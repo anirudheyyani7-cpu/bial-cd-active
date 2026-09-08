@@ -1,18 +1,13 @@
-"""Code continuity across sessions — what SURVIVES the U4 reset.
+"""Code continuity across sessions — what survives a reset.
 
-RETIRED WITH 0024: the conversations-PATCH `code` mirror (the SPA's write-back path into
-`app_registry.current_code`) died with the `conversations.code` column — the PATCH now 400s
-(pinned in `tests/api/v1/conversations/test_conversations.py::test_patch_code_is_retired_400`).
-`current_code` therefore has NO writer on this branch; code truth lives in the build snapshots,
-and the remaining readers (`projects/router.py::description:generate`, `apps/router.py`) treat
-a NULL as "no code yet". TODO(U5+): either re-establish a writer from the build pipeline or
-retire the readers with the column.
+The conversations-PATCH `code` mirror died with the `conversations.code` column and the PATCH
+now 400s (pinned in `tests/api/v1/conversations/test_conversations.py`). `current_code` has no
+writer on this branch — code truth lives in the build snapshots — and its readers treat a NULL
+as "no code yet"; either a writer comes back from the build pipeline or the readers retire with
+the column. What stays pinned here is that submit never touches it.
 
-What stays pinned here:
-  * submit never touches `current_code` (the open-sandbox artifact is the bundle copy).
-
-THE CROSS-USER PROMPT-GROUNDING TEST MOVED. It posted to the retired `POST /v1/claude` relay;
-the same ADR-0004 property is now asserted against the surviving send path in
+The cross-user prompt-grounding test moved. It posted to the retired `POST /v1/claude` relay; the
+same cross-user isolation property is asserted in
 `tests/api/v1/conversations/test_project_grounding.py`.
 """
 
@@ -47,20 +42,19 @@ async def _builder_conv(db_session, user_id, project_id):
 
 
 async def _provision(db_session, user_id, project_id) -> str:
-    """Mint the project's app the way the build session does (`POST /apps/provision` was
-    removed in U6). Commits so the endpoints under test read it through their own session."""
+    """Mint the project's app the way the build session does. Commits so the endpoints under
+    test read it through their own session."""
     app_id = await resolve_app_for_project(db_session, user_id, project_id)
     await db_session.commit()
     return str(app_id)
 
 
 async def test_submit_no_longer_touches_current_code(client, db_session, set_chat_model) -> None:
-    # INERTNESS GUARD (flipped, APPROVAL R19): submit used to backstop `current_code`
-    # from its request body. The open-sandbox submit carries NO source — the artifact
-    # is the server-side bundle copy — so `current_code` stays exactly what it was
-    # (here: NULL, its permanent state now that the PATCH mirror is retired).
-    # U8 retired the submit ROUTE; the guard follows the behaviour into the service
-    # (`services/approvals/submit`), which is now the only writer of pending.
+    # INERTNESS GUARD: submit used to backstop `current_code` from its request body. The
+    # open-sandbox submit carries NO source — the artifact is the server-side bundle copy —
+    # so `current_code` stays exactly what it was (here: NULL, its permanent state now that
+    # the PATCH mirror is retired). Asserted against `services/approvals/submit`, because the
+    # behaviour lives in the service and not in a route.
     import uuid as _uuid
 
     from src.db.models.app_registry import ApprovalRoute
@@ -89,7 +83,6 @@ async def test_submit_no_longer_touches_current_code(client, db_session, set_cha
     )
     await db_session.commit()
 
-    # The retired backstop stays retired: current_code is untouched by submit.
     row = await db_session.scalar(select(AppRegistry).where(AppRegistry.project_id == project.id))
     assert row is not None
     assert row.current_code is None

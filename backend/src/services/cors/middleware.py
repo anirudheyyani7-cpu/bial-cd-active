@@ -1,5 +1,6 @@
-"""The app's ONE CORS layer (R23, review P2) — credentialed CORS for the SPA.
+"""The app's ONE CORS layer — credentialed CORS for the SPA.
 
+WHY THIS EXISTS
 FastAPI's global `CORSMiddleware(allow_origins=[FRONTEND_URL],
 allow_credentials=True)` short-circuits EVERY OPTIONS preflight before any
 route-level reflection can run, and two stacked Starlette CORS middlewares cannot

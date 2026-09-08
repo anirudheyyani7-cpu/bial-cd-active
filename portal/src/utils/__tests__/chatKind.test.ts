@@ -1,9 +1,9 @@
 /**
- * `chatKindFor` — the lookup that decides what a chat row CALLS itself and SAYS about itself
- * (U16/R73).
+ * `chatKindFor` — the lookup that decides what a chat row CALLS itself and SAYS about itself.
  *
- * Before U16 the word and completion were literals baked into this file. Now they are not —
- * `word` and `description` come from `getStoredUser()?.chat_kinds`, the U16 catalogue riding the
+ * WHY THIS EXISTS
+ * The word and completion used to be literals baked into this file. Now they are not —
+ * `word` and `description` come from `getStoredUser()?.chat_kinds`, the catalogue riding the
  * once-cached `GET /auth/me` bootstrap. The strongest proof that the sourcing is real, rather
  * than a hardcoded fallback with a bootstrap-shaped decoration on top, is to mock the bootstrap
  * with wording that does NOT match the product copy and watch `chatKindFor` return exactly that
@@ -60,7 +60,7 @@ describe('chatKindFor', () => {
   })
 
   it('keeps the icon and the pill local, unaffected by whatever the bootstrap says', () => {
-    // R-8: icon/pill are NOT part of the catalogue's shape and must not move even though the
+    // icon/pill are NOT part of the catalogue's shape and must not move even though the
     // words now do. Same kind, two catalogues, one look.
     withCatalogue(MOCK_CATALOGUE)
     const first = chatKindFor('plan')
@@ -71,10 +71,9 @@ describe('chatKindFor', () => {
   })
 
   it('★ gives the pill the glyph its own board draws — which for BUILD is none', () => {
-    // The boards disagree on purpose, and the code used to draw a wrench in the BUILD pill that
-    // no board has. `PlanChat` puts an 11px message-square inside its PLAN pill; `BuildChat`,
-    // `NewBuildChat`, `PlainAnswer` and `ChatStarting` all draw BUILD as the word alone. The
-    // picker's `Icon` is a separate question and both kinds still answer it.
+    // The boards disagree on purpose: only PlanChat's pill carries an icon, the rest draw BUILD as
+    // text alone. `Icon` (the picker) and `pillIcon` (the board) are separate fields — both are
+    // checked here.
     withCatalogue(MOCK_CATALOGUE)
     expect(chatKindFor('build').pillIcon).toBeNull()
     expect(UNKNOWN_CHAT_KIND.pillIcon).toBeNull()
@@ -114,12 +113,10 @@ describe('chatKindFor', () => {
   })
 
   it('falls back rather than throwing when a profile arrives with no catalogue at all', () => {
-    // A THIRD MISS, and the one the type system says is impossible: a NON-NULL profile whose
-    // `chat_kinds` is absent. `UserProfile` is an unchecked cast over whatever `/auth/me`
-    // returned, so this is a wire shape, not a contradiction — a stale service worker, a
-    // server that predates the catalogue, a test double. The function's own contract says it
-    // never throws, and it is called once per row of the chat list: a throw here is not one
-    // bad badge, it is the whole project page failing to render.
+    // A THIRD MISS the type system calls impossible: a non-null profile with no `chat_kinds`.
+    // `UserProfile` is an unchecked cast over whatever `/auth/me` returned, so this is a real wire
+    // shape (stale service worker, older server, test double), not a contradiction. It's called
+    // once per chat-list row, so a throw here fails the whole project page, not one badge.
     h.getStoredUser.mockReturnValue({} as never)
     expect(() => chatKindFor('plan')).not.toThrow()
     expect(chatKindFor('plan')).toBe(UNKNOWN_CHAT_KIND)

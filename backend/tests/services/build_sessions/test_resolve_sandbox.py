@@ -1,19 +1,14 @@
-"""U2 — the pre-turn integrity gate: say so, quarantine, restore, then confirm.
+"""The pre-turn integrity gate: say so, quarantine, restore, then confirm.
 
-R1/R2/R3/R5/R6. Until this unit the attach path re-attached on a supervisor `/health` 200 and
-never looked at the tree. On 2026-08-18 that is exactly what happened: a container that had
-factory-reset to its baked image answered every check the platform had, and the agent built on
-the wiped workspace in front of a client.
+Until this gate the attach path re-attached on a supervisor `/health` 200 and never looked at
+the tree. THE ORDER OF THE ASSERTIONS IN THIS FILE IS THE ORDER OF THE RISK.
 
-THE ORDER OF THE ASSERTIONS IN THIS FILE IS THE ORDER OF THE RISK.
-
-* `test_the_sentence_arrives_before_the_restore_runs` is the unit's shape. Putting an app back
+* `test_the_sentence_arrives_before_the_restore_runs` is the unit's shape: putting an app back
   takes tens of seconds during which the screen would otherwise say nothing at all.
-* `test_a_check_that_times_out_touches_nothing` is the one that must never regress. `REVERTED` is
-  the only state that may destroy anything, and the whole safety argument collapses if an
-  unanswerable check can reach a teardown.
-* `test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted` is the inertness guard. It
-  is what proves the fakes' default is right — and, more usefully, that it STAYS right.
+* `test_a_check_that_times_out_touches_nothing` must never regress: `REVERTED` is the only state
+  that may destroy anything, and an unanswerable check must never reach a teardown.
+* `test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted` proves the fakes'
+  default is right — and, more usefully, that it STAYS right.
 """
 
 from __future__ import annotations
@@ -144,7 +139,6 @@ async def _seed_saved(store: FakeStorage, app_id: uuid.UUID, sha: str = RECORDED
 async def test_an_intact_workspace_is_attached_exactly_as_before(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """No message, no quarantine, no restore, and the same container."""
     user, project_id = await _mk(db_session, "u2a@rvaiglobal.com")
     manager = SessionManager()
     client, app_id = await _attached(db_session, manager, user, project_id)
@@ -166,16 +160,11 @@ async def test_an_intact_workspace_is_attached_exactly_as_before(
 async def test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ THE INERTNESS GUARD, and it is worth more than it looks.
-
-    `FakeSandboxClient.exec` used to answer every unrecognised command with an empty stdout at
-    exit 0, which `parse_state` reads as `head=None` — and under U1 a repo-less container with a
-    recovery bundle present is a CONFIRMED REVERSION. So without a default arm for the state
-    probe, every pre-existing turn test that happened to seed a bundle would silently have
-    exercised the quarantine-and-restore branch while asserting something else entirely.
-
-    This test does NOT script `exec`. That is the whole point: it fails the day the default stops
-    being the ordinary case.
+    """★ THE INERTNESS GUARD, and it is worth more than it looks: an unrecognised exec command
+    must default to a real answer, not `head=None`, or a repo-less container with a recovery
+    bundle present reads as a CONFIRMED REVERSION and quarantines apps nobody touched. This test
+    does NOT script `exec`, on purpose — it fails the day the default stops being the ordinary
+    case.
 
     Mutation check: delete the `_STATE_MARKER` arm from `tests/fakes.py` and this goes red."""
     user, project_id = await _mk(db_session, "u2b@rvaiglobal.com")
@@ -195,7 +184,6 @@ async def test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted(
 async def test_a_brand_new_project_attaches_with_nothing_to_say(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """Never-built by U1's four conditions: one commit, a clean tree, no bundles anywhere."""
     user, project_id = await _mk(db_session, "u2c@rvaiglobal.com")
     manager = SessionManager()
     client, _ = await _attached(db_session, manager, user, project_id)
@@ -221,7 +209,7 @@ async def test_the_sentence_arrives_before_the_restore_runs(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ AE1, and the ordering IS the unit.
+    """★ The ordering IS the unit.
 
     Putting an app back is a full bundle of the reverted tree plus a complete restore — tens of
     seconds during which the screen would otherwise say nothing at all, which is indistinguishable
@@ -364,7 +352,7 @@ async def test_a_restore_that_fails_still_tells_the_citizen(
 async def test_confirmed_loss_with_nothing_to_restore_says_so_and_restores_nothing(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ AE3. Neither a recovery copy nor a saved bundle. The one thing that must not happen is
+    """★ Neither a recovery copy nor a saved bundle. The one thing that must not happen is
     presenting the empty template as their app."""
     user, project_id = await _mk(db_session, "u2i@rvaiglobal.com")
     manager = SessionManager()
@@ -408,7 +396,8 @@ async def test_a_poisoned_recovery_slot_is_stepped_over(
     """★ THE REFUSAL LOOP, BOUNDED. `recoverable_work` ranks the two bundles by `last_modified`,
     never by ancestry, so a recovery copy that was overwritten with a bad tree outranks a
     perfectly good saved one — and every restore afterwards hands back the poison. Two consecutive
-    refusals by U3's guard is the signal that the slot rather than the turn is the problem.
+    refusals by the integrity guard are the signal that the slot, rather than the turn, is the
+    problem.
 
     Mutation check: raise `_POISONED_SLOT_REFUSALS` and this goes red."""
     user, project_id = await _mk(db_session, "u2k@rvaiglobal.com")
@@ -434,7 +423,7 @@ async def test_a_poisoned_recovery_slot_is_stepped_over(
 async def test_a_check_that_times_out_touches_nothing(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★★ AE2(a). `REVERTED` is the only state that may destroy anything, and the entire safety
+    """★★ `REVERTED` is the only state that may destroy anything, and the entire safety
     argument collapses if an unanswerable check can reach a teardown. The container stays running,
     attached and untouched; the turn fails as retryable."""
     user, project_id = await _mk(db_session, "u2l@rvaiglobal.com")
@@ -460,8 +449,8 @@ async def test_a_check_that_times_out_touches_nothing(
 async def test_a_structurally_unanswerable_check_lets_the_turn_through(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """Retrying cannot help, so refusing would lock the citizen out of their own project for good.
-    Proceed, say so once, restore nothing, destroy nothing."""
+    """Retrying cannot help, so refusing would lock the citizen out of their own project for
+    good."""
     user, project_id = await _mk(db_session, "u2m@rvaiglobal.com")
     manager = SessionManager()
     client, app_id = await _attached(db_session, manager, user, project_id)
@@ -509,7 +498,7 @@ async def test_the_slot_is_freed_even_when_the_gate_refuses(
 
 
 # =============================================================================
-# U4 — the reversion that happens while nobody is sending messages
+# The reversion that happens while nobody is sending messages
 # =============================================================================
 
 
@@ -519,10 +508,9 @@ async def test_an_idle_reversion_is_caught_at_the_poll_and_alarmed(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ R4/R7 — THE TURN MAY NEVER COME. Every other check in this system runs at the start of a
-    turn; a citizen who is reading, or in another tab, or at lunch gets none of them, and the
-    completion claim above their preview goes on being displayed over a dead app for as long as
-    the page stays open.
+    """★ THE TURN MAY NEVER COME — every other check in this system runs at the start of a turn,
+    and this one runs at the preview poll. Why that is the only notice an idle reversion gets is
+    on `WORKSPACE_LOST_WHILE_IDLE_EVENT`.
 
     Mutation check: return INTACT unconditionally from `project_workspace_check` and this goes
     red."""

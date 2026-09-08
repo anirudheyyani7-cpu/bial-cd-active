@@ -1,4 +1,4 @@
-"""`all_keys_under` (APPROVAL R23): the exhaustive prefix walk the delete paths
+"""`all_keys_under`: the exhaustive prefix walk the delete paths
 rely on. Pagination is the point — a single-page listing silently misses keys past
 the page size, which on the delete paths means citizen source surviving a hard
 delete — and errors must RAISE, never read as an empty prefix."""

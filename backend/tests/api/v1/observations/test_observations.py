@@ -1,4 +1,4 @@
-"""POST /v1/observations — the browser's one narrow write path (U3; R104, R105, R106).
+"""POST /v1/observations — the browser's one narrow write path.
 
 WHAT THESE PIN, and it is a short list on purpose: the only counter names this route can ever
 produce are the three it allows, and a malformed or hostile call writes NOTHING and returns a
@@ -126,7 +126,8 @@ async def test_a_counter_that_exists_but_is_not_browser_observable_is_refused(
 ) -> None:
     """★ THE INTERESTING BYPASS, and the reason the allowlist is a mapping on this side rather
     than a rule the browser is asked to follow. `app_start_reached_running` is a real member of
-    `HarnessCounter` — a browser that could write it could inflate R103's numerator at will."""
+    `HarnessCounter` — a browser that could write it directly could inflate a downstream
+    success-rate numerator at will."""
     user = await UserFactory.create(db_session, email="obs-bypass@rvaiglobal.com")
 
     resp = await client.post(
@@ -244,11 +245,12 @@ async def test_the_route_does_not_relate_one_counter_to_another(
 ) -> None:
     """The gap this route deliberately does NOT close, pinned so it cannot close by accident.
 
-    Each name is bounded alone; nothing here knows that R105's numerator should never outrun its
-    denominator. That invariant lives in the browser, which means it holds for the portal and not
-    for a hand-made request. Enforcing it server-side needs a visit token this plan does not
-    build — so the behaviour is documented, and the reading rule (a ratio outside [0,1] is
-    poisoned data, not a surprising result) lives beside the number."""
+    Each name is bounded alone; nothing here knows that `project_opened_chat` should never outrun
+    `project_opened` in whatever ratio reads them downstream. That invariant lives in the browser,
+    which means it holds for the portal and not for a hand-made request. Enforcing it server-side
+    needs a visit token that does not exist yet — so the behaviour is documented, and the reading
+    rule (a ratio outside [0,1] is poisoned data, not a surprising result) lives beside the
+    number."""
     user = await UserFactory.create(db_session, email="obs-invariant@rvaiglobal.com")
 
     resp = await client.post(
@@ -263,8 +265,8 @@ async def test_the_route_does_not_relate_one_counter_to_another(
 
 async def test_an_occurrence_cannot_be_sent_as_a_batch(client: AsyncClient, db_session) -> None:
     """An occurrence IS one. A browser reporting `project_opened` with a value of 40 is not
-    reporting an occurrence, it is inflating R105's denominator — and a denominator a client can
-    inflate is not a measurement."""
+    reporting an occurrence, it is inflating the denominator of whatever ratio reads
+    `project_opened` — and a denominator a client can inflate is not a measurement."""
     user = await UserFactory.create(db_session, email="obs-batch@rvaiglobal.com")
 
     resp = await client.post(

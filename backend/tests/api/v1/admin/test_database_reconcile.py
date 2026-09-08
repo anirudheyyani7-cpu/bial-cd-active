@@ -1,4 +1,4 @@
-"""U7 — `POST /v1/admin/apps/reconcile-databases` and the advisory size column.
+"""`POST /v1/admin/apps/reconcile-databases` and the advisory size column.
 
 Superadmin-gated, audited, and REPORT-ONLY: the endpoint-level pin is that a seeded orphan
 shows up in the response AND is still on the cluster when the request is over. The
@@ -211,7 +211,7 @@ async def test_unauthenticated_is_401(client: AsyncClient) -> None:
 async def test_an_unconfigured_substrate_is_503_not_500(
     client: AsyncClient, db_session: AsyncSession, no_substrate: None
 ) -> None:
-    # The eager-`Depends` trap (commit 6be7a9c): the maintenance engine is resolved INSIDE
+    # The eager-`Depends` trap: the maintenance engine is resolved INSIDE
     # the body, so its absence reaches the route's own error seam and answers with the
     # documented, retryable 503 instead of an undocumented 500 in the wrong envelope.
     resp = await client.post(_RECONCILE, headers=await _admin(db_session))
@@ -305,8 +305,6 @@ async def test_the_listing_still_renders_when_the_cluster_is_unreachable(
 async def test_the_listing_renders_with_no_substrate_at_all(
     client: AsyncClient, db_session: AsyncSession, no_substrate: None
 ) -> None:
-    # The fixture-free absent baseline (`.claude/rules/testing.md`): per-project databases
-    # are a genuinely optional integration, so the store-off deployment needs its own test.
     row = await _app_row(db_session)
 
     resp = await client.get(_LIST, headers=await _admin(db_session))

@@ -1,19 +1,11 @@
-"""The R22 dual-read window: a fleet registered before the environment segment existed must stay
-visible across the cutover deploy (C5, ADR-0029 U5).
+"""The dual-read window: a fleet registered before the environment segment existed must stay
+visible across the cutover deploy.
 
-WHY THIS FILE IS THE IMPORTANT ONE IN ITS UNIT. Changing the registry prefix is a one-line edit
-that looks free and is not. That prefix is the sole input to `sweep_all`'s scan AND to the
-report-only Azure inventory, and the registry hash is the one key family with **no TTL** — so a
-straight cutover would make every container live at that instant permanently invisible to both,
-forever. It would manufacture, wholesale, the exact orphan class ADR-0029 exists to collect, three
-phases before any collector exists.
-
-And the obvious half-measure is INERT, which is the part that fools people: widening only the SCAN
-pattern changes nothing, because `sweep_all` does not read the registry off the scan. It extracts
-the `user_id` from the key name and then issues a FRESH point read — which, against the new
-prefix, returns `None`, so the sweep takes its "nothing registered" arm and the fleet vanishes
-anyway. Every assertion below that says "the sweep still sees it" is therefore load-bearing
-against a change that would look correct in review.
+What a moved registry prefix costs is set out in `services/redis/keys.py`. What this file covers
+is the half-measure that looks like the fix: widening only the SCAN pattern changes nothing,
+because `sweep_all` extracts the `user_id` from the key name and then issues a FRESH point read.
+Every assertion below that says "the sweep still sees it" is load-bearing against exactly that
+change, which would read as correct in review.
 
 The mutation-check for this file is: delete the legacy arm from `locks.read_registry` and watch
 the fleet disappear from both `sweep_all` and `take_sandbox_inventory`.
@@ -52,7 +44,7 @@ from src.services.sandbox.client import AcaSandboxClient
 from src.services.sandbox.config import SandboxConfig
 from tests.fakes import FakeSandboxClient, a_fleet_member, a_sandbox_name
 
-_LEGACY_APP = "sbx-019f74300c9f747db10b73b6dcdd"  # the 19-day ghost ADR-0029 names
+_LEGACY_APP = "sbx-019f74300c9f747db10b73b6dcdd"  # a real name from the pre-cutover fleet
 
 
 class _Fleet:
@@ -66,7 +58,7 @@ class _Fleet:
 
 
 def _record(app_name: str) -> dict[str, str]:
-    """A COMPLETE C5 registry hash — every frozen field, so "without losing a field" is a real
+    """A COMPLETE registry hash — every frozen field, so "without losing a field" is a real
     assertion rather than a spot check on the two the reaper happens to read."""
     return {
         REGISTRY_FIELD_APP_NAME: app_name,
@@ -198,12 +190,12 @@ async def test_the_read_migrates_a_legacy_hash_without_losing_a_field(
         **_record(_LEGACY_APP),
         REGISTRY_FIELD_ADOPTED_FROM_LEGACY: "1",
     }
-    # THE LEGACY KEY SURVIVES THE READ, DELIBERATELY. An earlier draft retired it here, and that
-    # made the remedy worse than the exposure: a process pointed at the WRONG Redis would not
-    # merely read another environment's legacy record, it would relocate it under its own prefix
-    # and delete the original — leaving the owning environment with a running container and no
-    # record. That is the exact orphan class ADR-0029 exists to collect, manufactured by R22's
-    # own mitigation. `delete_registry` is where the legacy key goes, when the session ends.
+    # THE LEGACY KEY SURVIVES THE READ, DELIBERATELY: retiring it here would let a process
+    # pointed at the WRONG Redis relocate another environment's legacy record under its own
+    # prefix and delete the original, leaving the owning environment with a running container
+    # and no record — the exact orphan class environment scoping exists to prevent, manufactured
+    # by the mitigation meant to close it. `delete_registry` is where the legacy key actually
+    # goes, once the session ends.
     assert await fake_redis.exists(legacy_registry_key(user)) == 1
 
 
@@ -259,20 +251,14 @@ async def test_delete_registry_clears_both_prefixes_for_a_record_we_adopted(
 async def test_ending_our_session_does_not_delete_another_environments_legacy_record(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """THE ONE NAMESPACE WITH NO ENVIRONMENT SEGMENT, and the last place that wrote to it blindly.
+    """THE ONE NAMESPACE WITH NO ENVIRONMENT SEGMENT. `bial:sandbox:registry:{user}` names
+    different containers per deployment on one shared Redis, so deleting it unconditionally
+    let a session-end also destroy another environment's record — the orphan class
+    environment scoping exists to prevent, manufactured by its own cleanup. The record here
+    was born post-cutover, never adopted, so the legacy key beside it is somebody else's.
 
-    `bial:sandbox:registry:{user}` names different containers in different deployments sharing a
-    Redis instance — which is the entire reason R22 scoped the prefix. `delete_registry` deleted
-    it unconditionally, so a process ending its OWN session also destroyed whatever another
-    environment had under that key, leaving them a running container nothing tracks: the orphan
-    class this ADR exists to collect, manufactured by its own cleanup. The adoption path already
-    refused to delete on read for this reason; this closes the matching hole on the delete side.
-
-    Here the current record was born post-cutover — never adopted — so the legacy key beside it
-    belongs to somebody else and must survive.
-
-    Mutation-check: delete the legacy key unconditionally and this goes red while its sibling
-    above stays green."""
+    Mutation-check: delete the legacy key unconditionally and this goes red while its
+    sibling above stays green."""
     user = uuid.uuid4()
     await _write(fake_redis, legacy_registry_key(user), _record(a_sandbox_name("theirs")))
     await _write(fake_redis, registry_key(user), _record(a_sandbox_name("ours")))
@@ -290,7 +276,7 @@ async def test_ending_our_session_does_not_delete_another_environments_legacy_re
 
 async def test_both_point_reads_agree_on_a_legacy_record(fake_redis: aioredis.Redis) -> None:
     """`locks.read_registry` and `SandboxClient._read_registry` are separate implementations by
-    C5 design (`services/sandbox/` must not import `services/build_sessions/`). This is the only
+    design (`services/sandbox/` must not import `services/build_sessions/`). This is the only
     thing stopping them from drifting: they are handed the same legacy hash and must answer
     identically, migration and all."""
     user_a, user_b = uuid.uuid4(), uuid.uuid4()
@@ -339,17 +325,17 @@ async def test_reconcile_on_start_reaps_a_legacy_record(fake_redis: aioredis.Red
     assert client.torn_down == [_LEGACY_APP]
 
 
-# --- R22 itself: another environment's keys are not ours ------------------------------------
+# --- Another environment's keys are not ours -------------------------------------------------
 
 
 async def test_a_sweep_ignores_another_environments_keys_entirely(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """THE R22 PROPERTY, from the sweep's end. Pointed at a Redis holding production's records, a
+    """From the sweep's end: pointed at a Redis holding production's records, a
     development process must find NOTHING — not "records it does not understand", nothing at all.
 
     Note what the correct answer looks like downstream: an empty spare-list against a live fleet.
-    That is deliberately the input U10's store-fault guard trips on, so the wrong-Redis case
+    That is deliberately the input the store-fault guard trips on, so the wrong-Redis case
     escalates to a human instead of reading as a fleet of orphans to destroy."""
     user = uuid.uuid4()
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
@@ -364,7 +350,7 @@ async def test_a_sweep_ignores_another_environments_keys_entirely(
 
     assert result == reaper.SweepResult(reaped=0, failed=0)
     assert client.torn_down == []
-    assert inv.registered == ()  # the empty spare-list U10 fails closed on
+    assert inv.registered == ()  # the empty spare-list this guard fails closed on
     assert inv.unregistered == (a_sandbox_name("production-container"),)
 
 
@@ -389,7 +375,7 @@ async def test_the_scan_never_reaches_across_environments_through_the_legacy_pat
 
 
 async def test_a_legacy_lock_is_not_honoured(fake_redis: aioredis.Redis) -> None:
-    """Deliberate, and the opposite of the registry decision (C5). After the cutover every
+    """Deliberate, and the opposite of the registry decision. After the cutover every
     legacy-prefix lock is holder-less, so honouring one would hand a returning builder up to
     `LOCK_TTL_SECONDS` of phantom 409 on a session that does not exist — the lockout `reap_lock`
     was written to prevent. The registry is dual-read because losing it leaks a container; the
@@ -407,8 +393,8 @@ def test_no_module_builds_a_sandbox_key_by_hand() -> None:
     greps the source rather than trusting review.
 
     Two files may write the root: `keys.py`, which owns families 1-4, and `broker.py`, which owns
-    family 5 (C5). Anywhere else, a literal `bial:` with a key segment after it is a hand-typed
-    key that the environment scoping cannot reach — precisely the drift R22 forbids.
+    family 5. Anywhere else, a literal `bial:` with a key segment after it is a hand-typed
+    key that the environment scoping cannot reach — precisely the drift that scoping forbids.
     """
     import ast
     import pathlib
@@ -437,10 +423,9 @@ def test_no_module_builds_a_sandbox_key_by_hand() -> None:
         # F-STRINGS MUST BE REASSEMBLED BEFORE MATCHING, or this test is blind to the only key
         # shape anyone would write from now on. `f"bial:{env}:sandbox:lock:{u}"` parses to a
         # JoinedStr whose first Constant is exactly `"bial:"` — nothing follows the colon in that
-        # fragment, so `bial:\S` does not match it and the probe returns zero offenders. As
-        # originally written this test caught only the LEGACY spelling `f"bial:sandbox:…"`, i.e.
-        # precisely the one the cutover retired. Interpolations collapse to a non-space sentinel
-        # so the reassembled text reads like the key it will become at runtime.
+        # fragment, so `bial:\S` does not match it and the probe returns zero offenders.
+        # Interpolations collapse to a non-space sentinel so the reassembled text reads like the
+        # key it will become at runtime.
         interpolated: set[int] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.JoinedStr):
@@ -472,18 +457,14 @@ def test_no_module_builds_a_sandbox_key_by_hand() -> None:
 async def test_a_read_does_not_strand_another_environments_container(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """R22's mitigation must not manufacture the failure R22 exists to prevent.
+    """The environment-scoping mitigation must not manufacture the failure it exists to
+    prevent: during the dual-read window BOTH environments still read the legacy prefix, so
+    a process pointed at the wrong Redis can reach another environment's record — accepted,
+    unchanged exposure. What is NOT acceptable is the read RELOCATING it, which would leave
+    the owning environment (which scans only its own prefix and the legacy one) with a
+    running container and no record — an anonymous, forever-billing ghost.
 
-    During the dual-read window BOTH environments still read the legacy prefix, so a process
-    pointed at the wrong Redis can reach another environment's pre-cutover record. That is
-    unchanged exposure and is accepted in C5. What is NOT acceptable is the read RELOCATING it:
-    an earlier draft copied the record under the reading process's prefix and deleted the legacy
-    key, so the owning environment — which scans its own prefix and the legacy one, never a
-    foreign environment's — would be left with a running container and no record at all. An
-    anonymous, forever-billing ghost, minted by the remedy.
-
-    Asserted from the owning environment's side, which is the side that gets hurt.
-    """
+    Asserted from the owning environment's side, the side that gets hurt."""
     user = uuid.uuid4()
     await _seed_legacy(fake_redis, user, _LEGACY_APP)
 
@@ -522,7 +503,7 @@ async def test_a_second_read_does_not_migrate_again(fake_redis: aioredis.Redis) 
 async def test_the_namespace_smoke_check_is_exactly_two_globs(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """C5 publishes this as a contract: a namespace smoke check is `SCAN MATCH bial:*` plus
+    """The key namespace publishes this as a contract: a smoke check is `SCAN MATCH bial:*` plus
     `SCAN MATCH autoclaim:*`, and nothing else. If a later unit adds a key family under a third
     root, the operator runbook silently stops covering it.
 

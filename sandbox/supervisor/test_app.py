@@ -1,11 +1,10 @@
-"""Offline, NON-SPAWNING C1-conformance + guard-regression suite for the supervisor (U14).
+"""Offline, NON-SPAWNING conformance + guard-regression suite for the supervisor.
 
-The offline lane covers everything that does NOT spawn a child: the fail-closed child-env scrub
-(a pure function), `/files` (all actions), auth, and Pydantic/action body-validation — including
-the frozen 400-vs-422 split. SPAWNING scenarios (`/exec` exit/timeout, `/dev/*`), real UID
-demotion, and token isolation need root to demote to `appuser` (`_DEMOTE`'s `setgroups()` raises
-EPERM for a non-root process even demoting to itself), so they run IN-CONTAINER as root
-(`tests/test_supervisor_guards_incontainer.py`). See the plan U14 lane split.
+Covers everything that does NOT spawn a child: the fail-closed child-env scrub (a pure function),
+`/files` (all actions), auth, and Pydantic/action body-validation — including the frozen 400-vs-422
+split. SPAWNING scenarios (`/exec` exit/timeout, `/dev/*`), real UID demotion, and token isolation
+need root to demote to `appuser` (`_DEMOTE`'s `setgroups()` raises EPERM even demoting to itself),
+so they run IN-CONTAINER as root (`tests/test_supervisor_guards_incontainer.py`).
 
 Import note: `app.py` resolves `SUPERVISOR_TOKEN`, `WORKSPACE`, and `pwd.getpwnam(APP_USER)` at
 MODULE import (fail-fast config), so we seed a throwaway token, a temp workspace, and this
@@ -91,10 +90,10 @@ def test_child_env_extra_layers_on_and_path_survives() -> None:
 
 
 def test_child_env_carries_the_npm_and_node_runtime_names() -> None:
-    # The open-sandbox `run_command` npm install (U1/U7) needs its runtime env to survive the
+    # The open-sandbox `run_command` npm install needs its runtime env to survive the
     # scrub: the `npm_`/`NODE_` prefixes are allowlisted so npm config + node options pass
     # through, and HOME is forced to the appuser-owned account so npm's default cache
-    # ($HOME/.npm) is writable (R9/R13). This proves the EXISTING allowlist already covers a
+    # ($HOME/.npm) is writable. This proves the EXISTING allowlist already covers a
     # runtime install — no new entry (and no wildcard) is needed for a public, no-proxy registry.
     seeded = {
         "npm_config_registry": "https://registry.npmjs.org/",
@@ -114,16 +113,16 @@ def test_child_env_carries_the_npm_and_node_runtime_names() -> None:
 
 
 def test_child_env_sets_ci_so_clis_refuse_to_prompt() -> None:
-    # F4: no TTY reaches a demoted child, so an interactive CLI (drizzle-kit's rename-vs-create
-    # disambiguation, npm/next confirmations) would block on stdin until the timeout burned — the
-    # 600s hang the walkthrough QA hit. CI=1 makes well-behaved tools fail fast. It is set before
-    # `extra`, so a step that genuinely needs CI unset can still override it.
+    # No TTY reaches a demoted child, so an interactive CLI (drizzle-kit's rename-vs-create
+    # disambiguation, npm/next confirmations) would block on stdin until the timeout burned.
+    # CI=1 makes well-behaved tools fail fast. It is set before `extra`, so a step that
+    # genuinely needs CI unset can still override it.
     assert _child_env()["CI"] == "1"
     assert _child_env({"CI": "0"})["CI"] == "0"
 
 
 def test_exec_closes_child_stdin_so_a_prompt_cannot_hang(monkeypatch: pytest.MonkeyPatch) -> None:
-    # F4: exec_cmd hands the child a CLOSED stdin (immediate EOF) so a CLI that probes
+    # exec_cmd hands the child a CLOSED stdin (immediate EOF) so a CLI that probes
     # `process.stdin.isTTY` (drizzle-kit's prompt renderer does this) aborts fast, not waiting on
     # input that never comes. We intercept subprocess.run to inspect the wiring without a real
     # spawn — a real spawn would demote to APP_USER (needs root, the in-container lane's job).
@@ -140,16 +139,13 @@ def test_exec_closes_child_stdin_so_a_prompt_cannot_hang(monkeypatch: pytest.Mon
 
 
 def test_a_manufactured_tty_is_refused_before_it_can_hang(monkeypatch: pytest.MonkeyPatch) -> None:
-    """F4 — the escalation the trace actually recorded. Told to run a prompting
-    `drizzle-kit generate`, the agent worked AROUND the closed stdin by manufacturing a
-    terminal, and the command then sat at its prompt for 4m09s until the timeout fired. A real
-    pty defeats every `isTTY` check, so this is the only layer that can refuse it.
-
-    Refused as a normal exit-1 result with a correctable message, not an HTTP error: the caller
-    is a model, and a 4xx reads as an opaque tool failure it cannot learn anything from.
+    """A manufactured pty defeats every `isTTY` check, so it must be refused before it reaches
+    `subprocess.run` — the only layer that can catch it. Refused as a normal exit-1 with a
+    correctable message, not an HTTP error, since the caller is a model and a 4xx reads as an
+    opaque failure it cannot learn from.
 
     Mutation-check: delete the `_refuse_a_manufactured_tty` call in `exec_cmd` and the pty case
-    reaches `subprocess.run` — in production, that is the four-minute hang.
+    reaches `subprocess.run`.
     """
     spawned: list[list[str]] = []
 
@@ -172,12 +168,9 @@ def test_a_manufactured_tty_is_refused_before_it_can_hang(monkeypatch: pytest.Mo
         # The message must name the way OUT, not just say no — a refusal the model cannot act
         # on just becomes another workaround attempt.
         assert "non-interactively" in body["stderr"], cmd
-        # ...and the way out it names must be one that WORKS. This assertion used to require
-        # `--name` here. U20 measured drizzle-kit 0.31.10 and found that flag answers nothing:
-        # the rename resolver is an interactive select no flag can satisfy. Pointing the model at
-        # a flag that cannot work is what sent the observed build hunting for a longer flag list.
-        # So this is flipped to an inertness guard — the refusal must NOT prescribe a flag as the
-        # answer — paired with the liveness half, that it still prescribes the real escape.
+        # ...and the way out it names must be one that WORKS. An inertness guard — the refusal
+        # must NOT prescribe a flag as the answer, no flag being able to satisfy the rename
+        # resolver — paired with the liveness half, that it still prescribes the real escape.
         assert "--name" not in body["stderr"], cmd
         assert "ONE kind of schema change per generate" in body["stderr"], cmd
 
@@ -227,7 +220,7 @@ def test_wrong_bearer_is_401() -> None:
 
 
 def test_extra_whitespace_bearer_is_401() -> None:
-    # Exact string compare: even a doubled space between scheme and token fails (C1).
+    # Exact string compare: even a doubled space between scheme and token fails.
     r = client.post(
         "/files",
         json={"action": "view", "path": "x"},
@@ -253,7 +246,7 @@ def test_files_view_range_clamps_end_to_last_line() -> None:
 
 
 def test_files_view_range_minus_one_means_end_of_file() -> None:
-    # The C2/C7 read tool promises `end=-1` = end of file; a naive min(-1, len) computed an
+    # The read tool promises `end=-1` = end of file; a naive min(-1, len) computed an
     # EMPTY range. Regression-pin the full-file and from-line-2 spellings.
     _write("v3.txt", "a\nb\nc")
     full = client.post(
@@ -382,7 +375,7 @@ def test_exec_cwd_escape_is_400_before_any_spawn() -> None:
     assert r.status_code == 400
 
 
-# --- U8: the two per-app Blob vars reach the child via the allowlist --------------------------
+# --- the two per-app Blob vars reach the child via the allowlist --------------------------
 def test_child_env_admits_the_blob_vars() -> None:
     seeded = {
         "BIAL_BLOB_CONTAINER_URL": "http://azurite:10000/devstoreaccount1/app-x",
@@ -401,7 +394,7 @@ def test_child_env_admits_the_blob_vars() -> None:
     assert "SUPERVISOR_TOKEN" not in env  # the real token is never carried into the child env
 
 
-# --- U29: GET /env/manifest is retired — nothing in the platform had ever called it -----------
+# --- GET /env/manifest is retired — nothing in the platform had ever called it -----------
 def test_env_manifest_is_gone() -> None:
     # Dead-code removal, not a behavior change: the backend never called this route (grep across
     # `backend/` turns up nothing), so nothing loses a capability it was actually using. FastAPI
@@ -413,7 +406,7 @@ def test_env_manifest_is_gone() -> None:
     assert client.get("/env/manifest").status_code == 404
 
 
-# --- U8: the pure redactor — raw (already-encoded) AND URL-decoded forms, min-length guard -----
+# --- the pure redactor — raw (already-encoded) AND URL-decoded forms, min-length guard -----
 def test_redactor_strips_raw_and_url_decoded_secret_forms() -> None:
     # The SDK returns the SAS ALREADY percent-encoded; env holds that raw form.
     raw_sas = "sv=2021-08-06&sr=c&sp=rwdl&sig=abc%2Bdef%2Fghi%3D"
@@ -430,12 +423,12 @@ def test_redactor_strips_raw_and_url_decoded_secret_forms() -> None:
     finally:
         os.environ.pop("BIAL_BLOB_SAS", None)
     assert raw_sas not in red  # raw (encoded) form redacted
-    assert decoded_sas not in red  # URL-decoded form ALSO redacted (KTD-8)
+    assert decoded_sas not in red  # URL-decoded form ALSO redacted
     assert "keep this ordinary text" in red  # non-secret text untouched
     assert "***" in red
 
 
-# --- ADR-0028: the per-project database DSN — admitted by name, redacted both ways -----------
+# --- the per-project database DSN — admitted by name, redacted both ways -----------
 _DSN = "postgresql://bialrole_ab12:Sup3rSecretRolePassw0rd@db.example:5432/bialapp_ab12"
 
 
@@ -456,9 +449,9 @@ def test_child_env_admits_the_database_url() -> None:
 
 
 def test_redactor_strips_the_dsn_and_its_password_sub_token() -> None:
-    # `_redact` is a blind whole-VALUE substring replace, so the whole DSN and its password are two
-    # DIFFERENT registrations covering two different leaks — assert both, on lines where only one
-    # of the two forms appears (a line carrying both would pass with either registration alone).
+    # The whole DSN and its password are two DIFFERENT registrations covering two different
+    # leaks — assert both, on lines where only one of the two forms appears (a line carrying
+    # both would pass with either registration alone).
     password = "Sup3rSecretRolePassw0rd"  # noqa: S105 — a test fixture, not a real credential
     os.environ["BIAL_DATABASE_URL"] = _DSN
     try:
@@ -602,15 +595,12 @@ def _http_serving(handler: type[BaseHTTPRequestHandler]) -> Iterator[int]:
 def test_dev_status_owned_ready_child_probes_once_then_serves_from_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rewritten from `..._is_ready_and_never_probes`. That test asserted the owned-and-ready
-    path never pays for a probe — and that short-circuit IS the defect: the marker prints before
-    the first route compiles, so `ready` meant "Next announced itself", not "a request
-    succeeded". The probe therefore runs on this path now. It must run exactly ONCE: the
-    watchers poll `/dev/status` every second, and the cached affirmative is what keeps that
-    cheap.
+    """The owned-and-ready path used to short-circuit on the marker — "Next announced itself",
+    not "a request succeeded" — which is the defect this test pins: the probe must run on this
+    path too, but exactly ONCE, since the watchers poll `/dev/status` every second and the
+    cached affirmative is what keeps that cheap.
 
-    Do NOT make this green again by restoring the short-circuit — that silently reverts the
-    whole unit.
+    Do NOT restore the short-circuit to make this green again — that silently reverts the unit.
     """
     probes: list[tuple[object, ...]] = []
 
@@ -732,14 +722,11 @@ def _a_peer_that_trickles_header_bytes() -> Iterator[int]:
 
 
 def test_the_probe_gives_up_on_a_peer_that_trickles_header_bytes() -> None:
-    """★ THE PROBE HAS TO HAVE A TOTAL BOUND, not just per-operation ones. `settimeout` re-arms
-    on every socket operation and `http.client` performs many of them parsing a status line, so a
-    peer feeding one byte per 50ms satisfies each read forever and the probe never returns.
-
-    The consequence is not a slow poll, it is a permanent one: the probe holds the single-flight
-    slot, so every `/dev/status` caller waits on an answer that will never come and `ready` reads
-    False over an app that may since have become perfectly healthy. Re-arming `settimeout` before
-    `getresponse()` does NOT fix this — only a deadline does.
+    """★ THE PROBE NEEDS A TOTAL BOUND, not just per-operation ones: `settimeout` re-arms on
+    every socket op, so a peer feeding one byte per 50ms satisfies each read forever and the
+    probe never returns — pinning the single-flight slot so every `/dev/status` caller waits on
+    an answer that never comes, with `ready` reading False over an app that may be healthy.
+    Re-arming `settimeout` before `getresponse()` does NOT fix this — only a deadline does.
 
     Mutation check: delete the watchdog timer from `_dev_port_serving` and this hangs to the
     join timeout and then fails on `is_alive()`."""
@@ -763,22 +750,18 @@ def test_the_probe_gives_up_on_a_peer_that_trickles_header_bytes() -> None:
 def test_the_probe_counts_a_bound_but_silent_port_as_not_serving() -> None:
     # A connection ACCEPTED but never answered is the compile window, and excluding it is the
     # whole point of the unit. A two-tier "accepted counts as serving" rule would latch `ready`
-    # True during exactly the window this exists to exclude: `next dev` binds and accepts the
-    # instant it starts, then holds the request open while Turbopack compiles.
+    # True during exactly that window.
     with _bound_but_silent_port() as port:
         assert sup._dev_port_serving(port=port, timeout=0.5) is False
 
 
-# --- `ready` means a request ACTUALLY SUCCEEDED (U6) ------------------------------------------
+# --- `ready` means a request ACTUALLY SUCCEEDED ------------------------------------------
 def test_dev_status_is_ready_when_the_root_route_500s(monkeypatch: pytest.MonkeyPatch) -> None:
-    """THE fail-open guard, and the single most dangerous behaviour in this change to get wrong.
-
-    A compile error makes the root route answer 500 — that IS a served response, so `ready` must
-    stay True and let the app's own error reach the model through `/dev/logs`. A false negative
-    here makes `are_we_there_yet` return False, which synthesizes `dev_not_ready_error()` and
-    tells the model its app "hangs at startup or renders a blank page" — sending the agent to
-    debug a bug that does not exist. The marker is deliberately UNSET: the response alone
-    decides.
+    """THE fail-open guard: a compile error makes the root route answer 500, which IS a served
+    response, so `ready` must stay True and let the app's own error reach the model via
+    `/dev/logs`. A false negative here makes `are_we_there_yet` synthesize
+    `dev_not_ready_error()` and send the agent to debug a bug that does not exist. The marker is
+    deliberately UNSET: the response alone decides.
     """
     with _http_serving(_AlwaysErrorHandler) as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
@@ -792,11 +775,8 @@ def test_dev_status_is_ready_when_the_root_route_500s(monkeypatch: pytest.Monkey
 def test_dev_status_is_not_ready_while_the_route_is_still_compiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """THE defect being fixed. `next dev` prints its ready marker as soon as it is listening and
-    then holds the first request open while the route compiles; `ready` used to latch on that
-    marker alone, so the preview framed onto a blank page and every `/dev/status` consumer
-    believed a still-compiling app was up. Marker printed, child alive, port bound, nothing
-    answered yet -> NOT ready."""
+    """Marker printed, child alive, port bound, nothing answered yet -> NOT ready. The marker
+    may not latch `ready` on its own."""
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
@@ -912,20 +892,14 @@ def test_the_childs_death_invalidates_the_cached_ready(monkeypatch: pytest.Monke
 def test_a_probe_thread_that_cannot_start_hands_the_single_flight_slot_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE PERMANENT-WEDGE BRANCH, which had no coverage at all. `_dev_is_serving` claims the
-    single-flight slot BEFORE it spawns the probe thread, so a spawn that fails under memory
-    pressure — the realistic case in a memory-capped ACA container — would leave the slot held by
-    a probe that will never run and never clear it. Unlike a stale affirmative, which
-    `_READY_CACHE_TTL` bounds, that state has no expiry: `ready` reads False forever, for the
-    whole life of the container, and no consumer can tell why.
-
-    Two things must be true, and the branch exists for both: the failure PROPAGATES (a supervisor
-    that cannot spawn threads is not a supervisor that should quietly answer "not ready"), and
-    the slot is free afterwards so the next caller can still start a fresh probe.
-
-    Mutation check: delete the `except BaseException` recovery in `_dev_is_serving` and the
-    `probing is None` assertion goes red while the `pytest.raises` still passes — which is
-    exactly how this hid."""
+    """★ THE PERMANENT-WEDGE BRANCH, previously uncovered. `_dev_is_serving` claims the
+    single-flight slot BEFORE spawning the probe thread, so a spawn failing under memory
+    pressure (the realistic case in a capped ACA container) leaves the slot held by a probe that
+    never runs — unlike a stale affirmative this has NO expiry, so `ready` reads False forever.
+    Two things must hold: the failure PROPAGATES (never quietly answer "not ready"), and the
+    slot frees after so the next caller can probe again. Mutation check: delete the `except
+    BaseException` recovery — `probing is None` goes red while `pytest.raises` alone still
+    passes, exactly how this hid."""
 
     class _CannotStart(threading.Thread):
         def start(self) -> None:
@@ -948,9 +922,8 @@ def test_a_probe_thread_that_cannot_start_hands_the_single_flight_slot_back(
 def test_dev_start_refuses_while_something_serves_the_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The door KTD-1 closes: with an unowned server holding the port, Next 13.4+ does NOT
-    fail to bind — it falls back to the next free port and still prints "Ready in", minting a
-    sticky marker-`ready` child that Caddy never proxies. The start must refuse instead."""
+    """With an unowned server already holding the port, the start must refuse rather than
+    spawn."""
     monkeypatch.setattr(sup._Dev, "proc", None)
     monkeypatch.setattr(sup, "_dev_port_bound", lambda *a: True)
 
@@ -980,19 +953,17 @@ def test_dev_start_with_a_free_port_still_spawns(monkeypatch: pytest.MonkeyPatch
     assert spawned == [["npm", "run", "dev"]]
 
 
-# --- U14: the overlay kill switch is baked into dev_start, outside /workspace/app -------------
+# --- the overlay kill switch is baked into dev_start, outside /workspace/app -------------
 def test_dev_start_spawns_with_the_overlay_kill_switch_in_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`NEXT_PRIVATE_DISABLE_DEV_OVERLAY_UX=1` (Next 16.3+, PR #94346) must reach the ACTUAL
-    spawned child's environment — asserted on the `Popen` call itself, not merely on `_child_env`
-    as a pure function, so a mutation that drops it from `dev_start`'s literal `extra` (while
-    leaving `_child_env` untouched) still fails this test. It suppresses BOTH the compile and the
-    runtime overlay (ASM15) — defence in depth behind plan one's portal cover (U12) and
-    client-error arm (U13).
+    spawned child's env — asserted on the `Popen` call itself, not `_child_env` as a pure
+    function, so dropping it from `dev_start`'s literal `extra` still fails this test even if
+    `_child_env` is untouched. Suppresses both the compile AND runtime overlay.
 
-    The allowlist's fail-closed behaviour is unchanged by adding this one literal: a real secret
-    seeded on the parent still does not reach the child on this same spawn.
+    The allowlist stays fail-closed: a real secret seeded on the parent still does not reach the
+    child on this same spawn.
     """
     monkeypatch.setattr(sup._Dev, "proc", None)
     monkeypatch.setattr(sup._Dev, "ready", False)
@@ -1016,7 +987,7 @@ def test_dev_start_spawns_with_the_overlay_kill_switch_in_env(
 
 
 def test_overlay_kill_switch_reaches_no_tracked_template_file() -> None:
-    """R19's second clause, pinned as an assertion rather than a hope: the flag must be settable
+    """This is pinned as an assertion rather than a hope: the flag must be settable
     ONLY from `dev_start`'s hard-coded `extra` literal, baked into the image outside
     `/workspace/app` — never from the golden template that seeds the workspace. If it ever leaked
     into a tracked template file, a restore (which replays tracked files) or the agent's own write
@@ -1038,7 +1009,7 @@ def test_next_cache_stays_gitignored_and_untracked() -> None:
     """The persistent build cache (`.next/cache`) is on by default from 16.3 — verified, not
     assumed, that the template's existing `/.next` .gitignore entry already covers it and that
     nothing under `.next/` has ever been tracked, so the bump does not newly leak a multi-MB cache
-    into a future C4 git-bundle snapshot."""
+    into a future git-bundle snapshot."""
     repo_root = Path(__file__).resolve().parents[2]
     gitignore = (repo_root / "sandbox" / "template" / ".gitignore").read_text(encoding="utf-8")
     assert "/.next" in gitignore.splitlines()
@@ -1056,16 +1027,13 @@ def test_next_cache_stays_gitignored_and_untracked() -> None:
 def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE DOUBLE-SPAWN WINDOW U1/U2 made routine. The relaunch attach arm and the Write
-    turn's boot-at-attach now call `/dev/start` against containers that are ALREADY running a
-    dev server — and a server mid-recompile accepts the connection and answers nothing, which is
-    exactly what `_bound_but_silent_port` reproduces. The old guard asked "did anything ANSWER
-    within a second?", read that as an empty port, and spawned a second `next dev`; Next then
-    port-falls-back to a port Caddy does not proxy, and two Turbopack processes share a
-    memory-capped ACA container (the `exit_code 137` this codebase already handles).
+    """The relaunch attach arm and the Write turn's boot-at-attach call `/dev/start` against
+    containers that are ALREADY running a dev server, and a server mid-recompile accepts the
+    connection and answers nothing — exactly what `_bound_but_silent_port` reproduces. Asking
+    "did anything ANSWER within a second?" reads that as an empty port and spawns a second child.
 
-    The port being OCCUPIED is what triggers the fallback, so occupancy is what the guard asks.
-    Mutation check: point `dev_start` back at `_dev_port_serving` and the spawn below fires."""
+    Occupancy is what the guard asks. Mutation check: point `dev_start` back at
+    `_dev_port_serving` and the spawn below fires."""
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", None)  # no owned child — only the unowned server
@@ -1089,7 +1057,7 @@ def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
 def test_process_kill_commands_are_refused_with_the_steering_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Round 3's opening move: `pkill` the supervisor's dev child, nohup a replacement, and the
+    """The move this refuses: `pkill` the supervisor's dev child, nohup a replacement, and the
     replacement dies unwatched after the turn. The probe makes that survivable; this makes it
     rare. Refused as a normal exit-1 with a correctable message (same shape as the TTY guard),
     and nothing is executed."""
@@ -1156,17 +1124,13 @@ def test_the_tty_and_kill_guards_fire_independently(monkeypatch: pytest.MonkeyPa
 
 def test_an_unowned_server_that_dies_stops_being_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     """★ THE STICKY-AFFIRMATIVE GUARD. The dead-child-with-a-live-unowned-port state is exactly
-    the one the probe OR-arm exists to serve — the agent `pkill`s our child and `nohup`s its own
-    replacement. But the child's death is a ONE-SHOT reset (`_Ready.mourned` remembers the
-    corpse), so once that unowned server latched the affirmative there was no second event left
-    to clear it: when the unowned server itself died, `/dev/status` went on reporting `ready:
-    true` over a dead app forever, and no consumer could tell. `_watch_preview` consults `ready`
-    before `running`, so it would never even emit `preview_reconnecting`.
+    what the probe OR-arm exists to serve (the agent `pkill`s our child and `nohup`s its own
+    replacement) — but the child's death is a ONE-SHOT reset, so once that unowned server had
+    latched `ready`, its own later death left `/dev/status` reporting `ready: true` forever, and
+    `_watch_preview` (which consults `ready` before `running`) would never even reconnect.
 
-    The old `(_Dev.ready and running) or _dev_port_serving()` got this right by never caching at
-    all. The affirmative has to EXPIRE, not merely be invalidated at every place we can think
-    of — an enumeration is only as good as its completeness, and this file keeps growing ways
-    for a dev server to appear and vanish."""
+    The affirmative has to EXPIRE, not merely be invalidated at every place we enumerate — this
+    file keeps growing ways for a dev server to appear and vanish."""
     proc = _FakeProc(137)  # our child is already dead and already mourned
     answers = {"serving": True}
     monkeypatch.setattr(sup._Dev, "proc", proc)
@@ -1210,17 +1174,14 @@ def test_a_healthy_affirmative_is_still_cached_between_polls(
 def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE FLAPPING GUARD. Two watchers poll `/dev/status` every second while a probe can be
-    in flight for up to `_READY_READ_TIMEOUT`. An earlier cut let the callers who did NOT start
-    the probe return straight away on the theory they took "the last known answer" — but
-    negatives are deliberately never cached, so what they actually took was an unconditional
-    False. Over a healthy-but-slow route most polls in that window reported not-ready, and
-    paired with `running: false` (a dev server the agent started itself, which is precisely what
-    the probe exists to see) `_watch_preview` reads that pair as a crash edge and re-mounts the
-    citizen's iframe. A healthy app flapped between ready and reconnecting.
+    """★ THE FLAPPING GUARD. While a probe is in flight (up to `_READY_READ_TIMEOUT`), an
+    earlier cut let non-starting callers return early on "the last known answer" — but negatives
+    are never cached, so that was really an unconditional False. Paired with `running: false`
+    (a dev server the agent started itself), `_watch_preview` read that as a crash edge and
+    re-mounted the iframe: a healthy-but-slow app flapped between ready and reconnecting.
 
-    Every caller now waits on the SAME probe, so they cannot disagree — and it is still one
-    loopback request, which is the whole point of the single flight."""
+    Every caller now waits on the SAME probe, so they cannot disagree — still one loopback
+    request, the whole point of the single flight."""
     with _http_serving(_SlowRootHandler) as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", _FakeProc(137))  # dead child, unowned live server
@@ -1241,7 +1202,7 @@ def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
         )
 
 
-# --- R14 request accounting: the parser that decides whether a container is in use ----------
+# --- request accounting: the parser that decides whether a container is in use ----------
 #
 # WHY THESE EXIST. `_served_request_count` had ZERO coverage, and it fails toward the dangerous
 # answer: every failure mode returns a LOWER count, and `served: 0` is indistinguishable from
@@ -1334,7 +1295,7 @@ def test_a_uri_that_is_not_a_path_is_ignored() -> None:
     assert _served_request_count('{"request":"not-an-object"}') == 0
 
 
-# --- R17/R18: the compile state derived from the dev server's HMR socket ---------------------
+# --- the compile state derived from the dev server's HMR socket ---------------------
 #
 # The consumer THREAD is not exercised here (it needs a live `next dev`); what is pinned is the
 # part that decides what the platform believes: frame -> state, the debounce, the fail-closed
@@ -1636,7 +1597,7 @@ def test_a_malformed_base_path_is_treated_as_absent(
 
 
 def test_the_readiness_probe_asks_for_the_base_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ASM1. The probe's fail-open counts ANY response as serving, a 404 included — so under a
+    """The probe's fail-open counts ANY response as serving, a 404 included — so under a
     base path a probe left at `/` never FAILS, it just stops meaning anything. "Ready" would
     decay to "the dev server can render its own 404", which is true before the citizen's first
     route compiles and true forever for an app that never compiles."""

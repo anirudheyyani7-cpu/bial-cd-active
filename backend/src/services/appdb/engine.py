@@ -1,13 +1,15 @@
 """The maintenance engine: a second, AUTOCOMMIT, unpooled async engine used ONLY for
 cluster-level DDL (`CREATE`/`DROP DATABASE`, `CREATE`/`DROP ROLE`, `GRANT`, `COMMENT`).
 
+WHY THIS EXISTS
 Three properties, each load-bearing:
 
 * **AUTOCOMMIT** — `CREATE DATABASE` and `DROP DATABASE` cannot run inside a transaction
   block. There is no isolation-level precedent anywhere else in `src/`; this is net-new.
 * **`NullPool`** — pytest-asyncio runs a per-function event loop and an asyncpg connection
-  is loop-bound (`tests/conftest.py:37-40`). An unpooled engine holds no connection between
-  calls, so the same engine object is safe across loops.
+  is loop-bound — `tests/conftest.py` rebinds the app engine to `NullPool` for the same reason.
+  An unpooled engine holds no connection between calls, so the same engine object is safe
+  across loops.
 * **Lazy** — built on first use behind an accessor, never at import. `tests/conftest.py`
   rebinds only `src.db.base.engine`; a module-global engine constructed at import time
   would escape that and bind to whichever loop imported it first.
@@ -15,14 +17,11 @@ Three properties, each load-bearing:
 `get_maintenance_engine()` returns **`None`** when `APP_DB__*` is unset, deliberately
 copying `get_app_container_store()` (`services/storage/accessor.py:52-67`) rather than the
 raising `get_storage()`: a project with no database is a supported deployment — the app
-just has no persistence — so callers branch on `None` (KTD-2 divergence, documented there).
-Resolve it lazily INSIDE a route body's error seam, never as an eager `Depends`
-(`docs/solutions/design-patterns/eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`,
-commit 6be7a9c).
+just has no persistence — so callers branch on `None`.
+Resolve it lazily INSIDE a route body's error seam, never as an eager `Depends`.
 
-The maintenance identity is a password role by decision (ADR-0027 scope note: Entra token
-auth covers the control-plane `DATABASE_URL` identity only), so `attach_entra_token` is
-deliberately NOT applied here.
+The maintenance identity is a password role by decision (Entra token auth covers the control-plane
+`DATABASE_URL` identity only), so `attach_entra_token` is deliberately NOT applied here.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ def _new_maintenance_engine(url: str | URL) -> AsyncEngine:
         url,
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
-        # Same no-parameters-in-logs rule as `db/base.py` (#187). What it covers here is the
+        # Same no-parameters-in-logs rule as `db/base.py`. What it covers here is the
         # BOUND values this engine's statements carry — the registry reads and writes that ride
         # the same connection.
         #
@@ -96,17 +95,12 @@ def get_maintenance_engine() -> AsyncEngine | None:
 def maintenance_engine_for_database(db_name: str) -> AsyncEngine:
     """A FRESH AUTOCOMMIT/`NullPool` engine bound to ONE app database — the maintenance DSN
     with `database=` swapped to `db_name`. The caller OWNS it and must dispose it.
-
-    Schemas are per-database and `ALTER SCHEMA public` acts on the CURRENT database, so a
-    provisioning step that must touch an app database's `public` cannot ride the shared
-    maintenance engine (pinned to the maintenance database). Unlike `get_maintenance_engine`
-    this is deliberately NOT cached: it is a short-lived, single-statement engine, and caching
-    one per app database would leak engines without bound.
-
+    NOT CACHED, unlike `get_maintenance_engine`: `ALTER SCHEMA public` acts on the CURRENT
+    database, so per-database provisioning can't ride the shared maintenance engine, and
+    caching one per app database would leak engines without bound.
     Raises `AppDatabaseUnconfiguredError` when no substrate is configured — its only caller
-    runs after `get_maintenance_engine` has already established one, so an unset substrate here
-    is a real invariant break, not the supported no-op that `get_maintenance_engine` models.
-    """
+    runs after `get_maintenance_engine` already established one, so this is a real invariant
+    break, not a supported no-op."""
     from src.config import settings  # lazy: avoid an import cycle via src.config
 
     if settings.app_db is None:

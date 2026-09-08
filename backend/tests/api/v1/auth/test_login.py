@@ -1,6 +1,6 @@
-"""GET /auth/login — the redirect to Entra with PKCE (U5).
+"""GET /auth/login — the redirect to Entra with PKCE.
 
-The tenant discovery doc is pre-seeded onto the real OAuth registry (KD-9) so
+The tenant discovery doc is pre-seeded onto the real OAuth registry so
 `authorize_redirect` builds the authorize URL locally with NO network fetch.
 """
 
@@ -14,7 +14,7 @@ from src.services.auth.oidc import get_oauth
 _TID = settings.auth.tenant_id
 
 # A minimal Entra discovery doc. The `_loaded_at` key marks it as already fetched,
-# so Authlib's load_server_metadata() skips the network call (KD-9).
+# so Authlib's load_server_metadata() skips the network call.
 _DISCOVERY = {
     "issuer": f"https://login.microsoftonline.com/{_TID}/v2.0",
     "authorization_endpoint": f"https://login.microsoftonline.com/{_TID}/oauth2/v2.0/authorize",
@@ -40,11 +40,9 @@ async def test_login_redirects_to_entra_with_pkce(client) -> None:
     assert resp.status_code == 302
     location = resp.headers["location"]
     assert location.startswith(f"https://login.microsoftonline.com/{_TID}/oauth2/v2.0/authorize")
-    # PKCE (S256) + state present.
     assert "code_challenge=" in location
     assert "code_challenge_method=S256" in location
     assert "state=" in location
-    # redirect_uri equals the configured AUTH__REDIRECT_URI, byte-for-byte (KD-8).
     assert f"redirect_uri={quote(settings.auth.redirect_uri, safe='')}" in location
 
 
@@ -52,7 +50,7 @@ async def test_login_sets_transient_state_cookie(client) -> None:
     _seed_discovery()
     resp = await client.get("/v1/auth/login")
     # The PKCE verifier / nonce / state live in the oauth_transient cookie (its own
-    # SessionMiddleware name — never colliding with the app session cookie, KD-4).
+    # SessionMiddleware name — never colliding with the app session cookie).
     set_cookie = "\n".join(resp.headers.get_list("set-cookie"))
     assert "oauth_transient=" in set_cookie
     assert "session=" not in set_cookie  # no app session cookie minted yet

@@ -1,33 +1,22 @@
 """One-click publish configuration model.
 
 `Settings.deploy` is typed `DeployConfig | None`; pydantic-settings validates one
-`DEPLOY__*` env block against it (the single config funnel). Publishing is a
-genuinely-optional integration — `| None` means "publishing is off", which is the correct
-dev/test posture and a legitimate staging one.
+`DEPLOY__*` env block against it. `| None` means "publishing is off" — a legitimate
+dev/test/staging posture, so **no production gate**: this follows the `foundry`
+precedent, not `sandbox`/`redis`/`object_store`. Add a gate in the same commit that
+makes the portal show a Deploy control unconditionally; before that it would fail-first
+a running production backend for a capability nobody has turned on.
 
-**No production gate, deliberately** — this follows the `foundry` precedent
-(`src/config.py`), not the `sandbox`/`redis`/`object_store` one. A prod gate would make the
-running production backend fail to boot the moment this merges, for a capability nobody has
-turned on yet. Add `_require_deploy_in_production` in the same commit that makes the portal
-show a Deploy control unconditionally; until then a gate would fail-first for a feature that
-is not wired.
-
-WHY THE ACR FIELDS ARE DUPLICATED FROM `SandboxConfig` RATHER THAN HOISTED INTO A SHARED
-BLOCK. Three reasons, in order of weight:
-
-1. Hoisting is a breaking config change with no safe intermediate. `SandboxConfig` sets
-   `extra="forbid"`, so a leftover `SANDBOX__ACR_SERVER` during a rollout is a startup
-   `ValidationError` — production down at boot. The code deploy and the App Service settings
-   edit would have to be atomic. Duplication is purely additive and rollout-safe.
-2. It makes "deploy must never read `settings.sandbox.*`" structural rather than a
-   discipline. `settings.sandbox` is `None` in dev and test — a supported posture — so any
-   cross-read would crash exactly where it is least expected.
-3. The two consumers want different credentials in the end state: the sandbox needs
-   pull-only (and should move to AcrPull via managed identity), while publish needs ARM
-   rights to schedule a build plus pull creds to hand to ACA.
-
-The cost is the ACR password configured twice. That is one extra line in the deployment's
-env block, and it buys a rollout that cannot break the sandbox.
+WHY THIS EXISTS
+The ACR fields are DUPLICATED from `SandboxConfig`, not hoisted into a shared block,
+for three reasons: (1) hoisting is a breaking config change with no safe intermediate,
+since `SandboxConfig`'s `extra="forbid"` makes a leftover
+`SANDBOX__ACR_SERVER` a startup `ValidationError`; duplication is purely additive. (2)
+it makes "deploy must never read `settings.sandbox.*`" structural, not a discipline —
+`settings.sandbox` is `None` in dev/test. (3) the two consumers want different
+end-state credentials: sandbox pull-only, publish needs ARM rights to schedule a build.
+The cost — the ACR password configured twice — buys a rollout that cannot break the
+sandbox.
 """
 
 from __future__ import annotations
@@ -111,8 +100,8 @@ class DeployConfig(BaseModel):
     # same string builds arm64 on a developer machine and amd64 in the registry. Moved off
     # Debian 12, which left regular security support on 12 July 2026; matches the sandbox base
     # deliberately, so the environment citizens build in and the one their apps run in do not
-    # diverge. Resolved 2026-08-13 — ops/CVE-REMEDIATION-ROLLBACK-ANCHOR.md §1.2 records what
-    # this moved from and the commands to reproduce it.
+    # diverge. ops/CVE-REMEDIATION-ROLLBACK-ANCHOR.md §1.2 records what this moved from and
+    # the commands to reproduce it.
     #
     # As an env var this is DEPLOY__NODE_BASE_IMAGE; a value set on the deployed backend wins
     # over this default, so a code change alone does not reach a running environment.
@@ -151,24 +140,15 @@ class DeployConfig(BaseModel):
     target_port: PositiveInt = DEFAULT_TARGET_PORT
 
     # --- scheduled reconciliation ------------------------------------------------------
-    # Whether the SCHEDULED deploy reconciliation runs on the Taskiq worker (U6, ADR-0011).
-    #
-    # SHIPS ON, because the thing it replaced was never optional. This defaulted to False while
-    # `_reconcile_deploys_periodically` was still looping in the API lifespan — correct then: the
-    # loop was doing the work and this flag was how an operator promoted the scheduled pass after
-    # watching it run. U15 deleted the loop, and at that moment an off default stopped meaning
-    # "not yet promoted" and started meaning "nobody reconciles a deploy that straddled a
-    # restart". A pipeline runs for minutes and every platform deploy kills it, so that is the
-    # expected case during a rollout — the exact leak U6 was written to close.
+    # Whether the scheduled deploy reconciliation runs on the Taskiq worker. What sits on the
+    # platform's clock, and what deliberately does not, is set out in `src/worker_main.py`.
     #
     # An optional knob with a defined meaning (the fail-first exception): False = the cron tick
-    # logs `deploy_reconcile_pass_disabled` and returns, having imported nothing. It stays a real
-    # kill switch; what changed is which way it points when nobody has said anything.
+    # logs `deploy_reconcile_pass_disabled` and returns, having imported nothing.
     #
-    # It gates the CLOCK only. The boot one-shot (`main.py::_reconcile_interrupted_deploys`) and
-    # the operator endpoint (`POST /v1/admin/apps/reconcile-deploys`) are deliberately
-    # unaffected: an operator who has switched the timer off must still be able to settle a
-    # wedged deploy by hand, which is the whole reason the endpoint exists.
+    # It gates the CLOCK only: the boot one-shot (`main.py::_reconcile_interrupted_deploys`) and
+    # the operator endpoint (`POST /v1/admin/apps/reconcile-deploys`) are unaffected, so an
+    # operator who has switched the timer off can still settle a wedged deploy by hand.
     reconcile_enabled: bool = True
 
     # --- timeouts ---------------------------------------------------------------------

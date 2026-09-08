@@ -3,8 +3,8 @@
  * `window.__BIAL_CONFIG` declaration the error-capture shim publishes it through.
  *
  * This is types + one global declaration only: no fetching, no client, no I/O. The app's DATA
- * lives in its own PostgreSQL database now (ADR-0028) and is reached with Drizzle from server
- * code (`db/index.ts`) — the browser never gets a data credential, so nothing here is secret.
+ * lives in its own PostgreSQL database, reached with Drizzle from server code (`db/index.ts`) —
+ * the browser never gets a data credential, so nothing here is secret.
  *
  * Read the real values server-side from `process.env` (see `.env.example` for the manifest).
  * `BIAL_DATABASE_URL` is deliberately ABSENT from this type: it is a server-only secret and

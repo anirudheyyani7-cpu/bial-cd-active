@@ -1,7 +1,7 @@
 /**
- * ACTIVITY GROUPS — drawn by the parts, sealed by adjacency (R30–R35c).
+ * ACTIVITY GROUPS — drawn by the parts, sealed by adjacency.
  *
- * The two cases worth reading first are AE15 and the two-group case: they are what prove the
+ * The two cases worth reading first are the no-tool-calls case and the two-group case: they are what prove the
  * grouping is structural rather than conditional. A turn with no tool parts renders no element
  * because there is nothing to render, not because a renderer decided to hide a bar; and text
  * between two runs of tool calls produces two groups because the primitive coalesces ADJACENT
@@ -25,8 +25,6 @@ const stepPart = (seq: number, label: string, state: StepItem['state'] = 'ok'): 
 
 const textPart = (text: string): MessagePart => ({ type: 'text', text })
 
-/** The tree under test, so a scenario can RE-RENDER it with different parts — which is the only
- *  way to observe a group SEALING, and therefore the only way to test the peek closing itself. */
 function tree(parts: MessagePart[], opts: { isRunning?: boolean; interrupted?: boolean } = {}) {
   const message: ChatMessage = { id: 'a1', role: 'assistant', parts, seq: 1 }
   return (
@@ -49,7 +47,7 @@ const groups = () => screen.queryAllByTestId('activity-group')
 const trigger = (i = 0) => within(groups()[i]!).getByTestId('activity-group-trigger')
 
 describe('a group exists only when a tool actually ran', () => {
-  it('AE15: a turn with a text part and NO tool calls renders zero group elements', () => {
+  it('a turn with a text part and NO tool calls renders zero group elements', () => {
     mount([textPart('Right now only you can. Feedback is saved against the person who sent it.')])
 
     expect(groups()).toHaveLength(0)
@@ -58,7 +56,7 @@ describe('a group exists only when a tool actually ran', () => {
     expect(screen.getByTestId('assistant-message').textContent).toContain('Right now only you can')
   })
 
-  it('AE15: the same turn shows no group WHILE RUNNING either', () => {
+  it('the same turn shows no group WHILE RUNNING either', () => {
     mount([textPart('Right now only you can.')], { isRunning: true })
 
     expect(groups()).toHaveLength(0)
@@ -67,7 +65,7 @@ describe('a group exists only when a tool actually ran', () => {
 })
 
 describe('sealing is adjacency, and there is no seal logic', () => {
-  it('AE13: twelve adjacent tool calls followed by text make ONE group above the paragraph', () => {
+  it('twelve adjacent tool calls followed by text make ONE group above the paragraph', () => {
     const parts = [
       ...Array.from({ length: 12 }, (_, i) => stepPart(i + 1, `Step ${i + 1}`)),
       textPart('The picker is in and wired to the list.'),
@@ -103,9 +101,9 @@ describe('sealing is adjacency, and there is no seal logic', () => {
 })
 
 describe('a sealed group collapses to a count, and opens where it sits', () => {
-  it('AE13: is collapsed at rest, and pressing it lists the rows in place', () => {
-    // The client's decision, 2026-09-01: sealed means collapsed, including the last group of a
-    // turn. Vercel's AI Elements auto-open completed tools; we deliberately do not.
+  it('is collapsed at rest, and pressing it lists the rows in place', () => {
+    // Sealed means collapsed, including the last group of a turn. Vercel's AI Elements
+    // auto-open completed tools; we deliberately do not.
     mount([
       stepPart(1, 'Reading your visitor screen'),
       stepPart(2, 'Adding the Out column'),
@@ -120,13 +118,11 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
     const rows = screen.getByTestId('activity-group-rows')
     expect(within(rows).getByText('Reading your visitor screen')).toBeTruthy()
     expect(within(rows).getByText('Adding the Out column')).toBeTruthy()
-    // No new scroll container and no side panel — it opens where it sits.
     expect(rows.querySelectorAll('.overflow-y-auto, .overflow-y-scroll')).toHaveLength(0)
   })
 
   it('★ is a bordered chip on the board\'s own ground, not bare text in the transcript', () => {
-    // AN EARLIER PASS READ `BuildChat` AS DRAWING NO CHROME AT ALL and said so at length in the
-    // component. `ActivityAnatomy` is the artboard that specifies this component, and it draws
+    // `ActivityAnatomy` is the artboard that specifies this component, and it draws
     // `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`. Without it the group was
     // a line of text with nothing to say it was a receipt rather than a sentence.
     mount([stepPart(1, 'Reading your visitor screen'), textPart('Done.')])
@@ -135,7 +131,6 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
     expect(container.className).toMatch(/border-bial-border/)
     expect(container.className).toMatch(/rounded-\[10px\]/)
     expect(trigger().className).toMatch(/bg-canvas-group/)
-    // It hugs its contents rather than spanning the transcript.
     expect(container.className).toMatch(/w-fit/)
   })
 
@@ -174,16 +169,15 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
       textPart('Done.'),
     ])
     const tiles = screen.getByTestId('activity-glyphs').children
-    // Three tiles, and the first two carry DIFFERENT icons — one tick for everything is exactly
-    // what this replaces. Compared by their rendered markup, since both are inline SVGs.
+    // Compared by their rendered markup, since both are inline SVGs.
     expect(tiles).toHaveLength(3)
     expect(tiles[0]!.innerHTML).not.toBe(tiles[1]!.innerHTML)
     expect(tiles[2]!.textContent).toMatch(/failed/i)
   })
 })
 
-describe('R34 — a group that hit a problem opens by itself, but never mid-turn', () => {
-  it('AE14: a sealed group containing a failed step is already expanded', () => {
+describe('a group that hit a problem opens by itself, but never mid-turn', () => {
+  it('a sealed group containing a failed step is already expanded', () => {
     mount([
       stepPart(1, 'Working on your app', 'ok'),
       stepPart(2, 'Working on your app', 'failed'),
@@ -195,8 +189,7 @@ describe('R34 — a group that hit a problem opens by itself, but never mid-turn
     expect(trigger().textContent).toContain('one problem')
   })
 
-  it('AE14 (the negative half): the same group WHILE RUNNING stays collapsed', () => {
-    // Expanding mid-turn moves what the reader is reading, so the fail-open waits for terminal.
+  it('the negative half — the same group WHILE RUNNING stays collapsed', () => {
     mount([
       stepPart(1, 'Working on your app', 'failed'),
       stepPart(2, 'Working on your app', 'pending'),
@@ -215,11 +208,10 @@ describe('R34 — a group that hit a problem opens by itself, but never mid-turn
   })
 })
 
-describe('R31 — a live group names what is happening NOW and grows in place', () => {
+describe('a live group names what is happening NOW and grows in place', () => {
   it('★ stays COLLAPSED while it runs, with the current step on one quiet line beneath it', () => {
-    // THE OWNER'S RULING OF 2026-09-02, which amends `ActivityAnatomy` panel 2 in place. The board
-    // draws a live group OPEN with the current step named inside it; the owner does not want the
-    // working detail on screen. So the row is a count with icons accumulating in it, and the
+    // `ActivityAnatomy` panel 2 draws a live group OPEN with the current step named inside it;
+    // the working detail does not belong on screen. So the row is a count with icons in it, and the
     // sentence moves to a line underneath. Mutation receipt: return `facts.currentLabel` from
     // `groupLabel`'s running arm again and the first two assertions go red together.
     mount([
@@ -232,17 +224,13 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
     expect(trigger().textContent).toContain('3 steps')
     expect(trigger().textContent).not.toContain('Making sure everything fits together')
     expect(screen.getByTestId('activity-group-now').textContent).toBe('Making sure everything fits together')
-    // Icons accumulate in the row itself — one per call, oldest on the left.
     expect(screen.getByTestId('activity-glyphs').childElementCount).toBe(3)
   })
 
   it('★ keeps its height as icons fill it, so the transcript never jumps', () => {
-    // U8's last scenario. jsdom lays nothing out, so what is asserted is the MECHANISM that keeps
-    // the row exactly one line tall while steps accumulate into it: a strip that never shrinks,
-    // tiles of a FIXED 22px square rather than content-sized ones, and each tile after the first
-    // pulled back over its neighbour so a long run stays compact instead of wrapping onto a second
-    // line. A wrapping tile, or a dropped negative margin, would grow the group's height on every
-    // completed step and shuffle the transcript under someone reading it.
+    // jsdom lays nothing out, so this pins the MECHANISM instead: a strip that never shrinks, tiles
+    // of a fixed 22px square, and each tile after the first pulled back over its neighbour so a long
+    // run stays compact rather than wrapping and growing the group's height under the reader.
     //
     // Mutation receipt: drop `flex-shrink-0` from the strip, or the `marginLeft` from the tiles,
     // or make the tile size anything but the fixed square, and one of these goes red.
@@ -258,7 +246,6 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
     expect(tiles()[0]!.className).toMatch(/w-\[22px\]/)
     expect(tiles()[0]!.style.marginLeft).toBe('')
 
-    // Four more steps land in the same group — the row gains tiles, not height.
     view.rerender(
       tree(
         Array.from({ length: 5 }, (_, i) =>
@@ -273,8 +260,6 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
     for (const [i, tile] of tiles().entries()) {
       expect(tile.className).toMatch(/h-\[22px\]/)
       expect(tile.className).toMatch(/w-\[22px\]/)
-      // Overlapped rather than laid end to end: every tile but the first is pulled back over the
-      // one before it, which is what stops five icons from needing a second line.
       expect(tile.style.marginLeft).toBe(i === 0 ? '' : '-7px')
     }
   })
@@ -287,7 +272,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 
   it('★ a glance inside a RUNNING group closes itself when the TURN ends', () => {
-    // "A glance inside is temporary, not a new resting state" (owner ruling, 2026-09-02). Cleared
+    // "A glance inside is temporary, not a new resting state." Cleared
     // to "the reader has not decided" rather than to closed, so a group that also FAILED still
     // opens itself afterwards. The turn ending is the event — `isRunning` going false — not the
     // group's own steps settling; see the next test for why the difference is the whole finding.
@@ -303,10 +288,9 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 
   it('★ but it stays open through the pause BETWEEN two tool calls', () => {
-    // THE GAP IS NOT THE SEAL. A tool returns, and the next one starts only after the model has
+    // THE GAP IS NOT THE SEAL: a tool returns, and the next one starts only after the model has
     // thought again — seconds, with adaptive reasoning on — and in that window every step emitted
-    // so far reads as settled while the turn is still very much running. Closing on that snapped
-    // the group shut under a citizen who had just pressed it open, again on every step of a build.
+    // so far reads as settled while the turn is still very much running.
     //
     // Mutation receipt: gate the self-close on `facts.running` again instead of on the turn and
     // the first assertion below goes red — the group closes in the gap and never reopens.
@@ -343,7 +327,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
     expect(trigger().getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('AE16: a Plan-kind message with four read steps produces the same shape as a Build one', () => {
+  it('a Plan-kind message with four read steps produces the same shape as a Build one', () => {
     const parts = Array.from({ length: 4 }, (_, i) => stepPart(i + 1, `Reading file ${i + 1}`))
     const a = mount([...parts, textPart('Here is what I found.')])
     const html = a.container.innerHTML
@@ -357,7 +341,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 })
 
-describe('R35b — a step with no label still says something', () => {
+describe('a step with no label still says something', () => {
   it('renders the unrecognised-tool phrase, never an empty row and never the tool name', () => {
     mount([stepPart(1, ''), textPart('Done.')])
 
@@ -368,7 +352,7 @@ describe('R35b — a step with no label still says something', () => {
   })
 })
 
-describe('R35c — an interrupted turn does not read like a finished one', () => {
+describe('an interrupted turn does not read like a finished one', () => {
   it('says so in the sealed label, and the two labels differ', () => {
     const finished = mount([stepPart(1, 'Working on your app'), textPart('Done.')])
     const finishedLabel = trigger().textContent
@@ -421,12 +405,9 @@ describe('groupLabel — the wording, unit-tested away from the DOM', () => {
 })
 
 /**
- * R66's SECOND ANNOUNCEMENT.
- *
- * The surface used to pass a hardcoded `null` for this, under a comment saying the group announced
- * it itself. The group had no live region and no announcer, so the effect could never fire outside
- * `Announcer`'s own unit test — a screen-reader user heard that the agent had started and never
- * heard what it did. These pin the WIRING; the hook's own rules stay in `Announcer.test.tsx`.
+ * THE SECOND ANNOUNCEMENT: these pin the WIRING onto ChatThread — a screen-reader user needs to
+ * hear what a group amounted to, not just that one started. The hook's own rules stay in
+ * `Announcer.test.tsx`.
  */
 describe('a group reports what it amounted to, once, as it seals', () => {
   const withReporter = (
@@ -483,10 +464,9 @@ describe('a group reports what it amounted to, once, as it seals', () => {
   })
 
   it('says nothing for a group that was ALREADY finished when the chat opened', () => {
-    // THE ONE THAT MATTERS. R66 announces what just happened. A finished chat with past builds in
-    // it renders sealed groups on mount, and announcing those meant a reader who opened a
-    // conversation heard a summary of work nobody had just done — once per historical group, the
-    // last of them winning the live region.
+    // THE ONE THAT MATTERS: without this, a finished chat announces every historical group on
+    // mount — a reader who opens a conversation would hear a summary of work nobody just did,
+    // once per group, last one winning the live region.
     const onGroupSealed = vi.fn()
     render(withReporter([stepPart(1, 'Reading your data'), stepPart(2, 'Writing the page')], onGroupSealed))
     expect(onGroupSealed).not.toHaveBeenCalled()
@@ -516,13 +496,9 @@ describe('a group reports what it amounted to, once, as it seals', () => {
 })
 
 describe('★ the icon map speaks the server\'s vocabulary, not a guess at it', () => {
-  // `ActivityAnatomy` never draws an empty tile: every glyph on it names a kind of call. The first
-  // cut of `stepIconFor` matched verbs the projection does not emit — `reading`, `adding`,
-  // `putting`, `creating`, `installing`, `finishing` — and had no branch for the ones it does, so a
-  // quarter of the tiles in a real 61-message transcript drew the featureless fallback circle.
-  //
-  // THESE ARE THE SERVER'S ACTUAL WORDS, copied from `backend/src/services/messages/projection.py`.
-  // If a label there is reworded, this list is what goes red.
+  // `ActivityAnatomy` never draws an empty tile: every glyph on it names a kind of call. THESE ARE
+  // THE SERVER'S ACTUAL WORDS, copied from `backend/src/services/messages/projection.py` — if a
+  // label there is reworded, this list is what goes red.
   const EMITTED: [string, string][] = [
     ["Looking at your app's main page", 'read'],
     ["Looked through the app's files", 'read'],
@@ -561,8 +537,7 @@ describe('★ the icon map speaks the server\'s vocabulary, not a guess at it', 
 
   it('★ sees through the "Still …" prefix a slow step is wrapped in', () => {
     // The projection fronts a long-running step's OWN words rather than replacing them, so the raw
-    // string starts with "Still" — and the steps a citizen stares at longest were exactly the ones
-    // being sent to the neutral dot.
+    // string starts with "Still".
     expect(stepIconFor('Still setting up the tools your app needs').displayName)
       .toBe(stepIconFor('Setting up the tools your app needs').displayName)
   })

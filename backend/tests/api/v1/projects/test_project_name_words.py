@@ -1,21 +1,13 @@
-"""The project title's word cap, on BOTH write paths (#158 §14).
+"""The project title's word cap, on BOTH write paths. No boundary tests existed
+for an over-length name before this — the suite covered an over-length *description* and a
+blank name, but nothing pinned the title limit on `POST` or `PATCH`, and the cap lived in two
+places (the model constant and the portal's `NAME_MAX`) with nothing holding them together.
 
-There were no boundary tests for an over-length name at all before this — the issue says
-so, and it checks out: the suite covered an over-length *description* and a blank name, but
-nothing pinned the title limit on either `POST` or `PATCH`. The cap lived in two places (the
-model constant and the portal's `NAME_MAX`) with nothing holding them together.
-
-Two things these tests exist to hold:
-
-1.  **Create and rename are the same rule.** `_clean_name` is shared by `ProjectCreate` and
-    `ProjectPatch`, so one change covers both — but only a test proves it stayed that way.
-    The rename path is the one that had no client-side guard, so it is the one where a
-    server-side hole would actually be reached.
-2.  **The word rule is the shared one.** `count_words` is `str.split()`, which splits on
-    RUNS of whitespace. A title typed with a double space, a newline or a non-breaking
-    space must count the same as one typed normally, because the browser counts it that way
-    (`portal/src/utils/words.ts`) and a title that passes there must not be refused here.
-"""
+Two things these tests hold: (1) create and rename share `_clean_name`, and rename is the path
+with no client-side guard, so a server-side hole would actually be reached there; (2) the word
+rule is `count_words` = `str.split()`, splitting on RUNS of whitespace — a title typed with a
+double space, newline or non-breaking space must count the same as the browser counts it
+(`portal/src/utils/words.ts`), or a title that passes there could be refused here."""
 
 from __future__ import annotations
 
@@ -38,7 +30,6 @@ def _words(n: int) -> str:
 
 @pytest.mark.parametrize("n", [1, MAX_PROJECT_NAME_WORDS - 1, MAX_PROJECT_NAME_WORDS])
 async def test_create_accepts_a_name_up_to_the_word_cap(client, db_session, n: int) -> None:
-    """The boundary itself is legal — 8 words is accepted, not rejected."""
     headers, _ = await _auth(db_session)
 
     resp = await client.post(_PROJECTS, headers=headers, json={"name": _words(n)})
@@ -64,12 +55,9 @@ async def test_create_refuses_one_word_past_the_cap(client, db_session) -> None:
 async def test_the_character_backstop_still_refuses_an_enormous_single_word(
     client, db_session
 ) -> None:
-    """One word, far past the column width.
-
-    The word rule alone would accept this — it is a single token — so the character bound
+    """The word rule alone would accept this — it is a single token — so the character bound
     is not redundant. It is the thing that stops an arbitrary paste reaching a
-    `VARCHAR(120)` column, and a user should never meet it.
-    """
+    `VARCHAR(120)` column, and a user should never meet it."""
     headers, _ = await _auth(db_session)
 
     resp = await client.post(

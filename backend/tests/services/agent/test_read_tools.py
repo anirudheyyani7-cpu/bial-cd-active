@@ -1,11 +1,11 @@
-"""U8 — the jailed read-only tool surface (workspace, guest-list policy, tools in-run).
+"""The jailed read-only tool surface (workspace, guest-list policy, tools in-run).
 
-Three layers, each tested where it is enforced (testing.md: test the DECISION at the site
-that makes it): the `ExtractedSnapshotWorkspace` jail (path resolution, symlink
-containment, byte caps, scrubbed subprocess env), the `check_the_guest_list` argv policy
-(allowlist, deny flags, sed script vetting, path-token vetting), and the tool layer driven
-through a REAL pydantic-ai run (FunctionModel — refusals as ModelRetry, no-app-yet as a
-truthful NORMAL result, redacted command output).
+Three layers, each tested where the DECISION is made rather than where it is observed: the
+`ExtractedSnapshotWorkspace` jail (path resolution, symlink containment, byte caps, scrubbed
+subprocess env), the `check_the_guest_list` argv policy (allowlist, deny flags, sed script
+vetting, path-token vetting), and the tool layer driven through a REAL pydantic-ai run
+(FunctionModel — refusals as ModelRetry, no-app-yet as a truthful NORMAL result, redacted
+command output).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ async def test_list_and_search_do_not_follow_symlinks_out_of_the_tree(
     listing = await workspace.list_files()
     assert "app/sneaky.txt" not in listing
     assert not any(entry.startswith("linked/") for entry in listing)
-    assert "app/page.tsx" in listing  # ordinary files are untouched
+    assert "app/page.tsx" in listing
 
     hits = await workspace.search_files(re.compile("loot"), None)
     assert hits == []
@@ -119,7 +119,7 @@ async def test_list_and_search_do_not_follow_symlinks_out_of_the_tree(
 async def test_exec_readonly_refuses_a_symlink_escape(
     tree: Path, tmp_path: Path, workspace: ExtractedSnapshotWorkspace
 ) -> None:
-    # Layer 2 of the P0 jail-escape fix: even a live-workspace source (no `core.symlinks=false`
+    # Layer 2 of the jail-escape fix: even a live-workspace source (no `core.symlinks=false`
     # clone) must not let `cat`/`grep`/`find`/`sed` follow a symlink out of the tree — argv path
     # tokens are realpath-contained, unlike the LEXICAL-only guest-list vetting.
     outside = tmp_path / "outside.txt"
@@ -127,7 +127,6 @@ async def test_exec_readonly_refuses_a_symlink_escape(
     (tree / "app" / "sneaky.txt").symlink_to(outside)
     with pytest.raises(WorkspacePathError):
         await workspace.exec_readonly(["cat", "app/sneaky.txt"])
-    # A plain in-root read is untouched by the containment check.
     ok = await workspace.exec_readonly(["cat", "package.json"])
     assert ok.exit == 0 and "visitor-log" in ok.stdout
 
@@ -195,15 +194,13 @@ async def test_exec_timeout_returns_a_timeout_result(
     assert "timed out" in result.stderr
 
 
-# --- dependency lock files (U1 / R22a) ----------------------------------------
+# --- dependency lock files ----------------------------------------
 
 
 @pytest.fixture
 def locked_tree(tree: Path) -> Path:
-    """The base tree plus REAL lockfiles (beside the manifest each one locks), a monorepo
-    lockfile one level down, a near-miss name, and a file merely NAMED like a lockfile in a
-    directory with no manifest. Every one carries the `visitors` needle so a search hit
-    from inside any of them is detectable."""
+    """Real lockfiles beside their manifests, a monorepo lockfile, and near-miss names — each
+    carries a `visitors` needle so a search hit can be traced to it."""
     (tree / "package-lock.json").write_text('{"lockfileVersion": 3, "note": "visitors"}\n')
     (tree / "yarn.lock").write_text('# yarn lockfile v1\n"visitors": {}\n')
     # A monorepo package: a genuine lockfile that is NOT at the root. Excluded because it
@@ -309,9 +306,7 @@ def test_read_only_classics_are_admitted(argv: list[str]) -> None:
 
 
 def test_the_guest_list_has_no_way_to_learn_which_chat_it_is_in() -> None:
-    """★ R71, asserted from the signature — the cheapest proof there is.
-
-    A policy that takes only `argv` cannot vary by chat kind, by deps, by settings or by
+    """A policy that takes only `argv` cannot vary by chat kind, by deps, by settings or by
     which agent resolved the toolset, because none of those are reachable from inside it.
     That is stronger than any number of per-kind cases, which could only ever sample the
     behaviour; this closes the question.
@@ -327,17 +322,13 @@ def test_the_guest_list_has_no_way_to_learn_which_chat_it_is_in() -> None:
 async def test_the_same_refusal_reaches_two_different_agents_byte_for_byte(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
-    """★ THE ONE THAT CARRIES R71 END TO END, through two genuinely different consumers.
+    """`read_only_toolset` is shared: a Plan chat resolves it through `toolsets_for_kind` over
+    `ReadDeps`, the classification review agent through its own accessor over `ReviewDeps` — a
+    deps type with no chat kind at all. If what the ability allows depended on the surrounding
+    run, these two would differ.
 
-    `read_only_toolset` is shared: a Plan chat resolves it through `toolsets_for_kind` over
-    `ReadDeps`, and the classification review agent resolves it through its own accessor over
-    `ReviewDeps` — a deps type with no chat kind on it at all, in a run that has no
-    conversation behind it. If what the ability allows were a question about the surrounding
-    run, these two are where the answers would differ.
-
-    ZERO TRANSPORT CALLS IN BOTH is the other half of the claim, and it is the half that says
-    WHERE the policy runs. The guest list is the first statement of the tool body, before any
-    workspace call — so a refusal is not a command that ran and was judged afterwards, and a
+    ZERO TRANSPORT CALLS says WHERE the policy runs: the guest list is the first statement of
+    the tool body, before any workspace call, so a refusal is not judged after the fact — and a
     future approval layer could not be positioned to skip it."""
     reached: list[Sequence[str]] = []
 
@@ -584,7 +575,7 @@ async def test_search_files_tool_rejects_a_bad_regex_with_teaching(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# U22 / R28 — the two mirrored output caps, proved identical from ONE table
+# The two mirrored output caps, proved identical from ONE table
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
 # `orchestrator/tools._redact_command_output` and `read_tools._cap_redact_cap` are the same
@@ -735,16 +726,14 @@ _NOISY_CAPTURE = (
 def test_the_two_mirrored_output_caps_behave_identically(
     text: str, budget: int, handle: str | None, present: list[str], absent: list[str]
 ) -> None:
-    """★ THE ANTI-DRIFT TEST. Mutation check: change either copy's head/tail split, budget
-    handling or redaction ordering and the equality assertion goes red before any of the
-    behavioural ones do — which is the point, because a drift that keeps both copies
-    self-consistent is exactly the one no per-module test would catch.
+    """★ MUTATION CHECK: change either copy's head/tail split, budget handling, or redaction
+    ordering and the equality assertion goes red before any behavioural one does — a drift that
+    keeps both copies self-consistent is exactly what no per-module test would catch.
 
-    Compared against `denoise=False` because that is the ACTUAL parity claim: the two pipelines are
-    identical *modulo the noise arm*, which the read copy does not have and is not supposed to have
-    (see the block comment in `read_tools`). Comparing against the default `denoise=True` would
-    assert a design difference away, and the only way to make it pass would be to teach the read
-    surface to drop lines out of file content — the exact silent edit that comment forbids."""
+    Compared against `denoise=False` because that is the actual parity claim: the two pipelines are
+    identical *modulo the noise arm*, which the read copy does not have (see the block comment in
+    `read_tools`). The default `denoise=True` would assert that difference away — passing would
+    require the read surface to drop file-content lines, which that comment forbids."""
     read_mode = read_tools._cap_redact_cap(text, budget=budget, handle=handle)
     write_mode = _redact_command_output(text, budget=budget, handle=handle, denoise=False)
     assert read_mode == write_mode, "the mirrored output caps have drifted apart"
@@ -755,19 +744,13 @@ def test_the_two_mirrored_output_caps_behave_identically(
 
 
 def test_a_credential_body_in_the_tail_is_withheld_not_egressed() -> None:
-    """★ THE U22 REGRESSION, and the one case where this branch was WORSE than what it replaced.
+    """★ THE REGRESSION: this branch was worse than what it replaced. `_SECRET_ASSIGN_RE`'s quoted
+    arms span newlines, so "a credential is one line" is false for them — when `KEY="` falls in the
+    dropped middle, the retained tail is a private-key body with nothing left to identify it, and
+    it egresses in the clear into the model's context and `fetch_output_slice`'s buffer.
 
-    `_SECRET_ASSIGN_RE`'s quoted arms deliberately span newlines, so "a credential is a shape on
-    ONE line" — the assumption the line-boundary capture cut rests on — is false for those arms.
-    When the opening `KEY="` falls in the dropped middle, the retained tail is the inside of a
-    private key with nothing left to identify it: it matches none of the redactor's shapes and
-    egressed in the clear, into the model's context AND into the slice buffer behind
-    `fetch_output_slice`.
-
-    The old head-only cap discarded the tail entirely, so this text never left the container. That
-    is what makes it a regression and not a pre-existing gap.
-
-    Both copies are asserted, because both cut captures the same way."""
+    The old head-only cap discarded the tail entirely, so this text never left the container before
+    — that is what makes it a regression, not a pre-existing gap. Both copies are asserted."""
     raw = _credential_straddling_the_dropped_middle()
 
     write_mode = _redact_command_output(raw, budget=RUN_COMMAND_OUTPUT_MAX_CHARS)
@@ -804,18 +787,14 @@ def test_a_truncated_capture_with_no_credential_still_keeps_its_tail() -> None:
 
 
 def test_a_credential_body_in_the_head_is_withheld_not_egressed() -> None:
-    """★ THE OTHER HALF OF THE SAME CUT, and the one the tail guard did not cover.
+    """★ THE OTHER HALF OF THE SAME CUT: a value that opens INSIDE the head and closes past it is
+    unmaskable for the same reason a tail beginning inside one is — the redactor's quoted arms
+    need their closing delimiter, and the bare arm excludes quote characters, so the assignment
+    matches NOTHING. The head was rendered unconditionally, so a real bearer credential's visible
+    prefix went into the model's context and the persisted step row, in the clear.
 
-    A value that opens INSIDE the head and closes past it is unmaskable for exactly the reason a
-    tail beginning inside one is: the redactor's quoted arms need their closing delimiter, and its
-    bare arm excludes quote characters, so the assignment matches NOTHING. The head was rendered
-    unconditionally — so the visible prefix of a real bearer credential went into the model's
-    context and into the persisted step row, in the clear.
-
-    Mutation check: drop the `cut_before_an_open_credential` call from either copy's
-    `_redacted_lines` and the secret assertion goes red while everything else stays green.
-
-    Both copies are asserted, because both cut captures the same way."""
+    Mutation check: drop `cut_before_an_open_credential` from either copy's `_redacted_lines` and
+    the secret assertion goes red while everything else stays green. Both copies are asserted."""
     raw = _credential_opened_inside_the_head()
 
     write_mode = _redact_command_output(raw, budget=RUN_COMMAND_OUTPUT_MAX_CHARS)
@@ -838,13 +817,11 @@ def test_a_credential_body_in_the_head_is_withheld_not_egressed() -> None:
     ids=["sgr-reset", "sgr-plain", "zero-width-space", "byte-order-mark"],
 )
 def test_an_escape_between_the_key_and_its_quote_does_not_unlock_the_tail(separator: str) -> None:
-    """★ THE GUARD AND THE MASKER MUST READ THE SAME BYTES.
-
-    `scrub_untrusted` masks DE-ESCAPED text, so a guard that scanned the RAW text disagreed with
-    it about the same input: neither ESC nor U+200B is `\\s`, so one colour byte between the key
-    and its opening quote answered "nothing is open" and the tail — the inside of the private key
-    — shipped in the clear. Colourised CLI output puts an SGR reset in exactly that position as a
-    matter of routine, so this is not only an adversarial shape.
+    """★ THE GUARD AND THE MASKER MUST READ THE SAME BYTES. `scrub_untrusted` masks DE-ESCAPED
+    text, so a guard scanning RAW text disagreed with it: neither ESC nor U+200B is `\\s`, so one
+    colour byte between the key and its opening quote answered "nothing is open" and the tail —
+    the inside of the private key — shipped in the clear. Colourised CLI output puts an SGR reset
+    in exactly that position routinely, so this is not only an adversarial shape.
 
     Mutation check: drop `strip_control_sequences` from `leaves_a_credential_value_open` and every
     row here goes red while the plain-separator test above stays green."""
@@ -862,18 +839,14 @@ def test_an_escape_between_the_key_and_its_quote_does_not_unlock_the_tail(separa
 
 
 def test_the_capture_guard_stays_inside_its_wall_clock_budget() -> None:
-    """★ THE MUTATION TARGET for the input bound: raise `CREDENTIAL_OPEN_SCAN_MAX_CHARS` back
-    toward its old 8,000,000 and this goes red, because the scan below stops being bounded by the
-    ceiling and starts being bounded by whatever the app printed.
+    """★ MUTATION TARGET: raise `CREDENTIAL_OPEN_SCAN_MAX_CHARS` back toward its old 8,000,000 and
+    this goes red — the scan stops being bounded by the ceiling, and by whatever the app printed.
 
-    WHY WALL-CLOCK AND NOT A CONCURRENCY PROBE. The cost is paid ON the event loop and cannot be
-    moved off it: `re` does not release the GIL, so a non-matching scan — one C call — blocks
-    every other request in the process for its whole duration no matter which thread it runs in
-    (measured: a 1 ms ticker gets 0 ticks across a 304 ms `to_thread` scan of this pattern). The
-    only lever is how much text the scan may ever see, which is what this pins. 1s never flakes on
-    a bounded linear scan — the ceiling measures ~80 ms, and the capture below is 25x past it, so
-    the margin is the bound rather than the machine — and it fails loudly on either a raised bound
-    or a superlinear regression, the pair the ReDoS learning says to guard together."""
+    Wall-clock, not concurrency: the cost is paid ON the event loop (`re` doesn't release the GIL),
+    so a non-matching scan blocks every other request regardless of thread (measured: a 1ms ticker
+    gets 0 ticks across a 304ms `to_thread` scan). The ceiling measures ~80ms and this capture is
+    25x past it, so 1s never flakes — it fails loudly on a raised bound OR a superlinear
+    regression, the pair the ReDoS learning says to guard together."""
     # Well past the scan ceiling: what is asserted is that the BOUND decides the cost, not the
     # input. Identifier-shaped bytes, because that is what makes this pattern work hardest. Built
     # OUTSIDE the stopwatch — 6 MB of string concatenation is not what is being measured.
@@ -911,15 +884,14 @@ def test_the_write_copy_drops_predictable_noise_but_keeps_the_signal() -> None:
 
 
 def test_the_read_copy_never_drops_a_line_of_what_it_was_asked_to_read() -> None:
-    """The other half, and the reason the copies differ. Everything reaching the read surface is
+    """The other half, and the reason the copies differ: everything reaching the read surface is
     FILE CONTENT — `check_the_guest_list` admits only `ls, cat, head, tail, grep, sed, find, wc`,
-    and `search_files` renders hits out of files. Dropping a line there is not a saving, it is a
-    silent edit: a `sed -n '40,80p'` that answers 40 of the 41 lines it was asked for, and an
-    `edit_file` composed from that read failing to match with nothing on screen to explain why.
+    and `search_files` renders hits out of files. Dropping a line there is a silent edit: a `sed -n
+    '40,80p'` that answers 40 of 41 lines, with nothing on screen to explain why.
 
-    Written over the same capture the Write copy de-noises, so the two tests read as the pair they
-    are. These are PRESENCE assertions throughout: an absence assertion here would pass by vacuity
-    against a function that returned "", which is exactly the false green to avoid."""
+    Written over the same capture the Write copy de-noises. These are PRESENCE assertions
+    throughout: an absence assertion here would pass by vacuity against a function returning "",
+    the false green to avoid."""
     read = read_tools._cap_redact_cap(_NOISY_CAPTURE, budget=4_000)
 
     for line in _NOISY_CAPTURE.splitlines():

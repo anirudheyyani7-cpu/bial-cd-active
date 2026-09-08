@@ -1,40 +1,29 @@
-"""The Plan → Build handoff (R25–R29, N3): pressing Build it creates a NEW Build chat whose
-first visible message is the plan, verbatim, and records no association in either direction.
+"""The Plan → Build handoff: pressing Build it creates a NEW Build chat whose first visible
+message is the plan, verbatim. A chat's kind is fixed at creation, so this route creates rather
+than flips, and the planning conversation is left exactly as it was.
 
-WHAT THIS REPLACED. One endpoint used to flip the conversation it was called on into Write
-mode, append a hidden "execute the approved plan" seed reconstructed by walking backwards
-through the transcript for assistant prose, write a marker so the model could see where its
-toolset changed, and start a build in the same thread. A chat's kind is fixed at creation now,
-so there is nothing to flip; the plan is the offer tool call's own argument, so there is
-nothing to reconstruct; and the build belongs in its own chat, so the planning conversation is
-left exactly as it was.
+NO LINKAGE IS STORED, IN EITHER DIRECTION — no column, no marker, no back-reference. What makes
+a double press safe instead is the client-minted conversation id colliding with itself
+(`BuildHandoffBody`), and what makes "pressing the same offer again a week later builds again"
+true is that nothing remembers the first press.
 
-NO LINKAGE IS STORED, IN EITHER DIRECTION. No column, no marker, no back-reference, no
-"built from" record. Idempotency comes from the client-minted conversation id colliding with
-itself: one press produces one Build chat, a double press or a reload collides on the primary
-key, and next week's press mints a new id and gets a second, different Build chat — which is
-what makes "pressing the same offer again a week later builds again" true without anything
-remembering that the first press happened.
-
-THE ORDER IS THE UNIT, and the reason is issue #72. `append_batch` owns its commit and this
-route holds ONE session for both conversations, so every write here is a commit and where each
-one sits decides whether a failure can strand an empty Build chat:
+THE ORDER IS THE UNIT, because `append_batch` owns its commit and this route holds ONE session
+for both conversations: every write here is a commit, so where each one sits decides whether a
+failure can strand an empty Build chat.
 
   1. every refusal first, all side-effect free;
   2. insert the new conversation and FLUSH — deliberately not committing;
   3. the shared turn starter, whose first durable write commits the conversation row and the
-     first user message TOGETHER. Any failure before that point rolls both back and no Build
-     chat exists (R29);
+     first user message TOGETHER, so any failure before that point rolls both back and no
+     Build chat exists;
   4. ONLY THEN the answer to the offer's own deferred call, in the Plan chat.
 
-Step 4 is last because it carries its own commit. Written before the turn starter it would
-commit the flushed Build-chat row, and a turn-start failure afterwards would leave an empty
-Build chat with no message — issue #72's exact shape, in the route that exists to close it.
-Written after, a failure of the answer itself leaves a Build chat that is correct and complete
-and a Plan chat with an unanswered call, which is already handled twice over: the Plan chat's
-next send resolves the card as `refine`, and `repair_dangling_tool_calls` stitches the history
-valid regardless. One is recoverable and self-healing; the other is a permanent orphan.
-"""
+Step 4 is last because it carries its own commit. Written earlier it would commit the flushed
+Build-chat row, and a turn-start failure afterwards would leave an empty Build chat with no
+message. Written last, a failure of the answer itself leaves a Build chat that is correct and
+complete and a Plan chat with an unanswered call — already handled twice over, because the Plan
+chat's next send resolves the card as `refine` and `repair_dangling_tool_calls` stitches the
+history valid regardless. One is recoverable and self-healing; the other is a permanent orphan."""
 
 from __future__ import annotations
 
@@ -129,14 +118,13 @@ class BuildHandoffResponse(CamelModel):
     """IDS ONLY, and that is deliberate rather than minimal.
 
     The new conversation row is flushed and not committed when this is built, so projecting a
-    header off it would touch server-defaulted attributes on an un-refreshed row — which raises
-    `MissingGreenlet` asynchronously and, on one recorded occasion, spun the log formatter at
-    99% CPU. The create route refreshes through its flush before projecting; this one dodges the
-    question by not projecting at all. If it ever grows a header, it refreshes first.
+    header off it would touch server-defaulted attributes on an un-refreshed row and raise
+    `MissingGreenlet` asynchronously. The create route refreshes through its flush before
+    projecting; this one dodges the question by not projecting at all. If it ever grows a header,
+    it refreshes first.
 
-    `already_started` is the collision arm: the same press arriving twice. It carries whatever
-    turn is live on the chat that already exists, so a second tab attaches to that run rather
-    than starting a rival one."""
+    `already_started` is the collision arm: the same press arriving twice, carrying whatever turn
+    is live on the chat that already exists so a second tab attaches to that run."""
 
     outcome: Literal["started", "already_started"]
     chat_id: str
@@ -189,8 +177,8 @@ async def build_it(
         raise AppApiError(409, "A newer plan supersedes these options.")
 
     # THE PLAN COMES FROM THE OFFER'S OWN STORED CALL, never from the request body. That is what
-    # R44 asks for, and it is also what stops a stale second tab writing stale requirements into
-    # a permanent first message: the browser cannot post a plan at all.
+    # stops a stale second tab writing stale requirements into a permanent first message: the
+    # browser cannot post a plan at all.
     call = stored_call(rows, tool_call_id)
     plan = plan_from_call(call) if call is not None else None
     if plan is None:
@@ -227,7 +215,7 @@ async def build_it(
         return exc.as_response()
 
     # THERE IS NO PER-CONVERSATION CONTEXT PREFLIGHT ON THIS DOOR, AND ITS ABSENCE IS THE
-    # DECISION (D16) — said here rather than left as a silence, because "the send route has one
+    # DECISION — said here rather than left as a silence, because "the send route has one
     # and this one does not" is exactly the gap somebody closes by hand next year.
     #
     # IT WAS DELETED FOR BEING INERT, NOT FOR BEING INCONVENIENT. It measured `history=[]`: a
@@ -247,7 +235,7 @@ async def build_it(
     # trying to build lives.
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
-    # R98, identically to the send route: no workspace service means nothing for the build to
+    # Identically to the send route: no workspace service means nothing for the build to
     # read or write, said before anything is created rather than inside the detached turn.
     if sandbox is None:
         raise AppApiError(
@@ -256,7 +244,7 @@ async def build_it(
             code=WORKSPACE_UNAVAILABLE_CODE,
         )
 
-    # R19's two refusals, in the same order and carrying the same codes the send route uses:
+    # The two refusals below, in the same order and carrying the same codes the send route uses:
     # one workspace per user, and it is not this press's to take if another of the user's own
     # chats holds it — or if unsaved work in a different project is in the way.
     active = manager.active_session_for(user.id)
@@ -330,9 +318,9 @@ async def build_it(
     # --- ONLY NOW: the one write in the Plan chat -------------------------------------------
     #
     # ANYONE MOVING THIS WRITE, OR ADDING A COMMIT BETWEEN THE FLUSH ABOVE AND THE TURN
-    # STARTER, REINTRODUCES ISSUE #72. `append_batch` owns its commit and both conversations
-    # share one session, so a write here before the turn started would make the flushed Build
-    # chat durable, and a later failure would strand it empty.
+    # STARTER, STRANDS AN EMPTY BUILD CHAT. `append_batch` owns its commit and both
+    # conversations share one session, so a write here before the turn started would make the
+    # flushed Build chat durable, and a later failure would strand it empty.
     #
     # ITS CONTENT IS THE CHOICE AND NOTHING ELSE — never the new chat's id, never its url,
     # never a count. That is what makes "no stored field references both conversations" a fact
@@ -374,10 +362,8 @@ async def build_it(
 def _refusal_for(call: ToolCallPart | None) -> tuple[str, str]:
     """(message, code) for an offer that cannot be built from.
 
-    TWO CODES, because the two causes have different remedies. "There is no plan in this offer"
-    is what every pre-migration card looks like and is fixed by asking for the plan again; "the
-    plan is longer than a message may be" is fixed by asking for a shorter one. A single code
-    would leave the browser saying one of those to someone in the other situation.
+    TWO CODES, because the two causes have different remedies: an offer with no plan is fixed by
+    asking for the plan again, an over-long one by asking for a shorter one.
 
     ASKS THE SAME QUESTION `plan_from_call` ASKS rather than re-deriving it. The ceiling is the
     only thing separating the two refusals, so "the call carries a plan argument at all" IS
@@ -394,8 +380,8 @@ async def _already_started(
 
     The conversation id is client-minted, so an unguarded arm would hand any caller who guesses
     a colliding id the existence of — and a live turn id for — somebody else's conversation. The
-    predicate is the create route's: same owner, same project, same kind, or a flat 409 with one
-    message, so existence under another owner is not distinguishable (ADR-0004).
+    predicate is the create route's: same owner, same project, same kind, else a flat 409 with
+    one message — so existence under another owner is not distinguishable from absence.
 
     It starts NOTHING. The chat that already exists has whatever turn is already live on it, and
     that is what a second tab should attach to."""

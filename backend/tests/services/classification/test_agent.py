@@ -1,4 +1,4 @@
-"""The classification review agent (U5): schema discipline, settings, prompt split, and
+"""The classification review agent: schema discipline, settings, prompt split, and
 the snapshot-only toolset — all under scripted models, never a live call."""
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def test_field_order_is_evidence_then_reason_then_verdict() -> None:
 
 
 def test_unanswered_with_a_reason_is_accepted() -> None:
-    # R5's abstention shape: a returned `unanswered` carrying its reason is valid.
+    # Abstention shape: a returned `unanswered` carrying its reason is valid.
     output = ReviewOutput.model_validate(
         {
             "completeness": "complete",
@@ -317,7 +317,6 @@ async def test_static_instructions_ahead_of_volatile_content(tmp_path: Path) -> 
     assert "fixture-family" in captured["request_text"]
     assert "app/page.tsx" not in REVIEW_INSTRUCTIONS
     assert "fixture-family" not in REVIEW_INSTRUCTIONS
-    # And the run really carried the settings block.
     settings = captured["settings"]
     assert settings["max_tokens"] == MAX_TOKENS
     assert settings["anthropic_cache_instructions"] == "1h"

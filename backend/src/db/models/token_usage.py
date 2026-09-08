@@ -1,20 +1,15 @@
-"""The `token_usage` table — per-user daily token accounting (R13/R30).
+"""The `token_usage` table — per-user daily token accounting.
 
-One row per (user, IST calendar day, kind). The server-authoritative daily gate reconciles
-each turn's spend against this ledger. Mirrors Express `server/usage-repo.js`, which
-keeps one Cosmos doc per `username:istDateKey` and `$inc`s an `inputTokens` (with cache
-folded in) + `outputTokens` pair. Here the four token classes stay in SEPARATE columns so the
-daily gate can COST-WEIGHT them: under pydantic-ai `input_tokens` ALREADY includes the two
-cache classes, and the billable total is fresh input + output at face value with cache reads
-at ~10% and cache writes at ~125% (`services/usage/gate.py:billable_spend`) — never a re-add
-of the cache columns on top of input (that double-counts the cached prefix).
+One row per (user, IST calendar day, kind); the server-authoritative daily gate reconciles
+each turn's spend against this ledger, mirroring Express `server/usage-repo.js`'s per-day
+`$inc`. The four token classes stay in SEPARATE columns so the gate can COST-WEIGHT them:
+`input_tokens` already includes the two cache classes, so billable is fresh input + output at
+face value, cache reads at ~10%, writes at ~125% (`gate.py:billable_spend`) — never a re-add
+of the cache columns on top (that double-counts the cached prefix).
 
-The `(user_id, usage_date, kind)` uniqueness is the conflict target for the atomic
-`INSERT … ON CONFLICT … DO UPDATE` that records usage with the add in SQL — parity with
-Express's atomic `$inc` (no lost-update under-count). It does NOT close concurrent
-overspend (the check-before-stream / bill-after-stream window is open by design; Redis
-token-bucket hardening deferred).
-"""
+The `(user_id, usage_date, kind)` uniqueness is the atomic upsert's conflict target (parity
+with Express's `$inc`, no lost-update). It does NOT close concurrent overspend — that window
+is open by design; Redis token-bucket hardening is deferred."""
 
 from __future__ import annotations
 
@@ -29,20 +24,12 @@ from src.db.mixins import OwnedByUserMixin, TimestampMixin, UUIDv7PrimaryKeyMixi
 
 
 class TokenUsageKind(StrEnum):
-    """What the spend was FOR (U15, ASM14). Values are the native PG enum labels.
+    """What the spend was FOR. Values are the native PG enum labels.
 
-    The dimension exists to keep two properties apart that one number cannot carry:
-    who generated the spend (attribution — every row, whatever its kind, belongs to
-    the user who triggered it) and whose budget it comes out of (only `build` rows).
-
-    * `build` — the citizen's own chats and builds: the ONLY kind the daily gate's
-      `_used_today` and the admin roster's cap-comparison figure read. Every row
-      that predates this dimension was a build row (the 0031 backfill says so).
-    * `review` — the pre-publish classification review: metered against the citizen
-      so review cost is attributable, but never part of what their cap measures.
-      A heavy build day must not make an app unpublishable, and opening the publish
-      dialog must not silently spend build budget the citizen never chose to spend.
-    """
+    Keeps apart who generated the spend (every row, whatever its kind) from whose budget it
+    comes out of (only `build` rows). `build` is the ONLY kind the daily gate and cap read;
+    `review` (pre-publish classification) is metered but never counted against the cap — a
+    heavy build day must not make an app unpublishable."""
 
     BUILD = "build"
     REVIEW = "review"

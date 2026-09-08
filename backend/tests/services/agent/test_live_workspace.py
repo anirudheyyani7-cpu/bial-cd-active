@@ -1,4 +1,4 @@
-"""U5 §C3 — `LiveSandboxWorkspace`: the two structured reads routed through the supervisor.
+"""`LiveSandboxWorkspace`: the two structured reads routed through the supervisor.
 
 Driven through `FakeSandbox`, whose `exec` returns scripted stdout and RECORDS the argv — which
 is what makes both halves of the ignore story assertable: the prune/`--exclude-dir` flags that
@@ -238,7 +238,7 @@ async def test_exec_readonly_runs_the_argv_in_the_container() -> None:
 
 
 async def test_no_refusal_or_result_carries_the_handle_token() -> None:
-    # KD-9: the live workspace is the first read surface holding a live supervisor bearer.
+    # The live workspace is the first read surface holding a live supervisor bearer.
     fake = FakeSandbox()
     workspace = _live(fake, "./app/page.tsx\n")
     with pytest.raises(WorkspacePathError) as refusal:

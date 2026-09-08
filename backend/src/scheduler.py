@@ -1,9 +1,8 @@
-"""The Taskiq scheduler (ADR-0011).
+"""The Taskiq scheduler.
 
 The scheduler is only a CLOCK. On a cron tick it pushes a message onto the broker; the receiver
-picks it up and executes it. It does not run anything itself — which is why a scheduler deployed
-without a worker is worse than no deployment at all: it would enqueue ticks nothing ever
-consumes, behind a container that looks perfectly healthy.
+picks it up and executes it. It does not run anything itself. `worker_main` owns the reason the
+two roles are supervised together in one process.
 
 `LabelScheduleSource` reads each task's `schedule` label at startup. It creates ZERO Redis keys,
 which is why it is used here rather than `RedisScheduleSource` — that adds a `schedule:*` key

@@ -1,15 +1,18 @@
-"""The C3 GET-SSE progress feed — byte-framing COPIED from the legacy chat relay (D6: copy
-into your own router, never shared-edit someone else's), adapted for the C7 envelope +
-`Last-Event-ID` resume (KTD-5). The relay has since been retired; the copy is why this
-router did not have to change when it went.
+"""The build session's GET-SSE progress feed — the streaming response its route returns.
 
-Each frame is `id: {seq}\\n` + `data: {compact-envelope-json}\\n\\n`; the terminal
-`ended` envelope is followed by `data: [DONE]\\n\\n`. Unlike that relay, this does NOT
-await a first queued item before committing to the StreamingResponse (verified minor):
-the producer already ran by the time anyone subscribes and this GET is a pure CONSUMER, so a
-freshly-registered subscriber queue receives only future puts — awaiting it would hang a
-quiet-but-live or already-ended session (whose terminal lives in the replay BUFFER, not
-the queue). The only synchronous pre-stream failure is the 404 ownership check.
+WHY THIS EXISTS
+
+Byte-framing COPIED from the legacy chat relay (copy into your own router, never
+shared-edit someone else's), adapted for the envelope and `Last-Event-ID` resume. The
+relay has since retired; this copy is why the router did not have to change when it went.
+
+Each frame is `id: {seq}\\n` + `data: {compact-envelope-json}\\n\\n`; the terminal `ended`
+envelope is followed by `data: [DONE]\\n\\n`. Unlike that relay, this does NOT await a
+first queued item before committing to the StreamingResponse: the producer already ran by
+the time anyone subscribes and this GET is a pure CONSUMER, so a freshly-registered
+subscriber queue receives only future puts — awaiting it would hang a quiet-but-live or
+already-ended session (whose terminal lives in the replay BUFFER, not the queue). The only
+synchronous pre-stream failure is the 404 ownership check.
 
 HISTORICAL SESSIONS ONLY. The route this serves survives the deletion of the standalone build
 stack as the reader for `build_started` transcript rows that are permanent in production — a
@@ -18,7 +21,7 @@ Nothing produces a NEW one (a Write chat turn registers its workspace without ev
 session id), and nothing emits the six BRAIN envelope members any more, so in practice the
 ownership check answers 404 and this generator never runs. Kept because the alternative was
 deleting the portal's reattach path and the projection's `BuildInProgressItem` with live rows
-still in the database; see C3 §11.
+still in the database.
 """
 
 from __future__ import annotations
@@ -46,14 +49,14 @@ _BUFFER_RESCAN_SECONDS = 10.0
 
 
 def _frame(env: ProgressEnvelope) -> bytes:
-    # id: {seq} carries the SSE resume cursor; data: is the full C7 envelope (snake_case,
+    # id: {seq} carries the SSE resume cursor; data: is the full envelope (snake_case,
     # compact via Pydantic model_dump_json), `seq` preserved verbatim (never renumbered).
     return b"id: " + str(env.seq).encode() + b"\ndata: " + env.model_dump_json().encode() + b"\n\n"
 
 
 def build_sse_response(session: BuildSession, last_event_id: int | None) -> StreamingResponse:
     """Register a subscriber, replay `seq > last`, then stream live until the terminal
-    `ended` → `[DONE]`. Resume semantics (C3 §4): an explicit `Last-Event-ID: n` replays
+    `ended` → `[DONE]`. Resume semantics: an explicit `Last-Event-ID: n` replays
     `seq > n` (`0` = full backlog); no header → live-from-current-position on a LIVE
     session, or the full story on an already-ended one (so a fresh connect never hangs)."""
     if last_event_id is not None:

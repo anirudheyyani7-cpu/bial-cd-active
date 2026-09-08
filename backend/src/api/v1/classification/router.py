@@ -1,40 +1,27 @@
-"""The classification review surface (U7): ensure a review exists for the current saved
+"""The classification review surface: ensure a review exists for the current saved
 version, and read it — the browser is never the source of what the review said.
 
-TWO PROJECT-SCOPED ROUTES, the deploy router's shape deliberately.
-`POST /projects/{id}/classification-review` ENSURES: it resolves the current saved
-commit and hands it to the service's claim-or-return — the stored answer comes back for
-an unchanged version without a run (R6), a failed attempt is re-claimed by asking again
-on this SAME route (R19's "ask again without re-saving"; there is no separate retry
-verb), bounded by the service's three-runs-per-version cap, and a new version claims a
-fresh run, detached. The route never waits for the run: a review can take up to two
-minutes and the edge gives a request twenty seconds, so the answer is the current state
-— 202 while a run is in flight, 200 when the state is settled — and the client polls
-`GET .../classification-review`, which reads and NEVER starts, downloads, or writes.
+WHY THIS EXISTS
 
-OWNERSHIP FIRST — the opposite of the deploy routes' unconfigured-503-first ordering,
-and the inversion is the plan's requirement rather than drift: a cross-user project id
-must be a non-leaking 404 EVEN when storage is unbound, so the ownership read runs
-before any service or storage question is asked.
+TWO PROJECT-SCOPED ROUTES, the deploy router's shape deliberately. The POST ENSURES: it
+resolves the current saved commit and hands it to the service's claim-or-return. An
+unchanged version comes back without a run; a failed attempt is re-claimed by asking again
+on this SAME route — there is no separate retry verb — to the three-runs-per-version cap;
+a new version claims a fresh run, detached. The route never waits (a review takes minutes,
+the edge gives twenty seconds): it answers the current state, 202 in flight and 200 when
+settled, and the client polls the GET, which reads and NEVER starts, downloads, or writes.
 
-THE VERSION IS A METADATA QUESTION. Both routes resolve the current saved commit from
-the snapshot blob's stored `head_sha` stamp and its `last_modified` time — one `head()`
-call, the save-state reader's exact move — NEVER by extracting the bundle. The extract
-helper unconditionally downloads the whole bundle before consulting its SHA-keyed cache,
-and the GET here is polled by a dialog that stays open for up to a minute; only the
-detached runner extracts (and it fails closed with `version_drift` if the tree it pulls
-turns out to be a different commit than the stamp claimed here).
+OWNERSHIP FIRST, inverting the deploy routes' unconfigured-503-first ordering: a cross-user
+project id must be a non-leaking 404 EVEN when storage is unbound.
 
-EVIDENCE NEVER LEAVES THE ROW (R4/OD-B). The stored documents carry things the citizen
-must not see — cited locations, the scan block, the per-question scan agreement and the
-downgrade marker (the administrator's dispute presentation, U13's concern). The response
-is built through `ReviewAnswers.of`, which projects verdict + reason and nothing else.
+THE VERSION IS A METADATA QUESTION. Both routes resolve the saved commit from the snapshot
+blob's `head_sha` stamp and its `last_modified` — one `head()` call — NEVER by extracting
+the bundle, which downloads the whole thing before consulting its SHA-keyed cache. The GET
+here is polled by a dialog open for up to a minute; only the detached runner extracts.
 
-Storage is the one dependency that can be unconfigured, and it arrives through the
-EXISTING shared `OptionalStorage` provider — a `None`-yielding seam, because an eagerly
-raising provider resolves BEFORE the route body and would pre-empt the documented 503
-with an undocumented 500 in the wrong envelope (see `deps.py` for both documented burns).
-"""
+EVIDENCE NEVER LEAVES THE ROW. The stored documents carry cited locations, the scan block,
+the per-question scan agreement and the downgrade marker — none of which the citizen may
+see. The response goes through `ReviewAnswers.of`: verdict + reason, nothing else."""
 
 from __future__ import annotations
 
@@ -80,7 +67,7 @@ router = APIRouter(prefix="/projects", tags=["classification"])
 _REVIEW_PATH = "/{project_id}/classification-review"
 
 # THE REVIEW'S ONLY PER-USER SPEND BOUND, and the reason it needs one: review spend is
-# deliberately exempt from the daily token gate (U15 — a heavy build day must not make an
+# deliberately exempt from the daily token gate (a heavy build day must not make an
 # app unpublishable), and the stated bound, MAX_MODEL_RUNS_PER_VERSION, is per VERSION.
 # A version costs one Save, so `save -> ensure -> save -> ensure` mints fresh runs
 # forever: three runs x 25 requests x 8k tokens each, on the premium deployment, from a
@@ -111,9 +98,9 @@ _review_limiter = rate_limit(
     ),
 )
 
-# R19's "unavailable" is five distinct citizen-facing states (the plan's failure
-# taxonomy) plus the drift code U6 added. The CITIZEN sentence for each stored bucket
-# lives here — U7 owns the copy, the stored `failure_code` stays the stable, greppable
+# "Unavailable" is five distinct citizen-facing states plus the later-added drift code.
+# The CITIZEN sentence for each stored bucket
+# lives here — this module owns the copy, the stored `failure_code` stays the stable, greppable
 # operator string — and an unknown code fails loudly at the subscript rather than
 # rendering a sentence nobody wrote.
 _FAILURE_SENTENCES: Final[dict[str, str]] = {
@@ -156,10 +143,10 @@ class _SavedVersion:
 
 
 async def _saved_version(storage: ObjectStorage, app_id: uuid.UUID) -> _SavedVersion | None:
-    """HEAD the snapshot blob — metadata only, never the bytes. None means nothing was
-    ever saved (R21's nothing-to-review). A store that will not answer is the documented
-    503, not "nothing saved": unknown must never render as an empty state, and per ASM21
-    publishing reads the same bundle, so nobody is stranded behind this refusal."""
+    """HEAD the snapshot blob — metadata only, never the bytes. `None` means nothing was ever
+    saved. A store that will not answer raises the documented 503 instead of reporting the same
+    `None`: folding the two together would render an unknown as an empty state, telling a citizen
+    there is nothing to review while their saved app sits in a store that is merely unreachable."""
     try:
         meta = await storage.head(snapshot_key(app_id))
     except StorageError as exc:
@@ -176,7 +163,7 @@ async def _saved_version(storage: ObjectStorage, app_id: uuid.UUID) -> _SavedVer
 
 
 def _nothing_to_review() -> ClassificationReviewResponse:
-    """R21: no saved code — no answers, and nothing for a review to read."""
+    """No saved code — no answers, and nothing for a review to read."""
     return ClassificationReviewResponse(status="nothing_to_review")
 
 
@@ -202,14 +189,15 @@ def _presented(
 ) -> ClassificationReviewResponse:
     """One stored row → the citizen's view of it.
 
-    A RUNNING row past the wall-clock ceiling (`aged_out`) is presented as the
-    review-abandoned failure, never as still-in-flight: a restart kills the detached
-    runner but leaves the row RUNNING, and `start` un-wedges it on the next ask — so
-    the presentation must invite that ask rather than show an immortal spinner.
-
-    The row's own stamp rides as `reviewed_sha` even when it differs from the current
-    `head_sha`: U11 filters by the stamp it asked for, so surfacing both is what lets
-    the client ignore an answer about a version this dialog never named."""
+    A RUNNING row past the wall-clock ceiling (`aged_out`) is presented as the review-abandoned
+    failure, never as still-in-flight. The row's own stamp rides as `reviewed_sha` even when it
+    differs from the current `head_sha`."""
+    # A restart kills the detached runner but leaves the row RUNNING, and `start` un-wedges it
+    # on the next ask — so the aged-out presentation must invite that ask rather than show an
+    # immortal spinner.
+    #
+    # Surfacing both SHAs is what lets the client ignore an answer about a version this dialog
+    # never named: it filters by the stamp it asked for.
     if record.status is ClassificationReviewStatus.RUNNING and not aged_out:
         return ClassificationReviewResponse(
             status="running",
@@ -232,9 +220,9 @@ def _presented(
     code = FAIL_ABANDONED if aged_out else record.failure_code
     if code is None:
         raise RuntimeError(f"failed review {record.review_id} carries no failure code")
-    # A failed row usually carries no verdicts (a failure is never stored as an answer,
-    # R19) and presents as six unanswered questions. The one exception is the Tier A
-    # floor (P8): the model never returned, but a complete scan holds a high-confidence
+    # A failed row usually carries no verdicts (a failure is never stored as an answer)
+    # and presents as six unanswered questions. The one exception is the Tier A
+    # floor: the model never returned, but a complete scan holds a high-confidence
     # credential hit strong enough to stand as the credentials answer — stored on the
     # row, projected here like any other answer set.
     verdicts = (
@@ -282,22 +270,19 @@ async def ensure_review(
 ) -> ClassificationReviewResponse:
     """Ensure a review exists for the app's current saved version, and answer with it.
 
-    Opening the publish dialog calls this. An unchanged version gets the stored answers
-    back with no run (R6); a version the stored row does not match claims a fresh run,
-    detached; a failed attempt is re-claimed by calling this same route again, until the
-    service's per-version attempt cap returns the stored failure instead. 202 says a run
-    is in flight (poll the GET); 200 says the enclosed state is settled.
-
-    The service resolves nothing itself: the CALLER owns the version question, answered
-    here from the blob's metadata stamp — and if a Save lands between this read and the
-    runner's extraction, the runner fails closed with `version_drift` rather than
-    reviewing a tree this route never named."""
+    Opening the publish dialog calls this. An unchanged version gets the stored answers back
+    with no run; a version the stored row does not match claims a fresh run, detached; a failed
+    attempt is re-claimed by calling this same route again, until the service's per-version
+    attempt cap returns the stored failure instead. 202 says a run is in flight (poll the GET);
+    200 says the enclosed state is settled."""
+    # The service resolves nothing itself: the CALLER owns the version question, answered here
+    # from the blob's metadata stamp — and if a Save lands between this read and the runner's
+    # extraction, the runner fails closed with `version_drift` rather than reviewing a tree
+    # this route never named.
     # Ownership before anything — a cross-user id is a non-leaking 404 even when
     # storage is unbound, so no storage (or service) question may precede this read.
     await owned_project_or_404(db, user.id, project_id)
     if storage is None:
-        # The in-body 503 seam (see the module docstring): storage-off is a supported
-        # posture outside production, not a deploy bug.
         raise AppApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             _FAILURE_SENTENCES[FAIL_STORAGE],

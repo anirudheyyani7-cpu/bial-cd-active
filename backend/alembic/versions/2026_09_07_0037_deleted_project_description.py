@@ -1,9 +1,9 @@
-"""deleted_projects.project_description — what the app WAS, kept past the cascade (#184)
+"""deleted_projects.project_description — what the app WAS, kept past the cascade
 
-An administrator reading a deletion gets the project's name, its owner, who deleted it and
-why. It does not get the one sentence that says what the thing actually did, so a row reading
-"Visitor Log" is legible without being informative. This adds the description the citizen
-wrote, copied onto the tombstone exactly as `project_name` already is.
+WHY THIS EXISTS: an administrator reading a deletion gets the project's name, its owner, who
+deleted it and why. It does not get the one sentence that says what the thing actually did, so
+a row reading "Visitor Log" is legible without being informative. This adds the description
+the citizen wrote, copied onto the tombstone exactly as `project_name` already is.
 
 WHY A COPY AND NOT A LOOKUP: the description lives on the `projects` row that
 `delete_project_cascade` deletes in the same transaction that writes this record, and it

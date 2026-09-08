@@ -1,33 +1,27 @@
-"""The durable-copy precondition — nothing is destroyed until its work is provably safe (U14).
+"""The durable-copy precondition — nothing is destroyed until its work is provably safe.
 
-R9, R11. This is the last gate before an ARM delete, and it is the one whose failure a builder
-experiences directly: every other guard in this system protects money, this one protects work.
-
+WHY THIS EXISTS
+This is the last gate before an ARM delete, and it is the one whose failure a builder experiences
+directly: every other guard in this system protects money, this one protects work.
 WHAT "CURRENT" MEANS. `HEAD` in the container versus the `head_sha` stamped on the recovery
 bundle's blob metadata — **not** `last_modified`. Azure stamps that in whole seconds, so a Save and
 an autosave landing inside one second are indistinguishable by time, and "indistinguishable" on
 this path means deleting a container whose newest change was never copied.
-
 WHY THE RECOVERY SLOT AND NOT THE SAVED BUNDLE. The recovery key is the platform's own autosave at
-turn boundaries; the saved bundle is the user's explicit click. R11 asks for "their last completed
-change", which is the former — a builder who never pressed Save still has work worth keeping, and
-that is the population most likely to be reclaimed.
-
-THE FALLBACK ORDER IS DELIBERATE, and its shape comes from a round-1 wording that made the gate
-unsatisfiable: recover the token → read `HEAD` → compare. If TOKEN RECOVERY ITSELF fails, a present
-and parseable bundle counts as confirmed — otherwise a container that is already dead can never be
-collected, which is the entire point of the exercise. If there is no parseable bundle either,
-escalate. The real comparison still happens in the normal case.
-
-"STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE" (Q4). `manager.py` returns `False` from its
-bundle-presence check on `StorageUnconfiguredError` and documents it as a *confirmed absent* —
-which is right for its caller, because on a storage-off deployment you must not offer a restore
-that cannot work. It is exactly wrong here: consumed by a destroy path, "confirmed no bundle" is
-"nothing to preserve, safe to delete", so the most natural misconfiguration in the system would
-produce a worker that deletes the entire fleet while believing it had verified every container.
-This module distinguishes a fact about the DEPLOYMENT (storage unconfigured → escalate; in truth
-the worker should never have started) from a fact about the CONTAINER (storage reachable, no
-bundle for this app).
+turn boundaries, while the saved bundle is the user's explicit click; the relevant guarantee is
+"their last completed change" — the former, since a builder who never pressed Save still has work
+worth keeping and is the population most likely to be reclaimed.
+THE FALLBACK ORDER IS DELIBERATE: recover the token → read `HEAD` → compare. If TOKEN RECOVERY
+ITSELF fails, a present and parseable bundle counts as confirmed — otherwise a container that is
+already dead can never be collected, which is the entire point of the exercise. If there is no
+parseable bundle either, escalate. The real comparison still happens in the normal case.
+"STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE". An unset store is a fact about the
+DEPLOYMENT and an unreadable one a fact about this moment; only "the store answered and holds no
+bundle" is a fact about the CONTAINER, so only that case counts as confirmed absent — the other two
+spare the container as UNCONFIRMED. Folding "no store" into "no bundle" is right for offering a
+restore, but wrong on a destroy path, where a confirmed absent reads as "safe to delete": the most
+ordinary misconfiguration would otherwise delete the whole fleet while believing every container
+had been verified.
 """
 
 from __future__ import annotations
@@ -75,35 +69,14 @@ class CopyVerdict:
 async def confirm_durable_copy(
     app_id: uuid.UUID, *, container_head: str | None, container_dirty: bool | None
 ) -> CopyVerdict:
-    """Is this container's work provably preserved? (R9, R11.)
+    """Is this container's work provably preserved?
 
-    `container_head` is the container's current `HEAD`, or `None` when it could not be read —
-    which is the ordinary case for the population this gate exists to judge, since an orphan has
-    no registry record and may not be reachable at all.
-
-    `container_dirty` is whether that container's working tree has uncommitted changes, and it is
-    KEYWORD-REQUIRED WITH NO DEFAULT on purpose. A permissive default on a gate that authorises
-    destruction is how the bug below shipped; a caller that does not know must say `None` and be
-    refused, not stay silent and be believed. `None` means the probe did not answer.
-
-    A HEAD MATCH ALONE STOPPED MEANING "PRESERVED" WHEN THE AGENT STOPPED COMMITTING (U19).
-    The comparison below was written when the build agent committed as it worked, so a turn that
-    wrote files MOVED `HEAD` and a copy from the previous turn was detectably behind it. U19
-    deleted that commit discipline — the platform now commits only at the turn boundary — so
-    "HEAD unchanged + dirty tree" is the normal shape of every building turn. A turn that dies
-    before its finalizer (process death, OOM, a deploy restart, eviction) therefore leaves `HEAD`
-    exactly where the LAST turn's recovery copy was stamped, and a HEAD-only comparison reads that
-    as provably preserved and destroys a whole turn's uncommitted work — writing an audit row
-    saying it was safe. The dirty flag is what closes that, and it is why this signature changed
-    rather than the call sites quietly passing `head` alone.
-
-    The plan that removed the commits guards the recovery-copy WRITE path against the same new
-    normal (`test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy`). This is the same
-    lesson applied to the DESTROY path, which that test does not reach.
-
-    FAILS TOWARD SPARING, ALWAYS. Every branch that could not establish a fact returns
-    `UNCONFIRMED`, and `UNCONFIRMED` never authorises a delete. A timeout is not a death
-    certificate, and neither is a storage blip."""
+    `container_head` is `None` when it could not be read — ordinary for an orphan with no
+    registry record. `container_dirty` is KEYWORD-REQUIRED, NO DEFAULT: a caller that does not
+    know must pass `None` and be refused, never stay silent and be believed. A HEAD match alone
+    is not "preserved" — a turn commits only at `snapshot.py`, so the tree must be judged too.
+    FAILS TOWARD SPARING, ALWAYS: every branch that cannot establish a fact returns
+    `UNCONFIRMED`, which never authorises a delete — a timeout is not a death certificate."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
@@ -129,13 +102,14 @@ async def confirm_durable_copy(
     stamped = (meta.metadata or {}).get("head_sha")
     if not stamped:
         # A bundle whose head is unknown cannot be compared against anything. Older bundles
-        # predate the metadata stamp, and this is exactly the "unreadable signal" R4 covers.
+        # predate the metadata stamp, and this is exactly the kind of unreadable signal that
+        # spares the container rather than confirming it.
         return CopyVerdict(CopyState.UNCONFIRMED, "the recovery copy carries no head_sha")
 
     if container_head is None:
         # TOKEN RECOVERY OR THE CONTAINER READ FAILED. A present, parseable bundle counts as
-        # confirmed here — deliberately. Requiring the live comparison in this branch is what made
-        # the round-1 wording unsatisfiable: a container that is already dead can never answer,
+        # confirmed here — deliberately. Requiring the live comparison in this branch would make
+        # the gate unsatisfiable: a container that is already dead can never answer,
         # so the gate would have spared every genuinely-dead container forever and collected
         # nothing at all.
         return CopyVerdict(
@@ -155,9 +129,8 @@ async def confirm_durable_copy(
             "the recovery copy matches HEAD, but the working tree could not be read",
         )
     if container_dirty:
-        # The copy is not behind HEAD — it is behind the WORKING TREE, which is the shape every
-        # building turn now has. STALE rather than UNCONFIRMED because this is a known state with
-        # a known remedy: take a copy first, then reclaim.
+        # The copy is not behind HEAD — it is behind the WORKING TREE. STALE rather than
+        # UNCONFIRMED because this is a known state with a known remedy: copy first, then reclaim.
         return CopyVerdict(
             CopyState.STALE,
             "the recovery copy matches HEAD but the working tree has uncommitted work",

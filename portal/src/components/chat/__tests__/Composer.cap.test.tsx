@@ -1,11 +1,11 @@
 /**
- * THE CAP AS A CITIZEN MEETS IT (R42, R43).
+ * THE CAP AS A CITIZEN MEETS IT.
  *
  * `composerCap.test.ts` pins the arithmetic. This pins the promise the arithmetic is for: over the
  * cap the text STAYS — all of it — and Send is marked unavailable with one line saying why.
  *
  * The two are separate files on purpose. A counting rule that is right in isolation and truncates
- * in the UI is the exact defect issue #156 is about: someone whose paste was quietly cut believes
+ * in the UI is exactly the defect this file exists to catch: someone whose paste was quietly cut believes
  * their whole specification went in, and the app that gets built is missing the half nobody knows
  * was dropped.
  */
@@ -71,7 +71,7 @@ describe('nothing is ever cut', () => {
   })
 })
 
-describe('R43 — the counter is silent until it is useful, and then exact', () => {
+describe('the counter is silent until it is useful, and then exact', () => {
   it('shows nothing on an ordinary message', () => {
     draw()
     type('add a column for the gate number')

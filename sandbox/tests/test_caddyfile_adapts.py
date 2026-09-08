@@ -1,27 +1,23 @@
-"""The shipped Caddyfile must ADAPT. This is the cheapest test in the repo and it would have
-caught a total outage of the build sandbox.
+"""The shipped Caddyfile must ADAPT — the cheapest test here, and it would have caught a total
+build-sandbox outage.
 
-WHY IT EXISTS. v1.6.12 shipped a `log` directive nested inside a `handle` block. `log` is not an
-ordered HTTP handler, so `caddy adapt` rejects the file outright — on the pinned 2.8.4 and on
-every later version. In the container the consequence is not a warning: `entrypoint.sh`
-backgrounds Caddy, so its non-zero exit is never seen by `set -eu`, nothing binds :8080, and the
-ACA startup probe (30 × 1s against `/_sup/health` on 8080) fails until the revision is abandoned.
-Every provision fails, and nothing in the build or the test suite says why.
+WHY THIS EXISTS. v1.6.12 shipped a `log` directive nested inside a `handle` block; `log` isn't
+an ordered HTTP handler, so `caddy adapt` rejects the file on 2.8.4 and every later version.
+`entrypoint.sh` backgrounds Caddy, so its non-zero exit is invisible to `set -eu`: nothing binds
+:8080, the ACA startup probe (30 × 1s against `/_sup/health`) times out, the revision is
+abandoned, and every provision fails with nothing saying why. Every prior Caddy assertion lived
+in the `integration` lane — opt-in, Docker-gated, ~10-minute bake, absent from CI — so the
+default lane never touched the Caddyfile. This test is deliberately NOT that lane: it shells out
+to a tiny official Caddy image and asks one question in about a second, skipping if Docker is
+missing.
 
-WHY NOTHING CAUGHT IT. Every existing Caddy assertion lives in the `integration` lane, which is
-opt-in, needs Docker, needs a ~10-minute image bake, and is absent from CI. The default lane
-never touched the Caddyfile at all. So this test is deliberately NOT an integration test: it
-shells out to a tiny official Caddy image and asks one question in about a second. If Docker is
-missing it skips, exactly like the rest of the harness.
-
-It also pins the two properties the fix depends on, because "it adapts" alone would still pass
-if someone moved the logger back under `handle` for the app block and dropped `/_sup` logging by
-accident:
+It also pins the two properties the fix depends on — "it adapts" alone still passes if the
+logger moves back under `handle` or `/_sup` logging is dropped:
 
   * the site has a logger at all (delete it and reclamation reads every container as idle), and
-  * `/_sup/*` is excluded from it (delete `log_skip` and the platform's own 1-second startup
-    probes get counted as user traffic, so an idle container looks busy forever — the exact
-    failure mode the R14 signal was built to avoid).
+  * `/_sup/*` is excluded from it (delete `log_skip` and the platform's own probes count as user
+    traffic, so an idle container looks busy forever — the exact manufactured-activity failure
+    reclamation guards against).
 """
 
 from __future__ import annotations
@@ -105,18 +101,13 @@ def _matches_sup(route: dict[str, object]) -> bool:
 
 
 def test_the_site_logger_exists_and_skips_the_control_plane() -> None:
-    """The access log must cover the app and exclude `/_sup/*`.
+    """The access log must cover the app and exclude `/_sup/*` — asserted on the ADAPTED JSON,
+    not the Caddyfile text, so it survives any spelling and can't be satisfied by a comment.
 
-    Asserted on the ADAPTED JSON rather than on the Caddyfile text, so it survives any spelling
-    of the same config and cannot be satisfied by a comment.
-
-    THE SKIP MUST BE ON THE RIGHT ROUTE. An earlier form of this test asserted
-    `"skip" in json.dumps(server)` — a substring search over the entire serialized server, which
-    cannot tell "log_skip is on `/_sup/*`" from "log_skip is on the app block". The second of
-    those is the worst config in the space: the platform's own probes get counted as user
-    traffic AND the citizen's real requests stop being counted, so every container reads as busy
-    forever and reclamation never fires. Verified by mutation: moving `log_skip` into `handle`
-    left the substring form green.
+    THE SKIP MUST BE ON THE RIGHT ROUTE: an earlier `"skip" in json.dumps(server)` substring check
+    couldn't tell `/_sup/*`'s skip from the app block's — the worse of the two, since that stops
+    counting real traffic while counting probes as traffic (verified by mutation: `log_skip`
+    moved into `handle` left the substring form green).
     """
     result = _adapt(CADDY_VERSIONS[-1])
     assert result.returncode == 0, result.stderr

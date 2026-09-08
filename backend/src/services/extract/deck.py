@@ -1,18 +1,14 @@
-"""Deck (pptx) → PDF conversion via a Gotenberg sidecar (R17; ports `deck-convert.js`).
+"""Deck (pptx) → PDF conversion via a Gotenberg sidecar.
 
-A deck is a VISUAL medium, so it is NOT text-extracted — it is rendered to a PDF (LibreOffice via
-Gotenberg) that the model reads as vision.
+A deck is a VISUAL medium: not text-extracted, but rendered to a PDF (LibreOffice via Gotenberg)
+that the model reads as vision. BOUNDS SIT ON BOTH SIDES OF THE RENDER: structure and the
+zip-bomb pre-filter run BEFORE any network call, refusing a malformed or inflating file without
+touching the renderer, while the output-size and PAGE caps can only run AFTER, since the page
+count comes off the rendered PDF — so a 400-page deck costs one full render before being
+rejected. Accepted trade.
 
-THE BOUNDS SIT ON BOTH SIDES OF THE RENDER, and it matters which is which. Structure and the
-zip-bomb pre-filter run BEFORE any network call, so a malformed or inflating file is refused
-without touching the renderer. The output-size and PAGE caps can only run after — the page count
-is read off the RENDERED PDF (`count_pdf_pages`), there being nothing cheap to count in the
-pptx — so a 400-page deck is rejected having already cost one full render. That is the accepted
-trade, not an oversight, and this paragraph exists because the sentence it replaces claimed the
-page cap ran up front and that an oversized deck cost no render.
-
-Every failure is a typed `DeckConvertError(status, code)` with a user-safe message (never mentions
-"PDF"/"convert"). Deck attachments are gated on a configured `GOTENBERG_URL` — unset = disabled.
+Every failure is a typed `DeckConvertError(status, code)` with a user-safe message (never
+mentions "PDF"/"convert"); deck attachments are gated on a configured `GOTENBERG_URL`.
 """
 
 from __future__ import annotations

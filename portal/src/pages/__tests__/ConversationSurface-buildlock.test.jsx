@@ -1,39 +1,28 @@
 /**
- * The advisory build lock, seen from the page (KTD-7).
+ * WHY THIS EXISTS: the advisory build lock, seen from the page.
  *
  * `buildLock` is the FAST cross-tab UX pre-check only — the authoritative one-build-per-user
- * barrier is the server's 409 (tested in ConversationSurface-session.test.jsx). Here we pin that
- * BuilderPage still CLAIMS the project when a build starts and consults `blockedBy` before it
- * starts another (a second builder chat in the same project is warned before it costs a round
- * trip), that a different project is not blocked, that the claim is released when the build ends,
- * and that a planning chat is never blocked. Each BuilderPage owns its own manager over the shared
- * BroadcastChannel, so these two-page tests genuinely travel the wire.
+ * barrier is the server's 409 (tested in ConversationSurface-session.test.jsx). Pinned here: the
+ * page CLAIMS the project when a build starts and consults `blockedBy` before starting another,
+ * a different project is not blocked, the claim releases when the build ends, and a planning chat
+ * is never blocked. Each page owns its own manager over the shared BroadcastChannel, so these
+ * two-page tests genuinely travel the wire.
  *
- * WHAT A CLAIM IS has not changed across either migration: "this chat, in this project, is
- * building", held for the build's duration and retracted at its terminal, so a second tab can say
- * so instantly instead of discovering it from a 409 several seconds later. WHAT HAS CHANGED TWICE
- * is which chat holds it and where the acquire/release calls that say so now live:
+ * A CLAIM is "this chat, in this project, is building", held for the build's duration. WHICH
+ * chat holds it has changed: Build-it is now a HANDOFF — the press creates a brand-new build
+ * chat and starts the turn there, so `acquire` lives in `handleBuildIt` (claiming the new
+ * `outcome.chatId`) and `release` lives in `endGenerating`, the one point every turn path (send,
+ * reattach, reload-mid-build) settles through, since the page that ends up reattached to the new
+ * build's turn may not be the page that pressed the button.
  *
- *   - U5 made a build a Write TURN rather than a C3 session, but the claim was still taken and
- *     dropped by the SAME chat the button was pressed in (the deleted `watchBuildTurn`).
- *   - U12 made Build-it a HANDOFF: the press creates a brand-new build chat, seeds it with the
- *     plan, and starts the turn there — so the claim now has to be for THAT chat, not the one the
- *     button was in. `acquire` moved into `handleBuildIt`, right after the handoff call resolves,
- *     claiming `outcome.chatId`. `release` moved into `endGenerating`, the one point every turn
- *     path (send, reattach, reload-mid-build) settles through — because the chat that ends up
- *     watching the new build's turn is whichever page navigates there and reattaches to it
- *     (`reattachToTurn`), which is not necessarily the page that pressed the button.
+ * This file drives that reattach path directly: every "build starts" step mints a fresh chat id
+ * and gives it a running `activeTurn`, so the SAME page instance reattaches and renders the live
+ * narrative exactly as a reload mid-build already does (ConversationSurface-thread.test.jsx's
+ * suite).
  *
- * This file drives that reattach path directly: every "build starts" step here mints a fresh
- * chat id, registers it as the project's `listProjectConversations` would, and gives it a running
- * `activeTurn` so the SAME BuilderPage instance — now displaying the new chat, having navigated
- * there — reattaches and renders the live narrative (`build-progress`/`build-outcome`) exactly as
- * a reload mid-build already does (ConversationSurface-thread.test.jsx's R8 suite).
- *
- * The pre-check hangs off the BRIEF CARD's confirmation, not off Send (003-U4). A send is just a
- * chat turn, and refusing to let someone TALK to the assistant because another tab is building
- * would be nonsense — refusing them a SECOND BUILD is the rule. So the warning lands on the card
- * (`role="alert"` inside `plan-options-card`), which re-arms as "Try again"; it is not a toast.
+ * The pre-check hangs off the BRIEF CARD's confirmation, not off Send — refusing a chat TURN
+ * would be nonsense, refusing a SECOND BUILD is the rule. The warning lands on the card
+ * (`role="alert"` inside `plan-options-card`), not a toast.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react'
@@ -52,9 +41,8 @@ const h = vi.hoisted(() => ({
   stop: vi.fn(), getStatus: vi.fn(),
 }))
 
-// THE LEGACY RELAY MOCK IS GONE WITH THE HOOK (Plan D U17). Both kinds of chat run on the turn
-// stream now, so the mock below is the only transport this file needs — where it used to need two,
-// one per page.
+// Both kinds of chat run on the turn stream now, so the mock below is the only transport this
+// file needs.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
   startTurn: (...a) => h.startTurn(...a),
@@ -76,11 +64,8 @@ vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), bui
 
 import ConversationSurface from '../../components/chat/ConversationSurface'
 
-/**
- * The browser's Back button, as a thing a test can press. Rendered as a sibling of the routed
- * page so it survives the handoff's navigate — which is the only way to reach the state this
- * file's back-navigation test is about.
- */
+/** The browser's Back button, as a thing a test can press — rendered as a sibling of the routed
+ *  page so it survives the handoff's navigate. */
 function BackButton() {
   const navigate = useNavigate()
   return <button data-testid="go-back" onClick={() => navigate(-1)} />
@@ -139,20 +124,17 @@ async function lastCard(container) {
 // claim. Drain a few ticks so that handshake completes before the next build.
 const flushChannel = () => act(async () => { for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0)) })
 
-// The project's build-chat directory, the way `listProjectConversations` would answer it — and
-// which of those chats currently has a running turn a reattach would find via `activeTurn`. Both
-// are reset fresh per test and grown by `mintBuild` below, because U12 means EVERY build in this
-// file lands on a chat that did not exist when the test started.
+// The project's build-chat directory and which of those chats has a running `activeTurn`. Both
+// reset fresh per test and grow via `mintBuild` below, since the handoff means every build here
+// lands on a chat that didn't exist when the test started.
 let projectBuilds
 let liveTurnByChat
 
 /**
- * Arrange for the NEXT Build-it press to mint `id` (the CLIENT-MINTED chat `uuidv7()` hands
- * `handleBuildIt`), and register that chat as the server would once it exists: listed in the
- * project's directory under `title` (so `buildBlockedMessage` can name it to a sibling tab — see
- * BuilderPage.tsx), and carrying a running `activeTurn` (so the page that navigates there
- * reattaches to it via `reattachToTurn`, the same path a reload mid-build already takes, and
- * renders the live `build-progress`/`build-outcome` narrative this file asserts on).
+ * Arrange for the NEXT Build-it press to mint `id` (the client-minted chat `uuidv7()` hands
+ * `handleBuildIt`), and register that chat as the server would: listed in the project's
+ * directory under `title` (so `buildBlockedMessage` can name it to a sibling tab), and carrying
+ * a running `activeTurn` so the page that navigates there reattaches to it.
  */
 function mintBuild(id, title, { turnId = BUILD_TURN_ID } = {}) {
   h.uuidv7.mockReturnValueOnce(id)
@@ -178,7 +160,7 @@ beforeEach(() => {
   // Every interview turn answers with a ready-to-build brief, so these suites reach the lock
   // mechanics in one send + one click; the build turn it confirms into stays open.
   primeTurn(h)
-  // U12: buildFromPlan hands off to a NEW chat and echoes the caller's minted id back as
+  // buildFromPlan hands off to a NEW chat and echoes the caller's minted id back as
   // `chatId` (turnStreamApi.ts's BuildFromPlanOutcome docblock: "Echoed back rather than
   // assumed... the same id on a double-press and the thing to navigate to either way").
   h.buildFromPlan.mockImplementation(async (_conversationId, _toolCallId, chatId) => ({
@@ -229,38 +211,32 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalledTimes(2)) // both started
   })
 
-  it('a second build RE-ACQUIRES the claim — a second chat stays blocked after the refine (finding #23)', async () => {
+  it('a second build RE-ACQUIRES the claim — a second chat stays blocked after the refine', async () => {
     mintBuild('new-A', 'First build')
     const a = renderBuilder('build-A')
     await buildFrom(a.container, 'build it')
     await within(a.container).findByTestId('stop-turn')
     expect(h.buildFromPlan).toHaveBeenCalledTimes(1)
 
-    // End A's first build — its claim on 'new-A' retracts once `endGenerating` runs at the
-    // reattach's settle point (BuilderPage.tsx's `endGenerating` docblock: "the one point every
-    // turn path settles through"). NOT `findByTestId('build-outcome')`: that card is a confirmed,
-    // separately-tracked gap (ConversationSurface-outcome.test.jsx's diagnostic note) — `showBuildOutcome`
-    // has no call site on the turn-based path any more, so a live build's end currently clears the
-    // narrative bubble and shows NOTHING until a reload. Waiting for the live bubble to clear is
-    // the honest proxy: it is the one DOM change this page actually makes when the turn ends.
+    // End A's first build — its claim retracts once `endGenerating` runs at the reattach's settle
+    // point. NOT `findByTestId('build-outcome')`: `showBuildOutcome` has no call site on the
+    // turn-based path (a confirmed, separately-tracked gap — ConversationSurface-outcome.test.jsx),
+    // so waiting for the live bubble to clear is the one DOM change this page actually makes.
     await turn.frame(T_BUILD_END())
     await turn.end()
     await waitFor(() => expect(within(a.container).queryByTestId('stop-turn')).toBeNull())
 
-    // Refine from A's now-adopted chat — POST-build (U16: A's composer is shut while A's agent
-    // works, so the refine can only be asked for once the build is over). The press hands off
-    // AGAIN, to a SECOND fresh chat: ending the first RETRACTED A's claim on 'new-A', so this
-    // second build has to assert its own — otherwise it is claim-less and B sails past the check.
+    // Refine from A's now-adopted chat (POST-build only — the composer is shut while the agent
+    // works). The press hands off AGAIN to a SECOND fresh chat, so this build has to assert its
+    // own claim — the first was already retracted when its build ended.
     const second = scriptBuildTurn({ plan: planReply('Make it dark.', 'opt-2') })
     h.readTurnStream.mockImplementation(second.impl)
     turn = second
     mintBuild('new-A2', 'First build (refined)')
     await buildFrom(a.container, 'make it dark mode')
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalledTimes(2))
-    // This page never provisions a C3 session any more — `session.start()` is not merely unused,
-    // it is deleted, along with the client wrapper under it (see `ConversationSurface.tsx`'s
-    // docblock). `h.stop` pins that the retired stop-a-live-session arm is never reached on this
-    // path, not that a candidate was found and skipped.
+    // `session.start()` is deleted, not merely unused — `h.stop` pins that the retired
+    // stop-a-live-session arm is never reached on this path, not that a candidate was skipped.
     expect(h.stop).not.toHaveBeenCalled()
     await within(a.container).findByTestId('stop-turn')
 
@@ -275,11 +251,9 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
   })
 
   it('a same-project already_started outcome CLAIMS the project too — a second chat is still warned', async () => {
-    // A's transition answers `already_started` (a double click, or a race with another tab, beat
-    // it): the turn is already running in the chat A's OWN mint named, and this press simply
-    // JOINS it. Joining is still building as far as every other tab is concerned, so this arm has
-    // to claim exactly like `started` does — else A's live build is claim-less and B sails past
-    // the advisory pre-check.
+    // A's transition answers `already_started` (a double click, or a race, beat it): the turn is
+    // already running, and this press simply JOINS it. Joining still has to claim exactly like
+    // `started` does — else A's live build is claim-less and B sails past the pre-check.
     mintBuild('new-A', 'First build')
     h.buildFromPlan.mockResolvedValueOnce({ outcome: 'already_started', chatId: 'new-A', turnId: BUILD_TURN_ID })
     const a = renderBuilder('build-A')
@@ -310,11 +284,8 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
     expect(/already building this project/i.test((await within(b.container).findByTestId('urgent-banner')).textContent)).toBe(true)
     expect(h.buildFromPlan).toHaveBeenCalledTimes(1)
 
-    // A's build ends → its advisory claim retracts once `endGenerating` runs at the reattach's
-    // settle point. NOT `findByTestId('build-outcome')` — see the matching comment in "a second
-    // build RE-ACQUIRES the claim" above: that card has no call site on this path yet
-    // (ConversationSurface-outcome.test.jsx), so the live bubble clearing is the honest signal that the
-    // turn actually ended.
+    // A's build ends → its claim retracts once `endGenerating` runs (see "a second build
+    // RE-ACQUIRES the claim" above for why this waits on the live bubble, not `build-outcome`).
     await turn.frame(T_BUILD_END())
     await turn.end()
     await waitFor(() => expect(within(a.container).queryByTestId('stop-turn')).toBeNull())
@@ -330,20 +301,13 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
   })
 
   it('★ Back, straight after a handoff, does not leave the chat it returns to blank', async () => {
-    // THE HANDOFF MADE THIS REACHABLE ON THE COMMONEST ACTION THERE IS. Build it pushes a
-    // navigation to the new chat, and the arrival effect wipes the transcript on screen before
-    // a byte of the new one arrives. Press Back before that fetch resolves and the effect runs
-    // again for the chat we came from — where its own "already loaded" guard used to still
-    // name it, because the guard was only ever updated on a SUCCESSFUL load. Hydration was
-    // skipped, and the citizen sat looking at the empty transcript the outbound trip made,
-    // with no way back to it short of reloading the page.
-    //
-    // The guard means "the chat whose transcript is on screen". Clearing the transcript has to
-    // clear it too, and this is what says so.
+    // The "already loaded" guard means "the chat whose transcript is on screen" — clearing the
+    // transcript on arrival has to clear the guard too, or a Back press mid-hydration returns to
+    // a chat the guard still calls loaded, and its transcript never re-fetches.
     mintBuild('new-A', 'First build')
-    // THE FETCH FOR THE NEW CHAT NEVER RESOLVES, which is the whole precondition: Back has to
-    // land while the outbound hydration is still in flight. A resolved one would have moved
-    // the guard on to the new chat, and the return trip would re-hydrate for the wrong reason.
+    // THE WHOLE PRECONDITION: the new chat's fetch must NEVER resolve, so Back lands while the
+    // outbound hydration is still in flight — a resolved one would move the guard on and the
+    // return trip would re-hydrate for the wrong reason.
     const settled = h.getBuild.getMockImplementation()
     h.getBuild.mockImplementation(async (id) => (id === 'new-A' ? new Promise(() => {}) : settled(id)))
 
@@ -364,15 +328,11 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
   })
 
   it('★ releases the claim when the chat it handed off to has nothing running', async () => {
-    // THE LEAK THE HANDOFF OPENED. Acquire and release used to be one scope — the build ran in
-    // the chat the button was pressed in, and that watcher's own settle retracted the claim.
-    // Now the press claims a chat it is about to NAVIGATE to, and the release belongs to
-    // whoever ends up watching that chat's turn. When there is no turn to watch — the build
-    // ended before this page arrived and asked, or the read projection has not caught up —
-    // nobody retracts it, and the 5s heartbeat goes on announcing a claim with nothing behind
-    // it. The citizen's symptom is not subtle: every later Build press in this project, in
-    // this tab or a sibling, is told "another chat is already building this project", and
-    // only closing the tab clears it.
+    // THE LEAK THE HANDOFF OPENED: the press claims a chat it is about to NAVIGATE to, and
+    // release belongs to whoever ends up watching that chat's turn. When there is no turn to
+    // watch — the build ended before this page arrived, or the read projection lagged — nobody
+    // retracts it, and every later Build press in this project is told "another chat is already
+    // building" until the tab closes.
     //
     // Registered in the project directory but deliberately NOT in `liveTurnByChat`, which is
     // exactly "arrived, asked, and nothing is running here".
@@ -403,15 +363,10 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
 })
 
 describe('a SIBLING conversation is never blocked by another chat\u2019s build', () => {
-  // RE-POINTED, NOT DELETED (Plan D U17). This used to mount `ChatPage` beside the builder,
-  // because a planning chat was a different component on a different transport and the claim was
-  // that the build lock did not reach it. One surface serves both kinds now, so the same claim is
-  // made the way it can be made: a SECOND conversation, mounted through the same surface, sends
-  // while the first one's build holds the project's advisory claim.
-  //
-  // The claim is still worth pinning, and arguably more so: with one component the risk that a
-  // project-scoped lock leaks into a sibling chat is higher, not lower, than when the two were
-  // separate files.
+  // One surface now serves both a planning chat and a builder, so the claim is made the way it
+  // can be: a SECOND conversation, mounted through the same surface, sends while the first one's
+  // build holds the project's advisory claim. Still worth pinning, arguably more so — one
+  // component raises the risk of a project-scoped lock leaking into a sibling chat, not lowers it.
   it('sends freely while a build is live in another chat of the same project', async () => {
     mintBuild('new-A', 'First build')
     const a = renderBuilder('build-A')

@@ -1,39 +1,26 @@
 /**
- * CHARACTERIZATION — the preview address, exactly as it resolves today (Plan A, U1).
+ * WHY THIS EXISTS — pins the preview address exactly as it resolves today, ahead of the
+ * workspace-shell extraction that turns this three-source precedence into a named resolver
+ * called from above the chat. A resolver that "tidied" the two gating predicates into one must
+ * not pass unnoticed, so this pins the asymmetry below that looks like a bug and is not.
  *
- * WHAT THIS FILE IS FOR. The workspace-shell extraction moves the pane out of this page: the
- * three-source precedence becomes a named resolver called from above the chat (U2), and the iframe
- * becomes a shell-mounted host whose identity is that address plus its reload nonce (U4). Both
- * moves are claimed to be behaviour-preserving, and a suite that only exercised the happy path
- * would let a resolver that "tidied" the two predicates into one pass unnoticed. So this file pins
- * the address AS IT IS — including the asymmetry that looks like a bug and is not.
+ * THE RULE: a live turn's preview outranks a relaunched URL, which outranks the session's URL —
+ * the turn arm is gated by the CHAT predicate alone, the lower two by the PROJECT predicate alone.
  *
- * THE THING BEING PINNED, in one line: a live turn's preview outranks a relaunched URL, which
- * outranks the session's URL — and the turn arm is gated by the CHAT predicate alone while the
- * lower two are gated by the PROJECT predicate alone.
+ * Why the lower arm below is usually the relaunched URL: a session still framing is by definition
+ * an ACTIVE build, which closes this chat's own composer gate — so a scenario needing both a
+ * lower arm and a send can't use it. A relaunch has no lifecycle at all, so it frames without
+ * gating anything.
  *
- * WHY THE LOWER ARM IS USUALLY THE RELAUNCHED URL HERE. A session whose status still frames is by
- * definition an ACTIVE build (`isActiveBuildStatus` counts `ready`), which closes the composer gate
- * on its own chat — so a scenario that needs both a lower arm and a send cannot use it. A relaunch
- * is the arm with no lifecycle at all (`useBuildSession.relaunch` deliberately leaves the session's
- * status untouched), so it frames without gating anything. The session arm has its own two
- * scenarios below, where nothing needs to be sent.
+ * NOT RE-PINNED HERE (already pinned once, elsewhere):
+ *  - composer draft + scroll across a hide/show cycle → `ProjectWorkspace.test.tsx`
+ *  - a send refused mid-turn → `ConversationSurface-composer.test.jsx`, `-session.test.jsx`
+ *  - cross-project build-gate isolation → `ConversationSurface-session.test.jsx`
+ *  - the reload nonce's two legitimate bumps → `components/__tests__/LivePreview.test.jsx`
  *
- * WHAT IS DELIBERATELY NOT RE-PINNED HERE, because it is already pinned once and two assertions of
- * one fact drift apart:
- *  - the composer draft across a panel hide/show — `ConversationSurface-panel.test.jsx:57`;
- *  - the scroll position across the same cycle — `:86`, the one that actually discriminates a
- *    CSS-hide from an unmount;
- *  - a send refused while a turn runs — `ConversationSurface-composer.test.jsx:179`,
- *    `ConversationSurface-session.test.jsx:316,338`;
- *  - cross-project isolation of the build gate — `ConversationSurface-session.test.jsx:543`;
- *  - the reload nonce's two legitimate bumps, a turn ending over a live preview and the manual
- *    Reload — `components/__tests__/LivePreview.test.jsx:355` and `:375`.
- *
- * The pane is the REAL LivePreview, so the address is read off the actual iframe rather than off a
- * stubbed marker; a thin recording wrapper captures the props on the way through, because the
- * app-scoped ones (`compileState`, `workspaceLost`) are facts about the project's one app and their
- * whole characterization is that the chat predicate does NOT reach them.
+ * The pane is the REAL LivePreview; a recording wrapper captures its props on the way through,
+ * since the app-scoped ones (`compileState`, `workspaceLost`) are how this file proves the chat
+ * predicate does NOT reach them.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createElement } from 'react'
@@ -76,9 +63,7 @@ vi.mock('../../utils/builderHistory', () => ({
 }))
 vi.mock('../../utils/conversationApi', () => ({ listProjectConversations: h.listProjectConversations }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
-// A RECORDING WRAPPER, not a stub: the real pane still renders (so the iframe and its element
-// identity are observable) and the props are captured on the way through (so the app-scoped ones
-// are readable without asserting against the pane's cover copy, which is not this file's subject).
+// A recording wrapper, not a stub — see the module docblock for why.
 vi.mock('../../components/LivePreview', async (orig) => {
   const actual = await orig<typeof import('../../components/LivePreview')>()
   return {
@@ -93,11 +78,9 @@ vi.mock('../../utils/attachmentStore', async (orig) => ({
   ...(await orig<typeof import('../../utils/attachmentStore')>()),
   buildUserParts: h.buildUserParts,
 }))
-// `switchMode` is GONE — a chat's kind is fixed at creation, so there is no per-thread
-// setting left to switch, and a factory that still listed it would be mocking an export the
-// real module no longer has. This file was the last of ten still carrying the key; the other
-// nine already said so here. `resolvePlanOptions` is a real export, kept mocked only because
-// the surface reaches for it when a plan offer is answered — never exercised here.
+// `switchMode` is GONE — a chat's kind is fixed at creation. `resolvePlanOptions` stays mocked
+// because the surface reaches for it when a plan offer is answered, even though it's never
+// exercised here.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig<typeof import('../../utils/turnStreamApi')>()),
   startTurn: (...a: unknown[]) => h.startTurn(...a),
@@ -113,9 +96,8 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   fetchCompileState: (...a: unknown[]) => h.fetchCompileState(...a),
   checkWorkspace: (...a: unknown[]) => h.checkWorkspace(...a),
   // `StartAppControl.tsx` imports `relaunchPreview` DIRECTLY from this module rather than through
-  // the injected C3 client — it predates the client and was never moved onto it (Plan F, U3). This
-  // suite's vehicle for a relaunched URL is that control now (`RelaunchAffordance` is gone), so its
-  // call has to land on the same `h.relaunchPreview` the fixtures below already prime.
+  // the injected client, so its call has to land on the same `h.relaunchPreview` the fixtures
+  // below already prime.
   relaunchPreview: (...a: unknown[]) => h.relaunchPreview(...a),
 }))
 
@@ -154,19 +136,12 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 /**
- * Bring up a page whose RELAUNCH arm is live and stamped to `projectId`.
+ * Brings up a page whose RELAUNCH arm is live, stamped to `projectId`.
  *
- * RE-POINTED (Plan F, U3/U4). The old vehicle clicked a "Relaunch" button `LivePreview` rendered
- * inside its own terminal placeholder, fed by `handleRelaunch` — which stamped `sessionProjectRef`
- * as a side effect of the click itself. All of it is gone now: `RelaunchAffordance` and its four
- * render sites went first, `handleRelaunch` had no caller after that because `onRelaunch` was a
- * pane prop nothing read, and the whole chain — callback, flag, error and hook function — has since
- * been deleted rather than left threaded for typing continuity. The one control left
- * is `StartAppControl`, and getting it a chance to press is the whole of what changed here —
- * `primeStandbyReattach` stamps the ref `StartAppControl`'s OWN click path never touches, and
- * `findStartAppControl` presses whichever label the map is currently showing (both call the exact
- * same underlying `start()`). See its docblock in `_builderSession.jsx` for the full account,
- * including the real product bug this chase turned up.
+ * The vehicle is `StartAppControl` (the old Relaunch-button affordance is gone):
+ * `primeStandbyReattach` stamps the ref its own click path never touches, and
+ * `findStartAppControl` presses whichever label it's currently showing. Full account,
+ * including a real product bug this uncovered, is in `_builderSession.jsx`'s docblock.
  */
 async function relaunchFramedAt(chatId: string, projectId: string) {
   const reattach = primeStandbyReattach(h, { chatId, projectId })
@@ -175,9 +150,8 @@ async function relaunchFramedAt(chatId: string, projectId: string) {
   fireEvent.click(await findStartAppControl())
   await waitFor(() => expect(h.relaunchPreview).toHaveBeenCalled())
   await waitFor(() => expect(framedUrl()).toBe(RELAUNCH_URL))
-  // Settle the standby reattach now that the relaunch has framed what this fixture needs: several
-  // callers send a turn right after this returns, and a reattach left pending forever would keep
-  // the composer gate shut on them for good (see the docblock on `primeStandbyReattach`).
+  // Several callers send a turn right after this returns — a reattach left pending would keep
+  // the composer gate shut on them for good (see `primeStandbyReattach`'s docblock).
   reattach.settle()
   await waitFor(() => expect(screen.queryByText(/checking whether a build/i)).toBeNull())
   return view
@@ -244,16 +218,9 @@ describe('BuilderPage — the preview address: three sources, two predicates', (
   it('a relaunched URL outranks the session\'s own URL', async () => {
     // The middle of the precedence, which only shows when both lower arms are populated at once: a
     // relaunch restores an app the ENDED session's dead preview would otherwise still be naming.
-    //
-    // RE-POINTED. The session's own dead `SESSION_URL` is exactly what used to make `LivePreview`
-    // render its terminal placeholder WITH a Relaunch button — that button is gone, and framing a
-    // real (if dead) session URL is enough on its own to keep `AppPane` showing `AppPaneHost`'s own
-    // now-buttonless terminal card (`showTerminal`), never `NoFrame`. What gets `StartAppControl`
-    // a chance to press here is the SAME veto `AppPane.tsx` documents for every other state that
-    // definitely means nothing is serving: a settled `asleep`+`restorable` reading resolves the
-    // workspace map to `not-running`, and THAT swaps `AppPaneHost` for `NoFrame`. The poll only
-    // ever runs once something is framed, and the dead session URL is what starts it — so the
-    // sequence is mount, let the poll answer, THEN find and press the one control it leaves behind.
+    // `asleep`+`restorable` is what resolves the workspace map to `not-running` for that dead
+    // session. The poll only runs once something is framed, so the sequence here is mount, let the
+    // poll answer, THEN press.
     h.getBuild.mockResolvedValue(withLiveBuildAnchor('live-7'))
     h.getStatus.mockResolvedValue(
       statusResp({ sessionId: 'live-7', status: 'ended', previewUrl: SESSION_URL }),
@@ -266,12 +233,8 @@ describe('BuilderPage — the preview address: three sources, two predicates', (
 
     fireEvent.click(await findStartAppControl())
     await waitFor(() => expect(h.relaunchPreview).toHaveBeenCalled())
-    // The veto that got `StartAppControl` on screen at all is still standing — `fetchPreviewState`
-    // is still answering the same `asleep`/`restorable` reading, and the press does not itself
-    // change what the workspace map says (`onStartOutcome` only asks it again; the resolved
-    // ADDRESS and what `AppPane` is willing to FRAME from it are two different questions — see its
-    // own veto note). Answer it `alive` now, the same way the poll suite re-arms one, so the frame
-    // this precedence claim is actually about gets a chance to mount.
+    // The press doesn't itself change what the workspace map says — `onStartOutcome` only asks it
+    // again. Answer `alive` now so the frame this test is actually about gets a chance to mount.
     h.fetchPreviewState.mockResolvedValue({
       state: 'alive', alive: true, previewUrl: RELAUNCH_URL, occupyingProjectName: null, restorable: null,
     })
@@ -302,10 +265,9 @@ describe('BuilderPage — the preview address: three sources, two predicates', (
 
 describe('BuilderPage — the app-scoped props are NOT narrowed to the open chat', () => {
   it('the compile state reaches the pane while the narrating chat is a sibling', async () => {
-    // `compileState` and `workspaceLost` are facts about the PROJECT'S ONE APP, and their producer
-    // outlives the turn. They are deliberately ungated by `turnNarrativeIsThisChat`, and blanking
-    // them on a chat switch is what leaves an error screen uncovered. They are not address sources
-    // and must not follow the address into the resolver.
+    // `compileState`/`workspaceLost` are facts about the PROJECT'S ONE APP, deliberately ungated
+    // by `turnNarrativeIsThisChat` — blanking them on a chat switch is what leaves an error screen
+    // uncovered.
     const view = await relaunchFramedAt('chat-A', 'pA')
     h.readTurnStream.mockImplementation(
       turnStreaming([T_DELTA('working'), T_PREVIEW(TURN_URL), { type: 'compile', seq: 4, state: 'failed' }, T_END()]),
@@ -324,10 +286,8 @@ describe('BuilderPage — the app-scoped props are NOT narrowed to the open chat
 
 describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else', () => {
   it('re-rendering at the same address keeps the SAME iframe node and does not re-issue its src', async () => {
-    // AE4's mechanism, at the page level. `LivePreview` pins that a same-key render keeps the node
-    // (`LivePreview.test.jsx:143`); what is unproven without this is that the PAGE keeps handing it
-    // the same address across an ordinary re-render — the property the shell extraction must not
-    // lose, since after it the pane outlives the route entirely.
+    // `LivePreview.test.jsx` already pins that a same-key render keeps the node; unproven without
+    // this is that the PAGE keeps handing it the same address across an ordinary re-render.
     const view = await relaunchFramedAt('chat-A', 'pA')
     const before = frame()
     let loads = 0
@@ -351,15 +311,13 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
     // pushed in below rather than replaying a plan and completing.
     const turn = scriptBuildTurn({ hold: true })
     h.readTurnStream.mockImplementation(turn.impl)
-    // AN ORDINARY SEND, not the plan card. This page renders a BUILD chat and every send on one
-    // is a build turn, so a send is the shortest honest way to get a build streaming here — and
-    // the card is no longer even a route to one from this chat: pressing Build it hands off to a
-    // SECOND chat and navigates there, so the turn it starts would never stream into this frame.
+    // An ordinary send, not the plan card: this page renders a BUILD chat, so every send on it is
+    // already a build turn — the card would hand off to a SECOND chat whose turn would never
+    // stream into this frame.
     await send('a visitor app')
-    // NO `turnId` IN THE SUBSCRIBE, and that is the send path's shape rather than an oversight:
-    // a send subscribes to whatever turn its own POST just started on this conversation, so the
-    // id is the server's to know. Only a RE-ATTACH names a turn, because it is joining one it
-    // did not start.
+    // NO `turnId` in the subscribe is the send path's shape, not an oversight: a send subscribes
+    // to whatever turn its own POST just started, so the id is the server's to know. Only a
+    // RE-ATTACH names a turn, because it's joining one it didn't start.
     await waitFor(() =>
       expect(h.readTurnStream).toHaveBeenCalledWith(
         expect.objectContaining({ conversationId: 'chat-A' }),
@@ -377,12 +335,12 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
     view.unmount()
   })
 
-  it('★ AE5 — a SECOND SEND does not remount the app (#200)', async () => {
-    // ★ THE DEFECT, MEASURED THE WAY THE ISSUE MEASURED IT. `#200` was proven by stamping a marker
-    // on the live `<iframe>` before the send and finding `marked === false` when the card came
-    // back: the element was REPLACED, so the generated app re-requested its document on every
-    // message and discarded its in-app state — form entries, selected tab, scroll position. The
-    // backend read `{"state":"alive"}` before and after; same container, same URL throughout.
+  it('★ a SECOND SEND does not remount the app', async () => {
+    // ★ THE DEFECT, MEASURED THE WAY IT WAS ORIGINALLY PROVEN. Stamping a marker on the live
+    // `<iframe>` before the send and finding `marked === false` when the card came back: the
+    // element was REPLACED, so the generated app re-requested its document on every message and
+    // discarded its in-app state — form entries, selected tab, scroll position. The backend read
+    // `{"state":"alive"}` before and after; same container, same URL throughout.
     //
     // SO THIS ASSERTS ELEMENT IDENTITY, NOT THE ADDRESS MATCHING. Those are different claims: the
     // src is byte-identical across a remount, which is exactly why the URL comparison the earlier
@@ -446,7 +404,6 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
     view.moveTo({ chatId: 'chat-B', projectId: 'pB' })
     await waitFor(() => expect(frame()).toBeNull())
 
-    // Coming back re-acquires the address, and the frame that returns is a NEW element.
     view.moveTo({ chatId: 'chat-A', projectId: 'pA' })
     await waitFor(() => expect(framedUrl()).toBe(RELAUNCH_URL))
     expect(frame()).not.toBe(before)
@@ -455,7 +412,7 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
 })
 
 /**
- * THE FOURTH ARM: the project's own live preview, on a CHAT route (#192, U11).
+ * THE FOURTH ARM: the project's own live preview, on a CHAT route.
  *
  * WHAT WAS BROKEN. Reload a build chat whose app is up — a bookmark, an F5, a browser restart —
  * and the headline said the app was running while the pane framed nothing. Two independent

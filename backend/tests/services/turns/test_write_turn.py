@@ -1,8 +1,4 @@
-"""U5 — a WRITE turn on the chat engine: the convergence, tested at the engine seam.
-
-Write used to be a build: its own agent, its own harness, its own SSE feed, its own metering.
-It is now an ordinary turn that happens to hold the sandbox six, and these tests pin the four
-properties that were easiest to lose in the move.
+"""A WRITE turn on the chat engine: the convergence, tested at the engine seam.
 
 - THE SAVE. `finish_write_turn` runs on every terminal arm, including the cancelled one.
   Without it a Write turn reports success and the reaper deletes the work.
@@ -151,12 +147,9 @@ def _scripted(
     turns: list[list[list[tuple[str, str]] | str]],
 ) -> tuple[FunctionModel, dict[str, int]]:
     """A STREAMING scripted model — one canned response list per `agent.iter` run, so a test
-    can drive the self-heal loop's second and third passes.
-
-    Streaming, not `FunctionModel(respond)`, because the engine walks the run node by node and
-    calls `node.stream(...)`: that is what produces the live `text_delta` and `step` frames, and
-    a non-streaming model cannot serve it. `counts["requests"]` is how many model requests
-    actually fired — the number the daily-cap gate exists to bound.
+    can drive the self-heal loop's second and third passes. Streaming (not
+    `FunctionModel(respond)`) is what produces the live `text_delta`/`step` frames a
+    non-streaming model cannot serve; `counts["requests"]` is how many model requests fired.
 
     Each scripted step is either a plain string (a text reply) or a list of `(tool, json_args)`.
     """
@@ -239,7 +232,7 @@ async def _run(
 async def test_a_turn_terminal_frees_the_slot_without_saving(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ THE SAVE MODEL (KTD-5e). The terminal used to snapshot, which made every message a new
+    """★ THE SAVE MODEL. The terminal used to snapshot, which made every message a new
     saved version and left the user no way to try something and walk away from it. Saving is
     their click now; the terminal's job is to free the slot and leave the container up.
 
@@ -263,7 +256,7 @@ async def test_a_turn_terminal_frees_the_slot_without_saving(
     )
 
     assert state.write_session is not None
-    assert snapshot_key(state.write_session.app_id) not in fake_storage.objects  # nothing saved
+    assert snapshot_key(state.write_session.app_id) not in fake_storage.objects
     assert client.torn_down == []  # …and the container is still up, holding the work
     assert manager.active_session_for(user.id) is None  # the slot is free for the next message
 
@@ -383,9 +376,9 @@ async def test_the_daily_cap_is_checked_before_every_model_request(
     assert counts["requests"] == 2  # …and the third request NEVER fired
     assert state.status == "failed"
     assert state.end_reason == "quota_exceeded"
-    # THE WHOLE SENTENCE, not the substring "budget" — which the pre-U24 hardcoded string also
+    # THE WHOLE SENTENCE, not the substring "budget" — which the previous hardcoded string also
     # contained, so the weaker assertion stayed green through a full revert of the unit. It names
-    # what happened, that a copy was kept, when it resets, and who to ask (R31/AE18).
+    # what happened, that a copy was kept, when it resets, and who to ask.
     assert state.error_message == AT_LIMIT_TEXT.format(
         kept=KEPT_A_COPY, contact=settings.SUPPORT_CONTACT_EMAIL
     )
@@ -493,17 +486,13 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE ZERO-FILE BUILD. A live run read a file, said something reassuring, touched
-    NOTHING — and the citizen was told "Build complete — your app is live below" over a
-    container still serving the 145-character golden template, 65k tokens later. The guard
-    above is right for a chat turn and catastrophic for a build: a turn started from a plan
-    card was ASKED to build, so a zero-mutation outcome is a failure, not a quiet success.
+    """★ THE ZERO-FILE BUILD. The guard above is right for a chat turn and catastrophic for a
+    build: a turn started from a plan card was ASKED to build, so a zero-mutation outcome is a
+    failure, not a quiet success.
 
     The copy must say plainly that nothing was built, and must not claim the work is saved —
-    there is no auto-save (KTD-5e), and here there is not even any work to save.
-
-    Mutation-check: restore the bare `return` in the mutation guard and this goes red on
-    `status == "completed"`."""
+    there is no auto-save, and here there is not even any work to save. Mutation-check:
+    restore the bare `return` in the mutation guard and `status == "completed"` goes red."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt13@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -533,7 +522,7 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     message = state.error_message or ""
     assert "nothing" in message.lower()  # named plainly, not as "the assistant hit a problem"
     assert "unchanged" in message  # …and the app's actual state, said out loud
-    assert "saved" not in message  # no auto-save exists to claim (KTD-5e)
+    assert "saved" not in message  # no auto-save exists to claim
     assert counts["runs"] == 1  # it ends; it does not nudge the model round again
 
 
@@ -546,12 +535,9 @@ async def test_declaring_done_is_not_evidence_that_anything_was_built(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ THE SECOND DOOR INTO THE SAME LIE. The guard above asks "did anything change?", but it
-    asked it as `workspace_touched OR done_requested` — and `declare_done` set BOTH flags. So a
-    model that wrote not one file and simply declared itself finished satisfied the guard and
-    collected "Build complete — your app is live below" over an untouched template: the exact
-    outcome the guard exists to prevent, reached by asking the accused for a character
-    reference.
-
+    asked it as `workspace_touched OR done_requested` — and `declare_done` set BOTH flags, so a
+    model that wrote not one file and simply declared itself finished satisfied it, which is the
+    outcome the guard exists to prevent, reached by asking the accused for a character reference.
     A claim is not a mutation. On a turn that was ASKED to build, only a real write counts.
 
     Mutation-check: restore `session.workspace_touched = True` in `declare_done` (or put
@@ -599,7 +585,7 @@ async def test_budget_exhaustion_with_a_green_app_does_not_claim_an_error(
 ) -> None:
     """★ The green ending: every verify passed and the model simply never called
     `declare_done`. The old copy told this user their app "still has an error" — a defect
-    hunt with no defect — and claimed the work was "saved" when nothing auto-saves (KTD-5e).
+    hunt with no defect — and claimed the work was "saved" when nothing auto-saves.
     The copy the user sees must say the app checks out, and that the changes sit in the
     workspace awaiting THEIR Save click."""
     engine = _fresh_engine
@@ -625,7 +611,7 @@ async def test_budget_exhaustion_with_a_green_app_does_not_claim_an_error(
     message = state.error_message or ""
     assert "checks out" in message  # the app is fine, and the copy says so
     assert "error" not in message  # no invented defect to hunt for
-    assert "saved" not in message  # no auto-save exists to claim (KTD-5e)
+    assert "saved" not in message  # no auto-save exists to claim
     assert "workspace" in message and "Save" in message  # the truthful keep-it instruction
 
 
@@ -637,13 +623,13 @@ async def test_budget_exhaustion_with_a_red_app_still_names_the_error(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ COVERS AE7 — THE HONEST ENDING (U7/R13). The sentence this asserts replaced one that
+    """THE HONEST ENDING. The sentence this asserts replaced one that
     named a defect ("your app still has an error") and left the citizen to work out what they
     were looking at. What they should do next depends entirely on that: the starting template,
     their own app one change behind, and nothing at all are three different situations.
 
     The other half of the old assertion survives and matters as much: no arm may claim the work
-    is "saved". There is no auto-save (KTD-5e) — the changes sit in the workspace until the
+    is "saved". There is no auto-save — the changes sit in the workspace until the
     user's own click."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt12@rvaiglobal.com")
@@ -728,7 +714,7 @@ async def test_no_write_step_row_ever_carries_a_user_prompt(
 
 
 def _build_it_shaped_history() -> list[ModelMessage]:
-    """The trigger shape KTD-7 root-caused, structural to every Build-it: a DB-loaded
+    """The trigger shape behind the bug, structural to every Build-it: a DB-loaded
     ModelResponse (provider fields set, as loaded responses have) followed by THREE
     consecutive ModelRequests — the plan-options resolution appended as its own row, the
     mode-switch marker, and the seeded build prompt. pydantic-ai's `_clean_message_history`
@@ -760,7 +746,7 @@ def _build_it_shaped_history() -> list[ModelMessage]:
 
 def _flattened_pairing_violations(rows) -> list[str]:
     """Tool answers persisted with NO same-id tool-call at a strictly earlier flattened
-    (row-seq, message, part) position — each one is a stored 400 (KTD-7 / U5's orphan)."""
+    (row-seq, message, part) position — each one is a stored 400."""
     calls: dict[str, int] = {}
     violations: list[str] = []
     position = 0
@@ -793,8 +779,8 @@ async def _all_rows(db: AsyncSession, conv) -> list[Message]:
 async def test_a_build_it_run_persists_every_tool_call_its_answers_need(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ KTD-7 — the write half of the round-3 P0, asserted over RAW rows (`load_history`
-    would mask it: its U5 repair drops exactly the orphan this bug mints). With a Build-it-
+    """★ The write half of the bug, asserted over RAW rows (`load_history`
+    would mask it: its repair drops exactly the orphan this bug mints). With a Build-it-
     shaped history the pre-clean cursor overshoots by two and the run's first ModelResponse —
     the row carrying the write_file tool call — is never persisted; the stored history then
     holds a `tool_result` with no `tool_use` and Anthropic 400s every later turn.
@@ -891,16 +877,17 @@ async def test_a_genuinely_empty_delta_still_noops(
     assert await _all_rows(db_session, conv) == []
 
 
-# --- U2: the dev server boots when the turn attaches -------------------------
+# --- the dev server boots when the turn attaches -------------------------
 
 
 class _NoFreeLunchSandbox(FakeSandboxClient):
     """A container whose dev server does NOT run until somebody starts it.
 
     The shared fake answers `/dev/status` with `ready=True` unconditionally, which quietly
-    hands every test a preview nobody paid for — and would let U2's regression guard pass
-    without U2. This one couples status to start the way a real supervisor does, so "who
-    started the server, and when" becomes an observable fact rather than a fixture's gift.
+    hands every test a preview nobody paid for — and would let the regression guard below pass
+    whether or not the fix actually landed. This one couples status to start the way a real
+    supervisor does, so "who started the server, and when" becomes an observable fact rather
+    than a fixture's gift.
     """
 
     def __init__(
@@ -944,7 +931,7 @@ def _preview_ready_frames(state: _TurnState) -> list[object]:
 async def test_dev_start_fires_at_attach_before_the_model_runs(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ U2 (R2). Next's first route compile is 5-7s and it used to start only after the whole
+    """★ Next's first route compile is 5-7s and it used to start only after the whole
     model run plus a `tsc`. Booting it at attach overlaps that compile with the model's own
     first request. The assertion is on ORDERING, not on a call count: `dev_start` must land
     before request one, or the overlap it exists to buy never happens."""
@@ -1037,7 +1024,7 @@ async def test_an_already_serving_container_neither_raises_nor_double_frames(
 async def test_a_dev_start_blip_is_swallowed_and_selfheal_still_rescues(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ R6 — every new step fails open. `dev_start` at attach is an OPTIMIZATION; a supervisor
+    """★ Every new step fails open. `dev_start` at attach is an OPTIMIZATION; a supervisor
     blip there must cost the preview a few seconds, never the turn. `verify`'s dead-child
     rescue is the backstop, and it still runs."""
     engine = _fresh_engine
@@ -1077,17 +1064,14 @@ async def test_a_dev_start_blip_is_swallowed_and_selfheal_still_rescues(
 async def test_a_cancel_during_the_sandbox_terminal_still_frees_the_conversation(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ THE GUARD RELEASE. `_run_turn`'s `finally` runs `finish_turn_sandbox` under
-    `asyncio.shield`, and the surrounding `suppress(Exception)` does NOT catch
-    `CancelledError` — it is a `BaseException`. So a cancel delivered while that call is in
-    flight propagates straight out of the block.
+    """★ THE GUARD RELEASE. `finish_turn_sandbox` runs under `asyncio.shield` inside
+    `_run_turn`'s `finally`, whose `suppress(Exception)` does not catch `CancelledError` (a
+    `BaseException`), so a cancel mid-terminal propagates straight out. Un-nesting the release
+    here used to skip `release_conversation` altogether, and the guard never expires on its own
+    (`guard.py`) — so every later turn in the conversation answered 409 for the rest of the
+    process's life.
 
-    Flat, that skipped `release_conversation` altogether, and the guard never expires on its
-    own (`guard.py`) — so every later turn in the conversation answered 409 for the rest of the
-    process's life. The release lives in its own nested `finally` for exactly this.
-
-    Mutation-check: un-nest the release in `_run_turn`'s `finally` and this goes red.
-    """
+    Mutation-check: un-nest the release in `_run_turn`'s `finally` and this goes red."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wtguard@rvaiglobal.com")
     client = FakeSandboxClient()
@@ -1140,7 +1124,7 @@ async def test_a_cancel_during_the_sandbox_terminal_still_frees_the_conversation
     await asyncio.sleep(0)
 
 
-# --- R17/R18: the compile signal's channel to the portal --------------------------------------
+# --- the compile signal's channel to the portal --------------------------------------
 #
 # The consumer half lives in the container; what is pinned here is the CHANNEL — that the state
 # reaches a subscribed client as a turn frame, on change only, and that a signal we cannot read
@@ -1301,7 +1285,7 @@ async def test_a_compile_poll_never_takes_the_preview_watcher_down(_fresh_engine
     assert state.compile_state is CompileState.UNKNOWN
 
 
-# --- R17 (runtime half): a browser crash repairs, and does not narrate ------------------------
+# --- the runtime half: a browser crash repairs, and does not narrate ------------------------
 
 
 def _diagnostic_frames(state: _TurnState) -> list[object]:
@@ -1316,16 +1300,13 @@ async def test_a_client_class_error_repairs_the_app_without_narrating_it(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ U13's verification, at the only place it can be checked: a runtime crash is visible to
-    the agent and to the verdict, and invisible to the user except as the absence of a success
-    claim.
+    """★ Verified at the only place it can be checked: a runtime crash is visible to the agent
+    and to the verdict, and invisible to the user except as the absence of a success claim.
 
-    THE TRAP THIS PINS. The tidier-looking way to reach the same outcome is to have `verify`
-    return red with no error at all — and ten lines above the emit, a red outcome with no error
-    synthesizes `dev_not_ready_error()`. The user would then get a SERVER diagnostic that is both
-    rendered AND wrong, and the model would be handed the same misdiagnosis to chase. So the
-    verdict carries the real error and only the render is skipped, which is what the pairing of
-    assertions below actually proves."""
+    THE TRAP THIS PINS: the tidier-looking way to reach the same outcome is `verify` returning
+    red with no error at all, which a few lines above the emit synthesizes `dev_not_ready_error()`
+    — a SERVER diagnostic that is both rendered and wrong. The verdict must carry the real error
+    while only the render is skipped, which is what the pairing of assertions below proves."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt-client-err@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -1365,7 +1346,7 @@ async def test_a_client_class_error_repairs_the_app_without_narrating_it(
     )
 
     # ABSENCE: nothing about the crash is narrated. The report was written by code inside the
-    # generated app; a stack trace under a file-path title is the developer surface this plan
+    # generated app; a stack trace under a file-path title is the developer surface this feature
     # exists not to create.
     assert _diagnostic_frames(state) == []
     ring_text = " ".join(str(getattr(f, "title", "")) for f in state.ring)
@@ -1427,7 +1408,7 @@ async def test_a_compile_error_still_narrates_exactly_as_before(
 
 
 # =============================================================================
-# U7 / R13 — the honest ending, and U8 / R14 — the workspace note
+# the honest ending, and the workspace note
 # =============================================================================
 
 
@@ -1502,8 +1483,7 @@ def test_each_showing_arm_is_read_off_the_verdict() -> None:
 
 # THE VOCABULARY BAR, hoisted to module scope so more than one guard can hold a sentence to it.
 # The bar is the citizen's vocabulary, not a spell-checker's: `.tsx`, `npm`, `git`, `Next.js` and
-# their friends all name things the person who asked for a visitor log has never heard of, and
-# every one of them appeared in the 2,397 words that went to a non-technical user on 2026-08-18.
+# their friends all name things the person who asked for a visitor log has never heard of.
 _FORBIDDEN_IN_CITIZEN_COPY = (
     ".tsx",
     ".ts",
@@ -1530,15 +1510,13 @@ _FORBIDDEN_IN_CITIZEN_COPY = (
 
 
 def test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon() -> None:
-    """R13's testable half, and the reason `services/turns/copy.py` exists as a module rather
-    than as strings at their call sites: a promise about a CLASS of text can only be kept if the
-    class has an address.
+    """The honest ending's testable half, and the reason `services/turns/copy.py` exists as a
+    module rather than as strings at their call sites: a promise about a CLASS of text can only
+    be kept if the class has an address.
 
-    The bar is the citizen's vocabulary, not a spell-checker's. `.tsx`, `npm`, `git`, `Next.js`
-    and their friends all name things the person who asked for a visitor log has never heard of;
-    every one of them appeared in the 2,397 words that went to a non-technical user on
-    2026-08-18. The agent's own narration is NOT covered by this — that is the companion plan —
-    and this file is deliberately the whole of what this plan changes about voice."""
+    The bar is `_FORBIDDEN_IN_CITIZEN_COPY` above. The agent's own narration is NOT covered by
+    this — that is the companion plan — and this file is deliberately the whole of what this
+    plan changes about voice."""
     sentences = [
         value
         for name, value in vars(copy_module).items()
@@ -1557,23 +1535,14 @@ async def test_the_workspace_note_rides_a_build_turn_too(
     fake_redis: aioredis.Redis,
     fake_storage,
 ) -> None:
-    """★ COVERS AE9 — the BUILD half of the workspace note, and the reason it lives here.
+    """The BUILD half of the workspace note. Injected once, ABOVE the branch that
+    picks the run loop, so both kinds get the same message; the Plan half is proven cheaply
+    by `test_reminders.py::test_the_workspace_note_still_rides_a_turn_off_any_anchor`, while
+    Build needs the provisioned-container harness this file already stands up.
 
-    The note is injected once, ABOVE the branch that picks the run loop, so both kinds get the
-    same message. Proving that for a Plan turn is cheap and
-    `test_reminders.py::test_the_workspace_note_still_rides_a_turn_off_any_anchor` does it; a
-    Build turn takes the node loop and needs a provisioned container to reach its first model
-    request, which is the harness this file already stands up. Two halves, one claim, asserted
-    where each harness lives.
-
-    IT ALSO USED TO PIN A MECHANISM THAT IS GONE. The obvious home for the note was the
-    per-turn restatement's injector, which was cadence-gated — a full restatement every eighth
-    turn in the mode, a nudge every fourth, silence between — so riding it would have told the
-    model what its app was doing on roughly one turn in four, while the claim is that answering
-    from stale history is structurally impossible. That injector and its cadence are retired
-    (`test_reminders.py` is their inertness guard), so "off cadence" no longer names anything;
-    the history length below is kept as-is because a note that rides EVERY turn rides that one
-    too, and shortening the fixture would only make the test weaker."""
+    IT ALSO USED TO PIN A MECHANISM THAT IS GONE: the per-turn restatement's cadence-gated
+    injector, now retired (`test_reminders.py` is its inertness guard). The fixture's history
+    length stays as-is so the note-rides-every-turn claim isn't weakened by shortening it."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt-note@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -1583,8 +1552,7 @@ async def test_the_workspace_note_rides_a_build_turn_too(
         seen.append(list(messages))
         yield "noted."
 
-    # THREE prior turns — the length that used to fall between both cadence anchors, kept so
-    # this stays the same fixture the claim was originally made against.
+    # THREE prior turns, kept at the length the original claim was measured against.
     history: list[ModelMessage] = [
         message
         for n in range(3)
@@ -1703,20 +1671,11 @@ async def test_an_unanswerable_verdict_is_never_narrated_as_a_defect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ A verdict the platform could not reach carries no diagnostic, buys no repair run, and
-    makes no completion claim.
-
-    RUN AT THE REAL BUDGET, and that is the whole point of the fixture. An earlier version of
-    this test forced `SELF_HEAL_MAX_RETRIES` to 0, which short-circuits into the budget-exhausted
-    raise before either line it claims to pin is reached — so its absence assertion could not fail
-    for ANY implementation, and it passed while production did exactly the thing it forbids.
-
-    THE TRAP IT PINS is ten lines of `_run_write`: a red outcome with no error synthesizes
-    `dev_not_ready_error()`, so an INDETERMINATE verdict flowing through that line hands the
-    citizen a SERVER diagnosis that is both rendered and wrong — "the dev server did not report
-    ready" about an app that reported ready — and re-seeds the model to repair a fault that does
-    not exist. That is the misdiagnosis the third state exists to end, reappearing one arm
-    downstream of where it was fixed.
-
+    makes no completion claim. RUN AT THE REAL BUDGET: forcing `SELF_HEAL_MAX_RETRIES` to 0
+    short-circuits into the budget-exhausted raise before the pinned lines are reached, so the
+    absence assertion could pass for ANY implementation — including one that misdiagnoses an
+    INDETERMINATE verdict as a server fault (`dev_not_ready_error()`) and re-seeds a repair for
+    a fault that isn't there.
     Mutation check: change the guard back to `if error is None and not outcome.green` and this
     goes red on the diagnostic, the reason and the verify count."""
     engine = _fresh_engine
@@ -1774,13 +1733,10 @@ async def test_an_unanswerable_verdict_does_not_wear_the_failure_label_in_the_li
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ The plan's "does not produce a 'Not green yet' failure label either" scenario, in THIS
-    loop — the legacy harness has its own test and the two spinners are separate code.
-
-    "Not green yet" over a check that could not be REACHED tells the citizen their app is broken
-    on the strength of our own timeout: the platform blaming the app for its own silence, which is
-    the same shape of untruth as claiming a build finished when it did not. The spinner resolves
-    neutrally instead.
+    """★ "Not green yet" over a check that could not be REACHED tells the citizen their app is
+    broken on the strength of our own timeout: the platform blaming the app for its own silence,
+    which is the same shape of untruth as claiming a build finished when it did not. The spinner
+    resolves neutrally instead.
 
     Mutation check: delete the INDETERMINATE arm of `_emit_verify_step`'s three-arm block and this
     goes red on both the label and the state."""
@@ -1831,7 +1787,7 @@ async def test_an_unanswerable_verdict_does_not_wear_the_failure_label_in_the_li
 
 
 # =============================================================================
-# U18 / R22 / R30 — `declare_done` is terminal, and the harness renders the summary
+# `declare_done` is terminal, and the harness renders the summary
 # =============================================================================
 
 # A summary in the register the rewritten COMPLETION block now asks for: what the reader can
@@ -1875,22 +1831,16 @@ def _answered_tools(rows: list[Message]) -> set[str]:
 async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ U18 / R30 / R22 — THE WHOLE UNIT, IN ONE RUN.
+    """★ THE WHOLE UNIT, IN ONE RUN. `declare_done` used to be a request for permission: it
+    returned "stand by", the harness verified, then bought ONE MORE model request whose only
+    product was a closing paragraph. The summary the tool already carries says the same thing in
+    the register the reader actually has, so the harness renders THAT.
 
-    `declare_done` used to be a request for permission: the tool returned "stand by", the
-    harness verified, and then it bought ONE MORE full model request whose entire product was a
-    closing paragraph. That paragraph is the surface the 2026-08-18 demo filled with file paths,
-    package installs and framework names, and the platform paid for the request that produced
-    it. The summary the tool already carries says the same thing in the register the reader
-    actually has, so the harness renders THAT and the turn ends on it.
-
-    ASSERTED ON THE REQUEST COUNT, NOT ON ELAPSED BEHAVIOUR. "The model said nothing afterwards"
-    is also satisfied by a model that WAS asked and happened to return nothing; the claim here
-    is that it was never asked. `counts["requests"]` is how many model requests actually fired:
-    one for the write, one for the `declare_done` call, and no third.
-
-    Mutation check: delete the `break` in `_run_write_once` and the third request fires, the
-    closing paragraph lands in the transcript, and both halves of this go red."""
+    ASSERTED ON THE REQUEST COUNT, not on elapsed behaviour: a model that WAS asked and returned
+    nothing also says nothing afterwards. `counts["requests"]` must be one for the write, one for
+    `declare_done`, and no third."""
+    # Mutation check: delete the `break` in `_run_write_once` and the third request fires, the
+    # closing paragraph lands in the transcript, and both halves of this go red.
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt-u18-green@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -1920,13 +1870,14 @@ async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
     blocks = state.text_blocks()
     assert blocks == ["You can add a visitor, mark them arrived, and see the list."]
     rendered = blocks[0]
-    # …and the model's own closing prose is nowhere, because it was never written. AE13, on the
-    # one message that used to carry the worst of it: the whole completion, swept term by term.
+    # …and the model's own closing prose is nowhere, because it was never written. This check runs
+    # on the one message that used to carry the worst of it: the whole completion, swept term by
+    # term.
     for term in _FORBIDDEN_IN_CITIZEN_COPY:
         assert term not in rendered, f"{term!r} reached a citizen in the completion message"
 
     # DURABLE, not merely streamed. Without the row the completion vanishes the moment the
-    # citizen refreshes the tab — and plan one's retraction annotates a message that is gone.
+    # citizen refreshes the tab — and a retraction annotates a message that is gone.
     rows = await _all_rows(db_session, conv)
     texts = _assistant_texts(rows)
     assert any("You can add a visitor" in text for text in texts)
@@ -1944,17 +1895,11 @@ async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
 async def test_an_empty_summary_falls_back_to_a_plain_completion_never_to_silence(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ THE ONE PATH THAT COULD END A WORKING BUILD IN SILENCE.
-
-    `summary` is a plain string the model fills in and nothing stops it being blank. With the
-    tool terminal, a blank one used to be recoverable — the model still had a turn left to write
-    something — and now is not, so the harness owns the sentence.
-
-    TWO THINGS IT MUST NOT FALL BACK TO, which is why this is not a bare "non-empty" assert. Not
-    an EMPTY message, which ends a green build with the screen still showing whatever the last
-    progress line said. And not the model's own prose scraped from elsewhere in the run: that
-    prose is exactly the register this plan removes, so reaching for it as a substitute would
-    reintroduce the defect on the fallback path.
+    """★ THE ONE PATH THAT COULD END A WORKING BUILD IN SILENCE. `summary` is a plain string the
+    model fills in, and nothing stops it being blank; with the tool terminal a blank one is no
+    longer recoverable, so the harness owns the sentence. TWO THINGS IT MUST NOT FALL BACK TO: an
+    EMPTY message (ends a green build with the last progress line still showing), and the model's
+    own prose scraped from elsewhere in the run (exactly the register this feature removes).
 
     Mutation check: return `sandbox.done_summary` unconditionally and the message goes empty;
     fall back to the run's trailing text and the `app/page.tsx` assert goes red."""
@@ -1991,7 +1936,7 @@ async def test_an_empty_summary_falls_back_to_a_plain_completion_never_to_silenc
 
 
 def test_the_harness_written_completion_carries_no_developer_jargon() -> None:
-    """★ AE13 for the one completion sentence the harness writes itself.
+    """★ Covers the one completion sentence the harness writes itself.
 
     The summary is the model's words shaped by the prompt; this sentence is ours, on the path
     where the model supplied nothing — and it is the one a citizen reads when everything else
@@ -2015,22 +1960,12 @@ async def test_a_red_verdict_after_declare_done_still_goes_to_repair(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ ASM14 — THE CONJUNCTION IS UNTOUCHED, and this is the half of it that a unit called
-    "make declare_done terminal" is likeliest to break.
-
-    `declare_done` ends the turn on a PASSING verdict. On a failing one it ends nothing: the
-    claim is still only the model's opinion, and a model that has this moment written a type
-    error is not a reliable witness to its own build. The repair arm's promise — restated by
-    this unit in both the tool return and the COMPLETION block — is that a red check hands the
-    diagnostic back, and it has to stay true or the rewritten documentation simply lies in the
-    other direction.
-
-    IT ALSO PINS THE HISTORY THE CUT HANDS BACK. The repair pass seeds a new user prompt onto
-    the run's messages, and pydantic-ai refuses one outright over unprocessed tool calls — so a
-    cut that dropped the tool answers it was holding takes the SECOND run down with a framework
-    error. `end_reason` is what tells that apart from an honest ending: a turn that genuinely
-    repaired and ran out of budget names itself, while a crashed one names nothing at all.
-
+    """★ THE CONJUNCTION IS UNTOUCHED — the half a unit called "make declare_done terminal" is
+    likeliest to break. `declare_done` ends the turn on a PASSING verdict; on a failing one it
+    ends nothing, since a model that just wrote a type error is not a reliable witness to its own
+    build. The repair pass seeds a new prompt onto the run's messages, and pydantic-ai refuses one
+    over unprocessed tool calls, so a cut that dropped held tool answers crashes the second run;
+    `end_reason` tells that apart from an honest ending.
     Mutation check: end the turn on `done_requested` alone and the repair run never happens
     (`runs` stays 1), the completion is rendered over a broken app, and the status flips."""
     engine = _fresh_engine
@@ -2085,7 +2020,7 @@ async def test_a_red_verdict_after_declare_done_still_goes_to_repair(
 
 
 # =============================================================================
-# U17 / R24 — acknowledge immediately, and narrate long operations
+# acknowledge immediately, and narrate long operations
 # =============================================================================
 
 
@@ -2123,18 +2058,14 @@ def _step_labels(state: _TurnState, phase: str | None = None) -> list[str]:
 async def test_the_acknowledgement_is_on_the_wire_before_the_model_is_asked(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ AE17, first clause — asserted on ORDERING, not on presence.
-
-    A turn's first slow thing (a cold provision, a snapshot restore, the first model request)
-    can run for tens of seconds, and an acknowledgement that arrives after any of them is not an
-    acknowledgement. So this reads the ring AT THE MOMENT the first model request fires and
-    demands the row is already in it — which a "the frame exists somewhere" assertion would not:
-    that one stays green with the emit moved anywhere at all inside the detached task.
-
-    Mutation-check (verified): move the emit to after `_attach_sandbox` — the first thing in a
-    Write turn that can take a minute — and this goes red at `seq == 1`, because the workspace
-    frames get there first; move it into the tool-event handler, where a model has to speak
-    before it can fire, and it goes red at the emptiness check."""
+    """★ Asserted on ORDERING, not on presence. A turn's first slow thing (a cold provision, a
+    snapshot restore, the first model request) can run for tens of seconds, so an acknowledgement
+    arriving after any of them is not one. This reads the ring AT THE MOMENT the first model
+    request fires and demands the row is already in it — a "the frame exists somewhere" assertion
+    would stay green with the emit moved anywhere inside the detached task.
+    Mutation-check (verified): move the emit to after `_attach_sandbox` and this goes red at
+    `seq == 1` (workspace frames get there first); move it into the tool-event handler and it
+    goes red at the emptiness check."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "u17a@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -2176,12 +2107,9 @@ async def test_the_acknowledgement_never_reaches_the_stored_transcript(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
     """★ It is a feed row, not a message. Persisting it would give a build's transcript one
-    "Getting started on that…" per turn — a reload of a ten-message conversation reading like a
-    stutter — and would put the harness's own chatter into the model's history for good measure.
-
-    Queries the PERSISTED ROWS, not the live feed: the frame is supposed to exist in one and
-    not the other, so only the durable side can tell the two apart.
-
+    "Getting started on that…" per turn — a reload reading like a stutter — and would put the
+    harness's own chatter into the model's history. Queries the PERSISTED ROWS, not the live
+    feed: the frame is supposed to exist in one and not the other.
     Mutation-check: keep the ack in `state.steps` and the tail assertion goes red; drop the
     `state.acknowledgement = None` the first real step performs and the snapshot assertion does
     (an un-retired ack rides the snapshot's parts ahead of everything else); write it through
@@ -2297,28 +2225,14 @@ def _snapshot_shape(engine: TurnEngine, state: _TurnState) -> list[tuple[str, st
 async def test_write_prose_between_tool_calls_reaches_the_feed_where_it_was_written(
     _fresh_engine,
 ) -> None:
-    """★ THE LIVE HALF of the whole-voice change — the twin of `test_projection.py`'s reload
-    half, which pins the same turn once it has ended.
-
-    THIS USED TO ASSERT THE OPPOSITE. Prose written in the same response as a tool call was
-    accumulated in a buffer and deleted the moment the call arrived, on the rule that text beside
-    a tool call is the model narrating its way there. What that rule actually deleted was the
-    explanation between the receipts: a citizen watching her app being built read a column of
-    tool cards with no sentence saying what any of it was for. Every paragraph reaches her now,
-    in the place it was written.
-
-    ORDER IS THE ASSERTION, NOT PRESENCE. A response that writes, acts, writes, acts and writes
-    again is the shape the live feed could not express at all before — it drew every step and
-    then one concatenated block of text underneath — so a joined string would pass here whether
-    or not each block landed between the right steps. Three lists, because the live wire, the
-    snapshot tail and the blocks themselves all have to say the same thing: a citizen who
-    reattaches mid-build must read this turn in the order one who never left reads it.
-
-    Mutation check, one per list: discard the prose when a `FunctionToolCallEvent` arrives and
-    the first two blocks vanish; send every `text_delta` with `new_block=False` and the WIRE
-    collapses to one paragraph while the blocks stay green — which is exactly the live/reload
-    split the ordered parts exist to close; append each block to the end of `state.parts`
-    instead of in place, as the old flat tail effectively did, and only the SHAPE goes red."""
+    """★ THE LIVE HALF of the whole-voice change — twin of `test_projection.py`'s reload half.
+    Prose beside a tool call used to be buffered and deleted on arrival as narration, erasing the
+    explanation between receipts; every paragraph now reaches the citizen where it was written.
+    ORDER IS THE ASSERTION: wire, snapshot tail and blocks must all agree, or a joined string
+    would pass regardless of interleaving.
+    Mutation check, one per list: discard prose on `FunctionToolCallEvent` and two blocks vanish;
+    send `text_delta` with `new_block=False` and the wire collapses while blocks stay green;
+    append blocks to the end of `state.parts` instead of in place and only the SHAPE goes red."""
     engine = _fresh_engine
     state = _bare_state()
 
@@ -2372,14 +2286,10 @@ def test_write_prose_with_no_tool_call_after_it_is_still_the_citizens_answer(
 
 
 def test_a_plan_chat_streams_its_prose_exactly_as_a_build_chat_does(_fresh_engine) -> None:
-    """★ THE INVERSION (U4 / R74 / N2), and the reason it is safe to invert.
-
-    This used to assert that a planning chat HELD its prose exactly as a build chat did: every
-    paragraph buffered until the response ended, and deleted outright if a tool call followed.
-    The hold is gone in both kinds, so what the two share now is the opposite property — a word
-    written is a word on the wire, at the moment it is written. That also buys back what the hold
-    cost and the old docstring recorded as a real price: a planning answer streams token by token
-    again instead of arriving whole, seconds later, when its response happens to end.
+    """★ NEITHER KIND HOLDS ITS PROSE, and the reason that is safe. A planning chat's text is
+    not buffered until its response ends, and not dropped when a tool call follows it: a word
+    written is a word on the wire the moment it is written, which is the streaming any hold
+    costs a planning answer.
 
     Mutation check: gate `_push_text` on `state.kind is ChatKind.BUILD` and this goes red at
     the first assertion, before one word has been drawn."""
@@ -2402,10 +2312,10 @@ def test_a_plan_chat_streams_its_prose_exactly_as_a_build_chat_does(_fresh_engin
 async def test_a_plan_chats_prose_between_tool_calls_reaches_the_feed_where_it_was_written(
     _fresh_engine,
 ) -> None:
-    """★ AE43, live half — the same response means the same thing in both kinds.
+    """★ Live half — the same response means the same thing in both kinds.
 
     The twin of `test_write_prose_between_tool_calls_reaches_the_feed_where_it_was_written`, one
-    chat kind over, and the pair is the whole of what N2 asks for here. In a planning chat the
+    chat kind over, and the pair is the whole of what is required here. In a planning chat the
     prose IS the deliverable, so this is the kind where deleting it was most obviously wrong:
     the citizen asked what their app does and got a row of receipts for the files that were
     read."""
@@ -2456,12 +2366,10 @@ def test_a_plan_chats_answer_with_no_tool_call_after_it_still_reaches_the_citize
 async def test_a_long_operation_gets_a_status_line_refreshed_until_it_completes(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ AE17, first clause. An operation still running past `LONG_OPERATION_THRESHOLD_MS` says
-    so, in the citizen's own language, and keeps saying it until it finishes.
-
-    The threshold and cadence are compressed here rather than waited out — the property under
-    test is "after the threshold, and repeatedly", not the specific number of seconds, which is
-    pinned as a named constant precisely so a test does not have to sleep through it.
+    """★ An operation still running past `LONG_OPERATION_THRESHOLD_MS` says so, in the
+    citizen's own language, and keeps saying it until it finishes. The threshold and cadence are
+    compressed here rather than waited out — the property under test is "after the threshold,
+    and repeatedly", not the specific number of seconds.
 
     Mutation-check: drop the `while` and the refresh assertion goes red; drop the whole
     narrator and the first one does."""
@@ -2528,13 +2436,10 @@ async def test_a_fast_operation_never_flickers_a_status_line(
 async def test_a_read_that_runs_long_is_narrated_now_that_reads_are_drawn(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U5's first stillness scenario, and it exists BECAUSE the unit widened what is visible.
-
-    A read used to be hidden as a class and therefore never narrated. It is drawn now — looking
-    at the app before changing it is work the citizen recognises — so a read that outruns the
-    threshold is announced and restated like any other visible step. That is a real change in how
-    often a build speaks (a build reads far more often than it installs), and it was the half of
-    the widening nothing measured.
+    """The first stillness scenario. A read used to be hidden as a class and therefore never
+    narrated; it is drawn now, so a read that outruns the threshold is announced and restated
+    like any other visible step — a real change in how often a build speaks, since a build reads
+    far more often than it installs.
 
     Mutation-check: hide the read class again in `_step_label` and this goes red at the refresh
     assertion while the `npm install` test beside it stays green."""
@@ -2560,16 +2465,11 @@ async def test_a_read_that_runs_long_is_narrated_now_that_reads_are_drawn(
 async def test_a_housekeeping_command_that_runs_long_stays_silent(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ U5's second stillness scenario — and the reason `hidden` was NARROWED rather than
-    deleted.
-
-    A hidden step renders nowhere, so narrating one would change no pixels while still burning a
-    frame every few seconds. The flag survives to carry exactly this, and nothing else asserted
-    it: the guard could be deleted with the whole suite green.
-
-    THE VISIBLE ARM IS THE DISCRIMINATOR, run in the same conditions in the same test — a
-    silence assertion on its own passes just as well against a threshold that never fired, or a
-    narrator that was never armed at all.
+    """★ The second stillness scenario — and the reason `hidden` was NARROWED rather than
+    deleted. A hidden step renders nowhere, so narrating one would change no pixels while still
+    burning a frame every few seconds; nothing else asserted this, so the guard could be deleted
+    with the whole suite green. THE VISIBLE ARM IS THE DISCRIMINATOR, run in the same test — a
+    silence assertion alone passes just as well against a threshold that never fired.
 
     Mutation-check: delete `if hidden: return` from `_start_long_operation` and the silent arm
     goes red while the spoken one stays green."""
@@ -2623,7 +2523,7 @@ async def test_an_unclassified_command_says_nothing_about_its_argv(_fresh_engine
     await engine._drain_long_operations(state)
 
 
-# --- U13 / R91: the spend bound, end to end -------------------------------------------------
+# --- the spend bound, end to end -------------------------------------------------
 
 
 async def test_a_build_that_reaches_the_spend_bound_ends_saying_the_app_works(
@@ -2634,20 +2534,12 @@ async def test_a_build_that_reaches_the_spend_bound_ends_saying_the_app_works(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ AE47 / R91 — the bound fires inside the loop, before a request, and ends the turn.
-
-    THE SEAM IS THE POINT. It is checked at the same place the daily quota is: inside the node
-    loop, before the model request fires, where the run's accumulated spend is already known and
-    nothing can route around it. A check anywhere else — at the top of the turn, or in the
-    `finally` — either fires before there is anything to measure or fires after the money is
-    spent.
-
-    The bound is compressed to ZERO rather than spent for real: what is under test is "the loop
-    stops when the number is reached, before it asks for anything more, and says so" — not the
-    specific number, which is a named constant precisely so a test need not burn it. Zero also
-    makes the placement claim unambiguous, because a check anywhere after the request would let
-    one through.
-
+    """★ The bound fires inside the loop, before a request, and ends the turn. THE SEAM IS THE
+    POINT: it is checked at the same place the daily quota is, where the run's accumulated spend
+    is already known — a check anywhere else either fires before there is anything to measure or
+    after the money is spent. The bound is compressed to ZERO rather than spent for real: what
+    is under test is "the loop stops before it asks for anything more, and says so", not the
+    specific number, and zero makes the placement claim unambiguous.
     Mutation check: move the check below `node.stream(...)` and this goes red on the request
     count — the model gets one more turn after the bound was already reached."""
     monkeypatch.setattr(engine_module, "RUN_TOKEN_BUDGET", 0)
@@ -2694,22 +2586,12 @@ async def test_the_spend_bound_names_what_was_agreed_and_not_built(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★★ AE47 / R91's second clause — "and says what remains", end to end.
-
-    THE BOUND FIRING IS HALF THE REQUIREMENT. A run that stops where the app works, and then
-    leaves the citizen to work out which of the pieces they agreed to actually landed, has done
-    the mechanical half and skipped the half they can act on. This is the assertion that the
-    ending carries U12's remainder rather than merely existing.
-
-    THE NAMES COME FROM THE AGREED LIST. `agreed_slice` reads them off the proposal call the
-    citizen read — the platform's own record — so the sentence is derived, not recalled. The
-    seeding is stubbed here because WHERE the agreed list comes from is `test_scope_negotiation`'s
-    subject; what is under test is that this ending consults it at all.
-
-    NOTHING WAS MARKED AND NOTHING WAS TOUCHED, which is the tri-state's first arm: no container
-    took a write, so naming the whole agreed list is true rather than a guess. The arm that would
-    have shipped a lie — work landed, nothing marked — is pinned in `test_scope_negotiation`.
-
+    """★★ "And says what remains", end to end. THE BOUND FIRING IS HALF THE REQUIREMENT: a run
+    that stops where the app works must also tell the citizen which agreed pieces landed, not
+    just that it stopped. `agreed_slice` reads the names off the proposal call the citizen read,
+    so the sentence is derived, not recalled; where that list comes from, and the tri-state's
+    other arm (work landed, nothing marked), are both `test_scope_negotiation`'s subject — here,
+    NOTHING WAS MARKED AND NOTHING WAS TOUCHED, so naming the whole agreed list is true.
     Mutation check: drop the remainder from `_bounded_run_ending` and this goes red on the
     pieces while the sentence itself still passes."""
     agreed = ["A visitor list", "A sign-out button"]

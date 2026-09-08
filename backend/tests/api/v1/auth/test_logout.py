@@ -1,4 +1,4 @@
-"""POST /auth/logout — token_version bump, family revoke, cookie clear (U7)."""
+"""POST /auth/logout — token_version bump, family revoke, cookie clear."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ async def test_logout_bumps_version_revokes_family_and_clears_cookies(client, db
     assert resp.json() == {"status": "logged_out"}
 
     await db_session.refresh(user)
-    assert user.token_version == 1  # bumped from 0
+    assert user.token_version == 1
     assert await _active_families(db_session, user.id) == 0
 
     cookies = _set_cookies(resp)
@@ -55,7 +55,7 @@ async def test_logout_with_expired_session_cookie_still_revokes_family(client, d
     # signed but EXPIRED JWT (its max-age equals the access TTL). Logout must
     # decode it expiry-blind FOR REVOCATION ONLY — bump token_version and kill the
     # family — so a captured refresh token can't outlive logout to the 8h absolute
-    # cap (Finding #7). Cookies must still clear.
+    # cap. Cookies must still clear.
     user = await UserFactory.create(db_session)
     await issue_new_family(db_session, user.id)
     expired_jwt = mint_session_jwt(user.id, user.token_version, -60)  # exp 60s in the past
@@ -66,7 +66,7 @@ async def test_logout_with_expired_session_cookie_still_revokes_family(client, d
 
     await db_session.refresh(user)
     assert user.token_version == 1  # bumped from 0 despite the expired cookie
-    assert await _active_families(db_session, user.id) == 0  # family revoked
+    assert await _active_families(db_session, user.id) == 0
 
     cookies = _set_cookies(resp)
     assert {"session", "refresh", "csrf"} <= set(cookies)
@@ -79,7 +79,7 @@ async def test_prelogout_session_jwt_rejected_afterward(client, db_session) -> N
     csrf = issue_csrf_token(user.id, user.token_version)
 
     await client.post("/v1/auth/logout", headers=_headers(jwt=jwt, csrf=csrf))
-    # The same JWT (token_version 0) no longer authenticates (KD-6).
+    # The same JWT (token_version 0) no longer authenticates.
     me = await client.get("/v1/auth/me", headers={"Cookie": f"session={jwt}"})
     assert me.status_code == 401
 

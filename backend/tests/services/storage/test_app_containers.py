@@ -1,4 +1,4 @@
-"""AppContainerStore — per-app Blob container management (C9 §6).
+"""AppContainerStore — per-app Blob container management.
 
 Network-free unit tests inject a mock BlobServiceClient into the module client cache so
 ensure/mint/delete behavior and the account-key-vs-user-delegation SAS branch are observable
@@ -99,7 +99,7 @@ def test_container_url_defaults_to_account_url() -> None:
 
 
 def test_container_url_uses_sandbox_facing_base_and_strips_trailing_slash() -> None:
-    # KTD-2: the injected URL must be a host the sandbox reaches — callers pass the sandbox-facing
+    # The injected URL must be a host the sandbox reaches — callers pass the sandbox-facing
     # Blob base (e.g. the docker-network Azurite address), and the trailing slash is normalized.
     store = AppContainerStore(_azure())
     url = store.container_url(_APP, base_url="http://azurite:10000/devstoreaccount1/")
@@ -246,7 +246,7 @@ async def test_mint_container_sas_rejects_nonpositive_ttl() -> None:
         await AppContainerStore(_azure()).mint_container_sas(_APP, ttl=timedelta(0))
 
 
-# --- mint_deploy_container_sas (U2/R2) ---------------------------------------
+# --- mint_deploy_container_sas -----------------------------------------------
 
 
 def _deploy_mock(config: AzureStorageConfig) -> tuple[Any, Any, list[str]]:
@@ -266,8 +266,7 @@ def _deploy_mock(config: AzureStorageConfig) -> tuple[Any, Any, list[str]]:
 
 def test_deploy_sas_ttl_is_long_lived_but_guarded() -> None:
     # THE GUARD (a comment is not one): a future edit that widens the deploy credential's life
-    # past 400 days fails here. The deploy TTL is intentionally far past the session ceiling —
-    # that divergence is the whole point of U2 — but it is not unbounded.
+    # past 400 days fails here. Why it sits outside the session ceiling: `storage/constants.py`.
     assert DEPLOY_SAS_TTL == timedelta(days=365)
     assert DEPLOY_SAS_TTL <= timedelta(days=400)
     assert DEPLOY_SAS_TTL > MAX_SIGNED_URL_TTL
@@ -291,13 +290,11 @@ async def test_mint_deploy_container_sas_signs_against_the_stored_access_policy(
 
     assert credential.sas == "sv=X&si=deploy&sig=DEPLOY"
     assert credential.expires_at == base + timedelta(days=365)
-    # Container-scoped and account-key-signed — never an account SAS, never a delegation key
-    # (which Azure would cap at 7 days).
+    # Container-scoped and account-key-signed — never an account SAS, never a delegation key.
     assert captured["container_name"] == f"app-{_APP}"
     assert captured["account_key"] == "a2V5"
     assert captured.get("user_delegation_key") is None
-    # The revocability contract: the SAS delegates permission+expiry to the policy and inlines
-    # NEITHER — an inlined expiry would make the runbook's revocation lever a lie.
+    # The revocability contract: permission and expiry live on the policy, inlined in neither.
     assert captured["policy_id"].startswith(DEPLOY_POLICY_PREFIX)
     assert captured.get("permission") is None
     assert captured.get("expiry") is None
@@ -375,8 +372,8 @@ async def test_mint_deploy_container_sas_tolerates_existing_container(
 
 
 async def test_mint_deploy_container_sas_refuses_managed_identity() -> None:
-    # A user-delegation SAS is hard-capped at 7 days by Azure, so a managed-identity config
-    # simply cannot mint this credential — fail typed and BEFORE provisioning anything.
+    # A managed-identity config has no account key to sign with, so it cannot mint this
+    # credential at all — fail typed and BEFORE provisioning anything.
     config = _azure(account_key=None, use_managed_identity=True)
     mock_bsc, _, calls = _deploy_mock(config)
 
@@ -410,8 +407,7 @@ async def test_mint_deploy_container_sas_wraps_policy_write_failure(
 
 
 async def test_session_mint_still_rejects_the_deploy_ttl() -> None:
-    # REGRESSION: `validate_sas_ttl` remains authoritative for SESSION SAS. U2 opened a 365-day
-    # door for the deploy credential ONLY — the session path must never be able to walk through it.
+    # The deploy credential's TTL is exempt from the ceiling; the session mint is not.
     with pytest.raises(StorageSignError):
         await AppContainerStore(_azure()).mint_container_sas(_APP, ttl=DEPLOY_SAS_TTL)
 
@@ -550,8 +546,7 @@ async def test_deploy_sas_round_trips_and_is_revocable_by_policy(
 ) -> None:
     # The deploy credential against a REAL Blob service: it provisions the container itself,
     # round-trips rwld, and — the claim the runbook makes — DIES when the app's stored access
-    # policy is deleted, while the SAS string itself is untouched. That last assertion is the
-    # whole reason the mint references a policy instead of inlining an expiry.
+    # policy is deleted, while the SAS string itself is untouched.
     app_id = uuid.uuid4()
     try:
         credential = await app_container_store.mint_deploy_container_sas(app_id)
@@ -581,7 +576,7 @@ async def test_deploy_sas_round_trips_and_is_revocable_by_policy(
 @pytest.mark.integration
 async def test_cross_container_sas_isolation(app_container_store: AppContainerStore) -> None:
     # The named acceptance criterion: app A's SAS must be refused (403) on read, write, AND delete
-    # against app B's container — proving container-scoping is the isolation boundary (C9 §6.4).
+    # against app B's container — proving container-scoping is the isolation boundary.
     app_a, app_b = uuid.uuid4(), uuid.uuid4()
     await app_container_store.ensure_container(app_a)
     await app_container_store.ensure_container(app_b)

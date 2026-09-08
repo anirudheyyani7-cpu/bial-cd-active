@@ -1,10 +1,10 @@
-"""Ceilings and model settings for the classification review loop (U5).
+"""Ceilings and model settings for the classification review loop.
 
 These live HERE, not in `config.py`, for the same reason the build harness's own constants
 file records: caching, effort and the output clamp are properties of how THIS loop is
 shaped, not per-deployment knobs. The review runs on whatever Foundry deployment the
 platform is configured with (Opus today, Sonnet 5 in its own later PR) — the SETTINGS
-travel with the loop, and U14 re-measures the ceilings when the deployment changes.
+travel with the loop, and the ceilings get re-measured whenever the deployment changes.
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ answer truncate. The model's own ceiling is 128k output tokens on both the curre
 intended deployment, so 8k is a self-imposed guard, not a platform limit; a larger cap
 costs nothing unless used (billing is on tokens produced), and only the final structured
 output is large — tool-call steps are tiny, so the cap binds on exactly one step.
-Truncation at this cap is a FAILURE (U6 catches `finish_reason == "length"` and runs the
-one guided retry), never something to salvage partial verdicts from."""
+Truncation at this cap is a FAILURE — the review catches `finish_reason == "length"` and
+runs the one guided retry — never something to salvage partial verdicts from."""
 
 TEMPERATURE: Final = 0.0
 """Set for consistency with the two existing run sites, and DOCUMENTED AS UNSUPPORTED on
-the current model generation — it is silently ignored. That is why R6 caches the review's
-RESULT against the version rather than trusting two runs to agree."""
+the current model generation — it is silently ignored. That is why the service caches the
+review's RESULT against the version rather than trusting two runs to agree."""
 
 CACHE_TTL: Final[Literal["1h"]] = "1h"
 """TTL for every Anthropic prompt-cache breakpoint the review sets
@@ -56,19 +56,19 @@ LISTING_MAX_FILES: Final = 500
 holds `list_files` to see the rest."""
 
 REVIEW_WALL_CLOCK_CEILING_S: Final = 120.0
-"""The review's wall-clock ceiling (R7/R19's "abandoned at a stated ceiling"), measured
+"""The review's wall-clock ceiling — abandoned once a stated deadline passes — measured
 from the ROW's `started_at` — never from a dialog opening, so a reload cannot extend it
 and a control-plane restart leaves a row that AGES OUT rather than hangs. PROVISIONAL:
 this value belongs to the Opus deployment the nine measured runs were taken on (typical
-run ~18s, near-empty apps 54-57s) and U14 re-measures it — and again when the review
+run ~18s, near-empty apps 54-57s) and gets re-measured — and again when the review
 moves to its own Sonnet deployment. 120s leaves the slowest measured shape a 2x margin
 without letting a wedged run hold the publish dialog for minutes."""
 
 REVIEW_REQUEST_BUDGET: Final = 25
 """The run's model-request budget (`UsageLimits.request_limit`) — the hard bound on what
 one review may spend, alongside the store's three-attempts-per-version cap. PROVISIONAL,
-same ownership as the wall-clock ceiling above (U14 re-measures per deployment): the
-observed hard failure was a near-empty app exhausting a request ceiling, so the budget is
+same ownership as the wall-clock ceiling above: the observed hard failure was a
+near-empty app exhausting a request ceiling, so the budget is
 sized for the measured behaviours — a listing, a handful of directed verifications, a
 read per file of a small app, the final structured output — with room for the guided
 truncation retry, WHICH DRAWS FROM THIS SAME BUDGET (a truncation with no budget left is

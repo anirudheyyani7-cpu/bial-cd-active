@@ -1,22 +1,14 @@
 """Revision 0035: two three-valued enums collapse into one two-valued `chat_kind`.
 
-TWO LANES, deliberately split (L11 — every up/down round-trip permanently burns `pg_attribute`
-slots on the shared `citizen_one_test` database, so round-trip coverage is budgeted rather than
-added reflexively):
+TWO LANES, deliberately split — every up/down round-trip permanently burns `pg_attribute` slots
+on the shared `citizen_one_test` database, so round-trip coverage is budgeted rather than added
+reflexively. The **default lane** asserts the SHAPE the fresh upgrade left behind, against the
+real migrated schema inside the per-test transaction. The **destructive lane**
+(`uv run pytest -m destructive_migration`) walks the chain for real, because the DATA STEP
+cannot be proved from a fresh schema.
 
-* **default lane** — the SHAPE the fresh upgrade left behind, asserted against the real migrated
-  schema inside the per-test transaction. Both retired PG types are gone, `chat_kind` carries
-  exactly two labels, and both columns sit on it NOT NULL.
-* **destructive lane** (`uv run pytest -m destructive_migration`) — the DATA STEP, which is the
-  half that cannot be proved from a fresh schema. The chain is walked for real: head → 0034 →
-  seed a conversation in the old shape carrying all three retired modes, a mode-switch marker,
-  and an unresolved plan-options card → upgrade → assert what a migrated transcript looks like.
-  Then downgrade, and prove the structure comes back.
-
-AE38 lives in the second lane. The projection half of it — that a migrated row's PROSE still
-renders, which the backfill would otherwise have silently stopped — is asserted separately and
-by mutation in `tests/services/messages/test_projection.py`, because it is a property of the
-projection predicate rather than of the DDL.
+The projection half — that a migrated row's PROSE still renders — is asserted by mutation in
+`tests/services/messages/test_projection.py`: it belongs to the projection predicate, not the DDL.
 """
 
 from __future__ import annotations
@@ -79,11 +71,10 @@ async def test_the_kind_column_is_the_native_type_not_null(db_session, table: st
     row = (
         await db_session.execute(sa.text(_COLUMN_SQL), {"table": table, "column": "kind"})
     ).one()
-    assert row.udt_name == "chat_kind"  # native enum (ADR-0008), not a varchar with a check
+    assert row.udt_name == "chat_kind"  # native enum, not a varchar with a check
     assert row.is_nullable == "NO"
-    # NO SERVER DEFAULT, on either table, and that is the point: a chat whose kind the creator
-    # did not choose is a programming error, not a chat that quietly becomes one of them. The
-    # column this replaced on `conversations` defaulted to 'plan'.
+    # NO SERVER DEFAULT on either table, unlike the `conversations` column this replaced, which
+    # defaulted to 'plan'.
     assert row.column_default is None
 
 
@@ -176,7 +167,7 @@ _MARKER = json.dumps(
 
 @pytest.mark.destructive_migration
 def test_the_data_step_over_a_conversation_in_the_old_shape() -> None:
-    """★ AE38. A conversation carrying all three retired modes, a mode-switch marker, and an
+    """★ A conversation carrying all three retired modes, a mode-switch marker, and an
     unresolved plan-options card, walked through the real revision.
 
     The card is the reason the data step exists at all — not a wedged conversation, which
@@ -259,7 +250,7 @@ def test_the_data_step_over_a_conversation_in_the_old_shape() -> None:
             ]
         )
 
-        # R53's honest mapping: every migrated conversation becomes a Build chat, because "was
+        # The honest mapping: every migrated conversation becomes a Build chat, because "was
         # this a Plan chat?" is not a question the stored rows can answer — any conversation was
         # one mode switch away from writing files.
         assert conversation.kind == "build"

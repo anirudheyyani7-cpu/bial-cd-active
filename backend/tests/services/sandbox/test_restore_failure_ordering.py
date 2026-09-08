@@ -1,29 +1,13 @@
-"""Restore must never drop the ownership record while the container may still run (U18).
+"""Restore must never drop the ownership record while the container may still run.
 
-THIS IS THE GHOST FACTORY. The Redis registry hash is the only record that a container belongs
-to somebody. Delete it while the container is still running and the container becomes anonymous:
-unreachable by the product, invisible to the Redis-enumerating sweep, and billing at ~$0.108/hr
-forever. That is exactly the population ADR-0029 exists to collect — and this code path
-*manufactures* it.
+THE GHOST FACTORY: the Redis registry hash is the only record that a container belongs to
+somebody. Drop it while the container may still be running and it becomes anonymous —
+unreachable by the product, invisible to the sweep, billing at ~$0.108/hr forever. That is
+exactly the population fleet reclamation exists to collect.
 
-Two paths in `restore_from_snapshot` had the defect, and both come from `_safe_teardown`
-swallowing `AcaError`:
-
-1. **The failure path.** `_safe_teardown` swallowed, then `_delete_registry` ran
-   UNCONDITIONALLY — so a restore that failed after a failed teardown dropped the record of a
-   container that was probably still running.
-2. **The success path.** The defensive teardown of the OLD container also swallowed, and the code
-   then provisioned a new container and OVERWROTE the registry with the new app name. Same
-   outcome by a different route: the old container is left with nothing pointing at it.
-
-The fix has a template three methods below it in the same file: `teardown()` raises on a failed
-ACA delete and keeps the registry, commented *"Keep the registry so the reaper retries this
-teardown; don't orphan."* The rule is the same here — the record goes only once the resource is
-CONFIRMED gone.
-
-WHY THIS UNIT LANDS IN PHASE 1 RATHER THAN PHASE 5: every ghost minted before identity stamping
-ships is UNTAGGED, and an untagged container is permanently escalate-only under AE2. Each one is
-manual work forever, not something the collector can ever clean up on its own.
+The rule: the record goes only once the resource is CONFIRMED gone — see `teardown()` a few
+methods below for the same pattern, commented *"Keep the registry so the reaper retries this
+teardown; don't orphan."*
 """
 
 from __future__ import annotations
@@ -94,8 +78,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
         # ARM credential chain into a unit test.
         client = AcaSandboxClient(
             _config(),
-            # All THREE checkers see the structural stub, so all three want a directive; the
-            # mypy one was missing and left `uv run mypy src tests` red at HEAD.
+            # All THREE checkers see the structural stub, so all three need a directive.
             aca=aca,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]  # noqa: E501
         )
 
@@ -180,13 +163,8 @@ async def test_a_confirmed_teardown_does_drop_the_ownership_record(wired: Any) -
 async def test_a_failed_defensive_teardown_does_not_orphan_the_old_container(
     wired: Any,
 ) -> None:
-    """The SECOND ghost factory, on the success path rather than the failure path.
-
-    Before provisioning the replacement, restore tears down any container the registry still
-    names. That teardown swallowed its error too — and the code then provisioned and overwrote
-    the registry with the NEW app name, leaving the old container running with nothing pointing
-    at it. Recovery must not manufacture the thing it is recovering from.
-    """
+    """The SECOND ghost factory, on the success path rather than the failure path: recovery must
+    not manufacture the thing it is recovering from."""
     client, aca, calls = wired(delete_fails=True, restore_fails=False, existing_app=_OLD_APP)
 
     with pytest.raises(SandboxError):
@@ -206,8 +184,6 @@ async def test_a_failed_defensive_teardown_does_not_orphan_the_old_container(
 
 
 async def test_a_confirmed_defensive_teardown_proceeds_normally(wired: Any) -> None:
-    """The happy path must still work: old container confirmed gone, new one provisioned, and
-    the registry now names the new app."""
     client, aca, calls = wired(delete_fails=False, restore_fails=False, existing_app=_OLD_APP)
 
     handle = await client.restore_from_snapshot(

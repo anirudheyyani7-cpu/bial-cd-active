@@ -1,39 +1,24 @@
 """Moving already-published apps onto the shared apps hostname.
 
-THE PROBLEM THIS SOLVES, AND THE ONE IT REFUSES TO CREATE.
+WHY THIS EXISTS. Every published app's address used to be its own container's ACA FQDN,
+`https://pub-<28 hex>.<env-domain>/` — an internal DNS name that never resolved from an
+employee's desk. Those addresses live in two independently-written places and are already
+shared outside the platform, so rewriting the recorded strings directly is tempting but WRONG:
+an image built before the base path shipped serves at `/`, so pointing a live link at
+`/a/pub-<key>/` turns an honest "this doesn't resolve" into a 404 that reads as "the platform
+broke my app". An honest failure beats a confident wrong answer.
 
-Every published app's address used to be its own container's Azure Container Apps FQDN,
-`https://pub-<28 hex>.<env-domain>/`. BIAL's environment is internal, so that name has no public
-DNS and never resolved from an employee's desk — which is the defect this whole change exists to
-fix. Those addresses are recorded in two independently-written places and have been shared
-outside the platform, so changing the shape invalidates links already in circulation.
+So the rule is REPUBLISH BEFORE REWRITE, enforced structurally:
+* `deployments.url` needs no backfill — the deploy pipeline's success terminal now writes the
+  public address itself, so a republished app self-identifies and the rewrite below waits for
+  that signal.
+* `app_registry.deployed_url` DOES need one: the manual go-live runbook's field, written only
+  by an admin, rewritten only for an app whose platform address has already moved — so it can
+  never outrun the image.
 
-The tempting fix is to rewrite the recorded strings. It is WRONG, and the reason is the whole
-point of this module. An image built before the base path shipped serves at `/`, so pointing a
-live link at `/a/pub-<key>/` would make the app answer 404. That converts today's honest
-name-resolution failure — a link that plainly does not resolve — into a page that says the app
-is not there, which reads to the person who followed it as "the platform broke my app". An
-honest failure is better than a confident wrong answer.
-
-So the rule is REPUBLISH BEFORE REWRITE, and this module enforces it structurally rather than by
-procedure:
-
-* `deployments.url` needs no backfill at all. The deploy pipeline's success terminal now writes
-  the public address itself, so a republished app records the right one on its own. That makes a
-  republished app self-identifying — its recorded address no longer names its container — which
-  is exactly the signal the rewrite below waits for.
-* `app_registry.deployed_url` DOES need one. It is the manual go-live runbook's field, written
-  only by an admin, and nothing republishes it. It is rewritten only for an app whose platform
-  address has already moved, so the rewrite cannot outrun the image.
-
-WHAT IS DELIBERATELY LEFT ALONE. A human-typed address pointing somewhere else is not ours to
-correct — an operator may have recorded a genuinely different location, and silently repointing
-it at a container would be worse than leaving a stale note. The test for "ours" is exact and
-per-row: the recorded host's first label is this app's own container name, which only the
-platform mints.
-
-AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see the
-audit record.
+WHAT IS LEFT ALONE. A human-typed address pointing elsewhere is not ours to correct. The test
+for "ours" is exact and per-row: the recorded host's first label is this app's own container
+name, which only the platform mints.
 """
 
 from __future__ import annotations

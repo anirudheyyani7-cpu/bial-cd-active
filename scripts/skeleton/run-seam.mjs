@@ -1,7 +1,7 @@
-// Walking-skeleton seam driver (MOCKED leg). Ties the mock C1 supervisor to the mock C7
-// brain over the frozen contracts and asserts the seams connect end-to-end:
-//   mock brain --(C1: /exec, /dev/start, /dev/status)--> mock supervisor
-//   mock brain --(C7 envelope stream)--> this driver (the SESSION-API relay stand-in)
+// Walking-skeleton seam driver (MOCKED leg). Ties the mock supervisor to the mock brain
+// over the frozen contracts and asserts the seams connect end-to-end:
+//   mock brain --(supervisor API: /exec, /dev/start, /dev/status)--> mock supervisor
+//   mock brain --(envelope stream)--> this driver (the session-relay stand-in)
 //
 // This proves the contracts are buildable-to-the-doc (the anti-"both sides invent the shape"
 // check). It is the MOCK half; the REAL half — a genuine cross-origin frame + a real next-dev
@@ -16,7 +16,7 @@ const TOKEN = 'skeleton-mock-token'
 const BASE = `http://127.0.0.1:${PORT}`
 const AUTH = { authorization: `Bearer ${TOKEN}` }
 
-// A minimal C1 client (the SandboxClient subset BRAIN calls) over the mock supervisor.
+// A minimal supervisor client (the SandboxClient subset the brain calls) over the mock supervisor.
 const client = {
   async health() {
     return (await fetch(`${BASE}/health`)).json()
@@ -38,19 +38,19 @@ async function main() {
   process.env.SUPERVISOR_TOKEN = TOKEN
   const server = await start(PORT)
   try {
-    // C1: /health is unauth and returns {ok:true}.
+    // /health is unauth and returns {ok:true}.
     assert.deepEqual(await client.health(), { ok: true }, 'C1 /health must return {ok:true}')
 
-    // C1: a missing bearer is 401 (the exact `Bearer {TOKEN}` match).
+    // A missing bearer is 401 (the exact `Bearer {TOKEN}` match).
     const unauth = await fetch(`${BASE}/dev/status`)
     assert.equal(unauth.status, 401, 'C1 non-health routes require the bearer token')
 
-    // Drive a mock build turn; collect the C7 envelope stream.
+    // Drive a mock build turn; collect the progress envelope stream.
     const events = []
     const PREVIEW_URL = 'https://app-xyz.example.azurecontainerapps.io/'
     const result = await runBuild(client, (env) => events.push(env), PREVIEW_URL)
 
-    // C7: every emitted type is a frozen member; seq is monotonic +1 gap-free; the stream
+    // Every emitted type is a frozen member; seq is monotonic +1 gap-free; the stream
     // ends preview_ready -> ended (the happy path).
     for (const e of events) assert.ok(C7_TYPES.includes(e.type), `unknown C7 type: ${e.type}`)
     events.forEach((e, i) => assert.equal(e.seq, i + 1, 'C7 seq must be monotonic +1 gap-free'))

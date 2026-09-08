@@ -1,4 +1,4 @@
-"""The five tools + the fail-closed write guard + 422→ModelRetry enrichment (U5, KD-4/5/9/10).
+"""The five tools + the fail-closed write guard + 422→ModelRetry enrichment.
 
 Driven through `conftest.build_tool_agent()` + a capturing `FunctionModel` + `FakeSandbox` — the
 real reflection path, not a hand-called function. The agent is LOCAL because the module-level
@@ -75,12 +75,11 @@ _TOOL_NAMES = {
     "insert_lines",
     "declare_done",
     "run_command",
-    # U22: the slice handle is a REGISTERED TOOL, not a capability described in a prompt — and it
+    # The slice handle is a REGISTERED TOOL, not a capability described in a prompt — and it
     # is registered here, on the sandbox toolset, because Write is the only mode that runs
     # commands. `test_toolsets.py` asserts the mode half against `toolsets_for_kind` directly.
     "fetch_output_slice",
-    # U23: the composite is registered here too — one call for the generate + migrate sequence
-    # the DATABASE block used to dictate step by step.
+    # The composite is registered here too — one call for the generate + migrate sequence.
     "apply_schema_change",
 }
 
@@ -106,7 +105,7 @@ def _capturing_model(turns: list[ModelResponse], captured: dict[str, Any]) -> Fu
         captured["tool_names"] = {t.name for t in info.function_tools}
         # THE DESCRIPTIONS AS THE MODEL RECEIVES THEM, not the docstrings as written. The
         # framework builds one from the other, so a test that read `declare_done.__doc__`
-        # would be asserting on a string the model never sees (U18).
+        # would be asserting on a string the model never sees.
         captured["tool_descriptions"] = {t.name: t.description or "" for t in info.function_tools}
         captured.setdefault("incoming", []).append(_all_text(messages))
         return next(iterator, text_turn("done"))
@@ -142,7 +141,7 @@ async def _run(
 async def test_registered_tool_surface_is_the_open_sandbox_set(sink: CollectingSink) -> None:
     fake = FakeSandbox()
     captured = await _run(fake, sink, [text_turn("nothing to do")])
-    # The open-sandbox surface: the five file tools + run_command (the vibe-coding pivot, R1).
+    # The open-sandbox surface: the five file tools + run_command (the vibe-coding pivot).
     assert captured["tool_names"] == _TOOL_NAMES
     assert "run_command" in captured["tool_names"]
 
@@ -165,8 +164,8 @@ async def test_read_file_refuses_the_ignore_set(sink: CollectingSink) -> None:
 
 
 class _MalformedViewSandbox(FakeSandbox):
-    """A C2 client whose `view` returns a FileResult MISSING the contractually-required `content`
-    key (a malformed C1 response); every other op behaves normally."""
+    """A sandbox client whose `view` returns a FileResult MISSING the contractually-required
+    `content` key (a malformed supervisor response); every other op behaves normally."""
 
     async def files(self, handle: SandboxHandle, op: FileOp) -> FileResult:
         if isinstance(op, FileView):
@@ -208,7 +207,7 @@ async def test_read_file_minus_one_end_reads_to_end_of_file(sink: CollectingSink
 
 async def test_read_file_minus_one_end_is_still_budget_clamped(sink: CollectingSink) -> None:
     # -1 must not become an unbounded read: the VIEW_MAX_LINES clamp applies to it too
-    # (PR#33 #13 — previously only the end != -1 branch clamped).
+    # (previously only the end != -1 branch clamped).
     big = "\n".join(f"row-{i}" for i in range(1, 1001))  # 1000 lines
     fake = FakeSandbox(seed_files={"app/big.tsx": big})
     captured = await _run(
@@ -252,7 +251,7 @@ async def test_write_denied_paths_raise_model_retry_and_never_touch_files(
     # The guard fired before files(): nothing was written…
     assert path not in fake.workspace
     assert "PWNED" not in "".join(fake.workspace.values())
-    # …and the model was told why (a ModelRetry, KD-9).
+    # …and the model was told why (a ModelRetry).
     assert "cannot be written" in captured["all_incoming"]
 
 
@@ -269,7 +268,7 @@ async def test_edit_file_bad_match_enriches_into_a_model_retry(sink: CollectingS
             text_turn(),
         ],
     )
-    # The enrichment surfaces the current numbered file + the exactly-once rule (KD-5).
+    # The enrichment surfaces the current numbered file + the exactly-once rule.
     assert "match EXACTLY ONCE" in captured["all_incoming"]
     assert "1\tone" in captured["all_incoming"]
 
@@ -323,15 +322,15 @@ async def test_declare_done_sets_the_signal_and_emits_a_step(sink: CollectingSin
 async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
     sink: CollectingSink,
 ) -> None:
-    """★ U18/R30 — THE TOOL'S OWN DESCRIPTION IS HALF THE BEHAVIOUR.
+    """★ THE TOOL'S OWN DESCRIPTION IS HALF THE BEHAVIOUR.
 
     `declare_done` used to promise the opposite of what it now does ("This does NOT end the
     build on its own"), and a model that believes it gets one more turn keeps its closing
-    message OUT of `summary` and saves it for prose the run has just stopped rendering.
-    That is the exact failure this unit exists to prevent, so the description is asserted with
-    the same seriousness as the code.
+    message out of `summary`, saved for prose the run has already stopped rendering. That is
+    the exact failure this test exists to prevent, so the description is asserted with the same
+    seriousness as the code.
 
-    Asserted on the description the TOOLSET REGISTERS — the text pydantic-ai actually sends —
+    Asserted on the description the toolset registers — the text pydantic-ai actually sends —
     rather than on `__doc__`, because the framework composes one from the other and only one of
     them reaches the model.
 
@@ -345,7 +344,7 @@ async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
     lowered = " ".join(description.lower().split())
 
     # THE TERMINAL CONDITION, STATED — and stated as conditional on the check, which is what
-    # keeps it true (ASM14: the conjunction with the verdict is untouched).
+    # keeps it true (the conjunction with the verdict is untouched).
     assert "ends the turn" in lowered
     assert "passing check" in lowered
     # …and the summary is named as what the user reads, not as a note for the record.
@@ -359,7 +358,7 @@ async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
     # verdict really does hand the model the diagnostic and carry on.
     assert "diagnostic" in lowered
 
-    # U20 GENERATES THE PROMPT'S TOOL-SURFACE LINE FROM THE FIRST SENTENCE, so the first
+    # THE PROMPT'S TOOL-SURFACE LINE IS GENERATED FROM THE FIRST SENTENCE, so the first
     # sentence has to stand alone as user-visible prompt copy.
     first_sentence = lowered.split(".")[0]
     assert "declare the build finished" in first_sentence
@@ -369,11 +368,11 @@ async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
 async def test_declare_done_tells_the_model_its_summary_is_the_last_word(
     sink: CollectingSink,
 ) -> None:
-    """★ U18 — THE RETURN STRING MOVED WITH THE BEHAVIOUR TOO.
+    """★ THE RETURN STRING MOVED WITH THE BEHAVIOUR TOO.
 
-    It used to say "The harness will now type-check the app and confirm it renders", which
-    reads as an invitation to stand by for a second act. It now says which of the two arms is
-    terminal and which is not — both truthfully.
+    `declare_done` is terminal on the passing arm, so its return must say which of the two arms
+    is terminal and which is not — both truthfully. Anything that reads as an invitation to stand
+    by for a second act makes a model hold its closing message back for a reply it never gets.
 
     Asserted on what the MODEL received back (the tool return in its next input), not on the
     function's return value, for the same reason as the description test above."""
@@ -391,7 +390,6 @@ async def test_declare_done_tells_the_model_its_summary_is_the_last_word(
     assert "nothing further is asked of you" in returned
     # The repair arm survives verbatim — a red check still hands over the diagnostic.
     assert "you will get the diagnostic to fix" in returned
-    # The retired stand-by phrasing is gone.
     assert "will now type-check the app" not in returned
 
 
@@ -401,7 +399,7 @@ async def test_write_emits_a_step(sink: CollectingSink) -> None:
     assert any(getattr(e, "name", None) == "edit" for e in sink.events)
 
 
-# --- F3/U3: the LIVE feed emits friendly labels, never raw shell/argv/paths ---
+# --- the LIVE feed emits friendly labels, never raw shell/argv/paths ---
 
 
 def _steps(sink: CollectingSink) -> list[Any]:
@@ -431,7 +429,7 @@ async def test_run_command_emits_one_friendly_row_no_raw_shell(sink: CollectingS
         fake, sink, [tool_turn("run_command", {"command": ["npm", "install", "zod"]}), text_turn()]
     )
     rc = [e for e in _steps(sink) if e.name == "run_command"]
-    assert len(rc) == 1  # ONE row per command (no separate `started` emit)
+    assert len(rc) == 1
     assert rc[0].state == "ok"
     assert rc[0].label == "Setting up the tools your app needs"
     for leaked in ("$ ", "npm", "install", "zod"):
@@ -496,17 +494,11 @@ async def test_run_command_blocked_sql_emits_a_friendly_failed_label(sink: Colle
 async def test_a_read_only_command_is_a_visible_step_and_housekeeping_is_not(
     sink: CollectingSink,
 ) -> None:
-    """★ WHAT `hidden` MEANS NOW, asserted as the pair that defines the line.
-
-    Reads used to be hidden as a class, which is why a build's activity opened on a write with
-    no account of what the agent had looked at to get there. Looking at the app before changing
-    it is work the citizen recognises, so it is drawn. Housekeeping — `mkdir`, `mv`, `touch` —
-    is not: drawing it prints a generic line that says nothing about their app.
-
-    BOTH HALVES IN ONE TEST, deliberately. Asserting only that a read is visible would pass just
-    as well against a change that deleted the flag outright, which is the thing this unit
-    explicitly did not do.
-
+    """★ WHAT `hidden` MEANS NOW: reads used to be hidden as a class, so a build's activity
+    opened on a write with no account of what the agent had looked at first — looking at the
+    app is work the citizen recognises, so it's drawn; housekeeping (`mkdir`, `mv`, `touch`)
+    isn't. BOTH HALVES IN ONE TEST: asserting only that a read is visible would pass just as
+    well against a change that deleted the flag outright.
     Mutation check: flip either arm's `hidden` in `_classify_command` and exactly one of these
     two assertions goes red."""
     fake = FakeSandbox()
@@ -535,18 +527,12 @@ async def test_a_read_only_command_is_a_visible_step_and_housekeeping_is_not(
 async def test_housekeeping_that_fails_is_drawn_rather_than_hidden(
     sink: CollectingSink,
 ) -> None:
-    """★ NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, on this emitter too.
-
-    The turn engine's `_resolve_step` clears `hidden` on a failed step and the reload projection
-    does the same, and `classify_command`'s docstring states that parity for this emitter by
-    name — while this feed passed the classifier's flag straight through, so a `mkdir` that
-    failed was a problem counted in the group's total with no row anyone could open. A citizen
-    reading "1 problem" and finding nothing that says what it was is the failure the whole
-    hidden/failed rule exists to prevent.
-
-    THE PAIR IS THE TEST. The same command succeeding stays hidden — the flag is narrowed by
-    state, not deleted — which is what makes the visible arm mean something.
-
+    """★ NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, on this emitter too — `_resolve_step` and
+    the reload projection both clear `hidden` on a failure, and this feed used to pass the
+    classifier's flag straight through instead, so a failed `mkdir` was a problem counted in
+    the group's total with no row anyone could open. THE PAIR IS THE TEST: the same command
+    succeeding stays hidden — narrowed by state, not deleted — which is what makes the visible
+    arm mean something.
     Mutation check: pass `hidden=hidden` through `_step` again and the failed arm goes red while
     the succeeding one stays green."""
     fake = FakeSandbox()
@@ -571,7 +557,7 @@ async def test_housekeeping_that_fails_is_drawn_rather_than_hidden(
         assert leaked not in failed.label
 
 
-# --- run_command (U1 / U4 / R1 / R3 / R11) -----------------------------------
+# --- run_command -----------------------------------
 
 
 async def test_run_command_returns_exit_and_redacted_output(sink: CollectingSink) -> None:
@@ -591,7 +577,7 @@ async def test_run_command_nonzero_exit_is_a_normal_result_not_an_exception(
     sink: CollectingSink,
 ) -> None:
     # An npm 404 / peer-dep conflict is exit != 0 — it must come back as a NORMAL tool result the
-    # model can read and re-feed, never a raised exception (AE1).
+    # model can read and re-feed, never a raised exception.
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout="", stderr="npm ERR! 404 Not Found: nosuchpkg", exit=1))
     captured = await _run(
@@ -609,7 +595,7 @@ async def test_run_command_sandbox_error_becomes_a_model_retry_in_loop(
     sink: CollectingSink,
 ) -> None:
     # A supervisor 504 (incl. an install-timeout) surfaces as SandboxError → converted to a
-    # ModelRetry and re-fed in-loop, never a hard build failure (R11).
+    # ModelRetry and re-fed in-loop, never a hard build failure.
     fake = FakeSandbox()
     fake.queue_exec_errors(SandboxError("exec timed out after 600s"))
     captured = await _run(
@@ -632,11 +618,10 @@ async def test_run_command_sandbox_gone_escalates(sink: CollectingSink) -> None:
         await _run(fake, sink, [tool_turn("run_command", {"command": ["npm", "install"]})])
 
 
-# F4 — the bound depends on WHAT the command is, and one global value could not satisfy both
-# halves of the fix. The observed wedge (a `drizzle-kit generate` blocking on an interactive
-# prompt with no terminal to answer it) burned 249s, so catching it needs a bound well under
-# that; but this repo's own constant documents that a cold-base `npm install` "routinely" takes
-# the full 600s, so lowering a single global would kill healthy builds instead.
+# The bound depends on WHAT the command is, and one global value could not satisfy both halves.
+# A `drizzle-kit generate` that blocks on an interactive prompt has to be caught in a fraction of
+# the time a cold-base `npm install` needs — and this repo's own constant documents that install
+# "routinely" takes the full 600s, so lowering a single global would kill healthy builds instead.
 
 
 @pytest.mark.parametrize(
@@ -671,7 +656,7 @@ def test_the_short_bound_catches_the_observed_wedge_and_the_long_one_does_not() 
     observed_wedge_seconds = 249
     assert constants.RUN_COMMAND_DEFAULT_TIMEOUT_S < observed_wedge_seconds
     assert constants.RUN_COMMAND_SLOW_TIMEOUT_S > observed_wedge_seconds
-    # Both stay under C1's 900s hard cap, and neither is the tsc verify budget.
+    # Both stay under the supervisor's 900s hard cap, and neither is the tsc verify budget.
     assert constants.RUN_COMMAND_SLOW_TIMEOUT_S < 900
     assert constants.RUN_COMMAND_SLOW_TIMEOUT_S != constants.EXEC_TIMEOUT_S
     assert constants.RUN_COMMAND_DEFAULT_TIMEOUT_S != constants.EXEC_TIMEOUT_S
@@ -689,7 +674,7 @@ async def test_run_command_output_is_secret_redacted(
     sink: CollectingSink, secret_line: str
 ) -> None:
     # run_command is the first tool to egress captured stdout — a credential-shaped value must be
-    # masked before it re-enters the model context (R3).
+    # masked before it re-enters the model context.
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout=secret_line, stderr="", exit=0))
     captured = await _run(
@@ -706,9 +691,9 @@ async def test_run_command_output_is_secret_redacted(
 
 def test_redact_command_output_caps_raw_input_before_redacting() -> None:
     # ReDoS guard: raw output is sliced to REDACT_INPUT_MAX_CHARS BEFORE the redactor runs, so a
-    # trailing secret beyond the cap is dropped (never scanned) and the result stays bounded.
-    # U22 kept the ordering and moved the second cap: the artifact is now head + notice + tail,
-    # so the bound is the budget plus the notice rather than the budget plus a marker.
+    # trailing secret beyond the cap is dropped (never scanned) and the result stays bounded. The
+    # ordering is preserved and only the second cap has moved: the artifact is now head + notice +
+    # tail, so the bound is the budget plus the notice rather than the budget plus a marker.
     trailing_secret = "bial_ThisIsPastTheInputCap0123456789"
     raw = ("A" * (constants.REDACT_INPUT_MAX_CHARS + 5_000)) + trailing_secret
     out = _redact_command_output(raw, budget=constants.RUN_COMMAND_OUTPUT_MAX_CHARS)
@@ -728,19 +713,13 @@ async def test_run_command_never_leaks_the_supervisor_token(sink: CollectingSink
     assert FAKE_SUPERVISOR_TOKEN not in captured["all_incoming"]
 
 
-# --- U19 / R25: the commit reminder that no longer exists ------------------------------
+# --- the commit reminder that no longer exists -----------------------------------------
 #
-# THIS REPLACES FOUR TESTS that pinned the reminder's cadence and its reset — the reminder fires
-# on the third uncommitted write, names the exact action, stays non-binding, and a SUCCESSFUL
-# `git commit` zeroes the count while a failed one does not. All four were correct, and all four
-# enforced an instruction that no longer exists: the Write segment's COMMIT AS YOU WORK block is
-# deleted, because the platform commits the tree itself at every turn boundary.
-#
-# THE ENFORCER HAD TO GO WITH THE INSTRUCTION, and that is the whole point of testing it here.
-# `_note_write_and_maybe_remind` lived in `tools.py` — the toolset BOTH agents build from —
-# while the instruction it enforced lived only in the Write segment. Delete one and not the
-# other, and every third file write comes back carrying a `<system-reminder>` telling the model
-# to commit a slice nothing ever asked it to commit.
+# Who commits the tree, and when, now lives in `services/build_sessions/snapshot.py`, not here.
+# The enforcer had to go WITH the instruction: `_note_write_and_maybe_remind` lived in
+# `tools.py`, the toolset both agents build from, while the instruction it enforced lived only
+# in the Write segment — deleting one and not the other means a `<system-reminder>` telling the
+# model to commit a slice nothing ever asked it to commit rides every third write.
 
 
 async def test_no_reminder_rides_a_write_result_any_more(sink: CollectingSink) -> None:
@@ -791,19 +770,17 @@ async def test_a_git_commit_through_run_command_is_still_an_ordinary_command(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# U22 / R28 — cap tool output by usefulness, not by a fixed head
+# cap tool output by usefulness, not by a fixed head
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
-# THE DEFECT THESE PIN: the cap was HEAD-ONLY. A failing `tsc` or `npm run build` puts its
-# message at the top and the failing assertion at the bottom, so a head cap threw away the half
-# the model needed and it paid a re-run to see the middle. The fix is exit-code-conditional
-# (summarise a success, dump a failure), keeps BOTH ends, and hands back a handle to what it cut.
+# A head-only cap threw away a failure's message while keeping its irrelevant top. Fixed
+# exit-code-conditional (summarise a success, dump a failure), keeping both ends and handing
+# back a handle to what it cut.
 #
-# THE ONE TO RUN UNDER MUTATION is `test_a_secret_inside_the_elided_middle_is_never_retrievable`:
-# delete the `scrub_untrusted` call in `_redacted_lines` (the redact-before-buffering line) and it
-# goes red. It is DISTINCT from the boundary test below it — that one is about a cut splitting a
-# credential; this one is about the buffer being built from the wrong string in the first place,
-# and a secret sitting entirely inside an elided middle is the ordinary case, not an edge one.
+# Mutation target: `test_a_secret_inside_the_elided_middle_is_never_retrievable` — delete the
+# `scrub_untrusted` call in `_redacted_lines` and it goes red. Distinct from the boundary test
+# below (a cut splitting a credential): this one is a secret sitting entirely inside an elided
+# middle, the ordinary case, not an edge one.
 
 _ERROR_AT_THE_VERY_END = "error TS2322: Type 'string' is not assignable to type 'number'."
 _TRACE_TITLE_AT_THE_TOP = "FATAL: the migration runner refused to start"
@@ -868,7 +845,7 @@ async def _run_following(
 
 
 def test_a_failing_commands_output_is_dumped_and_a_succeeding_ones_is_summarised() -> None:
-    """★ ASM13's rule, both arms measured against ONE capture.
+    """★ The asymmetric-budget rule, both arms measured against ONE capture.
 
     A success's shape is already known — it is a confirmation. A failure's payload is unknown by
     construction, which is what makes it a failure, so it gets four times the budget."""
@@ -983,7 +960,8 @@ async def test_an_unknown_handle_returns_the_plain_instruction_not_an_exception(
 
 async def test_a_handle_from_a_previous_run_is_no_longer_held(sink: CollectingSink) -> None:
     """★ THE STATED LIFETIME, exercised rather than asserted about. The turn engine builds a
-    fresh `SandboxSession` per turn (`turns/engine.py:1727`), so the buffer dies with the turn —
+    fresh `SandboxSession` per turn (`turns/engine.py`, at `state.sandbox = SandboxSession(`), so
+    the buffer dies with the turn —
     nothing here is persisted to the database or to blob."""
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout=_long_output(), stderr="", exit=0))
@@ -1071,12 +1049,12 @@ def test_predictable_noise_goes_but_vulnerability_and_deprecation_signal_stays()
     assert kept == "\n".join(signal)
 
 
-# --- U22 adoption instrumentation ------------------------------------------------------
+# --- adoption instrumentation ------------------------------------------------------
 #
 # THE QUESTION THESE ANSWER is not "does the tool work" but "did it change anything": a slice
 # fetch is the round-trip the handle SAVED, and an identical command re-run inside one turn is
 # the round-trip it did not. They are only readable as a pair, so they are emitted as a pair.
-# `count` owns its own session and swallows everything (U25), so patching its module attribute is
+# `count` owns its own session and swallows everything, so patching its module attribute is
 # the honest seam — the tool-boundary call sites are what is under test, not the writer.
 
 
@@ -1148,15 +1126,11 @@ async def test_a_repeat_run_is_counted_on_the_repeat_only(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# U23 / R29 — one operation for applying a database change
+# One operation for applying a database change
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
-# THE DEFECT THESE PIN is not a slow loop, it is a LIE. Applying a schema change was two
-# prompt-taught commands and BOTH of them exit 0 after failing: drizzle-kit's rename resolver
-# prints "Interactive prompts require a TTY terminal", writes no migration and exits 0, and
-# `scripts/db-migrate.mjs` catches every error and exits 0 by design so a bad migration can never
-# stop the dev server. A model reading exit codes therefore believes a schema change happened
-# that did not, and then builds queries against tables that are not there.
+# THE DEFECT THESE PIN is not a slow loop, it is a LIE: both halves of the sequence this one call
+# replaced exit 0 after failing, which `sandbox/template/db/schema.ts` sets out in full.
 #
 # So every test below is really one assertion in two halves: the operation NEVER reports success
 # when a step failed, and when it reports failure it says which step, what the output actually
@@ -1224,7 +1198,7 @@ def test_the_zero_exit_lie_detector_reads_a_marker_anywhere_in_a_huge_capture() 
 async def test_a_step_that_exits_zero_after_failing_is_reported_as_a_failure(
     sink: CollectingSink,
 ) -> None:
-    """★ AE16 — THE HEADLINE. drizzle-kit reached the rename resolver: it printed the refusal to
+    """★ THE HEADLINE. drizzle-kit reached the rename resolver: it printed the refusal to
     stderr, wrote no migration, and exited 0. The operation must report FAILURE anyway, name the
     step, say what state the workspace was left in, and say out loud that it is overriding the
     exit code — a verdict that silently contradicts a zero the model can see is a verdict the
@@ -1293,10 +1267,10 @@ async def test_a_failed_first_step_stops_the_second_and_the_report_says_so(
 async def test_the_migrator_always_exits_zero_so_its_output_is_what_gets_read(
     sink: CollectingSink, printed: str
 ) -> None:
-    """★ AE16 again, on the second step and all three of its shapes. `db-migrate.mjs` is non-fatal
-    BY DESIGN — its own header explains why — so a caught error, a migration abandoned after its
-    20-second timer, and a run with no DSN to connect to all end in `process.exit(0)`. Each is a
-    schema change that did not happen wearing a clean exit code."""
+    """★ THE SAME HEADLINE AGAIN, on the second step and all three of its shapes. `db-migrate.mjs`
+    is non-fatal BY DESIGN — its own header explains why — so a caught error, a migration
+    abandoned after its 20-second timer, and a run with no DSN to connect to all end in
+    `process.exit(0)`. Each is a schema change that did not happen wearing a clean exit code."""
     fake = FakeSandbox()
     fake.queue_commands(
         ExecResult(stdout=_A_MIGRATION_WAS_WRITTEN, stderr="", exit=0),
@@ -1336,21 +1310,20 @@ def test_the_migrate_failure_markers_match_the_script_that_prints_them() -> None
 async def test_the_interactive_resolver_fails_fast_with_a_plain_explanation(
     sink: CollectingSink,
 ) -> None:
-    """★ The wedge, asserted the only honest way: on the BOUND and the measured signature, never
-    by waiting one out.
+    """The wedge, asserted the only honest way: on the BOUND and the measured signature, never by
+    waiting one out.
 
-    Under a TTY the rename resolver waits forever — that is the observed 4m09s stall. Under this
-    sandbox's real conditions it cannot: the supervisor sets `CI=1`, closes stdin, and refuses a
-    manufactured pty (`test_prompt.py` pins all three), so drizzle-kit fails immediately with the
-    signature below. What this test owns is what the composite does with those seconds: it takes
-    the SHORT bound rather than the ten-minute install class, and it hands back an explanation in
-    words rather than a wedged command and a timeout."""
+    Under this sandbox's real conditions the resolver cannot wait: the supervisor sets `CI=1`,
+    closes stdin, and refuses a manufactured pty (`test_prompt.py` pins all three), so drizzle-kit
+    fails immediately with the signature below. What this test owns is what the composite does
+    with those seconds: it takes the SHORT bound rather than the ten-minute install class, and it
+    hands back an explanation in words rather than a wedged command and a timeout."""
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout="", stderr=_THE_TTY_REFUSAL, exit=0))
     captured = await _apply(fake, sink)
 
     # A migration generate should take seconds. Ten minutes of waiting for a terminal that does
-    # not exist is ten minutes of the citizen's build (F4's whole argument for two bounds).
+    # not exist is ten minutes of the citizen's build.
     assert fake.command_timeouts == [constants.RUN_COMMAND_DEFAULT_TIMEOUT_S]
     report = _report_in(captured)
     # THE MEASURED SIGNATURE, pinned against the two other places the same measurement is
@@ -1370,11 +1343,11 @@ async def test_the_interactive_resolver_fails_fast_with_a_plain_explanation(
 async def test_the_composites_output_is_capped_by_its_verdict_not_by_the_commands_exit_code(
     sink: CollectingSink,
 ) -> None:
-    """★ U22's cap, reached through U23's override. A step that failed while exiting 0 would be
-    SUMMARISED if the budget were read off `result.exit` — the misleading zero deciding how much
-    of the failure the model gets to see. The budget is asked about the OPERATION's verdict
-    instead, so a failing composite dumps and a succeeding one summarises, and both still hand
-    back the slice handle to whatever was cut."""
+    """★ The output cap, reached through the composite's own override. A step that failed while
+    exiting 0 would be SUMMARISED if the budget were read off `result.exit` — the misleading
+    zero deciding how much of the failure the model gets to see. The budget is asked about
+    the OPERATION's verdict instead, so a failing composite dumps and a succeeding one
+    summarises, and both still hand back the slice handle to whatever was cut."""
     failing = FakeSandbox()
     failing.queue_commands(
         ExecResult(stdout=_long_output(lines=900), stderr=_THE_TTY_REFUSAL, exit=0)
@@ -1415,12 +1388,12 @@ async def test_a_transport_failure_names_the_step_and_the_state_and_re_enters_th
 
     assert "The `generate the migration` step could not run" in captured["all_incoming"]
     assert "NO migration file was written" in captured["all_incoming"]
-    assert captured["output"] == "ok"  # the loop healed rather than crashing (R11)
+    assert captured["output"] == "ok"  # the loop healed rather than crashing
 
 
 async def test_a_gone_sandbox_still_escalates_from_the_composite(sink: CollectingSink) -> None:
     """Only `SandboxGoneError` leaves the tool — the restore-needed escalation is terminal for the
-    handle and must not be dressed up as a step outcome (KD-11)."""
+    handle and must not be dressed up as a step outcome."""
     fake = FakeSandbox()
     fake.queue_exec_errors(SandboxGoneError("the sandbox is gone"))
     with pytest.raises(SandboxGoneError):
@@ -1472,13 +1445,11 @@ async def test_the_live_step_says_what_the_citizen_sees_never_the_shell(
 async def test_the_composite_gets_the_long_operation_status_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ AE17, SECOND CLAUSE. U17's stillness narrator exists for exactly this tool: the composite
-    removes the per-step narration that used to fill the gap, so a citizen watching a schema change
-    would otherwise watch a row that stopped changing when the generate started.
-
-    Driven at `_on_event`, the seam where a tool call becomes a step frame and the narrator is
-    armed — the threshold and cadence are compressed rather than waited out, because the property
-    under test is "past the threshold, and repeatedly", not the number of seconds.
+    """★ The stillness narrator exists for exactly this tool: the composite removes the per-step
+    narration that used to fill the gap, so a citizen watching a schema change would otherwise
+    watch a row that stopped changing when the generate started. Driven at `_on_event`;
+    threshold and cadence are compressed rather than waited out, since the property under test
+    is "past the threshold, and repeatedly", not the number of seconds.
 
     Mutation-check: classify the composite as `hidden` and this goes red, because
     `_start_long_operation` refuses to narrate a step that renders nowhere."""
@@ -1523,7 +1494,7 @@ async def test_the_composite_gets_the_long_operation_status_line(
 async def test_the_adoption_pair_tells_the_composite_from_the_hand_rolled_sequence(
     sink: CollectingSink, counted: list[str]
 ) -> None:
-    """★ The behavioural bet, counted. R29's open question is whether the agent actually REACHES
+    """★ The behavioural bet, counted. The open question is whether the agent actually REACHES
     for the composite, and neither number answers it alone: "40 composite calls" is a fact about
     traffic until you know how many hand-rolled sequences ran beside it.
 

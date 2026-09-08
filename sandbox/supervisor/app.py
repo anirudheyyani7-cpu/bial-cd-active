@@ -1,33 +1,21 @@
-"""Minimal in-sandbox supervisor for the BIAL sandbox spike (ADR-0014 contract).
+"""Minimal in-sandbox supervisor for the BIAL sandbox spike.
 
-Exposes the supervisor HTTP API the production orchestrator will drive, guarded by a
-per-session bearer token that lives ONLY in this (root) process's environment. Every child
-it spawns (`npm`, `next dev`) runs as an unprivileged UID with a SCRUBBED environment, so the
-untrusted generated app cannot read the token or drive the supervisor — the in-sandbox-RCE
-closure ADR-0014 lines 47-52 require.
+Exposes the supervisor HTTP API the orchestrator drives, guarded by a per-session bearer
+token held ONLY in this root process's environment. Every child it spawns (`npm`, `next dev`)
+runs unprivileged with a SCRUBBED environment, so the untrusted generated app can't read the
+token or drive the supervisor — the in-sandbox-RCE gap this closes. Caddy fronts ACA port
+8080, routing `/_sup/*` here (:9000) and everything else to `next dev` (:3000, HMR upgrade).
 
-Routing: an in-container Caddy proxy fronts a single ACA ingress port (8080) and routes
-`/_sup/*` here (127.0.0.1:9000) and everything else to `next dev` (127.0.0.1:3000, with
-WebSocket upgrade for HMR).
+Injected secrets (Blob SAS, app credential, per-project DB DSN) are REDACTED from every
+observable output via `_redaction_secrets`; the real isolation boundary is container-scope +
+TTL (and `REVOKE CONNECT` for the DB), not this. Written LF-only with pathlib per the
+Windows-built-image rule.
 
-Endpoints:
-  GET  /health                                   -> {"ok": true}
-  POST /exec       {cmd:[..], cwd?, timeout?}     -> {"stdout","stderr","exit"}
-  POST /files      {action, path, ...}            -> view | str_replace | create | insert
-  POST /dev/start  {cmd?:[..], cwd?}              -> {"pid": N}
-  GET  /dev/status                                -> {"running","ready","port","exit_code"}
-  GET  /dev/logs?since=N                          -> {"lines":[..], "next": M}
-  GET  /dev/compile   -> {"state","errors","reason","connect_generation"}   (R17/R18)
-  GET  /served                                    -> {"served": N, "truncated": bool}   (R14)
-
-Injected secret values (the Blob SAS, the app credential, the per-project database DSN) are
-REDACTED from every observable output surface — `/exec` stdout+stderr, each `/dev/logs` line, and
-`/files` `view` — so a secret never rides the orchestrator's context (C9 §6.4). A URL-shaped
-secret is registered BOTH whole and as its parsed password sub-token, since the scrub is a
-substring replace of known values. This is the accidental-leak guard; the real isolation boundary
-is container-scope + TTL (and, for the database, the `REVOKE CONNECT` wall), not redaction.
-
-Written LF-only with pathlib to satisfy the ADR-0015 Windows-built-image rule.
+WHY THIS EXISTS — readiness means a SERVED RESPONSE, not `next dev`'s "Ready in <ms>" stdout
+marker, which prints once listening, before the first route compiles — believing it is how a
+blank page got announced as finished. `ready` now means an HTTP probe ACTUALLY SUCCEEDED; the
+marker only lets a cached affirmative skip that probe, never gates it, since a dev server can
+exist without `/dev/start` (the agent has replaced the supervisor's child before).
 """
 
 from __future__ import annotations
@@ -83,10 +71,10 @@ _ENV_ALLOW_PREFIXES = ("LC_", "NODE_", "NEXT_", "CHOKIDAR_", "WATCHPACK_", "npm_
 # The SINGLE source of truth for the injected-env contract: (name, description, secret?). ACA
 # injects these BIAL_* vars at provision — the ONLY BIAL_* the child may read. The two views below
 # (child-env allowlist, redaction set) are DERIVED from this table so they can't drift.
-# `description` stays even though `/env/manifest` — its one reader — is gone (U29, dead code:
+# `description` stays even though `/env/manifest` — its one reader — is gone (dead code:
 # nothing ever called it): the table remains the documented contract surface. Listed EXPLICITLY
 # (not via a suffix rule) because several end in `_URL`, which a denylist would wrongly drop; the
-# SAS is a bearer CAPABILITY, not an identity label (C9 §6). Add a row here or the child never
+# SAS is a bearer CAPABILITY, not an identity label. Add a row here or the child never
 # sees the var (fail closed).
 class InjectedEnvVar(NamedTuple):
     name: str
@@ -121,7 +109,7 @@ _INJECTED_ENV: tuple[InjectedEnvVar, ...] = (
 _BIAL_INJECTED_KEYS = tuple(v.name for v in _INJECTED_ENV)
 # The names whose VALUES are secret bearer credentials — redacted from observable output.
 _SECRET_ENV_NAMES = tuple(v.name for v in _INJECTED_ENV if v.secret)
-# A shorter value can't be a real SAS/credential; redacting it would blank ordinary text (KTD-8).
+# A shorter value can't be a real SAS/credential; redacting it would blank ordinary text.
 _MIN_SECRET_LEN = 8
 
 # The exact shape the router will actually route: `/a/` plus the container app's own name, which
@@ -171,19 +159,14 @@ def _register_secret(out: list[str], value: str | None) -> None:
 
 
 def _redaction_secrets() -> tuple[str, ...]:
-    """The known secret values to strip from observable output, read from `os.environ` at call time
-    (so a value injected after import is still covered). For each secret env var (non-empty, len >=
-    `_MIN_SECRET_LEN`) we redact BOTH the raw value AND its `urllib.parse.unquote` (URL-decoded)
-    form: the Azure SDK returns the SAS ALREADY percent-encoded, so the raw value is what a logged
-    URL carries, while the decoded `sig=…+…=…` is what a layer that parsed the query emits. We do
-    NOT add the double-encoded `quote()` form (it appears in no log). See KTD-8 / C1.
+    """The known secret values to strip, read from `os.environ` at call time so a value
+    injected after import is still covered.
 
-    A URL-shaped secret ALSO contributes its parsed password sub-token. `_redact` is a blind
-    whole-VALUE substring replace, so the two registrations cover different leaks and neither is
-    redundant: registering only the whole `BIAL_DATABASE_URL` lets a line that prints just the
-    password (a libpq/`pg` auth error, a `console.log(cfg.password)`) sail straight through, while
-    registering only the password lets a printed DSN leak its host, database and role name. Both,
-    or the guard has a hole (ADR-0028 / D18)."""
+    `_redact` is a blind whole-VALUE substring replace, so each secret is registered in every
+    form a line can carry it: raw, URL-decoded (the Azure SDK returns the SAS pre-encoded),
+    and, for a URL-shaped secret, its parsed password sub-token — the DSN alone misses a line
+    printing just the password, and the password alone misses a DSN leaking host/db/role. The
+    double-encoded `quote()` form is skipped; it appears in no log."""
     out: list[str] = []
     for name in _SECRET_ENV_NAMES:
         value = os.environ.get(name)
@@ -301,17 +284,12 @@ generous READ budget must never become a generous RESPONSE time."""
 def _abandon_socket(sock: socket.socket) -> None:
     """Tear a socket down out from under the thread blocked on it — the probe's deadline watchdog.
 
-    SHUTDOWN, NOT CLOSE, and the difference is the whole fix. `socket.close()` only closes the
-    real descriptor once every `makefile()` wrapper is gone (`_io_refs`), and `getresponse()`
-    holds exactly such a wrapper for the entire header parse — so closing here returns
-    immediately, changes nothing, and leaves the reader blocked on a live connection. `shutdown`
-    goes straight to the kernel: the blocked read sees EOF and `http.client` raises, which the
-    probe already classifies as not-serving.
-
-    Errors are dropped on purpose and it is the narrowest possible swallow: this runs on a timer
-    thread with nobody to report to, and the only failure mode is racing the probe's own
-    `conn.close()` (`ENOTCONN` / `EBADF`) — i.e. the answer already arrived. A raise here would
-    surface as an unhandled exception in a daemon thread guarding work that already succeeded."""
+    SHUTDOWN, NOT CLOSE: `close()` only frees the descriptor once every `makefile()` wrapper is
+    gone, and `getresponse()` holds one for the whole header parse, so `shutdown` goes straight
+    to the kernel instead — the blocked read sees EOF and `http.client` raises, which the probe
+    already treats as not-serving. Errors are swallowed on purpose: this runs on a timer thread
+    with nobody to report to, and the only failure mode is racing the probe's own
+    `conn.close()`."""
     try:
         sock.shutdown(socket.SHUT_RDWR)
     except OSError:
@@ -320,22 +298,13 @@ def _abandon_socket(sock: socket.socket) -> None:
 
 def _dev_port_bound(port: int = _DEV_PORT, timeout: float = _READY_CONNECT_TIMEOUT) -> bool:
     """Is the dev port OCCUPIED? A completed TCP connect, nothing sent, nothing awaited.
-
-    THIS IS `/dev/start`'s QUESTION, and it is deliberately not `_dev_port_serving`'s. What makes
-    a second `next dev` dangerous is a BOUND port, not an answering one: Next 13.4+ finds 3000
-    taken, falls back to the next free port, prints "Ready in" and mints a child Caddy never
-    proxies — and it does that whether or not the incumbent has finished compiling. Asking
-    "did anything answer within a second?" therefore reads a mid-recompile server as absent and
-    spawns the very duplicate the guard exists to prevent. U1's relaunch attach arm and U2's
-    Write-turn boot-at-attach both call `/dev/start` against containers that are ALREADY running
-    a dev server, so that window is now walked routinely rather than exotically — and two
-    Turbopack processes in a memory-capped ACA container is how `exit_code 137` gets into the
-    logs.
-
-    Connection REFUSED is the only genuine negative and on loopback it is instant, so the budget
-    here bounds nothing but the pathological unreachable case. Fails CLOSED on any other
-    socket error: "I could not tell" must never authorize a spawn.
-    """
+    THIS IS `/dev/start`'s QUESTION, not `_dev_port_serving`'s: a second `next dev` is dangerous
+    because of a BOUND port, not an answering one — Next 13.4+ finds 3000 taken, falls back to a
+    free port, and mints a child Caddy never proxies, whether or not the incumbent has finished
+    compiling. So "did anything answer?" would read a mid-recompile server as absent and spawn
+    the duplicate this guard exists to prevent (two bundlers in a capped container is how
+    `exit_code 137` happens). Connection REFUSED is the only genuine negative; any other socket
+    error fails CLOSED — "I could not tell" must never authorize a spawn."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
         conn.connect()
@@ -353,52 +322,14 @@ def _dev_port_serving(
     read_timeout: float | None = None,
     path: str | None = None,
 ) -> bool:
-    """True when something ANSWERS HTTP on the dev port — observed truth, not child state.
-
-    The child/marker state only knows about the supervisor's OWN child; a dev server the agent
-    relaunched itself (`pkill` + `nohup`) is invisible to it forever, and the preview never
-    frames over a live app. So a response — from whoever — is what counts.
-
-    This is `/dev/status`'s authority alone. `/dev/start`'s double-spawn guard asks the cheaper,
-    stricter question next door (`_dev_port_bound`) because the two need DIFFERENT answers, not
-    merely different budgets: a bound-but-still-compiling port is "not serving" here and
-    "occupied" there, and both readings are correct for their caller.
-
-    `timeout` bounds the CONNECT and `read_timeout` (default: `timeout`) bounds the wait for the
-    response — split so a cold server-render can be waited out without making "nothing is there"
-    a slow answer.
-
-    ANY HTTP response counts as serving, INCLUDING a 4xx/5xx — a 500-ing dev server is still
-    serving, and its brokenness is the app's business, not the supervisor's. That fail-open is
-    load-bearing, not incidental: without it a compile error would wedge `ready` False forever
-    and the platform would tell the model its app "hangs at startup" instead of showing it the
-    real error. Connection-refused (nothing bound) and a read timeout (bound, but nothing
-    answered yet — the compile window) both count as NOT serving.
-
-    THE READ BUDGET IS PER-RECV; THE TIMER IS THE TOTAL. `settimeout` re-arms on every socket
-    operation, and `http.client` performs MANY of them parsing a status line and headers — so a
-    peer that trickles one byte every half-second satisfies each read forever and this call never
-    returns. That is not a hypothetical for code the citizen's own agent wrote: the response here
-    comes from an unreviewed generated app. An unbounded probe pins the single-flight slot, so
-    `/dev/status` goes on reporting not-ready over an app that has since become healthy — a
-    permanent state, not a slow one. The watchdog below tears the socket down at the deadline
-    (see `_abandon_socket` — shutdown, not close), and the resulting failure lands in the same
-    not-serving arm as any other unreachable peer.
-
-    WHAT IT ASKS FOR is `path`, defaulting to the app's assigned base path (see `_base_path`)
-    and to `/` when there is none. THE FAIL-OPEN IS UNCHANGED — this widens WHAT is asked
-    without touching WHETHER a non-answer is tolerated, which is the only reason it is safe to
-    touch a function on the readiness chain at all: a wrongly-negative readiness leads to a
-    recovery path that silently rolls the workspace back to the last Save. Leaving the request
-    at `/` was the behavioural change, not moving it — under a base path `/` belongs to no
-    route, so "ready" would decay to "the dev server can render its own 404", which is true
-    before the citizen's first route has compiled and true forever for an app that never
-    compiles. That is the exact false-ready this probe was rewritten to kill.
-
-    NO TRAILING SLASH on the base path, and that is measured rather than stylistic: Next
-    redirects `/<base>/` to `/<base>` with a 308, so the slashed form would answer with a
-    redirect instead of the app and tell us nothing about whether the app renders.
-    """
+    """True when something ANSWERS HTTP on the dev port — observed truth, not child state (a dev
+    server the agent relaunched itself is still seen). See `_dev_port_bound` for the stricter
+    sibling question. ANY response counts, INCLUDING 4xx/5xx — fail-open, or a compile error
+    would wedge `ready` False forever and mislead the model. Reads `path` (default:
+    `_base_path()`, else `/`, NEVER trailing-slashed — Next 308s that): under a base path, `/`
+    404s even before the first route compiles, which would read as ready forever. `read_timeout`
+    bounds the response wait; the `_abandon_socket` watchdog tears it down since `settimeout`
+    re-arms per recv and a trickling peer would otherwise starve it forever."""
     return _dev_port_status(port, timeout, read_timeout, path) is not None
 
 
@@ -410,15 +341,10 @@ def _dev_port_status(
 ) -> int | None:
     """The HTTP status the dev port answered with, or None when nothing answered at all.
 
-    This holds the mechanics `_dev_port_serving` used to hold inline; that function is now the
-    one-line predicate over it, so the fail-open lives in exactly one place and reads as what it
-    is — "an answer, any answer" — rather than being spelled out in the middle of socket
-    bookkeeping.
-
-    NO CALLER READS THE INT TODAY, and that is worth saying plainly rather than dressing up: the
-    split exists to isolate the fail-open, not to serve a second consumer. Tamper detection needs
-    a response BODY as well as a status, so it opens its own connection (`_served_base_path`)
-    instead of reusing this. If that ever changes, this is the seam to reuse.
+    Holds the mechanics `_dev_port_serving` used to hold inline, so the fail-open lives in one
+    place. NO CALLER READS THE INT TODAY — the split exists to isolate the fail-open, not to
+    serve a second consumer; tamper detection needs a response BODY too, so it opens its own
+    connection (`_served_base_path`) rather than reusing this. If that changes, this is the seam.
     """
     read_budget = timeout if read_timeout is None else read_timeout
     target = (_base_path() or "/") if path is None else path
@@ -472,14 +398,11 @@ and the model burns metered tokens repairing a file that was never wrong."""
 def _served_base_path() -> str | None:
     """The base path the dev server is ACTUALLY generating URLs under, or None if unreadable.
 
-    Read from the ROOT rather than from the configured path, because the root is the request
-    whose answer differs between the two cases. Under a correct `basePath` the root is a 404
-    whose body still carries prefixed asset URLs; with `basePath` removed the root is the app
-    itself, carrying unprefixed ones. Either way the first `/_next/` reference names the truth.
-
-    Returns None — never a guess — when nothing identifiable comes back, so an app that replaces
-    the not-found page with plain text is reported as unknown rather than as tampered.
-    """
+    Reads the ROOT, not the configured path: under a correct `basePath` root is a 404 whose body
+    still carries prefixed asset URLs, and with `basePath` removed root is the app itself with
+    unprefixed ones — either way the first `/_next/` reference names the truth. Returns None —
+    never a guess — when nothing identifiable comes back, so an app that replaces the not-found
+    page with plain text reads as unknown, not tampered."""
     # THE SAME WATCHDOG THE READINESS PROBE CARRIES, AND FOR THE SAME REASON. `settimeout` re-arms
     # on every socket operation, and this response comes from an unreviewed generated app — a peer
     # that trickles one byte at a time satisfies each read forever and this call never returns.
@@ -546,18 +469,12 @@ explicit resets below stay, for promptness rather than for correctness.
 class _Ready:
     """`/dev/status`'s readiness cache and single-flight probe guard.
 
-    `served_until` is the CACHED AFFIRMATIVE, held as a monotonic DEADLINE rather than a bool so
-    it cannot outlive the thing it describes (see `_READY_CACHE_TTL`). Nothing is ever cached
-    negatively — a not-yet-ready server must be re-probed on the next poll.
-
-    It lives HERE rather than inside `_dev_port_serving`, which is also `/dev/start`'s
-    refuse-to-double-spawn guard: a cache there would let the guard read a stale True after the
-    server died, `/dev/start` would 409 forever, and `selfheal.verify`'s dead-child rescue could
-    never restart it.
-
-    `generation` disowns the answer of a probe that was already in flight when readiness reset,
-    so a restarted server can never inherit the previous server's `ready`.
-    """
+    `served_until` is the CACHED AFFIRMATIVE, held as a monotonic DEADLINE (not a bool) so it
+    can't outlive what it describes (`_READY_CACHE_TTL`); nothing is ever cached negatively. It
+    lives HERE, not inside `_dev_port_serving` (also `/dev/start`'s double-spawn guard): a cache
+    there would let that guard read a stale True after the server died, 409-ing forever and
+    blocking `selfheal.verify`'s dead-child rescue. `generation` disowns an in-flight probe's
+    answer when readiness resets, so a restarted server never inherits the old one's `ready`."""
 
     lock = threading.Lock()
     served_until: float = 0.0  # monotonic deadline; anything <= now means "no affirmative"
@@ -618,19 +535,12 @@ def _run_probe(done: threading.Event, generation: int) -> None:
 def _dev_is_serving() -> bool:
     """Has a request to the app root actually been answered? — `/dev/status`'s `ready`.
 
-    Single-flight, ONE ANSWER: only one probe runs at a time, and every caller — the one that
-    started it and the ones that arrived while it was in flight — waits on that same probe for a
-    bounded `_STATUS_PROBE_WAIT`. The watchers poll every second, so without the single flight a
-    slow route would stack N concurrent requests against a dev server already busy compiling.
-
-    The waiting matters as much as the flight. An earlier cut let a caller that found a probe
-    running return immediately, on the theory that it would get "the last known answer" — but
-    negatives are deliberately never cached, so that answer was an unconditional False. Two
-    watchers at 1s against a 10s probe meant most polls in that window reported not-ready over a
-    perfectly healthy app; paired with `running: false` (a dev server the agent started itself,
-    which is exactly what this probe exists to see) `_watch_preview` reads that as a crash edge
-    and re-mounts the citizen's iframe. A healthy app flapped.
-    """
+    Single-flight, ONE ANSWER: one probe runs at a time and every caller — starter and late
+    arrivals — waits on it for a bounded `_STATUS_PROBE_WAIT`, so a slow route can't stack N
+    requests against an already-compiling dev server. WAITING MATTERS: an earlier cut let a late
+    caller return immediately with "the last known answer" — but negatives are never cached, so
+    that was an unconditional False, and two 1s watchers against a 10s probe made most polls
+    report not-ready over a healthy app, reading as a crash edge and flapping the iframe."""
     done: threading.Event | None = None
     generation = 0
     i_started_it = False
@@ -672,7 +582,7 @@ def _pump(proc: subprocess.Popen[str]) -> None:
                 _Dev.ready = True
 
 
-# --- R17/R18: the dev server's own compile state, read off its HMR socket --------------------
+# --- the dev server's own compile state, read off its HMR socket --------------------
 #
 # WHY A SOCKET AND NOT THE LOG TAIL. `/dev/logs` was the only compile signal the platform had,
 # which means string-matching a human-formatted stream at whatever cadence the control plane
@@ -757,14 +667,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 class _Compile:
     """The derived compile state, published by the HMR consumer thread and read by `/dev/compile`.
 
-    `connect_generation` counts SUCCESSFUL connects. It is on the wire so the control plane can
-    raise the protocol-drift alarm exactly once per connect instead of once per poll — without it,
-    a drifted protocol would emit an alarm every second for the life of the container.
-
-    `pending` holds a `clean` that has not served its debounce yet. Settling happens on the READ
-    (`_settle_locked`), not on a timer in the writer: the consumer thread is blocked in `recv()`
-    for most of its life and cannot wake itself to publish, and a read-side promotion is exactly
-    as prompt for a caller polling every second while staying deterministic under test."""
+    `connect_generation` counts SUCCESSFUL connects, on the wire so the control plane raises the
+    protocol-drift alarm once per connect, not once per poll. `pending` holds a `clean` not yet
+    past its debounce; settling happens on the READ (`_settle_locked`), not a writer-side timer,
+    since the consumer thread is blocked in `recv()` for most of its life and can't wake itself
+    to publish — a read-side promotion stays just as prompt for a once-a-second poller."""
 
     lock = threading.Lock()
     state: str = "unknown"  # "building" | "clean" | "failed" | "unknown"
@@ -787,13 +694,10 @@ def _error_text(item: Any, secrets: tuple[str, ...]) -> str:
     string, but webpack-shaped object entries are a documented variant, so both are handled and
     anything else degrades to its repr rather than throwing inside the consumer thread.
 
-    THE REDACTION IS NOT OPTIONAL, and it is the same rule `/exec`, `/dev/logs` and `/files`
-    already follow (see this module's header): a compile error is dev-server output, and dev-server
-    output is exactly as credential-shaped as a log line. A Next error that echoes a bad
-    `BIAL_DATABASE_URL` — an unparseable DSN is a compile-time failure, not an exotic one — would
-    otherwise carry the per-project database password out of the container, into the control
-    plane, and on into a model prompt. The scrub is a substring replace of known values, so it
-    catches the whole DSN and its parsed password sub-token both (C9 §6.4)."""
+    THE REDACTION IS NOT OPTIONAL, the same rule `/exec`, `/dev/logs` and `/files` follow: a
+    compile error is dev-server output, and a Next error echoing a bad `BIAL_DATABASE_URL` — an
+    unparseable DSN is a compile-time failure, not an exotic one — would otherwise carry the
+    per-project database password out of the container and on into a model prompt."""
     if isinstance(item, str):
         text = item
     elif isinstance(item, dict):
@@ -956,11 +860,10 @@ def _ensure_hmr_consumer() -> None:
 
 
 # --- the TTY escape hatch ------------------------------------------------------------------
-# `stdin=DEVNULL` below is not enough, and we have the trace to prove it: told to run a bare
-# `npx drizzle-kit generate`, which prompts, the agent worked around the closed stdin by
-# MANUFACTURING a terminal — `python3 -c "import pty; pty.spawn([...])"` — and the command then
-# sat at its prompt for 4 minutes 9 seconds until the timeout fired. A real TTY defeats every
-# `isTTY` check we rely on, so the only place to stop it is here.
+# `stdin=DEVNULL` below is not enough: handed a command that prompts, the agent worked around the
+# closed stdin by MANUFACTURING a terminal — `python3 -c "import pty; pty.spawn([...])"` — and sat
+# at the prompt until the timeout fired. A real TTY defeats every `isTTY` check we rely on, so the
+# only place to stop it is here.
 #
 # A TARGETED DENYLIST, not a general shell filter. `run_command` is deliberately unrestricted in
 # Write mode (that is the open-sandbox model), so the goal is narrow: refuse the handful of
@@ -982,13 +885,11 @@ _TTY_REFUSAL = (
     "so the tool has nothing ambiguous to ask about (for a migration, make ONE kind of schema "
     "change per generate), or set the tool's non-interactive/CI option."
 )
-"""U20 correction: this used to say "pass the flag that supplies the answer (for example
-`--name <what_changed>`)". Measured against the pinned drizzle-kit 0.31.10, that is false —
-`--name` names the output file and answers nothing. The rename resolver is an interactive select
-NO flag answers, and under this sandbox's own conditions (stdin=DEVNULL, no TTY) it does not even
-hang: it prints "Interactive prompts require a TTY terminal", writes no migration, and exits 0.
-Teaching the agent a flag that cannot work sends it hunting for a longer flag list; teaching it to
-avoid the ambiguity is the instruction that actually resolves the situation."""
+"""NAMES NO FLAG, deliberately. Under this sandbox's conditions (stdin=DEVNULL, no TTY)
+drizzle-kit's rename resolver does not even hang: it prints "Interactive prompts require a TTY
+terminal", writes no migration and exits 0, and no flag answers it — `db/schema.ts` carries that
+account in full. Pointing the agent at a flag sends it hunting for a longer flag list; telling it
+to remove the ambiguity is the instruction that resolves the situation."""
 
 
 def _refuse_a_manufactured_tty(cmd: list[str]) -> str | None:
@@ -1105,7 +1006,7 @@ def files(body: FilesBody) -> dict[str, Any]:
         start, end = 1, len(lines)
         if body.view_range:
             start, end = body.view_range
-            if end == -1:  # C2/C7 tool promise: -1 = end of file (not an empty range)
+            if end == -1:  # tool contract: -1 = end of file (not an empty range)
                 end = len(lines)
             start = max(1, start)
         numbered = "\n".join(
@@ -1117,7 +1018,7 @@ def files(body: FilesBody) -> dict[str, Any]:
     if body.action == "str_replace":
         if body.old_str is None or body.new_str is None:
             raise HTTPException(400, "str_replace needs old_str and new_str")
-        # Normalize to LF on both sides (CRLF has burned BIAL twice — ADR-0015).
+        # Normalize to LF on both sides (CRLF has burned BIAL twice).
         text = p.read_text(encoding="utf-8").replace("\r\n", "\n")
         old = body.old_str.replace("\r\n", "\n")
         new = body.new_str.replace("\r\n", "\n")
@@ -1181,11 +1082,11 @@ def dev_start(body: DevStartBody) -> dict[str, Any]:
         body.cmd,
         cwd=cwd,
         # NEXT_PRIVATE_DISABLE_DEV_OVERLAY_UX (Next 16.3+, PR #94346) suppresses BOTH the compile
-        # and the runtime error overlay (ASM15) — defence in depth behind plan one's portal cover
-        # (U12) and client-error arm (U13), which is why this can't land before those do (a
+        # and the runtime error overlay — defence in depth behind plan one's portal cover
+        # and client-error arm, which is why this can't land before those do (a
         # runtime crash would otherwise go silent end-to-end). Set here, as a literal `extra`
         # entry rather than an image env var, so it's baked outside `/workspace/app`: the agent's
-        # write surface (R19) never reaches it, and a restore can't overlay it away.
+        # write surface never reaches it, and a restore can't overlay it away.
         env=_child_env(
             {"PORT": "3000", "HOST": "0.0.0.0", "NEXT_PRIVATE_DISABLE_DEV_OVERLAY_UX": "1"}
         ),
@@ -1249,19 +1150,14 @@ def dev_logs(since: int = 0) -> dict[str, Any]:
 
 @app.get("/dev/compile", dependencies=[Depends(_auth)])
 def dev_compile() -> dict[str, Any]:
-    """Is the app currently compiling, compiled, or broken? — the signal the platform covers
-    the preview frame with (R17/R18).
-
-    `state` is one of `building` | `clean` | `failed` | `unknown`, and `unknown` is a real
-    answer, not an error: the consumer has not connected yet, the socket is down between
-    reconnects, or a successful connect produced nothing recognisable. `reason` names which.
-    A caller must treat `unknown` as "hold whatever you are showing" — never as clean.
-
-    `connect_generation` counts successful connects, so the control plane can raise the
-    protocol-drift alarm once per connect rather than once per poll.
-
-    Starting the consumer HERE, on first ask, is deliberate: nothing spawns a reconnect loop
-    in a container the platform never polls, and the first answer is honestly `unknown`."""
+    """Is the app currently compiling, compiled, or broken? — the signal the platform covers the
+    preview frame with.
+    `state` is `building` | `clean` | `failed` | `unknown`; `unknown` is a real answer, not an
+    error (consumer not yet connected, socket down between reconnects, or a connect that
+    produced nothing recognisable) — `reason` names which, and callers must treat `unknown` as
+    "hold what you're showing", never as clean. `connect_generation` counts successful connects,
+    so the control plane can raise the protocol-drift alarm once per connect, not once per poll.
+    The consumer starts lazily, on first ask, so no never-polled container reconnects for free."""
     _ensure_hmr_consumer()
     with _Compile.lock:
         _settle_locked(time.monotonic())
@@ -1273,7 +1169,7 @@ def dev_compile() -> dict[str, Any]:
         }
 
 
-# --- R14: what the generated app actually served -----------------------------------------
+# --- what the generated app actually served -----------------------------------------
 #
 # Caddy logs to this file from a SITE-LEVEL logger, and `/_sup/*` opts out of it with `log_skip`.
 # The app block is therefore still the only thing recorded — but by exclusion, not because the
@@ -1328,22 +1224,14 @@ def _served_request_count(raw: str) -> int:
 
 @app.get("/served", dependencies=[Depends(_auth)])
 def served() -> dict[str, Any]:
-    """How many requests the generated app has served, excluding control-plane probes (R14).
-
-    A COUNT AND A TIMESTAMP, never a path. The control plane compares successive counts to decide
-    whether anyone is using this app; it has no business knowing which pages they visited, and a
-    generated app's URLs are citizen-authored input this process must not forward upward.
-
-    PULL, NOT PUSH. The control plane asks during a reclamation pass rather than the sandbox
-    calling out. That keeps the sandbox with no outbound credential, no new egress path and no
-    knowledge of the control plane's address — and it means a sandbox cannot keep itself alive by
-    talking, only by being used.
-
-    A missing log file is `served: 0`, not an error: it is what a container that has never served
-    a request looks like, and that is exactly the container this signal exists to identify.
-
-    AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see the
-    audit record."""
+    """How many requests the generated app has served, excluding control-plane probes.
+    A COUNT AND A TIMESTAMP, never a path — the control plane compares successive counts to
+    decide whether anyone is using the app, and a generated app's URLs are citizen-authored
+    input this process must not forward upward. PULL, NOT PUSH: the control plane asks during a
+    reclamation pass rather than the sandbox calling out, so the sandbox holds no outbound
+    credential, no new egress path, and no knowledge of the control plane's address — it can't
+    keep itself alive by talking, only by being used. A missing log file is `served: 0`, not an
+    error: that's exactly what a never-served container looks like."""
     try:
         size = _SERVED_LOG.stat().st_size
         with _SERVED_LOG.open("r", encoding="utf-8", errors="replace") as fh:

@@ -1,4 +1,5 @@
-"""U2 — the raw ACA control-plane (`AcaControlPlane`, the lower C2 seam) error triage.
+"""The raw ACA control-plane (`AcaControlPlane`, the layer beneath `AcaSandboxClient`) and its
+error triage.
 
 The sync `azure-mgmt-appcontainers` client is fully mocked (a `SimpleNamespace` whose
 `container_apps` methods return a canned poller or raise a canned Azure exception), so
@@ -157,7 +158,6 @@ def _fake_app(fqdn: str | None) -> SimpleNamespace:
     ],
 )
 def test_is_transient_threshold(status: int, expected: bool) -> None:
-    # Retry only on 429 or >= 500; every other 4xx is terminal.
     assert is_transient(_http_error(status)) is expected
 
 
@@ -342,13 +342,13 @@ async def test_delete_app_maps_terminal(monkeypatch: pytest.MonkeyPatch) -> None
     assert not isinstance(ei.value, AcaTransientError)
 
 
-# --- C10 identity tags: the envelope, the PATCH, and the listing -------------
+# --- Identity tags: the envelope, the PATCH, and the listing -------------
 
 
 def test_the_create_envelope_carries_the_identity_tags(monkeypatch: pytest.MonkeyPatch) -> None:
     """ON THE ENVELOPE, not PATCHed on afterwards. A create that succeeded followed by a stamp
-    that did not would leave an anonymous container behind — the population ADR-0029 exists to
-    collect, manufactured by the code meant to prevent it."""
+    that did not would leave an anonymous container behind — exactly the orphan the reclamation
+    system exists to collect, manufactured by the code meant to prevent it."""
     cp = _control_plane(monkeypatch, SimpleNamespace())
     tags = {"bial-kind": "build-sandbox", "bial-user-id": "u"}
     envelope = cp._envelope(_ENV, tags)  # noqa: SLF001
@@ -394,16 +394,12 @@ async def test_stamp_tags_uses_patch_and_never_put(monkeypatch: pytest.MonkeyPat
 
 
 async def test_a_stamp_carries_the_tags_it_did_not_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    """THE PROVIDER REPLACES; THE MERGE HAS TO BE OURS.
-
-    Observed against real Azure, twice, after every unit test said otherwise. `PATCH` on
-    `Microsoft.App/containerApps` is documented as JSON Merge Patch, but the provider treats
-    `tags` as ONE property and swaps the whole map for whatever the body carries. So stamping
-    `bial-reclaim-staged-at` onto a staging candidate DELETED its owner, its app id and its
-    created-at — and a container carrying no identity is escalate-only, which means the second
-    pass of the two-pass protocol could never reach `Verdict.DESTROY` on a container the first
-    pass had staged. The protocol destroyed its own evidence.
-
+    """THE PROVIDER REPLACES; THE MERGE HAS TO BE OURS. Observed against real Azure, twice: PATCH
+    on `Microsoft.App/containerApps` is documented as JSON Merge Patch, but the provider treats
+    `tags` as ONE property and swaps the whole map for whatever the body carries — stamping
+    `bial-reclaim-staged-at` onto a staging candidate DELETED its owner, app id and created-at,
+    making the container escalate-only so the two-pass protocol could never reach
+    `Verdict.DESTROY` on a container the first pass had staged.
     MUTATION-CHECK: send `tags=stamp` instead of the union and this goes red on the identity keys
     while every other stamp test stays green — which is exactly what shipping looked like."""
     seen: dict[str, object] = {}
@@ -447,7 +443,7 @@ async def test_a_stamp_overwrites_only_the_keys_it_names(monkeypatch: pytest.Mon
 async def test_a_stamp_on_an_untagged_container_still_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`tags: None` on the resource is the C10 backfill's entire input population. Reading it as
+    """`tags: None` on the resource is the backfill's entire input population. Reading it as
     anything other than "no tags yet" would make the backfill crash on the containers it exists
     for."""
     seen: dict[str, object] = {}
@@ -597,9 +593,10 @@ async def test_the_fleet_projection_keeps_the_identity(monkeypatch: pytest.Monke
 async def test_the_projection_carries_what_a_judgement_needs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3. Name alone was the old answer and it is why the fleet was un-judgeable: the pass has
-    to know whether a container is running, how to reach it (U14 recovers the supervisor bearer
-    through this FQDN), and what ARM thinks its age is."""
+    """Name alone was the old answer and it is why the fleet was un-judgeable: the pass has to
+    know whether a container is running, how to reach it (the supervisor answers at
+    `https://{fqdn}/_sup`, so the FQDN is what recovers its bearer), and what ARM thinks its
+    age is."""
     born = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
     apps = [_listed("sbx-x", None, running_status="Stopped", fqdn="sbx-x.uk.io", created_at=born)]
     cp = _control_plane(monkeypatch, SimpleNamespace(list_by_resource_group=lambda rg: apps))
@@ -615,15 +612,12 @@ async def test_an_sdk_enum_status_projects_as_its_wire_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FOUND AGAINST THE REAL FLEET, not here — which is the point of writing it down.
-
     `azure-mgmt-appcontainers` types `running_status` as `ContainerAppRunningStatus`, not `str`,
     so a bare `str()` yields `"ContainerAppRunningStatus.RUNNING"` — a Python repr where the
     projection promises Azure's own wire value. Every fake in this suite hands back a plain
-    string, so nothing here could ever have caught it: the fake did not record what the real
-    client records, and the tests certified a fiction until the enumerator was pointed at a live
-    subscription.
-
-    Modelled with a real `enum.Enum` rather than a sentinel, because the failure IS the enum."""
+    string, so nothing here could have caught it until the enumerator was pointed at a live
+    subscription. Modelled with a real `enum.Enum` rather than a sentinel, because the failure
+    IS the enum."""
 
     class _RunningStatus(enum.Enum):
         RUNNING = "Running"

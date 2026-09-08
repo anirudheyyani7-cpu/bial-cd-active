@@ -1,19 +1,13 @@
-"""U9 / D4 / R13 — the chat-kind prompt system: BASE + exactly one positive segment per run.
+"""The chat-kind prompt system: BASE + exactly one positive segment per run.
 
-The R13 property under test: a kind's composed prompt describes what that kind IS and DOES
-with the tools it HAS — never prohibitions against tools the registry already makes
-uncallable (`test_toolsets.py` proves the structural half; this file proves the prose
-half). Plus the D4 delivery property: composed instructions ride `@agent.instructions`
-per run and never reach a persisted row (`test_store_roundtrip.py` pins the store seam).
+The property under test: a kind's composed prompt describes what that kind IS and DOES with
+the tools it HAS — never prohibitions against tools the registry already makes uncallable
+(`test_toolsets.py` proves the structural half; this file proves the prose half). Plus the
+delivery property: composed instructions ride `@agent.instructions` per run and never reach a
+persisted row (`test_store_roundtrip.py` pins the store seam).
 
-TWO SEGMENTS NOW, NOT THREE. The Ask segment went with the third enum value it existed for;
-what it said about reading the app is what the Plan segment already says, and the one thing it
-said that Plan does not — what a brand-new project's files actually look like — was recorded as
-a hand-off below rather than quietly dropped. Plan 003 (shipped) decided the two surviving
-segments' wording but left that hand-off's ACTION half undecided; plan 006's U14 is what closed
-it, in the Plan segment alone
-(`test_no_segment_promises_an_emptiness_signal_that_never_arrives` below). This file owns the
-properties that must hold whatever the wording becomes.
+There are two segments, Plan and Build. This file owns the properties that must hold whatever
+their wording becomes.
 """
 
 from __future__ import annotations
@@ -60,10 +54,8 @@ _CONTEXT = PromptContext(
     project_description="Tracks visitors at the airport office.",
 )
 
-# The segment header each kind's composition must carry, and only its own. The Build arm still
-# reads "WRITE MODE" because the segment's own wording is Plan C's to rewrite, not this change's
-# — what matters here is that the two compositions are distinct and that neither leaks the
-# other's segment.
+# The segment header each kind's composition must carry, and only its own — what matters here
+# is that the two compositions are distinct and that neither leaks the other's segment.
 _SEGMENT_HEADERS = {
     ChatKind.PLAN: "PLAN MODE",
     ChatKind.BUILD: "WRITE MODE",
@@ -77,20 +69,16 @@ def test_composition_is_base_plus_exactly_its_own_segment(kind: ChatKind) -> Non
     assert "Citizen Developer assistant for BIAL" in composed
     assert "Asha" in composed and "Visitor Log" in composed
     assert "Tracks visitors at the airport office." in composed
-    # The data-safety block, verbatim, in the ONE form this kind is supposed to get. Build takes
-    # the whole constant; Plan takes the same string minus the two Build-machinery clauses, which
-    # is why this is a per-kind lookup and not a shared substring — the dropped sentinel clause
-    # sits mid-sentence, so neither form contains the other. WHY the two differ, and that the
-    # rules themselves are identical, is
+    # A per-kind lookup, not a shared substring: Plan's form drops two Build-machinery clauses
+    # mid-sentence, so neither form contains the other. WHY they differ is
     # `test_the_sql_sentinel_and_the_migration_channel_are_named_to_build_alone` below.
     expected_integrity = {
         ChatKind.PLAN: DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY,
         ChatKind.BUILD: DATA_INTEGRITY_RULES,
     }[kind]
     assert expected_integrity in composed
-    # Exactly this kind's segment, not the other's (mutation-checked: swapping a segment in
-    # `compose_kind_prompt` turns this red). Parametrized over the WHOLE enum rather than a
-    # hand-kept list, so a third kind added without a segment fails here.
+    # Mutation-checked: swapping a segment in `compose_kind_prompt` turns this red. Parametrized
+    # over the whole enum, not a hand-kept list, so a third kind added without one fails here.
     assert _SEGMENT_HEADERS[kind] in composed
     for other, header in _SEGMENT_HEADERS.items():
         if other is not kind:
@@ -101,8 +89,8 @@ def test_composition_is_base_plus_exactly_its_own_segment(kind: ChatKind) -> Non
 def test_every_kind_carries_the_truthful_portal_self_description(
     kind: ChatKind,
 ) -> None:
-    """R5's other half. It lives in BASE, so neither kind can be missing it — the
-    walkthrough's invented-portal-features fix does not depend on which segment is selected."""
+    """It lives in BASE, so neither kind can be missing it — the fix for a model inventing
+    portal features it does not have cannot depend on which segment was selected."""
     composed = compose_kind_prompt(kind, _CONTEXT)
     assert PORTAL_SURFACES in composed
     # The two clauses that do the actual work: the closed world, and honesty over invention.
@@ -117,8 +105,8 @@ def test_every_kind_carries_the_truthful_portal_self_description(
         "Admin review area",
     ):
         assert real_surface in composed
-    # R10: the unified chat's right pane is the APP. The relay's retiring wording said the
-    # builder view was "a chat beside a live preview"; this layout must not be re-described.
+    # The unified chat's right pane is the APP — guards against the retired relay's wording
+    # ("a chat beside a live preview") being used to re-describe this layout.
     assert "the right pane shows the app itself" in composed
 
 
@@ -130,9 +118,9 @@ def test_base_survives_an_undescribed_project() -> None:
 
 
 def test_build_composes_like_the_other_kind() -> None:
-    """A Build chat has a segment like any other (KTD-5/KTD-5a). This used to raise, and that
-    refusal was read as architecture when it was an unfinished seam: no `_WRITE_SEGMENT` had
-    been authored, to avoid duplicating `orchestrator/prompt.py`. A shared import solves that."""
+    """A Build chat has a segment like any other. Composing one used to raise, on the reading
+    that a Write segment could only duplicate `orchestrator/prompt.py`; importing the shared
+    blocks removes that reason, so the refusal was an unfinished seam and not architecture."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert "WRITE MODE" in composed
     assert 'on "Visitor Log"' in composed  # the same BASE both kinds carry
@@ -153,7 +141,7 @@ def test_the_write_segment_and_the_build_prompt_come_from_one_source() -> None:
     assert BUILD_WORKING_RULES_HEAD in composed
     assert BUILD_WORKING_RULES_TAIL in composed
     assert WRITE_IDENTITY in composed
-    # U15's audience block arrives the same way — one constant, reached through `_base()`, so
+    # The audience block arrives the same way — one constant, reached through `_base()`, so
     # the prompt cannot grow a voice the shared source does not have.
     assert NARRATION_VOICE in composed
 
@@ -171,28 +159,11 @@ _MIGRATION_CHANNEL_SENTENCE = "Schema changes go through generated migrations (s
 
 
 def test_the_sql_sentinel_and_the_migration_channel_are_named_to_build_alone() -> None:
-    """The two DATA INTEGRITY clauses that were FALSE in a Plan prompt, and only there.
+    """The two DATA INTEGRITY clauses that were FALSE in a Plan prompt, and only there: both
+    name machinery (BUILD's `run_command` sentinel; a `BUILD_WORKING_RULES_HEAD` section) a
+    Plan run doesn't have. The rules THEMSELVES are asserted present in both.
 
-    This is a behaviour assertion, not a wording one: both clauses describe machinery the
-    registry does not hand a Plan run, so a Plan prompt asserting them is the prompt telling the
-    model something about its own tools that is not so.
-
-    * THE SENTINEL. `orchestrator/sql_guard.you_shall_not_pass` is wired into BUILD's
-      `run_command` (`orchestrator/tools.py`). A Plan run's `run_command` is
-      `agent/read_tools`' allowlist, which admits ls/cat/head/tail/grep/wc/find/sed and no
-      shell — so no SQL can be issued and no sentinel is installed to catch one. Pinned below
-      against the live registry rather than against a list kept by hand.
-    * THE MIGRATION CHANNEL. "(see DATABASE)" points at a section of
-      `BUILD_WORKING_RULES_HEAD` that a Plan prompt does not carry, and the sentence it opens
-      ends "your done-summary must say so plainly" — a Plan run has no `declare_done` and
-      writes no done-summary.
-
-    THE RULES THEMSELVES ARE UNCHANGED IN BOTH, which is the half that must not regress: the
-    never-mutate rule and the no-invented-rows rule are asserted present in each. A change that
-    dropped the rule along with its enforcement clause passes neither of the last two asserts.
-
-    Mutation check: make `_base` ignore its `kind` and this goes red on the Plan arm.
-    """
+    Mutation check: make `_base` ignore its `kind` and this goes red on the Plan arm."""
     plan = compose_kind_prompt(ChatKind.PLAN, _CONTEXT)
     build = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
 
@@ -201,9 +172,8 @@ def test_the_sql_sentinel_and_the_migration_channel_are_named_to_build_alone() -
     assert _MIGRATION_CHANNEL_SENTENCE in build
     assert _MIGRATION_CHANNEL_SENTENCE not in plan
 
-    # …because the tools it describes are Build's. Read off the registry, so a Plan run that
-    # ever gains a write or schema tool fails HERE rather than shipping a prompt that lies the
-    # other way round.
+    # Read off the registry, so a Plan run that ever gains a write or schema tool fails HERE
+    # rather than shipping a prompt that lies the other way round.
     plan_tools = asyncio.run(registered_tool_definitions(ChatKind.PLAN))
     build_tools = asyncio.run(registered_tool_definitions(ChatKind.BUILD))
     assert "apply_schema_change" in build_tools
@@ -218,29 +188,19 @@ def test_the_sql_sentinel_and_the_migration_channel_are_named_to_build_alone() -
 
 
 def test_write_speaks_to_the_person_who_asked_for_the_app() -> None:
-    """U15 / R20. Write mode carried NO audience instruction at all — Plan carried a full
-    plain-language contract and Ask deliberately pushes the other way — and the demo build spent
-    2,397 words of paths, commands, and framework nouns on a citizen. The composed Write prompt now
-    carries the audience block, and the assertions pin it CONCRETELY (the plain register, what
-    stays behind the scenes, and that the failure turns are covered too) rather than just proving
-    some voice text exists.
-
-    THE LENGTH BAR IS NO LONGER ASSERTED, because there is no longer one to assert. A sentence
-    telling the agent how long it may write is a decision about how much of what it produced a
-    citizen is allowed to read, and it went with the other caps. WHO is being written for did
-    not: that is what this test is about, and it is the one thing in this block that two live
-    incidents came from removing."""
+    """Pins the audience block CONCRETELY — plain register, what stays behind the scenes, the
+    failure turns — rather than just proving some voice text exists. No length bar is asserted
+    because there is no longer one to assert."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert NARRATION_VOICE in composed
     lowered = composed.lower()
     assert "talking to the user" in lowered
-    # The SAME register Plan already speaks — U15 matched a voice rather than inventing a second.
     assert "plain, everyday words" in lowered
     assert "keep the how-it's-built details behind the scenes" in lowered
     assert "the file and folder names, the commands you run" in lowered
-    # R20 covers the hard turns as well: a failure and its recovery stay in product language.
+    # The hard turns are covered as well: a failure and its recovery stay in product language.
     assert "when something goes wrong" in lowered
-    # R23: the technical record is untouched, which is what lets the narration be short.
+    # The technical record is untouched, which is what lets the narration be short.
     assert "recorded step by step" in lowered
 
 
@@ -251,7 +211,7 @@ def test_the_audience_block_is_emitted_exactly_once() -> None:
     different places is how one wording starts drifting from the other.
 
     (It used to be three sites: the standalone `BUILD_SYSTEM_PROMPT` named the block itself,
-    because it could not call `_base()`. That prompt went with the build harness in U33; the two
+    because it could not call `_base()`. That prompt went with the build harness; the two
     surviving sites are both reached through `compose_kind_prompt`, which is what this counts.)
 
     IT IS ALSO THE DELETION GUARD. The block restricts WHO the agent writes for, not what it may
@@ -267,28 +227,14 @@ def test_the_audience_block_is_emitted_exactly_once() -> None:
         composed = compose_kind_prompt(kind, _CONTEXT)
         assert composed.count(NARRATION_VOICE) == 1
         assert composed.count("TALKING TO THE USER") == 1
-        # AND NO LENGTH BAR BESIDE IT, in either kind. The per-kind "HOW LONG —" sentences went
-        # with the rest of the caps; asserting their absence here is what stops one drifting
-        # back in beside the contract it used to ride with.
+        # No length bar drifts back in beside the contract it used to ride with.
         assert "HOW LONG —" not in composed
 
 
 def test_the_name_the_files_instruction_went_with_the_segment_that_carried_it() -> None:
-    """A REAL LOSS, recorded rather than quietly dropped.
-
-    The retired Ask segment told the model to "name the actual files and quote the actual code",
-    because Ask answered a question ABOUT the code to someone who had asked about code. There
-    are two kinds now, and a citizen who asks what their app does lands in a Plan chat — whose
-    segment says the opposite, deliberately: keep file and folder names behind the scenes and
-    describe everything in words the user already knows.
-
-    That follows from the origin's decision about what the two kinds are for; it is not a defect
-    this change introduced, and it is not a gap this change may paper over by inventing prompt
-    copy. So the guard is inertness only: the instruction is gone from every composition, and it
-    stays gone on purpose — plan 006's U14 closed the Plan segment's OTHER hand-off (the ACTION
-    half: what to do once the model reads a fresh project's files —
-    `test_no_segment_promises_an_emptiness_signal_that_never_arrives` below) and left this half,
-    naming files and quoting code, permanently retired rather than reviving it too."""
+    """A real loss, recorded rather than quietly dropped: the retired Ask segment told the model
+    to name files and quote code; the Plan segment a citizen now lands in says the opposite
+    deliberately. Inertness only — nothing here invents prompt copy to paper over the gap."""
     for kind in ChatKind:
         assert "name the actual files and quote the actual code" not in compose_kind_prompt(
             kind, _CONTEXT
@@ -296,69 +242,45 @@ def test_the_name_the_files_instruction_went_with_the_segment_that_carried_it() 
 
 
 def test_both_kinds_inherit_the_one_audience_contract() -> None:
-    """★ AE44 / R79 — the two kinds are told the same thing about their reader.
-
-    A Plan chat used to carry its OWN plain-language paragraph, saying what the audience block
-    says in different words. Two wordings of one contract is the drift R79 forbids, and the
-    earlier version of this test enforced the split: it asserted the shared block was ABSENT
-    from a Plan prompt, on the grounds that build framing ("what you are building right now")
-    had no place in a turn where nothing is being built yet.
-
-    That objection was real and it is what the split fixed — the build framing was one SENTENCE,
-    about length. That sentence and its planning twin have since gone entirely, with the rest of
-    the caps: how long the agent may write is a decision about how much of what it produced a
-    citizen is allowed to read. What is left is a contract with no per-kind half at all, which
-    is the strongest form of the thing R79 was asking for."""
+    """One contract, with no per-kind half at all: the audience block lives in BASE, and neither
+    kind carries its own plain-language paragraph or length clause. A per-kind half drifting
+    back in alone is the failure this catches."""
     plan = compose_kind_prompt(ChatKind.PLAN, _CONTEXT)
     build = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert NARRATION_VOICE in plan
     assert NARRATION_VOICE in build
 
-    # The register survives the move — asserted on the COMPOSED prompt, because the wording no
-    # longer lives in the Plan segment; deleting the duplicate is the point of the unit.
+    # Asserted on the COMPOSED prompt: the wording no longer lives in the Plan segment itself.
     lowered = plan.lower()
     assert "plain, everyday words" in lowered
     assert "keep the how-it's-built details behind the scenes" in lowered
     assert "present_plan_options" in plan
 
-    # NO PER-KIND LENGTH CLAUSE IS LEFT, in either direction. Both halves are asserted because
-    # the failure this catches is one of them drifting back in alone, which would restore the
-    # split without restoring the thing the split was for.
+    # Both halves asserted: the failure this catches is one drifting back in alone, restoring
+    # the split without restoring the thing the split was for.
     assert "a plan is as long as it needs to be" not in lowered
     assert "a couple of lines at each milestone" not in lowered
     assert "a plan is as long as it needs to be" not in build.lower()
     assert "a couple of lines at each milestone" not in build.lower()
 
-    # AE44's other half: the two prompts say the same thing about voice, with nothing left that
-    # differs. Nothing in the shared block is reachable from only one kind.
     assert plan.count(NARRATION_VOICE) == build.count(NARRATION_VOICE) == 1
 
 
-# --- U19 / R25: the version control the agent no longer does ---------------------------------
+# --- the version control the agent no longer does ---------------------------------
 #
-# THESE THREE REPLACE `test_write_teaches_the_commit_discipline_as_a_capability`, WHICH IS FLIPPED
-# RATHER THAN DELETED. It used to assert `COMMIT AS YOU WORK`, `git diff` and `git add -A` were
-# all present, because the Write segment taught the agent to stage and commit each coherent slice.
-# The platform commits the tree itself at every turn boundary
-# (`build_sessions/snapshot._COMMIT_SCRIPT`), so that instruction bought the user nothing and cost
-# them a shell round trip and a paragraph of narration per slice.
+# The commit the platform takes instead is `build_sessions/snapshot._COMMIT_SCRIPT`.
 #
-# TWO INERTNESS GUARDS AND ONE LIVENESS GUARD, and the third is not decoration: an inertness pair
-# on its own is greenest against a Write prompt somebody deleted outright, so one rule that must
-# SURVIVE every trim is asserted next to them.
+# Two inertness guards plus one liveness guard below, deliberately: an inertness pair alone is
+# greenest against a Write prompt somebody deleted outright, so a rule that must SURVIVE every
+# trim is asserted right next to them.
 
 _RETIRED_GIT_INSTRUCTIONS = (
-    # The commit discipline itself.
     "git add",
     "git commit",
-    # THE UNDO HALF, and the reason this is a set rather than one assertion. The deleted block
-    # taught `git checkout` and `git revert` for backing out a bad edit; both — and `git reset`,
-    # and `git stash` — leave a HEAD that is NOT a descendant of the copy on record, over a
-    # perfectly good tree. That is precisely the input the workspace-integrity verdict has to
-    # reason about before it may call a workspace REVERTED. The verdict closes the hazard on its
-    # own (it requires the CONTENT to disagree as well as the lineage); this stops a future
-    # prompt edit from feeding it self-inflicted non-descendant HEADs, and reintroducing ANY ONE
-    # of the five turns it red.
+    # The undo half, checked as a set: each of these — including reset and stash below — can
+    # leave a HEAD that is not a descendant of the copy on record over a perfectly good tree,
+    # which is exactly the input the workspace-integrity verdict reasons about before calling a
+    # workspace REVERTED. Guards against a prompt edit feeding it a self-inflicted HEAD.
     "git checkout",
     "git revert",
     "git reset",
@@ -367,12 +289,12 @@ _RETIRED_GIT_INSTRUCTIONS = (
 
 
 def test_neither_write_prompt_instructs_the_agent_in_git() -> None:
-    """★ THE INERTNESS GUARD (U19 / R25, cross-plan constraint 9). Asserted as a SET so the
-    failure names every instruction that crept back.
+    """★ THE INERTNESS GUARD. Asserted as a SET so the failure names every instruction that
+    crept back.
 
     IT USED TO RUN TWICE, over the composed Write prompt and the standalone `BUILD_SYSTEM_PROMPT`
     beside it, because either composition site could grow one. The standalone prompt went with
-    the build harness in U33 and the composed one is the whole Write surface now, so the
+    the build harness and the composed one is the whole Write surface now, so the
     parametrization went with it — the blocks it composes are unchanged and still the place a git
     instruction would come back.
 
@@ -391,7 +313,7 @@ def test_the_write_prompt_still_says_not_to_restart_the_dev_server() -> None:
     env carries no marker that would tell the platform's flag apart from the real one — so this
     sentence is the whole of what stops a second `next dev` racing the one the turn engine reads
     (through `selfheal.verify`) to decide whether the app is healthy. It survives every prompt
-    trim in this plan."""
+    trim."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     lowered = composed.lower()
     assert "the dev server (`next dev`) is already running" in lowered
@@ -399,31 +321,22 @@ def test_the_write_prompt_still_says_not_to_restart_the_dev_server() -> None:
 
 
 def test_the_composer_takes_no_approved_plan_at_all() -> None:
-    """The parameter is GONE rather than rejected, which is the stronger version of the same
-    guarantee.
-
-    It used to be accepted and then raised on, so that a mis-wired caller failed loudly instead
-    of having its plan silently swallowed. A plan reaches a Build chat as its first user MESSAGE
-    now — never spliced into the system prompt — so there is no caller left to mis-wire and no
-    argument for one to pass. An inertness guard on the SIGNATURE rather than on a raise: the
-    parameter is not there to reject anything, so asserting a `TypeError` from a literal call
-    would only prove that Python rejects unknown keywords — and would need a suppression on
-    every type checker to compile at all."""
+    """The parameter is GONE rather than rejected — the stronger guarantee, and checked on the
+    SIGNATURE: a `TypeError` from a literal call would only prove Python rejects unknown
+    keywords, and would need a type-checker suppression to compile."""
     assert "approved_plan" not in inspect.signature(compose_kind_prompt).parameters
 
 
 def test_a_plan_chat_stays_lean() -> None:
-    # Template facts / working rules are the BUILD prompt's business (plan decision): a Plan
-    # chat never carries the build environment blocks.
     composed = compose_kind_prompt(ChatKind.PLAN, _CONTEXT)
     assert BUILD_WORKING_RULES_HEAD not in composed
     assert "declare_done" not in composed
 
 
 _FORBIDDEN_FRUIT = (
-    # R13: prohibition prose aimed at tools the mode doesn't have. The registry already
-    # removed them — ban text would teach the model to reason about absent capabilities
-    # (the research doc's anti-pattern 1/2).
+    # Prohibition prose aimed at tools the mode doesn't have. The registry already
+    # removed them, and ban text would teach the model to reason about capabilities it
+    # cannot reach.
     "do not",
     "don't",
     "never",
@@ -444,16 +357,8 @@ def test_the_plan_segment_never_speaks_of_forbidden_fruit() -> None:
 
 
 def test_the_plan_still_says_nothing_technical_even_with_its_shape_freed() -> None:
-    """★ THE HALF THAT SURVIVED THE DE-GATING, and the distinction the owner drew.
-
-    The pass that freed the plan's SHAPE deliberately did not free its AUDIENCE. A plan is read
-    by someone who asked for an app, and naming the file it lives in tells them nothing they can
-    act on — which is the same rule the shared audience contract states for every other message,
-    applied to the one message a citizen is asked to APPROVE.
-
-    Asserted per category rather than in general: a sentence that dropped "a command" while
-    keeping the other four would still read as a no-jargon rule and would still have stopped
-    covering the thing the 2026-08-18 demo actually leaked.
+    """Asserted per category rather than in general: a sentence that dropped "a command" while
+    keeping the other four would still read as a no-jargon rule.
 
     Mutation check: delete any one of the five nouns from `_PLAN_SEGMENT` and this names it."""
     lowered = _PLAN_SEGMENT.lower()
@@ -462,29 +367,19 @@ def test_the_plan_still_says_nothing_technical_even_with_its_shape_freed() -> No
 
 
 def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
-    # F9: the plan streams as ordinary assistant TEXT, so its register is dictated entirely by
-    # _PLAN_SEGMENT. The developer skeleton ("the files you would touch", "the trade-offs the
-    # user should weigh") is retired; the segment now steers an outcome-first, plain-language plan,
-    # while KEEPING the read-first grounding. This asserts the PROMPT's shape — the ground-truth
-    # check is an eyeballed rendered Plan turn against PLAN-FORMAT-RESEARCH.md's AFTER, since a
-    # prompt string cannot prove the model's OUTPUT stays jargon-free.
+    """This asserts the PROMPT's shape only. Whether the model's OUTPUT stays jargon-free is
+    read off a rendered Plan turn by eye — a prompt string cannot prove it."""
     lowered = _PLAN_SEGMENT.lower()
-    # the retired developer-register source phrases are gone (assert the REAL phrases, not the
-    # model-output headings from the research BEFORE example)
+    # The real retired phrases, not the model-output headings they used to produce.
     assert "the files you would touch" not in lowered
     assert "trade-offs the user should weigh" not in lowered
     assert "trade-offs" not in lowered
-    # citizen framing is present: outcome-first + see/do + the options contract. "Plain,
-    # everyday words" is NO LONGER asserted here on purpose — it moved to the shared audience
-    # block, and a Plan chat inherits it through `_base` rather than restating it. Asserting it
-    # against the segment again would recreate the second copy R79 exists to prevent;
-    # `test_a_plan_chat_inherits_the_contract_and_only_the_length_differs` holds that ground on
-    # the composed prompt, where the model actually reads it.
+    # "Plain, everyday words" is not asserted against the segment itself on purpose — it moved
+    # to the shared audience block; `test_both_kinds_inherit_the_one_audience_contract` holds
+    # that ground on the composed prompt, where the model actually reads it.
     assert "plain, everyday words" in compose_kind_prompt(ChatKind.PLAN, _CONTEXT).lower()
-    # THE MANDATED SHAPE IS GONE, and its absence is asserted rather than merely unmentioned.
-    # The segment used to dictate five headed sections in a fixed order, which made every plan
-    # read the same whatever was being planned. What a plan is FOR and who reads it survives;
-    # how it is arranged is the agent's, in front of the person who asked.
+    # The mandated five-headed-section shape is gone; what a plan is FOR survives, how it is
+    # arranged is the agent's.
     assert "five parts" not in lowered
     assert "what this gives you" not in lowered
     assert "present_plan_options" in _PLAN_SEGMENT
@@ -493,31 +388,21 @@ def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
 
 
 def test_the_plan_segment_says_the_plan_travels_in_the_offer_argument() -> None:
-    """★ THE SENTENCE THAT KEEPS A BUTTON ATTACHED TO SOMETHING (U9).
+    """The buttons attach to the `plan` argument, so a plan announced beside the call leaves the
+    reader nothing to press.
 
-    THE REASON CHANGED AND THE INSTRUCTION DID NOT, which is worth saying because the old reason
-    is gone: prose beside a tool call used to be thrown away, so a plan written next to the call
-    simply disappeared. It reaches the citizen now. What has not changed is that the BUTTONS are
-    attached to the argument — a plan announced beside the call leaves the person reading a plan
-    with nothing to press, which is the one thing the plan chat exists to produce.
-
-    So the segment must still say where the plan goes, and must no longer say that everything
-    else the agent writes is discarded. Both halves are asserted.
-
-    Mutation check: revert this paragraph to "write the plan, then call the tool" and no other
+    Mutation check: revert that paragraph to "write the plan, then call the tool" and no other
     test in the repo goes red — the failure is a citizen reading a plan with no button."""
     lowered = _PLAN_SEGMENT.lower()
     assert "as the `plan` argument of" in lowered
     assert "not as a message beside the call" in lowered
-    # AND IT NO LONGER LIES TO THE MODEL. The segment used to say anything written in the same
-    # breath as a tool call "does not reach the user", which stopped being true the moment the
-    # hold was deleted — R7's whole point is that nothing tells the model something about this
-    # system that is no longer so.
+    # The segment used to say anything written alongside a tool call "does not reach the user",
+    # which stopped being true the moment the hold was deleted.
     assert "does not reach the user" not in lowered
     assert "everything else you write does reach them" in lowered
 
 
-# THE PLAN REMINDERS' OWN F9 CHECK USED TO SIT HERE, and it is not orphaned: the reminders it
+# THE PLAN REMINDERS' OWN CHECK USED TO SIT HERE, and it is not orphaned: the reminders it
 # guarded no longer exist (`tests/services/turns/test_reminders.py` is their inertness guard),
 # and every property it asserted — citizen-plain wording, prohibition-free, the
 # `present_plan_options` contract — is asserted directly against `_PLAN_SEGMENT` above, which is
@@ -536,12 +421,12 @@ async def test_relay_path_stays_verbatim_deps_system(db_session) -> None:
     captured: dict[str, str] = {}
     deps = ChatDeps(db=db_session, user_id=uuid.uuid4(), system="RELAY-PROMPT")
     result = await chat_agent.run("hi", deps=deps, model=_capturing_model(captured))
-    assert captured["instructions"] == "RELAY-PROMPT"  # mode=None → byte-identical U7 path
+    assert captured["instructions"] == "RELAY-PROMPT"  # mode=None → byte-identical path
     assert result.output == "ok"
 
 
 async def test_mode_run_composes_and_never_persists_instructions(db_session) -> None:
-    """D4 delivery: the model RECEIVES the composition; the store's dump seam keeps it out
+    """Delivery: the model RECEIVES the composition; the store's dump seam keeps it out
     of any persisted payload (the JSONB half is pinned in test_store_roundtrip)."""
     captured: dict[str, str] = {}
     deps = ChatDeps(
@@ -570,37 +455,14 @@ async def test_a_kind_without_context_fails_first(db_session) -> None:
 
 @pytest.mark.parametrize("kind", list(ChatKind))
 def test_no_segment_promises_an_emptiness_signal_that_never_arrives(kind: ChatKind) -> None:
-    """★ U20 / R26 — THE PROMISE IS GONE BECAUSE THE SIGNAL NEVER ARRIVES.
-
-    The retired Ask segment told the model "If there is no app yet, your tools will tell you
-    truthfully." The only workspace that answered that way was reachable from one branch of
-    the turn's workspace resolver, and that branch required `sandbox_client is None`: NO
-    SANDBOX SERVICE CONFIGURED. That branch — and the workspace behind it — are since gone
-    (`_pin_workspace` has one arm). In the configured deployment a
-    brand-new project gets the live container like every other project, and the container holds
-    the golden template — so the reads come back FULL, of template files, and a model waiting
-    for an emptiness signal spends round-trips looking for one that is not coming.
-
-    WIDENED TO BOTH SURVIVING SEGMENTS rather than deleted with the segment that carried it.
-    The promise was wrong about the platform, not about Ask, so it must not reappear in either.
-
-    HAND-OFF, ONCE STATED RATHER THAN DROPPED, NOW CLOSED (plan 006's U14). The deleted Ask
-    segment's liveness sentence carried two things: a FACT ("the starter template … in place")
-    and an ACTION on it ("talk about what could be built for them"). By the time this test was
-    first written the FACT was already covered — not by anything this file decides, but by the
-    workspace note (`mode_prompts.workspace_note`, U8/R14), which tells a Plan turn the app is
-    still the starter template on every turn regardless of what any segment says. Only the
-    ACTION half was genuinely missing, and plan 003 (shipped) is the plan that left it missing
-    without deciding it either way. U14 is what decided it: `_PLAN_SEGMENT` now carries the
-    instruction, and only Plan's segment does — the assertion below was withheld pending that
-    decision and is no longer."""
+    """The retired Ask segment promised an emptiness signal that never arrives — every project
+    gets a live container holding the golden template, so reads come back FULL. Widened to both
+    surviving segments because the promise was wrong about the platform, not about Ask."""
     lowered = compose_kind_prompt(kind, _CONTEXT).lower()
     assert "your tools will tell you truthfully" not in lowered
     assert "if there is no app yet" not in lowered
-    # THE ASSERTION THAT WAS WITHHELD (U14): Plan's composition now carries the instruction the
-    # retired sentence's ACTION half taught, and Build's — which shares the workspace note's
-    # FACT but not the segment — does not. Parametrized over the whole enum like the rest of
-    # this test, so a third kind added without a decision here fails loudly instead of silently.
+    # Plan's composition carries the retired sentence's ACTION half; Build's — which shares the
+    # workspace note's FACT but not the segment — does not.
     if kind is ChatKind.PLAN:
         assert "talk about what could be built for them" in lowered
     else:
@@ -610,18 +472,9 @@ def test_no_segment_promises_an_emptiness_signal_that_never_arrives(kind: ChatKi
 async def test_a_plan_turn_carries_the_notes_fact_and_the_segments_instruction_together(
     db_session,
 ) -> None:
-    """★ THE INTEGRATION HALF OF U14's HAND-OFF CLOSE.
-
-    The two tests above prove the FACT (the workspace note, unit-tested by
-    `test_reminders.py`) and the ACTION (the Plan segment's new clause, unit-tested by
-    `test_no_segment_promises_an_emptiness_signal_that_never_arrives` above) each exist in
-    isolation. Neither would catch one regressing while the other stays green — the segment
-    could lose its clause, or a future turn could stop appending the note, and every OTHER
-    test in this file or `test_reminders.py` would still pass. This assembles a Plan turn the
-    way `turns/engine.py` actually does: the note appended to `message_history` as a
-    `UserPromptPart` (the note's channel), the segment delivered through `@agent.instructions`
-    (the segment's channel) — and proves both reach the one model call on the one turn.
-    """
+    """The integration half: the workspace note's FACT and the Plan segment's ACTION, each
+    unit-tested alone (`test_reminders.py` and the test above) but never together — assembled
+    here the way `turns/engine.py` actually does, to prove both reach the one model call."""
     captured_instructions = ""
     captured_messages: list[ModelMessage] = []
 
@@ -649,9 +502,8 @@ async def test_a_plan_turn_carries_the_notes_fact_and_the_segments_instruction_t
 
     # The segment's INSTRUCTION, on the instructions channel.
     assert "talk about what could be built for them" in captured_instructions
-    # The note's FACT, on the message-history channel — the same wording `_WORKSPACE_STILL_
-    # TEMPLATE` composes, checked as literal text rather than the private constant so this
-    # test fails the way a reviewer reading the model's actual request would notice it.
+    # The note's FACT, on the message-history channel — checked as literal text rather than
+    # the private constant so this fails the way a reviewer reading the actual request would.
     sent_notes = [
         part.content
         for message in captured_messages
@@ -663,18 +515,11 @@ async def test_a_plan_turn_carries_the_notes_fact_and_the_segments_instruction_t
 
 
 def test_no_prompt_surface_names_a_button_the_interface_does_not_draw() -> None:
-    """★ R-15 / L8 — the five-link chain, checked at the link that used to break silently.
-
-    An agent that tells a citizen to press "Keep refining" when the interface draws "Keep
-    planning" is a broken instruction at the one moment the product asks them to decide
-    something, and nothing about it fails: the prompt composes, the tool registers, the turn
-    runs, and only the person reading it is stuck.
-
-    THE TOOL DESCRIPTIONS ARE CHECKED TOO, and that is the half a composed-prompt assertion
-    misses. `present_plan_options`' docstring is prompt copy — pydantic-ai sends it on the tool
-    schema of every request — but it never appears in any composed prompt string, so a guard
-    over prompts alone reads clean while the model is being told the old labels. That is not
-    hypothetical: this is exactly the site that survived the previous relabelling."""
+    """A prompt naming a button the interface doesn't draw fails nothing on its own — the prompt
+    composes, the turn runs, only the reader is stuck. Tool descriptions are checked too:
+    `present_plan_options`' docstring is prompt copy pydantic-ai sends on every tool schema, but
+    it never appears in any composed prompt string, so a prompt-only guard would read clean
+    while the model is told the old labels."""
     retired = ("Keep refining", "keep refining", "Build it")
     surfaces: dict[str, str] = {
         f"composed {kind.value} prompt": compose_kind_prompt(kind, _CONTEXT) for kind in ChatKind
@@ -696,10 +541,6 @@ def test_no_prompt_surface_names_a_button_the_interface_does_not_draw() -> None:
 
 
 def await_definitions(kind: ChatKind) -> dict[str, ToolDefinition]:
-    """`registered_tool_definitions` without the await, for a sync test.
-
-    The registry's renderer is async only because pydantic-ai's `get_tools` is; it performs no
-    I/O and calls no model (its accessors raise if anything tries). Running it on its own loop
-    here keeps the guard above a plain sync test beside the other prompt-copy guards, which is
-    where a reader looks for it."""
+    """`registered_tool_definitions` without the await, for a sync test — the renderer is async
+    only because pydantic-ai's `get_tools` is; it performs no I/O and calls no model."""
     return asyncio.run(registered_tool_definitions(kind))

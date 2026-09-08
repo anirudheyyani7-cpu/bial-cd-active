@@ -1,4 +1,4 @@
-"""U3 — creating a project provisions its own database (ADR-0028, R3/R4).
+"""Creating a project provisions its own database.
 
 Real cluster, no fakes: `POST /v1/projects` runs the whole external sequence, so these
 assert against `project_databases` AND the PostgreSQL catalogs. Every test that provisions
@@ -101,7 +101,7 @@ async def test_create_project_provisions_a_ready_database(
 async def test_create_project_still_reports_no_app(
     client: AsyncClient, db_session: AsyncSession, salted: list[uuid.UUID]
 ) -> None:
-    # The fresh-project contract is inviolable (D0): the DATABASE is project-keyed and exists
+    # The fresh-project contract is inviolable: the DATABASE is project-keyed and exists
     # from create, while the app row stays lazily minted at first build. Provisioning must not
     # smuggle an app into the 201 body.
     headers = await _auth(db_session, "u3-noapp@rvaiglobal.com")

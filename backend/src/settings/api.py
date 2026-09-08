@@ -1,16 +1,14 @@
 """Everything the FastAPI control plane needs to boot, in one list.
 
-Read this file to answer "which environment variables does the API need?" — the answer is here and
-nowhere else. Fields are grouped under the four tier headers defined in `__init__.py`, and a
-field's tier is spelled by its SHAPE, never by a class name:
+Read this file to answer "which environment variables does the API need?" Fields are
+grouped under the four tier headers in `__init__.py`; a field's tier is spelled by its
+SHAPE, never a class name:
 
     REQUIRED               no default            -> fails to construct in EVERY environment
     REQUIRED IN PRODUCTION `X | None = None` + a `_require_<field>_in_production` gate
     FEATURE SWITCH         `X | None = None`     -> unset means the feature is OFF, in prod too
     KNOB                   a working default     -> set only to change behaviour
-
-Behaviourally identical to the pre-U24 mixin composition: same fields, same seven production
-gates, same messages.
+Behaviourally identical to the previous mixin composition: same fields, gates, messages.
 """
 
 from __future__ import annotations
@@ -34,13 +32,12 @@ from src.settings.foundry import FoundryConfig
 class ApiSettings(CoreSettings):
     """The API role's complete settings manifest.
 
-    Inherits `CoreSettings` — and ONLY `CoreSettings`. A single base is deliberate: pydantic merges
-    `model_config` along the MRO with a plain left-to-right `dict.update`, and every `BaseSettings`
-    subclass owns a complete config dict with explicit `None` defaults, so multiple bases could
-    silently reset `env_file` and `env_nested_delimiter` — a profile that boots, reads no env file
-    and ignores every nested `X__Y` variable. With one base there is no merge to clobber it.
-    `tests/test_settings_profiles.py` pins it anyway.
-    """
+    Inherits `CoreSettings` — and ONLY `CoreSettings`. A single base is deliberate:
+    pydantic merges `model_config` along the MRO with a plain left-to-right
+    `dict.update`, and every `BaseSettings` subclass owns a complete config dict with
+    explicit `None` defaults, so multiple bases could silently reset `env_file` and
+    `env_nested_delimiter` — booting with no env file read and every nested `X__Y`
+    ignored. `tests/test_settings_profiles.py` pins it anyway."""
 
     # ============================================================ REQUIRED
     # No default. Missing or partial -> the process does not start, in dev, test and prod alike.
@@ -52,7 +49,7 @@ class ApiSettings(CoreSettings):
     auth: AuthConfig
 
     # The Entra emails computed to the super-admin role PER REQUEST — no mutable DB role column
-    # (ADR-0005). Required, no default: a control-plane with no configured admins is a
+    # Required, no default: a control-plane with no configured admins is a
     # misconfiguration, so a missing SUPERADMIN_EMAILS — or one normalizing to an EMPTY allowlist —
     # fails at construction, in every environment. `NoDecode` disables pydantic-settings' JSON
     # pre-parse so the env value is a plain comma-separated string.
@@ -60,7 +57,7 @@ class ApiSettings(CoreSettings):
 
     # WHO A CITIZEN ASKS WHEN THE PLATFORM SAYS NO.
     #
-    # The at-limit message (R31/U24) has to end in something the reader can actually do, and
+    # The at-limit message has to end in something the reader can actually do, and
     # until this field existed the product had no way to say who. `superadmin_emails` is the
     # nearest thing to an admin roster, and naming one of its entries would publish a
     # colleague's inbox as a support desk without their having agreed to it — while naming all
@@ -69,8 +66,8 @@ class ApiSettings(CoreSettings):
     #
     # NO DEFAULT, DELIBERATELY, and the consequence is stated here rather than discovered
     # during an incident: this must be set in the App Service configuration BEFORE the release
-    # ships, or the API refuses to start. That is the intended behaviour
-    # (`.claude/rules/fail-first-python.md`), and it is the cheaper failure by a wide margin. A
+    # ships, or the API refuses to start. That is the intended behaviour, and it is the
+    # cheaper failure by a wide margin. A
     # default would have to be a placeholder address, and a placeholder address sends a citizen
     # who is already stuck to a mailbox nobody reads — a failure that surfaces as silence,
     # weeks later, from the one person least able to escalate it.
@@ -184,7 +181,7 @@ class ApiSettings(CoreSettings):
     @model_validator(mode="after")
     def _require_storage_in_production(self) -> Self:
         # Production persists attachments and cannot run without it. The sanctioned
-        # optional-integration prod gate (fail-first-python.md): fail at startup in prod, not at
+        # optional-integration prod gate: fail at startup in prod, not at
         # the first artifact write.
         if self.is_production and self.object_store is None:
             raise ValueError(
@@ -222,7 +219,7 @@ class ApiSettings(CoreSettings):
 
     @model_validator(mode="after")
     def _require_app_db_in_production(self) -> Self:
-        # Production IS the data isolation boundary for every generated app (ADR-0028): an
+        # Production IS the data isolation boundary for every generated app: an
         # unconfigured prod control plane would create projects that silently never get a
         # database. STATIC message only — never interpolate the maintenance DSN or the at-rest key.
         if self.is_production and self.app_db is None:
@@ -252,7 +249,7 @@ class ApiSettings(CoreSettings):
     @model_validator(mode="after")
     def _require_real_frontend_url_in_production(self) -> Self:
         # FRONTEND_URL keeps its dev default, but it feeds security surfaces — the sandbox
-        # frame-ancestors CSP via BIAL_PORTAL_ORIGIN (C8) and postMessage targetOrigin checks — so
+        # frame-ancestors CSP via BIAL_PORTAL_ORIGIN and postMessage targetOrigin checks — so
         # production booting with the localhost default would silently mis-scope them.
         if self.is_production and not self.FRONTEND_URL.startswith("https://"):
             raise ValueError(

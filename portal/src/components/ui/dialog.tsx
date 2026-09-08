@@ -5,23 +5,16 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 /**
- * shadcn/ui `dialog`, copied in from the registry, with the alias set trimmed to the five names
- * this portal actually mounts — recorded here because the next `npx shadcn@latest add` of
- * anything listing `dialog` in its registryDependencies will restore the rest as an unexplained
- * diff, exactly the way `button.tsx` beside it records its own departures.
+ * shadcn/ui `dialog`, copied from the registry with the alias set trimmed to the five names
+ * this portal mounts — recorded here because the next `npx shadcn@latest add` listing
+ * `dialog` in `registryDependencies` restores the rest as an unexplained diff, the way
+ * `button.tsx` beside it records its own departures.
  *
- * WHAT WENT AND WHY IT WAS NOT AN OVERSIGHT. The trigger, the close alias and the footer were
- * vendored whole and never reached. Both consumers — `chat/AttachmentPreview.tsx` and
- * `__tests__/test-setup.test.tsx` — drive the dialog from `open`/`onOpenChange` state rather than
- * from a trigger, and dismiss it through the corner control `DialogContent` already renders, so a
- * footer had nothing to hold.
- *
- * THE PORTAL AND THE OVERLAY ARE STILL HERE, only unexported: `DialogContent` composes both, and
- * deleting either would take the backdrop and the layer with it.
- *
- * A FUTURE CONSUMER IS EXPECTED. `workspace/UnsavedWorkGuard.tsx` names this file as the upgrade
- * path for its focus trap. Re-adding a trigger together with a caller is the right move; re-adding
- * one on spec is what this note exists to stop.
+ * Trigger, close alias, and footer were vendored whole, never reached — both consumers drive
+ * the dialog from `open`/`onOpenChange` state and dismiss via the corner control
+ * `DialogContent` renders. Portal/overlay stay, only unexported (`DialogContent` composes
+ * both). A future consumer IS expected: `UnsavedWorkGuard.tsx` names this as the upgrade
+ * path for its focus trap — re-add a trigger together with that caller, not on spec.
  */
 
 const Dialog = DialogPrimitive.Root
@@ -44,20 +37,12 @@ const DialogOverlay = React.forwardRef<
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 /**
- * TWO ADDITIONS TO THE UPSTREAM SHAPE, both because this design needs them at the call site
- * and upstream renders the overlay and the close button internally where a caller cannot
- * reach them:
- *
- *   `overlayClassName` — #158 §9 specifies a SOFTENED overlay (`bg-slate-900/15` with a 3px
- *     backdrop blur) rather than upstream's `bg-black/80`, and §12 names overriding it as the
- *     expected thing to do. Without this prop the only way to get there is editing the
- *     vendored default, which would change every other dialog in the product.
- *
- *   `hideClose` — the project dialogs carry their own Cancel and their own X. Rendering
- *     Radix's as well gives two close affordances in one corner.
- *
- * Everything else is upstream verbatim, including the whole point of moving onto it:
- * `role="dialog"`, `aria-modal`, a focus trap, Escape-to-close and scroll lock.
+ * TWO ADDITIONS TO THE UPSTREAM SHAPE, both because upstream renders the overlay and close
+ * button internally where a caller cannot reach them: `overlayClassName` lets the design's
+ * softened overlay (`bg-slate-900/15`, 3px blur) override upstream's `bg-black/80` without
+ * editing the vendored default (which would change every dialog in the product), and
+ * `hideClose` skips Radix's own X where a dialog already has its own Cancel and X. Everything
+ * else is upstream verbatim — `role="dialog"`, `aria-modal`, a focus trap, Escape, scroll lock.
  */
 /**
  * WHERE FOCUS GOES WHEN A DIALOG IS UNMOUNTED RATHER THAN CLOSED.

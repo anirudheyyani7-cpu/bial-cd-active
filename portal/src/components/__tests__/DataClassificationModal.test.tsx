@@ -1,18 +1,13 @@
 /**
- * DataClassificationModal: the pre-publish form — six weighted Yes/No toggles pre-filled
- * by the automatic review, the notes gate tied to the routing rule (any weighted Yes both
- * flips the action to "Send for review" AND is obliged to explain itself), and a Cancel
- * structurally isolated from the submit (backdrop/Escape/button all resolve to the same
- * `onCancel`, none of them reachable from `onConfirm`).
+ * DataClassificationModal: pre-publish form — six weighted Yes/No toggles pre-filled by the
+ * automatic review; any weighted Yes flips the action to "Send for review" and requires
+ * notes; Cancel (backdrop/Escape/button) never reaches onConfirm.
  *
- * What these do NOT assert, deliberately: that a weighted-Yes total blocks the button.
- * It must not — the running total is informational, the server re-reads the STORED
- * review and merges there, so a test pinning a client-side block would enshrine exactly
- * the bypassable design this avoids. What IS pinned client-side: the review's answers
- * land only on untouched questions (merge, never clobber), responses are filtered by the
- * version stamp the dialog asked about, Escape stays available while the review runs
- * (the busy block covers a submit in flight only), and progress/arrival/failure announce
- * through a polite live region.
+ * Deliberately NOT asserted: that a weighted-Yes total blocks the button — the server
+ * re-reads the STORED review and merges there, so a client-side block would enshrine a
+ * bypassable design. Pinned instead: answers merge onto untouched questions only, are
+ * filtered by the reviewed version stamp, Escape stays live outside an in-flight submit,
+ * and progress/arrival/failure announce via a polite live region.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
@@ -88,10 +83,9 @@ const BASE: ClassificationReview = {
 const COMPLETE_ALL_NO: ClassificationReview = { ...BASE, verdicts: verdicts() }
 const RUNNING: ClassificationReview = { ...BASE, status: 'running' }
 /**
- * The default wiring for the hand-answering scenarios: a settled FAILED review with six
- * unanswered questions. No pre-fill, so every legacy flow (answer six, notes gate,
- * submit) reads exactly as it did before the review existed — while still exercising the
- * real mount-time ensure-POST.
+ * Default beforeEach wiring: a settled FAILED review with six unanswered questions — no
+ * pre-fill, so legacy flows (answer six, notes gate, submit) behave as before, while still
+ * exercising the real mount-time ensure-POST.
  */
 const FAILED_UNANSWERED: ClassificationReview = {
   ...BASE,
@@ -186,7 +180,7 @@ describe('DataClassificationModal', () => {
   })
 
   it('ties the warning to the explanation field for assistive tech, and clears invalid once written', async () => {
-    // R10 obliges the explanation, and the warning is the copy saying so — a screen
+    // The explanation is required, and the warning is the copy saying so — a screen
     // reader has to reach it FROM the field, not stumble on it. Asserted both ways so
     // a hardcoded `aria-invalid` cannot pass.
     await renderModal()
@@ -224,8 +218,6 @@ describe('DataClassificationModal', () => {
     fireEvent.change(screen.getByTestId('dc-notes'), { target: { value: 'Vendor contact list only.' } })
     expect(confirmButton().disabled).toBe(false)
   })
-
-  // --- the action's label states which of the two things it will do -------------
 
   it('with no weighted Yes the action reads Publish and no explanation is demanded', async () => {
     await renderModal()
@@ -284,8 +276,6 @@ describe('DataClassificationModal', () => {
     expect(screen.getByTestId('data-classification-modal')).toBeTruthy()
     expect(confirmButton().disabled).toBe(false)
   })
-
-  // --- Cancel is structural ----------------------------------------------------
 
   it('the Cancel button calls onCancel only — never onConfirm', async () => {
     const onConfirm = vi.fn()
@@ -371,9 +361,7 @@ describe('the review pre-fill', () => {
     expect(version.textContent).toMatch(/saved/i)
   })
 
-  it('re-opening for an unchanged version renders the stored answers and never polls (AE4)', async () => {
-    // The server answers the ensure-POST with the stored COMPLETE row — settled, so the
-    // dialog has nothing to poll and issues no GET. One ask per open, no run implied.
+  it('re-opening for an unchanged version renders the stored answers and never polls', async () => {
     ensureReview.mockResolvedValue(COMPLETE_ALL_NO)
     const first = await renderModal()
     expect(screen.getByTestId('dc-question-publicData-no').getAttribute('aria-checked')).toBe(
@@ -414,9 +402,9 @@ describe('the review pre-fill', () => {
     expect(confirmButton().disabled).toBe(false)
   })
 
-  it('renders a leaked-credential reason verbatim — no file name, no value, no markdown mangling (AE1)', async () => {
+  it('renders a leaked-credential reason verbatim — no file name, no value, no markdown mangling', async () => {
     // Server-shaped reason: the backend strips locations and values before this body is
-    // built (R3). The render path's obligation is to pass it through VERBATIM in a
+    // built. The render path's obligation is to pass it through VERBATIM in a
     // whitespace-preserving plain element — the shared markdown renderer would collapse
     // the single newline (documented repo bug) and transform the asterisks.
     const reason =
@@ -454,7 +442,7 @@ describe('while the review runs', () => {
     expect(status.textContent).toMatch(/close this and come back/i)
     expect(status.textContent).toMatch(/20 seconds/)
     expect(status.textContent).toMatch(/up to a minute/i)
-    // OD-A: never claim closing loses the result — it is stored against the version.
+    // Never claim closing loses the result — it is stored against the version.
     // (Word-bounded: "close" contains "lose".)
     expect(status.textContent).not.toMatch(/\b(lose|lost|losing)\b|start over|again from/i)
     // The version is named from the moment it opens, review or no review.
@@ -701,7 +689,7 @@ describe('the failure buckets', () => {
       } else {
         expect(screen.queryByTestId('dc-recheck')).toBeNull()
       }
-      // A failure is never stored as an answer (R19): six unanswered questions the
+      // A failure is never stored as an answer: six unanswered questions the
       // citizen must answer, and the submit stays blocked until they do.
       expect(confirmButton().disabled).toBe(true)
       expect(screen.getByTestId('dc-question-healthData-no').getAttribute('aria-checked')).toBe(
@@ -739,21 +727,19 @@ describe('the failure buckets', () => {
     expect(screen.getByTestId('dc-review-status').textContent).toMatch(/couldn't be read/i)
   })
 
-  it('an app with nothing saved says so and offers no questions (R21)', async () => {
+  it('an app with nothing saved says so and offers no questions', async () => {
     ensureReview.mockResolvedValue(NOTHING_SAVED)
     await renderModal()
 
     expect(screen.getByTestId('dc-review-status').textContent).toMatch(
       /nothing saved to check yet/i,
     )
-    // No questions, no score, no explanation field, and nothing to submit.
     for (const key of CATEGORY_KEYS) {
       expect(screen.queryByTestId(`dc-question-${key}-yes`)).toBeNull()
     }
     expect(screen.queryByTestId('dc-score')).toBeNull()
     expect(screen.queryByTestId('dc-notes')).toBeNull()
     expect(screen.queryByTestId('dc-confirm')).toBeNull()
-    // There is no version to name either.
     expect(screen.queryByTestId('dc-review-version')).toBeNull()
     // Cancel still works — the way out is never removed.
     expect(screen.getByTestId('dc-cancel')).toBeTruthy()
@@ -776,14 +762,10 @@ describe('the failure buckets', () => {
 })
 
 /**
- * The number on this screen is the one thing it exists to get right, and it used to score
- * the developer's answers ALONE. A developer who set the check's two Yes verdicts back to
- * No was shown "0 — no sensitive data declared — this can publish automatically" with a
- * button reading Publish, moments before the server merged the same answers to 45, refused
- * for a missing explanation, and routed the app.
- *
- * The gate itself was never at risk — the server merges and it decides. What was wrong was
- * every sentence the developer read on the way there.
+ * This score used to reflect the developer's own answers alone, so overriding the check's
+ * findings could show "publish automatically" moments before the server's own merge routed
+ * the app for review anyway. The gate was never the risk — the number read on the way
+ * there was.
  */
 describe('the total is the ANSWER OF RECORD, not the developer’s answers alone', () => {
   /** The Passenger Feedback Log case: the check finds Health (25) and PII (20). */

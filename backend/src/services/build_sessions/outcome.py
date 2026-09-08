@@ -1,4 +1,13 @@
-"""Record a finished build in its thread — the durable half of 003-U5, native-store edition.
+"""Record a finished build in its thread — the durable counterpart to the live `ended` frame,
+native-store edition.
+
+WHY THIS EXISTS. The plan had the portal append the outcome at its terminal, with a
+reconciliation pass for the closed-tab case — unimplementable: sessions live only in
+`SessionManager._sessions`, are evicted 5 minutes after the terminal
+(`_ENDED_RETENTION_SECONDS`), and do not survive a restart, so "the project's latest build
+session" is unanswerable once the tab is gone. Builds take minutes and users close tabs, so a
+portal-only design would miss exactly the users the record exists for. The thing that always
+knows a build finished is the thing that finished it, so the server writes.
 
 THE WRITE HALF IS HALF GONE. `write_build_started` — the hidden `build_started` marker — went
 with `SessionManager.start`, its only caller, when the start route was deleted; so did
@@ -7,8 +16,8 @@ STAYS, but read the next sentence before trusting it: the live `stop` path does 
 `_record_outcome` through `_end` -> `_finalize`, and `_record_outcome` then returns immediately
 on `if session.conversation_id is None`. Nothing in `src/` sets that field — the one production
 `BuildSession(...)` omits it, and the only assignment in the repository is a test fixture whose
-own docstring says it builds a shape production cannot produce. **So the CALL is reachable and
-the BODY is not.** The function is kept rather than deleted because the `{sessionId}` routes it
+own docstring says it builds a shape production cannot produce. So the CALL is reachable and
+the BODY is not. The function is kept rather than deleted because the `{sessionId}` routes it
 belongs to are kept (they read `build_outcome` rows already in the production database), and
 cutting the writer while keeping that reader is the half-state this deletion deliberately
 avoided. Treat it as parked, not as live.
@@ -19,30 +28,21 @@ rows are written, so `projection._closed_sessions()` has nothing to close and th
 an ordinary Write chat turn records its ending as a `turn_terminal` row instead, which is the
 projection arm a citizen actually sees today.
 
-WHY THE SERVER WRITES THIS. The plan had the PORTAL append the outcome at its terminal, with a
-reconciliation pass for the closed-tab case. That pass turned out to be unimplementable: sessions
-live only in `SessionManager._sessions`, are evicted `_ENDED_RETENTION_SECONDS` (5 min) after the
-terminal, and do not survive a restart — so "the project's latest build session" is not a question
-anything can answer once the tab is gone. Since builds take minutes and users close tabs, the
-portal-only design would have missed exactly the users the record exists for. The thing that
-always knows a build finished is the thing that finished it, so it writes.
+SHAPE. A `system_event` row: PAYLOAD is synthesized assistant text
+(`ModelResponse(TextPart(summary))`) — plain factual prose, because it replays to the model as
+history on the user's next turn; build METADATA (`sessionId`/`startedSeq`/`previewUrl`/`status`/
+`reason`/`snapshotCommitted`) lives in `meta`, OUTSIDE the payload, so the payload stays pure
+native. Idempotency keys on
+`meta->>'sessionId'`; `startedSeq` was the attachment-consumption boundary the now-deleted
+`attachments.py` read. Seq allocation and the two-writer retry live in the store's
+`append_batch`.
 
-SHAPE (U4). The outcome is a `system_event` row in the native message store: the PAYLOAD is a
-synthesized assistant text (`ModelResponse(TextPart(summary))`) — plain factual prose, because
-it replays to the model as history on the user's next turn — and the build METADATA
-(`sessionId` / `startedSeq` / `previewUrl` / `status` / `reason` / `snapshotCommitted`) lives in
-the row's `meta` column, OUTSIDE the payload, so the payload stays pure native. Idempotency keys
-on `meta->>'sessionId'`; `startedSeq` was the attachment-consumption boundary the deleted
-`attachments.py` read. Seq allocation and the two-writer retry now live in ONE place — the store's
-`append_batch` — instead of being reimplemented here.
+Written BEFORE the terminal frame: `_do_finalize` calls this immediately before emitting
+`ended`, so the row exists before any client learns the build is over — reversed, this would
+race every reader.
 
-TODO(U5): when BRAIN persists its full transcript per step, this summary row becomes the
-terminal lifecycle entry of that stream (provisioned/quota/stopped/reaped entries join it) —
-re-home the writer accordingly.
-
-WHY IT WRITES BEFORE THE TERMINAL FRAME. `_do_finalize` calls this immediately before emitting
-`ended`, so by the time any client learns the build is over, the row is already there. The
-reverse order would race every reader.
+TODO: once BRAIN persists its full transcript per step, this row becomes that stream's terminal
+lifecycle entry (provisioned/quota/stopped/reaped entries join it); re-home the writer then.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ _log = structlog.get_logger()
 # "Build finished.", which is the bug these arms exist to fix.
 STOPPED_BY_USER: Final = "stopped_by_user"
 FORCE_ENDED: Final = "force_ended"
-# The idle reaper's reason — part of C3's documented terminal set (`build_sessions/schemas.py`).
+# The idle reaper's reason — part of the documented terminal set (`build_sessions/schemas.py`).
 # NOTHING IN `src` IMPORTS IT, and it is not dead: `_summary` reads it below, and that arm is
 # reachable because `StopBuildRequest.reason` is caller-supplied — `stop_build` passes it straight
 # through to `manager.stop(..., reason=...)`. So a stop carrying this reason produces the prose
@@ -187,18 +187,14 @@ async def write_build_outcome(
     reason: str | None,
     started_seq: int | None = None,
 ) -> bool:
-    """Append the build-outcome `system_event` row to its thread. Returns True if written.
+    """Append the build-outcome `system_event` row. Returns True if written.
 
-    Owner-scoped (ADR-0004): the conversation must be the caller's, else this is a no-op rather
-    than a cross-user write. Idempotent on `session_id` — a build has exactly one outcome, so a
-    re-run of the end sequence must not add a second. Seq allocation + the two-writer retry live
-    in the store's `append_batch`; a retry budget exhausted there is logged, not raised (this
-    runs inside the end sequence, where a raise would hang every SSE feed).
-
-    `started_seq` is the transcript's high-water mark at build START, captured by the caller then
-    (`SessionManager.start`) because it is unrecoverable now: by the time this runs, a turn the
-    user sent DURING the build is already indistinguishable from one they sent before it.
-    """
+    Owner-scoped: the conversation must be the caller's, else this is a no-op, never a
+    cross-user write. Idempotent on `session_id` — one outcome per build; an exhausted seq
+    retry budget (`append_batch`) logs rather than raises, since raising here would hang
+    every SSE feed. `started_seq` is the build's START high-water mark, captured by the
+    caller then — unrecoverable later, once a mid-build turn looks no different from one
+    sent before it."""
     conversation = await db.scalar(
         sa.select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id
@@ -252,7 +248,7 @@ async def _already_recorded(
         sa.select(Message.id).where(
             Message.conversation_id == conversation_id,
             Message.entry_kind == MessageEntryKind.SYSTEM_EVENT,
-            # `kind` disambiguates: the U5 `build_started` lifecycle row carries this
+            # `kind` disambiguates: the `build_started` lifecycle row carries this
             # session's id too, and without this predicate it would satisfy the idempotency
             # probe and silently suppress the real outcome.
             Message.meta["kind"].astext == "build_outcome",
@@ -268,13 +264,11 @@ async def newest_build_outcome_status(
     """The status of the NEWEST recorded build outcome across the project's threads, or None
     when no outcome was ever recorded (or the newest one is unreadable).
 
-    Owner- AND project-scoped (ADR-0004). Best-effort by design: the outcome write itself is
-    best-effort (`_record_outcome` swallows failures rather than hang the terminal), so an
-    absent row must read as "nothing known" — None — never an error. Relaunch (#43/U6) uses
-    this to label a restore whose newest build FAILED as "last saved version": `_do_finalize`
-    snapshots pass and fail alike, so the newest snapshot may well be that failed build's
-    workspace, and an unqualified "ready" would misrepresent what the user is looking at.
-    """
+    Owner- AND project-scoped. Best-effort by design: the outcome write itself can silently
+    fail, so an absent row reads as "nothing known" — None — never an error. Relaunch uses
+    this to label a restore whose newest build FAILED as "last saved version": a failed build
+    still snapshots, so the newest snapshot may be that build's workspace, and an unqualified
+    "ready" would misrepresent what the user is looking at."""
     meta = await db.scalar(
         sa.select(Message.meta)
         .join(Conversation, Message.conversation_id == Conversation.id)
@@ -283,7 +277,7 @@ async def newest_build_outcome_status(
             Conversation.project_id == project_id,
             Message.user_id == user_id,
             Message.entry_kind == MessageEntryKind.SYSTEM_EVENT,
-            # Outcomes only: a `build_started` lifecycle row (U5) also carries a sessionId,
+            # Outcomes only: a `build_started` lifecycle row also carries a sessionId,
             # and picking it up here would read as "status unknown" — regressing the
             # relaunch label for a project whose newest build has merely STARTED.
             Message.meta["kind"].astext == "build_outcome",

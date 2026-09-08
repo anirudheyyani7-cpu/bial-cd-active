@@ -54,7 +54,6 @@ test('a 403 "CSRF check failed" does NOT redirect — the caller handles its own
 
   await page.goto('/projects')
 
-  // Still on /projects, still signed in. The page shows its own error state.
   await expect(page.getByText(/Couldn’t load your projects/i)).toBeVisible()
   await expect(page).toHaveURL(/\/projects/)
   await expect(page).not.toHaveURL(/authError=account_suspended/)
@@ -62,8 +61,7 @@ test('a 403 "CSRF check failed" does NOT redirect — the caller handles its own
 
 test('a 403 "Super-admin privileges required." does NOT redirect, and its message is shown', async ({ page }) => {
   // A super-admin whose gate check fails server-side must see the server's own words, not a
-  // blank error and not a suspension redirect. This is the interceptor's discrimination test
-  // seen from the UI.
+  // blank error or a suspension redirect — the interceptor's discrimination test, seen from the UI.
   await mockSession(page, { isAdmin: true })
   await page.route('**/api/admin/users**', (route) => route.fulfill(json(403, { detail: 'Super-admin privileges required.' })))
 
@@ -77,8 +75,8 @@ test('a 403 "Super-admin privileges required." does NOT redirect, and its messag
 })
 
 test('a citizen developer is gated by the SPA before it ever calls the admin API', async ({ page }) => {
-  // RBAC is enforced at the API (.claude/rules/security.md); this client gate is an
-  // affordance, not the enforcement. It must still not crash or look like a suspension.
+  // RBAC is enforced at the API; this client gate is an affordance, not the
+  // enforcement. It must still not crash or look like a suspension.
   await mockSession(page, { isAdmin: false })
   let adminCalls = 0
   await page.route('**/api/admin/**', (route) => {

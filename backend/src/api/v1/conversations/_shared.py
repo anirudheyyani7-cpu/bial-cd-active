@@ -1,17 +1,9 @@
 """The turn plumbing the conversation routes run on.
 
-These helpers used to live as underscore-private names inside the legacy relay's router, and
-`conversations/turns.py` reached across a package boundary to import them anyway — which is
-exactly the coupling ADR-0010 warns about: a "private" name with a second consumer is not
-private, it is undocumented shared API, and the next edit to the relay silently reshaped the
-turn route.
-
-The home is `conversations/` rather than beside the relay on purpose: the relay was the surface
-being retired, so the code that outlived it should not sit in the module that died. It has since
-died, and this file is what that move was for. The underscore in the FILE name marks it as
-internal to `api/v1` — it is plumbing, not a route module — while every NAME it exports is
-public, because it genuinely has more than one caller: the send route, the transition route, and
-the test fixtures that bind `chat_model` and `billing_session_factory`.
+The underscore in the FILE name marks it as internal to `api/v1` — it is plumbing, not a route
+module — while every NAME it exports is public, because it genuinely has more than one caller:
+the send route, the transition route, and the test fixtures that bind `chat_model` and
+`billing_session_factory`.
 """
 
 from __future__ import annotations
@@ -48,7 +40,7 @@ from src.services.storage import ObjectStorage, StorageUnconfiguredError, get_st
 # traffic, and the real cost gate is the daily token limit, not a byte ceiling.
 #
 # THIS NUMBER SITS FAR ABOVE THE BROWSER'S OWN CAP ON PURPOSE, AND THEY ARE NOT TWO SPELLINGS
-# OF ONE RULE (R42a). The composer caps what a person can TYPE, which is a courtesy — it stops
+# OF ONE RULE. The composer caps what a person can TYPE, which is a courtesy — it stops
 # someone pasting a novel and waiting to find out it was too much. This is the platform's own
 # SAFETY limit on what may be stored, and the server keeps its own precisely so it does not
 # inherit a number chosen for a text box: the handoff materialises a plan the browser never
@@ -64,7 +56,7 @@ MAX_MESSAGE_TEXT_CHARS = 64_000
 MAX_ATTACHMENT_TEXT_CHARS = 600_000
 MAX_ATTACHMENT_BLOCKS = 8
 
-# An attachment id is a `secrets.token_urlsafe` value (ADR-0006) — never a path or a raw UUID.
+# An attachment id is a `secrets.token_urlsafe` value — never a path or a raw UUID.
 ATTACHMENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 # --- the build-in-flight refusal ------------------------------------------------------------
@@ -90,15 +82,11 @@ PDF_MEDIA_TYPE = "application/pdf"
 # HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
 # `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
 #
-# IT IS NOT DERIVED, AND THE DERIVATION THAT USED TO STAND HERE IS DELETED RATHER THAN
-# RECOMPUTED. This comment used to work the number out from what a page of PDF costs, the
-# upload route's page cap and the per-conversation ceiling. That reasoning was already false
-# when it was written — THE PLATFORM DOES NOT PRICE A DOCUMENT UP FRONT: the window check reads
-# the count the provider returns for a completed turn, and nothing charges an attachment a
-# nominal on its way in, so no such sum was ever what refused a third document. Raising the
-# ceiling only makes the wrongness easier to see. It is not re-derived at the new ceiling
-# because the attachment-format work (#214) removes this limit outright, and sizing it now
-# would churn the sentence a citizen reads twice over.
+# IT IS NOT DERIVED. THE PLATFORM DOES NOT PRICE A DOCUMENT UP FRONT: the window check reads the
+# count the provider returns for a completed turn, and nothing charges an attachment a nominal
+# cost on its way in, so no arithmetic sum was ever what refused a third document. It is not
+# derived at this ceiling either, because upcoming attachment-format work removes this limit
+# outright, and sizing it now would churn the sentence a citizen reads twice over.
 #
 # What is true, and load-bearing: this cap is a COUNT and not a token figure precisely because
 # it is the one bound that can be checked before the provider has seen anything.
@@ -167,7 +155,7 @@ StorageDep = Annotated[ObjectStorage | None, Depends(chat_storage)]
 
 
 class TurnMessage(CamelModel):
-    """The new message — the ONLY content the browser sends (R9).
+    """The new message — the ONLY content the browser sends.
 
     `attachment_texts` are complete, client-built `<attachment …>…</attachment>` fence blocks:
     inline text files (whose bytes are never uploaded) and office extractions (whose bytes are
@@ -197,10 +185,9 @@ class TurnMessage(CamelModel):
 async def resolve_conversation_or_404(
     db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> Conversation:
-    """The turn's owner-scoped conversation row. U7 retires the old load-bearing None arm:
-    conversations are created BEFORE the first turn (`POST /v1/conversations`), so an unknown
-    id is a client bug and a cross-user id is indistinguishable from it — one non-leaking 404
-    (ADR-0004)."""
+    """The turn's owner-scoped conversation row. Conversations are created BEFORE the first turn
+    (`POST /v1/conversations`), so there is no None arm to keep: an unknown id is a client bug, a
+    cross-user id is indistinguishable from it, and both get the same non-leaking 404."""
     conversation: Conversation | None = await db.scalar(
         sa.select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id
@@ -233,12 +220,11 @@ def history_rehydrator(
 async def resolve_binaries(
     db: AsyncSession, storage: ObjectStorage | None, user_id: uuid.UUID, attachment_ids: list[str]
 ) -> list[BinaryContent]:
-    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt (the plan's
-    refs→base64-at-send resolver). Rides the store's own rehydrator — owner-scoped row, magic
-    re-check, authoritative media type — then gates on WHAT may enter the prompt: only
-    image/PDF vision content. Office originals and anything else are a 400 (their content
-    travels as `attachmentTexts`), and an unknown/foreign id fails the same typed way the
-    rehydrator words it.
+    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt. Rides the
+    store's own rehydrator — owner-scoped row, magic re-check, authoritative media type — then
+    gates on WHAT may enter the prompt: only image/PDF vision content. Office originals and
+    anything else are a 400 (their content travels as `attachmentTexts`), and an unknown/foreign
+    id fails the same typed way the rehydrator words it.
 
     It also gates on HOW MANY DOCUMENTS: past `MAX_PDF_BLOCKS` the message is refused here
     rather than by the token gate downstream, which would answer the same refusal with advice

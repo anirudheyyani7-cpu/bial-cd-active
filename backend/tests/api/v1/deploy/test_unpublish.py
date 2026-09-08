@@ -1,4 +1,4 @@
-"""The admin unpublish kill-switch (#113): `POST /v1/admin/apps/{app_id}/unpublish`.
+"""The admin unpublish kill-switch: `POST /v1/admin/apps/{app_id}/unpublish`.
 
 No real Azure anywhere — `PublishedAppRemover` is a `Protocol`
 (`services/deploy/aca_publish.py`) exactly so a fake can stand in for it, the same
@@ -238,7 +238,7 @@ async def test_happy_path_unpublishes_and_audits(app, client, db_session) -> Non
     assert row is not None
     assert row.unpublished_at is not None
 
-    # ONE row, not two. The pre-ARM `unpublish` row already carries the whole ADR-0005
+    # ONE row, not two. The pre-ARM `unpublish` row already carries the whole audit
     # payload; "and it worked" is durable in `unpublished_at` and the log line, so a second
     # success row would only double the volume of the most-read resource type.
     # Pins router.py's single `append_audit` on the success path.
@@ -281,16 +281,13 @@ async def test_idempotent_repeat_does_not_call_azure_again(app, client, db_sessi
 async def test_an_unobserved_teardown_leaves_unpublished_at_unset_and_retry_succeeds(
     app, client, db_session
 ) -> None:
-    """A sweep that comes back empty is recorded as UNCONFIRMED, never as failed.
-
+    """A sweep that comes back empty is recorded as UNCONFIRMED, never as failed —
     `sweep_published_apps` collapses every exception into a survivor entry, so a non-empty
-    list covers both a
-    terminal `AcaError` (ARM refused; the container really is still up) and an
-    `AcaTransientError` raised by `await_lro` on ceiling expiry — whose docstring says the
-    outcome is genuinely unknown because "the operation may still land". The second case is
-    the LIKELY one here: the ceiling is 300s and the edge gateway gives up at 20. Asserting
-    "could not be removed" would be the mirror image of the unobserved-success row this
-    route's whole audit discipline exists to avoid.
+    list covers both a terminal `AcaError` (ARM refused; the container really is still up)
+    and an `AcaTransientError` from `await_lro` hitting its 300s ceiling (the edge gateway
+    gives up at 20s first), whose docstring already says the outcome is unknown and safe to
+    retry either way. Asserting "could not be removed" would mirror the unobserved-success
+    row this route's whole audit discipline exists to avoid.
 
     Mutation receipt: rename the action back to `unpublish:failed` (or restore the "could not
     be removed. Please try again." copy) and this goes red."""
@@ -317,7 +314,7 @@ async def test_an_unobserved_teardown_leaves_unpublished_at_unset_and_retry_succ
     assert row.unpublished_at is None
 
     # The ATTEMPT is still on record, because it was committed before Azure was called. This
-    # is the accountability contract (ADR-0005): an admin who pressed the button and got a 503
+    # is the accountability contract: an admin who pressed the button and got a 503
     # must not leave an empty audit log behind — that was the gap where a repeated failing
     # episode was invisible.
     # Pins router.py: move the `append_audit(action="unpublish")` + `db.commit()` back below
@@ -424,15 +421,11 @@ async def test_republish_restores_the_app_at_the_same_url(db_session: AsyncSessi
 async def test_a_failed_deploy_can_still_own_a_live_container_and_is_torn_down(
     app, client, db_session
 ) -> None:
-    """The orphan case, and the one the lever is most obviously needed for. The pipeline
-    calls `create_or_update` at step 5 and only THEN awaits the revision, so an attempt that
-    settles FAILED at step 6 leaves `pub-<app_id>` running, externally addressable, holding
-    the app's database URL and Blob SAS, and billing.
-
-    Resolving through the newest SUCCEEDED row — as this route originally did, through a
-    `store.last_successful` accessor since deleted — answered "this app has never been
-    published, there is nothing to unpublish" while exactly that container served traffic.
-    Resolving through `store.latest_for_app` tears it down.
+    """The orphan case: the pipeline calls `create_or_update` at step 5 and only THEN awaits
+    the revision, so an attempt that settles FAILED at step 6 leaves `pub-<app_id>` running,
+    externally addressable, holding the app's database URL and Blob SAS, and billing.
+    Resolving through the newest SUCCEEDED row (the deleted `store.last_successful`) answered
+    "nothing to unpublish" while that container served traffic; `latest_for_app` tears it down.
 
     Mutation receipt: narrow `latest_for_app`'s query to `status == SUCCEEDED` and this goes red
     with a 409 `never_deployed`."""
@@ -511,25 +504,10 @@ async def test_app_not_found_is_404(app, client, db_session) -> None:
 
 
 async def test_unpublish_store_write_does_not_commit_on_its_own(db_session) -> None:
-    """Review finding on #120: `store.unpublish` used to `db.commit()` on its own, which
-    took the transaction boundary away from the route that owns it.
-
-    Note what this does and does not claim NOW. The original fix was described as making the
-    stamp share one trailing commit with `append_audit`; the later audit-first change moved
-    the accountability row to a commit BEFORE the Azure call, so the two writes are
-    deliberately in different transactions and the route sequences three commits in total.
-    What survives — and what this test pins — is narrower and still load-bearing: the store
-    function must not commit, because the route branches on its return value and decides
-    where the next boundary falls. A commit in here would fire in the middle of that.
-
-    Testing this end to end through the HTTP layer doesn't work in this suite: `db_session`
-    (conftest.py) binds the whole test to ONE already-open connection-level transaction, so
-    a mid-test `session.rollback()` unwinds back to the test's own start — including fixture
-    setup — not just the request's writes, making a commit/then-fail/then-rollback dance
-    indistinguishable from a plain reset. Spying on `db.commit` directly is what actually
-    isolates the claim: `store.unpublish` itself must never call it, full stop — the router
-    (already covered by `test_happy_path_unpublishes_and_audits`, which needs BOTH the row
-    and the audit entry to appear) is the only place a commit is allowed to happen.
+    """`store.unpublish` must never commit on its own — the route branches on its return
+    value to decide where the next transaction boundary falls, and a commit in here would
+    land mid-branch. `db_session` binds the whole test to one transaction, so spying on
+    `db.commit` (not a live HTTP round-trip) is the only way to isolate that claim.
 
     Mutation receipt: restoring the deleted `await db.commit()` in `store.unpublish`
     (services/deploy/store.py) turns this red — `commits` stops being empty."""
@@ -558,13 +536,10 @@ async def test_unpublish_store_write_does_not_commit_on_its_own(db_session) -> N
 
 
 async def test_store_unpublish_stamps_exactly_once(db_session) -> None:
-    """The idempotency predicate itself, at the store layer.
-
-    The router-level repeat test cannot reach this: it short-circuits at the route's
-    `if row.unpublished_at is not None` early return, so `store.unpublish` is never called a
-    second time and the `WHERE unpublished_at IS NULL` clause is never exercised. That clause
-    is the whole concurrency story — it is what makes the return value, rather than a
-    (necessarily stale) prior read, the authority on who won.
+    """The idempotency predicate at the store layer: the router-level repeat test can't reach
+    it (short-circuits at the route's own `is not None` early return before `store.unpublish`
+    runs twice), so this is the only place the `WHERE unpublished_at IS NULL` clause — the
+    whole concurrency story — gets exercised.
 
     Mutation receipt: drop `Deployment.unpublished_at.is_(None)` from the `.where()` in
     services/deploy/store.py so the UPDATE matches on id alone, and this goes red — the
@@ -589,12 +564,10 @@ async def test_store_unpublish_stamps_exactly_once(db_session) -> None:
 
 async def test_losing_the_race_still_records_this_admins_action(app, client, db_session) -> None:
     """Two admins hit the lever for the same incident. The loser's guarded UPDATE touches
-    zero rows, so it reports the WINNER's timestamp rather than its own — but its own attempt
-    is still on record, because the audit row was committed before Azure was called.
-
-    That is the gap the ordering closes: previously this branch returned 200 having really
-    called `delete_app`, and wrote nothing at all, so the second admin's action was invisible
-    everywhere.
+    zero rows, so it reports the WINNER's timestamp — but its own attempt is still audited,
+    because that row commits before Azure is ever called. Previously this branch returned 200
+    having really called `delete_app` while writing nothing, so the second admin's action was
+    invisible everywhere.
 
     Mutation receipt: delete the whole `if not await store.unpublish(...)` branch in
     router.py and this goes red — the response reports `now` instead of the winner's stamp."""
@@ -619,13 +592,12 @@ async def test_losing_the_race_still_records_this_admins_action(app, client, db_
 
 
 async def test_an_app_deleted_mid_teardown_is_a_404_not_a_500(app, client, db_session) -> None:
-    """A zero-row stamp has two causes, and only one of them is the race.
-
-    If a concurrent `DELETE /v1/admin/apps/{id}` cascades the deployment row away while the
-    ARM delete runs, `store.unpublish` also touches zero rows — and `db.refresh(row)` would
-    then raise `ObjectDeletedError`, escaping as an undocumented 500 on a request whose
-    teardown actually SUCCEEDED. Re-reading with `db.get(..., populate_existing=True)` turns
-    that into the 404 this route already documents, which by then is simply true.
+    """A zero-row stamp has two causes, and only one of them is the race. If a concurrent
+    `DELETE /v1/admin/apps/{id}` cascades the deployment row away while the ARM delete runs,
+    `store.unpublish` also touches zero rows — and `db.refresh(row)` would then raise
+    `ObjectDeletedError`, an undocumented 500 on a request whose teardown actually SUCCEEDED.
+    Re-reading with `db.get(..., populate_existing=True)` turns that into the 404 this route
+    already documents.
 
     Mutation receipt: swap the re-read back to `await db.refresh(row)` and this goes red with
     a 500."""
@@ -688,15 +660,11 @@ async def test_publishing_unconfigured_is_a_503_that_does_not_say_try_again(
 ) -> None:
     """`DEPLOY__*` unset: the provider yields None rather than raising (a raising one would
     resolve BEFORE the route body and escape its error handling as a 500 with the wrong
-    envelope), and the body has to interpret that None itself.
-
-    Without the guard, None flows into `sweep_published_apps`, which re-resolves the
-    singleton, catches `DeployNotConfiguredError` and returns 0 — landing in the
-    unconfirmed-teardown branch and telling the admin to retry on an environment where
-    retrying can never work.
-
-    Both 503s therefore carry a `code`: this one is terminal, the other is worth retrying, and
-    they are otherwise indistinguishable to a client that will not parse prose.
+    envelope), so the body must interpret that None itself — otherwise it flows into
+    `sweep_published_apps`, which
+    re-resolves the singleton, catches `DeployNotConfiguredError`, and returns 0, landing in
+    the unconfirmed-teardown branch and telling the admin to retry when retrying can never
+    work. Both 503s carry a distinct `code` for that reason: one terminal, one worth retrying.
 
     Mutation receipt: remove `if remover is None:` from router.py and the code flips to
     `teardown_unconfirmed`."""
@@ -723,9 +691,9 @@ async def test_publishing_unconfigured_is_a_503_that_does_not_say_try_again(
 
 
 async def test_the_citizen_read_surface_reports_the_takedown(app, client, db_session) -> None:
-    """#2 of the re-review: `unpublished_at` was write-only on the wire. The POST response
-    carried it, but `GET /v1/projects/{id}/deployment` — the one surface the portal actually
-    polls — did not, so a killed app kept rendering as live with a clickable dead URL.
+    """`unpublished_at` was write-only on the wire: the POST response carried it, but
+    `GET /v1/projects/{id}/deployment` — the one surface the portal actually polls — did not,
+    so a killed app kept rendering as live with a clickable dead URL.
 
     Mutation receipt: `schemas.py` `unpublished_at=row.unpublished_at` -> `unpublished_at=None`
     and this goes red while every other test stays green."""
@@ -816,13 +784,11 @@ async def test_the_audit_names_the_container_even_when_the_row_never_recorded_on
 async def test_settling_a_running_row_clears_a_takedown_stamp_it_raced_into(
     db_session: AsyncSession,
 ) -> None:
-    """#3 of the re-review: the kill-switch jamming on a live app.
-
-    `unpublish` resolves through `latest_for_app`, which has no status predicate, so a
-    takedown landing in the window after `in_flight` returned None can stamp the NEW running
-    row — the one whose pipeline is at that moment publishing the container. If the stamp
-    survives the settle, the portal reports "Taken down" over a genuinely live app AND every
-    later unpublish takes the idempotent early return, never calling Azure again.
+    """The kill-switch jamming on a live app: `unpublish` resolves through `latest_for_app`,
+    which has no status predicate, so a takedown landing after `in_flight` returned None can
+    stamp the NEW running row mid-publish. If the stamp survives the settle, the portal
+    reports "Taken down" over a live app AND later unpublishes take the idempotent early
+    return, never calling Azure again.
 
     Mutation receipt: drop `unpublished_at=None` from `_finish`'s `.values(...)` and this
     goes red."""

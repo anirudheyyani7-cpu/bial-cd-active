@@ -1,11 +1,11 @@
-"""Vendored dict-backed `ObjectStorage` for the Track SANDBOX harness (plan D6).
+"""Vendored dict-backed `ObjectStorage` for the sandbox test harness.
 
 Mirrors `backend/tests/fakes.py::FakeStorage` but is VENDORED here on purpose: importing the
 backend copy would drag in backend's Postgres-bound `tests/conftest.py`. It still subclasses the
 REAL frozen `ObjectStorage` port (resolved via the `conftest.py` sys.path bridge), so it is a
 genuine port impl — an incomplete one would fail at instantiation with `TypeError`.
 
-`ExplodingStorage` is the ordering-test double: `put` raises so the reference client's C4
+`ExplodingStorage` is the ordering-test double: `put` raises so the reference client's
 abort-before-teardown path (snapshot failure → lock NOT released) can be exercised without Azurite.
 """
 
@@ -59,8 +59,8 @@ class FakeStorage(ObjectStorage):
 
 
 class ExplodingStorage(FakeStorage):
-    """A `FakeStorage` whose `put` always raises — to prove the C4 abort-before-teardown rule: a
-    snapshot that cannot durably store MUST NOT proceed to teardown or release the lock (R3)."""
+    """A `FakeStorage` whose `put` always raises — to prove the abort-before-teardown rule: a
+    snapshot that cannot durably store MUST NOT proceed to teardown or release the lock."""
 
     async def put(self, key, data, *, content_type=None, metadata=None):
         raise StorageError("simulated Blob put failure", provider="fake", key=key)

@@ -1,18 +1,13 @@
 /**
- * ToolActivityLine — the shared Mode-A atom for build/tool activity (F3/U3). ONE renderer, reached
- * through `ActivityRow` for a step and `ActivityGroup`'s glyph strip for the collapsed summary, so
- * the live and reloaded halves of a build can never visually diverge. (It used to be named as
- * `BuildProgress`' and `BuilderPage`'s shared atom; both were deleted with the two-page era.)
+ * ToolActivityLine — the shared atom for build/tool activity, reached through `ActivityRow`
+ * (a step) and `ActivityGroup`'s glyph strip (collapsed summary) so live and reloaded builds
+ * never visually diverge. (Formerly `BuildProgress`/`BuilderPage`'s shared atom; both were
+ * deleted with the two-page era.)
  *
- * A chrome-free flex row — no card, no border: `[state glyph 14px] friendly label`.
- * The friendly label is neutral-coloured in every state; a FAILED row conveys failure by the glyph
- * SHAPE (a cross, not merely a red tint) plus a visually-hidden "failed" — never by colour alone
- * (WCAG 1.4.1). Height is constant across states so a line never reflows as it resolves. The
- * running spinner is gated behind `prefers-reduced-motion`.
- *
- * Palette: the portal's CUSTOM tokens (`text-danger`, `text-primary`, `text-tertiary`) — NOT
- * shadcn's `text-destructive` / `text-muted-foreground`, so these rows do not diverge from the
- * portal's own colours where they sit in the transcript.
+ * Chrome-free flex row: `[state glyph 14px] label`, constant height. FAILED conveys by glyph
+ * SHAPE (cross) plus a visually-hidden "failed" — never colour alone (WCAG 1.4.1). Spinner
+ * gated behind `prefers-reduced-motion`. Palette: portal CUSTOM tokens (`text-danger`/
+ * `text-primary`/`text-tertiary`), not shadcn's — keeps rows matching the transcript's colours.
  */
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'

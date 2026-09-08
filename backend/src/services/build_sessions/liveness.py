@@ -1,24 +1,15 @@
-"""The #46 generation-time detector (plan U1): flag a generated app whose UI copy promises
-live/shared/real-time behaviour while NO refetch pattern exists anywhere in the workspace.
+"""The generation-time detector: flag UI copy that promises live/shared/real-time behaviour
+while NO refetch pattern exists anywhere in the workspace.
 
-The HONEST UI prompt rule (`orchestrator/prompt.py`) nudges the model to wire a refetch before
-making a liveness claim — but a prompt rule is probabilistic, and #46 is the rule the model most
-often shirks in favour of optimistic local state. This detector is the "revisit if it recurs"
-trigger the plan asked for: a structlog WARNING at finalize (with `app_id`/`session_id`), never a
-gate, so a recurring overpromise shows up in logs instead of waiting for a user to notice stale
-data.
+The HONEST UI prompt rule nudges the model to wire a refetch first, but is probabilistic —
+this is what it most often shirks. Logs a structlog WARNING at finalize, never a gate: a
+recurring overpromise shows in logs, not a user noticing stale data. Transport mirrors
+`snapshot.py` (base64 tar over the same `/exec` seam); matching runs in Python — one source
+of truth, no grep-dialect drift vs. the sandbox image.
 
-Transport mirrors `snapshot.py`: one command run in the still-live sandbox ships the source tree
-out as a base64 tar (the same base64-over-`/exec` seam the snapshot bundle uses), and ALL matching
-runs in Python — one source of truth for the heuristic, unit-testable on a plain dict tree,
-no grep-dialect drift between the sandbox image and this code.
-
-The heuristic is deliberately simple (a signal, not a verdict):
-- a CLAIM is liveness wording in a UI file (`.tsx`/`.jsx` — where user-facing copy lives);
-- a REFETCH is any refresh wiring anywhere in the tree (`.ts` hooks included): refetch/
-  revalidate calls, polling intervals, SWR/React-Query usage, or a focus/visibility listener.
-Claims with no refetch anywhere → flagged. Anything else → silent.
-"""
+A SIGNAL, not a verdict: a CLAIM is liveness wording in a `.tsx`/`.jsx` file; a REFETCH is
+any refresh wiring anywhere (`.ts` hooks included). No refetch anywhere → flagged; else →
+silent."""
 
 from __future__ import annotations
 

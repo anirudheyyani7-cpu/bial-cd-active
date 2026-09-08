@@ -1,33 +1,15 @@
-"""The tools a chat has in BOTH kinds, because they are about the conversation itself.
+"""The tools a chat has in BOTH kinds, because they're about the person waiting, not what the
+run can DO — registered once and shared by both arms of `toolsets_for_kind`, so "the kind
+decides only the toolset" holds without two tool lists to drift apart.
 
-WHY A THIRD TOOLSET RATHER THAN TWO MORE ENTRIES IN THE TWO ARMS. `read_only_toolset` is
-about a workspace and `sandbox_toolset` is about a container; these are about the person
-waiting. They are the only tools whose presence does not depend on what the run can DO, so
-registering them once and handing the same object to both arms of `toolsets_for_kind` is what
-keeps "the kind decides only the toolset" true of a tool that both kinds have — the
-alternative, naming each tool twice in the registry, is two lists to keep in step and a
-silent drift the moment one is edited.
+TOOL BODIES ARE DELIBERATELY THIN: pushing text at RUN time would race a reloaded transcript,
+which renders in part order while bodies complete out of order. Both emitters render from the
+stored tool CALL's position instead, so live and reload can't disagree — the body's only job
+is saying what happened when a call can't be honoured (`update_from_args` decides what shows).
 
-THE TOOL BODIES ARE DELIBERATELY THIN, and that is the design rather than an omission. A
-`tell_the_user` body that pushed text onto the live stream itself would have to be handed an
-emitter through the run's deps, and — worse — it would render at the moment the body RUNS.
-Tool bodies run concurrently and their results arrive in completion order, while a reloaded
-transcript renders in part order, so a response that spoke and also read a file could put the
-two in one order live and the other order on reload. Both emitters render from the stored
-tool CALL instead, at the position the call occupies, which is the `present_plan_options`
-shape and the only placement where live order and reload order cannot disagree (R75a/R76).
-
-So the body's whole job is to tell the model what happened when a call cannot be honoured.
-What reaches the screen is decided by `update_from_args`, which both emitters call — one rule,
-one place.
-
-NEITHER TOOL COUNTS ANY MORE. Both used to carry a numeric ceiling — 280 characters on an
-update, four pieces in a first round — and the renderer carried a copy of each, so a call one
-over the line was refused at the body AND deleted at the renderer: the model was taught to
-retry and the citizen was shown nothing where the agent had spoken. How long a sentence should
-be and how much belongs in a first round are judgements about the person waiting, which is
-what the agent is for.
-"""
+NEITHER TOOL COUNTS ANY MORE: numeric ceilings (280 chars, four pieces) used to be enforced at
+both body and renderer, so an over-limit call was refused AND shown as nothing; that's now a
+judgement for the agent, not a counter."""
 
 from __future__ import annotations
 
@@ -87,7 +69,7 @@ async def tell_the_user(ctx: RunContext[Any], update: str, finished: str | None 
             "carry on working without calling this."
         )
     if finished is not None:
-        # ONE FIELD RATHER THAN A SECOND TOOL (U12). The mark and the sentence arrive together
+        # ONE FIELD RATHER THAN A SECOND TOOL. The mark and the sentence arrive together
         # — "It is in." — so splitting them would ask for two calls to report one event, and
         # two tools that differ only in shade are the overload the research warns about.
         #
@@ -109,10 +91,10 @@ async def tell_the_user(ctx: RunContext[Any], update: str, finished: str | None 
                 "`finished` out."
             )
         if not _already_marked_against(ctx.messages, agreed):
-            # R92's SECOND HALF, counted where the fact is rather than read out of a
+            # THE SECOND OF THE TWO COUNTERS, counted where the fact is rather than read out of a
             # transcript. The first mark that matches the agreed list is the observable form
             # of "they proceeded on the slice as proposed" — a fact about a tool call, which
-            # is the only kind of fact this plan lets anything act on.
+            # is the only kind of fact anything here acts on.
             await _count(HarnessCounter.FIRST_SLICE_ACCEPTED)
     return _SHOWN
 
@@ -135,15 +117,12 @@ def _already_marked_against(messages: Sequence[Any], agreed: Sequence[str]) -> b
 
 
 async def _count(name: HarnessCounter) -> None:
-    """Fire-and-forget, and the import is function-scoped for the package cycle.
-
-    `src.services.build_sessions.__init__` reaches `manager` → `appdata` → `services.projects`
-    → `describe`, which imports the agent package this module lives in. At module level that
-    fails at interpreter start, in whichever router happens to import first, with a traceback
-    pointing nowhere near the cause — the same trap `usage/gate.py` documents.
-
-    `count` owns its own session and swallows everything, so a counter can never fail the tool
-    it is counting."""
+    """Fire-and-forget; the import is function-scoped for the package cycle. `build_sessions.
+    __init__` reaches `manager` → `appdata` → `services.projects` → `describe`, which imports
+    the agent package this module lives in — at module level that fails at interpreter start,
+    in whichever router imports first, with a traceback nowhere near the cause (same trap
+    `usage/gate.py` documents). `count` owns its own session and swallows everything, so a
+    counter can never fail the tool it's counting."""
     from src.services.build_sessions.counters import count
 
     await count(name)
@@ -152,16 +131,11 @@ async def _count(name: HarnessCounter) -> None:
 def _bad_slice(found: list[str], first: list[str]) -> str | None:
     """The teaching refusal for a proposal that cannot be honoured, or None.
 
-    NO PIECE COUNT IS ENFORCED, in either direction. A floor of two would leave the model no
-    recovery but to split something that should not be split — twenty pages describing one
-    screen is one piece — and the ceiling that used to sit here refused proposals the agent had
-    made well, at a number nobody could defend against a particular citizen's request. Worse,
-    the renderer read the same ceiling, so a refused proposal was ALSO drawn nowhere: the model
-    was told to retry and the citizen was shown silence.
-
-    WHAT IS LEFT IS THE ONE RULE THAT IS NOT TASTE: every piece in the first round has to be a
-    piece the citizen was told had been picked up. That one is about what a person reads, not
-    about how many things an agent should do at once."""
+    NO PIECE COUNT IS ENFORCED, in either direction: a floor would force splitting something
+    that shouldn't split, and a ceiling would refuse a proposal the agent had made well — and,
+    because body and renderer read the same number, that refused proposal would then be drawn
+    as nothing at all. WHAT IS LEFT IS THE ONE RULE THAT ISN'T TASTE: every piece in the first
+    round must be one the citizen was told had been picked up."""
     if not found:
         return (
             "List everything the user asked for in `found`, in your own words, one piece per "

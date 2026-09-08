@@ -1,17 +1,18 @@
 """Redis coordination configuration model.
 
+WHY THIS EXISTS
 `Settings.redis` is typed `RedisConfig | None`; pydantic-settings validates one
 `REDIS__*` env block against it (the single config funnel — no hand-written
 `TypeAdapter` on the env path). Redis is the genuinely-optional coordination
 integration: `| None` keeps dev/test booting without it, and the single prod gate
-in `src.config` requires it in production (fail-first-python.md).
+in `src.config` requires it in production.
 
 Redis coordinates the one-sandbox-per-user lock, idle heartbeat, and sandbox
-registry (contract C5); the single-replica POC uses in-process asyncio for
-progress (C7), so there are NO pub/sub channels.
+registry; the single-replica POC uses in-process asyncio for progress, so there
+are NO pub/sub channels.
 
 `url` is a `SecretStr` (a Redis DSN may embed a password); it is unwrapped only at
-the pool boundary in `client.py` (per security.md).
+the pool boundary in `client.py`.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ class RedisConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Redis DSN, e.g. redis://:pass@host:6379/0 or rediss://… — may embed a
-    # password, so it is masked; unwrapped only in the pool factory (U6).
+    # password, so it is masked; unwrapped only in the pool factory.
     url: SecretStr
     # Connection-pool ceiling (the POC bounds concurrency at one sandbox per user,
     # so a small pool is enough). `PositiveInt` rejects a nonsensical zero/negative.
@@ -72,14 +73,11 @@ class RedisConfig(BaseModel):
     def require_tls(self) -> None:
         """Raise unless this DSN uses the TLS scheme. Called by each role's production gate.
 
-        TLS to Redis is carried by the DSN SCHEME, not by kwargs (there are no per-environment TLS
-        settings anywhere in `services/redis/client.py`), so a settings validator is the only place
-        plaintext can be caught.
-
-        A METHOD on the config rather than a helper in either role's module, so the two roles
-        cannot drift into two different opinions about the same instance — the worker connects to
-        the same Redis the API does, and also runs its task broker over it. STATIC message only:
-        never interpolate the DSN (it is a `SecretStr` and may embed a password).
+        TLS to Redis is carried by the DSN SCHEME, not by kwargs — no per-environment TLS
+        settings exist in `services/redis/client.py` — so this validator is the only place
+        plaintext can be caught. A METHOD here (not a per-role helper) keeps the API and
+        worker from drifting into two opinions about the same instance. STATIC message
+        only: never interpolate the DSN — it is a `SecretStr` and may embed a password.
         """
         if not self.url.get_secret_value().startswith("rediss://"):
             raise ValueError(

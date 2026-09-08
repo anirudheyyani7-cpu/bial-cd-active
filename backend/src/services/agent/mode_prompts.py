@@ -1,38 +1,15 @@
-"""Chat-kind prompt system (U9 / D4 / R13): one BASE + a positive per-kind segment, per run.
+"""Chat-kind prompt system: one BASE + a positive per-kind segment, per run.
 
-Authoring is grounded in the U9 research pass
-(`docs/brainstorms/bial-walkthrough-2026-07-22-refs/mode-prompt-research.md` — untracked
-reference doc, patterns cited by number below):
+Authoring choices: every segment LEADS with purpose/identity, tool talk second; tool
+surfaces are stated as facts ("you have read tools ...") never bans — the registry
+(`toolsets.py`) makes absent tools structurally uncallable. Plan's output contract is the
+NAMED `present_plan_options` call, gated on the user's click, never tone; its segment names
+WHAT the plan is for and WHO reads it, not a fixed five-part shape. Cross-mode safety rules
+(DATA INTEGRITY) live ONCE, in BASE, single-sourced — never copied (see `_base`).
 
-- Pattern 3: every segment LEADS with a purpose/identity sentence, tool talk second
-  (OpenHands' Planning Agent, Copilot's "optimized for ..." one-liners).
-- Pattern 1: tool surfaces are stated as facts about the kind's world ("you have read
-  tools ...") — never as bans on tools the kind doesn't have. The registry
-  (`toolsets.py`) makes absent tools structurally uncallable, which is the "clean
-  removal" case even prohibition-heavy systems (Cline's editor tool) treat as needing
-  no ban text (pattern 2). A test pins the segments prohibition-free.
-- Patterns 4/5: Plan mode's output contract is a NAMED tool call (`present_plan_options`,
-  the opencode `plan_exit` shape), and plan→build is gated on the user's explicit click,
-  never conversational tone ("never treat the task request as approval" — Cline).
-- Pattern 9 is DELIBERATELY NOT FOLLOWED any more. The plan segment used to mandate a
-  five-part shape, each part with its own heading, in a fixed order — a citizen-facing
-  skeleton rather than the developer-CLI one the pattern came from, but a skeleton either
-  way, and it made every plan read the same whatever was being planned. What survives is what
-  the plan is FOR and who reads it; the shape is the agent's. Grounding is untouched: the
-  model still reads the real files first.
-- Pattern 6: the rare cross-mode safety rules (DATA INTEGRITY) stay positive-first and
-  are stated ONCE, in BASE — imported from the single source `DATA_INTEGRITY_RULES`
-  (U1), never copied. The RULES are cross-kind; two clauses that ride with them are not,
-  and BASE now drops those two for Plan (see `_base`). Still one source: the Plan form is
-  the same constant minus two clauses, not a second wording.
-
-There is no downgrade clarification any more and there is nothing for one to say: a chat's
-kind is fixed at creation, so a conversation's history can never contradict the toolset it is
-running under. The direction-aware marker rows that carried it are gone with the switch.
-
-Delivery is per-run `@agent.instructions` (`agent.py`) — composed text is never persisted
-(pydantic-ai keeps instructions out of message parts; pinned by test).
-"""
+A chat's kind is fixed at creation, so history can never contradict its toolset — no
+downgrade clarification, no marker rows. Delivery is per-run `@agent.instructions`;
+composed text is never persisted (pinned by test)."""
 
 from __future__ import annotations
 
@@ -57,7 +34,7 @@ from src.db.models.conversation import ChatKind
 @dataclass(frozen=True)
 class PromptContext:
     """What BASE needs to say who the assistant is working with and on what. Built per
-    turn from the conversation's project + owner (U10); `project_description` is the
+    turn from the conversation's project + owner; `project_description` is the
     project row's description, absent when the user never wrote/generated one."""
 
     user_name: str
@@ -67,23 +44,20 @@ class PromptContext:
 
 def _base(context: PromptContext, kind: ChatKind) -> str:
     """BASE — the voice examples, identity, project grounding, the truthful portal
-    self-description (R5), and the one cross-mode safety block. Shared by every kind so each
-    wording exists exactly once (pattern 6; U1's and R5's single sources).
+    self-description, and the one cross-mode safety block. Shared by every kind so each wording
+    exists exactly once.
 
-    THE EXAMPLES COME BEFORE THE IDENTITY SENTENCE, which is the whole of R32 (#185). The
-    audience contract has never been missing from this prompt; what it lacked was a position and
-    a pair of sentences to match against. `NARRATION_VOICE` still states the rule where it always
-    has, some 530 words in — this is the same contract shown first, in three pairs the model
-    reads before it writes anything. Anything inserted above it takes that away.
+    THE EXAMPLES COME BEFORE THE IDENTITY SENTENCE. The audience contract has never been missing
+    from this prompt; what it lacked was a position and a pair of sentences to match against.
+    `NARRATION_VOICE` still states the rule where it always has, some 530 words in — this is the
+    same contract shown first, in three pairs the model reads before it writes anything.
+    Anything inserted above it takes that away.
 
-    THE ONE THING BASE VARIES BY KIND, and it is not a second wording — it is the SAME
-    `DATA_INTEGRITY_RULES` string with two clauses dropped. Both clauses describe Build-only
-    machinery (the destructive-SQL sentinel on Build's `run_command`, and the DATABASE block's
-    migration channel), and a Plan prompt carries neither the machinery nor the section the
-    second one cross-references. `prompt_blocks.DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY`
-    is where the split and its reasoning live; the rules themselves are byte-identical in both.
-    This is why `_base` takes a kind at all — it was invariant until the false half of a
-    cross-mode block turned out to be the mode-specific half."""
+    THE ONE THING BASE VARIES BY KIND: the same `DATA_INTEGRITY_RULES` string with two
+    Build-only clauses dropped (the destructive-SQL sentinel, the migration channel) via
+    `DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY` — byte-identical rules otherwise. This
+    is why `_base` takes a kind at all: the false half of a cross-mode block turned out to be
+    the mode-specific half."""
     described = f" — {context.project_description}" if context.project_description else ""
     identity = (
         f"You are the Citizen Developer assistant for BIAL, working with "
@@ -91,8 +65,8 @@ def _base(context: PromptContext, kind: ChatKind) -> str:
         "this one project: its app, its code, and its data. Ground everything you say "
         "about the app in its actual files, and answer what was asked before acting."
     )
-    # R5: the walkthrough caught the model inventing portal features. The relay had this
-    # clause and the mode system did not, so R5 would have regressed the moment the relay
+    # The walkthrough caught the model inventing portal features. The relay had this
+    # clause and the mode system did not, so this rule would have regressed the moment the relay
     # retired — it belongs in BASE, where every mode carries it.
     integrity = (
         DATA_INTEGRITY_RULES
@@ -130,7 +104,7 @@ is ready — call `present_plan_options` with it, which puts the \
 calling it, wait for their choice; `{BUILD_THIS_PLAN_LABEL}` is the only signal that \
 building starts. If they choose `{KEEP_PLANNING_LABEL}`, revise the plan and present again."""
 
-# NO COMMIT BLOCK LIVES HERE ANY MORE (U19 / R25), and re-adding one is a regression with two
+# NO COMMIT BLOCK LIVES HERE ANY MORE, and re-adding one is a regression with two
 # separate costs. `_COMMIT_DISCIPLINE` used to sit at the end of this segment teaching the agent
 # to stage and commit each coherent slice.
 #
@@ -142,7 +116,7 @@ building starts. If they choose `{KEEP_PLANNING_LABEL}`, revise the plan and pre
 #    exactly the input the workspace-integrity verdict has to reason about before it may declare
 #    a workspace REVERTED. That verdict closes the hazard on its own (it requires the CONTENT to
 #    disagree as well as the lineage), but nothing should be feeding it self-inflicted
-#    non-descendant HEADs. `test_the_write_prompt_teaches_no_git_undo` is the inertness guard.
+#    non-descendant HEADs. `test_neither_write_prompt_instructs_the_agent_in_git` is the guard.
 #
 # The reminder that enforced the deleted instruction went with it —
 # `orchestrator/tools._note_write_and_maybe_remind` and `SandboxSession.uncommitted_writes`.
@@ -151,7 +125,8 @@ _RECONCILE_WITH_REALITY = """\
 A message may describe a plan that was written some time ago. Where the code on disk differs \
 from what the plan assumed, follow the code's reality and tell the user plainly what you found \
 and what you did differently."""
-"""R25's second half, and it lives HERE because the thing that used to carry it is gone.
+"""Reconciles a stale plan with what the code actually is now, kept here because the thing
+that used to carry this instruction is gone.
 
 It was a prefix the Build-it endpoint glued onto a hidden seed message — so it only ever reached
 a build started from a plan, and only in the same conversation. The handoff now posts the plan as
@@ -160,8 +135,8 @@ is nowhere in that message for a platform instruction to hide. Putting it in the
 strictly better than where it was: a plan can be built weeks after it was written, and the agent
 in a fresh Build chat has LESS context to notice a divergence with, not more.
 
-The wording is this plan's to preserve, not to perfect — the voice work owns how it is phrased,
-and may reword it. It may not drop it."""
+This wording is carried forward as-is rather than polished here — the voice work owns how it
+is phrased, and may reword it. It may not drop it."""
 
 _WRITE_SEGMENT = f"""\
 {WRITE_IDENTITY}
@@ -173,16 +148,16 @@ _WRITE_SEGMENT = f"""\
 {BUILD_WORKING_RULES_TAIL}"""
 """WRITE's segment, and since the build harness was deleted THE ONLY WRITE PROMPT THERE IS. It
 composes from the shared `core/prompt_blocks.py` sources rather than typing the text out, which is
-what kept it from drifting against the standalone `BUILD_SYSTEM_PROMPT` while that existed
-(KTD-5a) — and is now simply where the one copy lives. The original objection to a Write segment
-here — "it could only ever drift from `orchestrator/prompt.py`" — was true of a COPY and false of
-a shared import, which is what this is.
+what kept it from drifting against the standalone `BUILD_SYSTEM_PROMPT` while that existed — and
+is now simply where the one copy lives. The original objection to a Write segment here — "it
+could only ever drift from `orchestrator/prompt.py`" — was true of a COPY and false of a shared
+import, which is what this is.
 
 `DATA_INTEGRITY_RULES` is deliberately ABSENT from this list even though a Write turn is told the
 rules: `_base(context)` already appends them for every mode, so naming them again would emit the
 whole block twice in every Write prompt.
 
-`NARRATION_VOICE` (the audience contract — R79/R80/R81) is ABSENT for the same reason and must
+`NARRATION_VOICE` (the audience contract) is ABSENT for the same reason and must
 stay so: `_base(context)` names it for every kind, so adding it here would print the whole voice
 rule twice. A test counts it at exactly one in the composed prompt, and that count is the guard
 against the deletion this block has already suffered twice.
@@ -192,7 +167,7 @@ has to lead the composed prompt. Naming it in a segment would put a second copy 
 down — the position is the point, and a copy in the middle quietly cancels it."""
 
 
-# --- THE PER-TURN RESTATEMENT IS GONE, and nothing replaced it (R17) ------------------
+# --- THE PER-TURN RESTATEMENT IS GONE, and nothing replaced it ------------------------
 #
 # There used to be a cadence here: a full restatement of "which mode you are in" every eighth
 # turn, a one-line nudge every fourth between, re-anchored by the mode-switch marker rows. It
@@ -207,21 +182,21 @@ down — the position is the point, and a copy in the middle quietly cancels it.
 # and a named cache-breaking action.
 #
 # `_PRIVATE` below OUTLIVES them, and deliberately: it is composed into the workspace note's
-# tail as well, so deleting it with the reminders would break the one ephemeral note this plan
-# is protecting.
+# tail as well, so deleting it with the reminders would break the one ephemeral note that
+# still relies on it.
 
-# N9(a) — the note says it is private. The walkthrough caught the model quoting one of these
+# The note says it is private. The walkthrough caught the model quoting one of these
 # notes back at the citizen ("I want to flag that note…"), so the user watched the assistant
 # argue with an instruction they never wrote and could not see. Nothing told the model the note
 # was private, and "it is obviously internal" is not an instruction.
 #
-# Phrased in POSITIVE VOICE, like everything else here (R13 / pattern 1-2): "keep it out of
+# Phrased in POSITIVE VOICE, like everything else here: "keep it out of
 # your reply" is the same instruction as "never mention it" without teaching the model to
 # reason in prohibitions.
 _PRIVATE = " This note is between you and the platform — keep it out of your reply."
 
 
-# --- U8 (R14): the ephemeral workspace note ------------------------------------------
+# --- The ephemeral workspace note ------------------------------------------------------
 #
 # THE MODEL IS TOLD WHAT THE WORKSPACE IS DOING RIGHT NOW, on every turn, whether it asked or not.
 # The prohibition ("do not answer from memory") existed and was obeyed the way prohibitions are:
@@ -264,15 +239,14 @@ _WORKSPACE_LIVE = "the app is serving, and its home page is no longer the starte
 
 
 def workspace_note(*, serving: bool | None, still_the_template: bool | None) -> str:
-    """The private note telling the model what this app's workspace is doing, right now (U8/R14).
+    """The private note telling the model what this app's workspace is doing, right now.
 
-    `None` means the platform could not find out, and it is deliberately not collapsed into either
-    of the other answers: a model told "your app is fine" on the strength of a check that never
-    completed is worse off than one told nothing, because it will now defend the claim.
+    `None` (could not find out) is NOT collapsed into either answer: a model told "it's
+    fine" on an incomplete check is worse off than one told nothing — it will defend the
+    claim.
 
-    Ordering. "Could not tell" wins over everything — an unanswered check cannot be reported as a
-    finding. Then "not serving", because an app that is down is not an app whose home page is
-    worth discussing. Only then the content answer."""
+    ORDER: "could not tell" > "not serving" > the content answer — an unanswered check is
+    not a finding, and a down app has no home page worth discussing."""
     if serving is None:
         body = _WORKSPACE_UNKNOWN
     elif not serving:

@@ -1,5 +1,5 @@
 /**
- * The client half of the shared word rule (#158).
+ * The client half of the shared word rule.
  *
  * The cases below are the SAME list `tests/api/v1/projects/test_project_name_words.py`
  * asserts on the server. That duplication is the point: the rule is written twice, once per
@@ -50,7 +50,7 @@ describe('countWords — the shared rule', () => {
 })
 
 describe('the shared limits', () => {
-  it('carries the delete-reason bounds from §13.2', () => {
+  it('carries the delete-reason bounds — five words minimum, fifty maximum', () => {
     expect(MIN_DELETE_REASON_WORDS).toBe(5)
     expect(MAX_DELETE_REASON_WORDS).toBe(50)
   })

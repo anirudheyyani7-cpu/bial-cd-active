@@ -15,7 +15,6 @@ def fake_storage() -> FakeStorage:
 
 @pytest.fixture(autouse=True)
 def _override_storage(app, fake_storage) -> None:
-    # Point the attachment routes at the in-memory store for every test in this package.
     from src.api.v1.attachments.router import storage_dependency
 
     app.dependency_overrides[storage_dependency] = lambda: fake_storage

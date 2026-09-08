@@ -191,7 +191,7 @@ def test_there_is_no_liveness_probe() -> None:
     assert all(p.type != "Liveness" for p in _probes(_envelope()))
 
 
-# --- C10 identity, on the envelope because this call is a PUT ------------------------
+# --- identity, on the envelope because this call is a PUT ------------------------
 
 
 def test_the_published_envelope_declares_what_it_is() -> None:
@@ -200,7 +200,7 @@ def test_the_published_envelope_declares_what_it_is() -> None:
 
     `bial-kind=published-app` turns "this is a citizen's live application, not a build sandbox"
     from a `pub-` naming convention into a record. Getting that distinction wrong is how a fleet
-    reclamation pass takes production down (C10 §1.4)."""
+    reclamation pass takes production down."""
     tags = _envelope().tags
 
     assert tags is not None

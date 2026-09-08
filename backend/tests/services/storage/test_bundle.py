@@ -1,4 +1,4 @@
-"""Bundle-header validation tests (APPROVAL D4, R3/R4/R5). The header is
+"""Bundle-header validation tests. The header is
 attacker-writable (it came from a sandbox the citizen's AI drove), so these are
 attack-shaped: oversized/control-char/non-hex tokens, base64-transport bytes,
 truncation, and the bounded-prefix read — plus the one real-git round trip that
@@ -55,12 +55,12 @@ def real_bundle(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, str]:
 
 def test_real_bundle_parses_to_the_rev_parse_sha(real_bundle: tuple[bytes, str]) -> None:
     raw, expected_sha = real_bundle
-    assert raw.startswith(b"# v")  # the pinned raw-bundle assertion (git-bundle doc §5)
+    assert raw.startswith(b"# v")
     assert parse_bundle_head_sha(raw) == expected_sha
 
 
 def test_base64_transport_shape_is_rejected(real_bundle: tuple[bytes, str]) -> None:
-    # base64 is a supervisor-transport artifact, never a storage format (R5): a
+    # base64 is a supervisor-transport artifact, never a storage format: a
     # bundle that arrives still encoded must be refused, not silently stored.
     raw, _ = real_bundle
     with pytest.raises(BundleValidationError):

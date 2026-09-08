@@ -1,6 +1,6 @@
-"""The build-harness counters, read by an operator (U25, R32).
+"""The build-harness counters, read by an operator.
 
-WHAT THIS ROUTE IS FOR, in the words of the plan's success criteria: after a week in production,
+WHAT THIS ROUTE IS FOR: after a week in production,
 "did the verdict block a false claim, how often did we restore, and did any turn fail to reach a
 durable copy" has to be answerable. There is no metrics system in this deployment, so if these are
 not readable here they are not readable anywhere.
@@ -61,9 +61,8 @@ async def _seed(db: AsyncSession, name: str, value: int, *, age_days: int = 0) -
 
 
 async def test_a_citizen_cannot_read_the_operational_counters(client, db_session) -> None:
-    """★ THE GATE IS OPT-IN PER ROUTE in this package, so its absence is invisible: the route
-    works, and it hands aggregate operational and usage data across every user in the tenant to
-    anyone signed in."""
+    """★ The gate is opt-in per route here, so its absence is invisible: the route would work
+    and hand aggregate usage data across every user in the tenant to anyone signed in."""
     resp = await client.get(_ROUTE, headers=await _citizen(db_session))
 
     assert resp.status_code == 403

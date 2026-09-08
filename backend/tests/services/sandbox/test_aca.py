@@ -1,9 +1,10 @@
-"""U2 — the C2 client's ACA lifecycle: provision / attach / restore / teardown, the
-C5 registry hash, the token_ref map, and the C4 restore pull.
+"""The `AcaSandboxClient`'s ACA lifecycle: provision / attach / restore / teardown, the
+registry hash, the token_ref map, and the restore pull.
 
 The ACA control plane is faked (a `FakeAca` recording created/deleted apps + their
 injected env); Redis is `fake_redis`; Blob is `fake_storage`; the `/_sup/*` layer is
-an `httpx.MockTransport`. Real Azure is Track SANDBOX's live-validation join.
+an `httpx.MockTransport`. Real Azure is exercised in a separate live-validation pass,
+not here.
 """
 
 from __future__ import annotations
@@ -54,11 +55,10 @@ class FakeAca(AcaControlPlane):
 
     def __init__(self) -> None:
         self.created: dict[str, dict[str, str]] = {}
-        # THE TAGS ARE RECORDED AND SERVED BACK, deliberately. A fake that accepted `tags=` and
-        # dropped them would let every tag-reading assertion in this suite certify a fiction —
-        # the identity would exist only in the call, never on the resource. `stamp_tags` MERGES —
-        # the `FleetTagger` contract, which the real client keeps by reading the current tags
-        # first, because ARM replaces the map — so an idempotence test can actually observe it.
+        # Tags are recorded and served back, deliberately: a fake that dropped `tags=` would
+        # let every tag-reading assertion here certify a fiction. `stamp_tags` MERGES — the
+        # `FleetTagger` contract the real client keeps by reading current tags first, since ARM
+        # replaces the map — so an idempotence test can actually observe it.
         self.tags: dict[str, dict[str, str]] = {}
         self.deleted: list[str] = []
         self.create_calls = 0
@@ -127,15 +127,14 @@ _BIAL_KEYS = ("BIAL_APP_ID", "BIAL_PORTAL_ORIGIN", "BIAL_DATABASE_URL")
 async def test_a_provisioned_sandbox_is_judgeable_without_redis(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """R1, end to end through the client. The registry hash has no TTL and has been lost at least
-    twice; when it goes, the container must still be able to say who owns it, what it serves and
-    how old it is — from the ARM resource alone.
+    """End to end through the client. The registry hash has no TTL and has been lost at least
+    twice; when it goes, the container must still say who owns it, what it serves, and how old
+    it is — from the ARM resource alone.
 
-    THIS TEST'S SCOPE IS THE CLIENT SEAM, NOT THE ENVELOPE. `FakeAca` IS the control plane here,
-    so "what the fake recorded" and "what the client passed" are one value — a REAL control plane
-    that accepted `tags=` and dropped them would sail through. That property lives one layer down,
+    THIS TEST'S SCOPE IS THE CLIENT SEAM, NOT THE ENVELOPE: `FakeAca` IS the control plane
+    here, so a REAL control plane that dropped `tags=` would sail through. That property lives
     in `test_aca_control_plane.py::test_the_create_envelope_carries_the_identity_tags`, which
-    drives the actual `_envelope`; do not delete it on the strength of this one."""
+    drives the actual `_envelope` — do not delete it on the strength of this one."""
     aca = FakeAca()
     client = _client(aca)
     await client.provision_new(str(USER), APP_NAME, app_env=_app_env())
@@ -161,7 +160,7 @@ async def test_provision_new_writes_registry_and_injects_env(fake_redis: aioredi
     assert handle.app_name == APP_NAME
     env = aca.created[APP_NAME]
     for key in _BIAL_KEYS:
-        assert key in env  # the four C9 identity vars are injected at provision
+        assert key in env  # the four app-data identity vars are injected at provision
     assert env["SUPERVISOR_TOKEN"] == handle.token  # bearer lives in the container env
 
     reg = await fake_redis.hgetall(registry_key(USER))
@@ -178,7 +177,7 @@ async def test_a_fresh_registry_never_inherits_a_previous_occupants_preview_stay
     fake_redis: aioredis.Redis,
 ) -> None:
     # `_write_registry` is an `hset(mapping=…)` MERGE, so a field it does not name SURVIVES
-    # a re-registration. `preview_stay_until` surviving is a leak with teeth (#43):
+    # a re-registration. `preview_stay_until` surviving is a leak with teeth:
     #
     #   relaunch grants a 30-min stay -> the user starts a build -> reconcile's reap hits a
     #   transient ACA error, whose arm deliberately KEEPS the registry -> a preview holds no
@@ -296,14 +295,13 @@ async def test_attach_ending_state_raises_gone_without_probing(fake_redis: aiore
 
     client = _client(aca, handler)
     await client.provision_new(str(USER), APP_NAME, app_env=_app_env())
-    # The provision itself legitimately reaches the container once (the git-repo init). This
-    # test is about the ATTACH path, so count from zero after the setup rather than widening
-    # the assertion — the number that must be 0 is "touches while ENDING".
+    # The provision itself legitimately reaches the container once (git-repo init); count
+    # from zero after setup so the number that must be 0 is "touches while ENDING".
     probes["n"] = 0
     await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_STATE, REGISTRY_STATE_ENDING)
     with pytest.raises(SandboxGoneError):
         await client.attach_existing(str(USER))
-    assert probes["n"] == 0  # honors the C5 mark-ending guard — never touches a dying box
+    assert probes["n"] == 0  # honors the registry mark-ending guard — never touches a dying box
     await client.aclose()
 
 
@@ -329,19 +327,15 @@ async def test_restore_pulls_bundle_and_reinjects_env(
     assert calls["files"] == 1 and calls["run"] == 1
     env = aca.created[APP_NAME]
     for key in _BIAL_KEYS:
-        assert key in env  # env re-injected onto the fresh container (C4/C9)
+        assert key in env  # env re-injected onto the fresh container by the restore
     await client.aclose()
 
 
 async def test_restore_with_no_snapshot_never_creates_a_container_to_clean_up(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """RENAMED and re-aimed. This used to assert a self-clean: the old order created the
-    container FIRST and discovered the missing bundle two steps later, so the test's job was to
-    prove the wasted container got torn down again.
-
-    The pull now happens before anything is created or destroyed, so there is nothing to clean
-    up — which is the stronger property, and the one worth pinning. No ACA create, no ACA
+    """The pull happens before anything is created or destroyed, so there is nothing to
+    clean up — the stronger property, and the one worth pinning. No ACA create, no ACA
     delete, no registry churn.
     """
     aca = FakeAca()
@@ -363,7 +357,7 @@ async def test_restore_reconciles_deps_from_the_lockfile(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
     # The restore script re-derives dynamic deps with `npm install` AFTER the git checkout, inside
-    # the SAME single exec (one round trip), bounded by the sandbox-layer restore timeout (U6/R16).
+    # the SAME single exec (one round trip), bounded by the sandbox-layer restore timeout.
     aca = FakeAca()
     captured: dict[str, object] = {}
 
@@ -389,7 +383,7 @@ async def test_restore_reconciles_deps_from_the_lockfile(
     assert script.index("git checkout") < script.index("npm install")
     assert captured["timeout"] == _RESTORE_TIMEOUT_SECONDS
 
-    # #11/R4 — the reconcile is CONDITIONAL on lockfile drift. The baked fingerprint is
+    # The reconcile is CONDITIONAL on lockfile drift. The baked fingerprint is
     # taken BEFORE the fetch overwrites the workspace, the snapshot's AFTER the checkout,
     # and the install sits inside the comparison — an unchanged lockfile restores with
     # zero npm work.
@@ -408,7 +402,7 @@ async def test_restore_reconcile_failure_is_a_hard_error_and_self_cleans(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
     # A non-zero restore script (e.g. `npm install` on an unresolvable lockfile version) aborts
-    # restore with a hard SandboxError; the just-created container is torn down (R17 / AE3).
+    # restore with a hard SandboxError; the just-created container is torn down.
     aca = FakeAca()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -423,7 +417,7 @@ async def test_restore_reconcile_failure_is_a_hard_error_and_self_cleans(
     await fake_storage.put(snapshot_key(APP_ID), a_git_bundle())
     with pytest.raises(SandboxError):
         await client.restore_from_snapshot(str(USER), APP_NAME, app_env=_app_env())
-    assert APP_NAME in aca.deleted  # the just-created container was torn down (R17)
+    assert APP_NAME in aca.deleted  # the just-created container was torn down
     assert await fake_redis.hgetall(registry_key(USER)) == {}
     await client.aclose()
 
@@ -435,7 +429,6 @@ async def test_teardown_is_idempotent_and_clears_registry(fake_redis: aioredis.R
     await client.teardown(handle)
     assert APP_NAME in aca.deleted
     assert await fake_redis.hgetall(registry_key(USER)) == {}
-    # A second teardown on the already-deleted container is a clean no-op.
     await client.teardown(handle)
     await client.aclose()
 
@@ -507,15 +500,12 @@ def _bare_control_plane() -> AcaControlPlane:
 
 
 def test_the_container_probes_knock_on_the_supervisor_and_never_on_the_app() -> None:
-    """U7-adjacent: explicit probes exist to skip ACA's default readiness grace (~8s/provision).
+    """Explicit probes exist to skip ACA's default readiness grace (~8s/provision).
 
-    Two properties are load-bearing, and BOTH are silent failures if broken:
-
-    1. The probe MUST target `/_sup/health`, never `/`. Nothing listens on the `next dev` port
-       until the control plane calls `/dev/start`, so a probe at `/` gets a Caddy 502 forever,
-       the revision never goes healthy, and the latency fix becomes a total outage.
-    2. There MUST be no Liveness probe. Liveness failure RESTARTS the container, and a sandbox
-       holds the citizen's un-snapshotted work.
+    Two properties are load-bearing and silently fail if broken: the probe MUST target
+    `/_sup/health` (nothing listens on the `next dev` port until `/dev/start` runs, so a probe
+    at `/` gets a Caddy 502 forever and the revision never goes healthy), and there MUST be no
+    Liveness probe (its restart would hit a sandbox holding the citizen's un-snapshotted work).
     """
     envelope = _bare_control_plane()._envelope(_app_env(), {})  # noqa: SLF001
     container = envelope.template.containers[0]
@@ -541,13 +531,10 @@ def test_the_container_probes_knock_on_the_supervisor_and_never_on_the_app() -> 
 async def test_attach_transient_during_token_recovery_confirm_maps_to_not_ready(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ The OTHER confirm site. `_probe_with_retry` already guards its `get_app_fqdn` (see the
-    test above); the token-recovery arm did not, and `AcaError`/`AcaTransientError` are not
-    `SandboxError`s — so a throttle here escaped every handler above it, out of
-    `reconcile_user`, and killed the whole reap sweep.
-
-    This arm is reached precisely when ARM is ALREADY unhappy: the token recovery it follows
-    just failed against the same control plane. A throttle here is the expected shape.
+    """★ The OTHER confirm site: `_probe_with_retry` already guards `get_app_fqdn` (see the test
+    above), but the token-recovery arm didn't — and `AcaError`/`AcaTransientError` aren't
+    `SandboxError`s, so an unguarded throttle here escaped every handler and killed the whole
+    reap sweep. This arm fires exactly when ARM is already unhappy, so a throttle is expected.
 
     Mutation-check: unwrap the `get_app_fqdn` call in `attach_existing` and this goes red with
     a raw `AcaTransientError`.
@@ -577,11 +564,9 @@ async def test_a_missing_bundle_leaves_the_live_container_standing(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
     """★ RECOVERY MUST NOT REQUIRE DESTROYING WHAT IT IS RECOVERING. The snapshot pull used to
-    live two steps AFTER the defensive teardown, so an absent or unreadable bundle killed the
-    live container and only then discovered there was nothing to put back.
-
-    That container's tree is the only copy of everything since the user last saved, so the
-    ordering turned "the restore failed" into "the work is gone".
+    run two steps AFTER the defensive teardown, so an unreadable bundle killed the live
+    container before discovering there was nothing to put back — turning "the restore failed"
+    into "the work is gone" (that container's tree is the user's only copy since their last save).
 
     Mutation-check: move the `get`/`parse_bundle_head_sha` back below the teardown and this
     goes red — `aca.deleted` gains the original.
@@ -591,12 +576,9 @@ async def test_a_missing_bundle_leaves_the_live_container_standing(
     await client.provision_new(str(USER), APP_NAME, app_env=_app_env())
     assert aca.deleted == []
 
-    # No bundle was ever saved for this app.
     with pytest.raises(StorageNotFoundError):
         await client.restore_from_snapshot(str(USER), "sbx-replacement", app_env=_app_env())
 
-    # The original is untouched: not deleted, and the registry still points at it so the next
-    # attach finds it.
     assert aca.deleted == [], "the live container was destroyed before the bundle was read"
     assert APP_NAME in aca.created
     reg = await fake_redis.hgetall(registry_key(USER))
@@ -606,11 +588,10 @@ async def test_a_missing_bundle_leaves_the_live_container_standing(
 
 # --- where the app is served from (generated-app access domain) -------------------------------
 #
-# Every generated app is reached on ONE public hostname with the app's key in the path, because
-# per-app subdomains would need a wildcard certificate BIAL refused. The container therefore has
-# to be TOLD its own path, and the whole class of failure here is silent: a container that never
-# learns it serves at `/` while the router asks for `/a/<key>/`, and the preview shows a blank
-# page while every automated check still reports healthy.
+# Every generated app is reached on ONE public hostname with the app's key in the path — per-app
+# subdomains would need a wildcard certificate BIAL refused. The container must be TOLD its own
+# path, and the failure mode is silent: a container that never learns it serves at `/` while the
+# router asks for `/a/<key>/` shows a blank preview while every automated check reports healthy.
 
 
 async def test_a_provisioned_sandbox_is_told_where_it_is_served_from(
@@ -667,7 +648,7 @@ async def test_the_base_path_carries_no_trailing_slash(fake_redis: aioredis.Redi
 async def test_the_handle_hands_the_browser_the_public_address(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """AE1. `preview_url` is what the cockpit frames, and an internal Container Apps environment
+    """`preview_url` is what the cockpit frames, and an internal Container Apps environment
     publishes no public DNS — so the container's own FQDN does not resolve from a BIAL desk at
     all. That unresolvable address is the entire defect this change exists to fix."""
     aca = FakeAca()
@@ -682,14 +663,11 @@ async def test_the_control_plane_keeps_the_direct_private_address(
     fake_redis: aioredis.Redis,
 ) -> None:
     """★ THE REGRESSION THAT WOULD BE HARDEST TO SEE. The browser's address moved; the control
-    plane's must NOT. `/_sup/*` and both serving probes compose from `handle.fqdn`, so the two
-    are different hosts by construction rather than by discipline.
-
-    If they were ever collapsed back onto one field, every build's supervisor call and every
-    health probe would start traversing the public gateway — working, in a dev environment whose
-    Container Apps environment happens to be public, and failing in the internal one this design
-    is actually for. That is the worst shape a defect can have here: green everywhere we can
-    test, broken only where we cannot.
+    plane's must NOT — `/_sup/*` and both serving probes compose from `handle.fqdn`, so the two
+    are different hosts by construction, not by discipline. Collapsed onto one field, every
+    supervisor call and health probe would traverse the public gateway — working in a dev
+    environment whose Container Apps environment happens to be public, and failing only in the
+    internal one this design is for: green everywhere testable, broken only where it isn't.
     """
     aca = FakeAca()
     client = _client(aca)

@@ -1,10 +1,10 @@
-"""The session→record seam, composed (003-U5/U6).
+"""The session→record seam, composed.
 
 `test_outcome.py` calls `write_build_outcome` directly, which proves the writer. It cannot prove
 the SEAM: that a real end sequence on a real `SessionManager` actually threads the session's
 thread id, its settled snapshot verdict and its terminal status into that writer. Every link
 there is a plain assignment, and a plain assignment is exactly the kind of thing that gets
-dropped in a refactor while every unit test stays green (`mocks-mask-composition-seams` learning).
+dropped in a refactor while every unit test stays green.
 
 So this drives the REAL SessionManager → REAL end sequence → REAL `write_build_outcome`, with
 only the sandbox faked (it needs a container), and asserts the outcome lands in the real thread.
@@ -84,8 +84,8 @@ async def _end_the_session(
 
 async def _build_parts(db_session: AsyncSession, conversation_id) -> list[dict]:
     """The build-OUTCOME records only (`meta.kind == 'build_outcome'`, the same predicate the
-    outcome probes use). The hidden `build_started` marker (U5) is deliberately excluded —
-    these tests prove the verdict record, and the marker has its own suite."""
+    outcome probes use). The hidden `build_started` marker is deliberately excluded — these
+    tests prove the verdict record, and the marker has its own suite."""
     rows = await db_session.scalars(
         select(Message).where(Message.conversation_id == conversation_id).order_by(Message.seq)
     )
@@ -141,10 +141,10 @@ async def test_a_failed_build_still_records_what_happened(
 async def test_the_record_reports_the_session_apis_snapshot_verdict_not_brains_claim(
     db_session, wire, fake_redis, fake_storage
 ) -> None:
-    """R7, carried into the record: `snapshotCommitted` must be the value the end sequence
-    settled AFTER its own snapshot step, never a value that predates it — anything read before
-    the snapshot could only ever report `false`. Recording that would tell a user their work was
-    lost when it was saved a moment later.
+    """The session API's own rule, carried into the record: `snapshotCommitted` must be the
+    value the end sequence settled AFTER its own snapshot step, never a value that predates
+    it — anything read before the snapshot could only ever report `false`. Recording that
+    would tell a user their work was lost when it was saved a moment later.
 
     The session starts with `snapshot_committed` false, exactly as it is before finalize runs;
     `_do_finalize`'s step 1 is what flips it, and the record must carry the flipped value."""
@@ -242,8 +242,8 @@ async def test_a_build_with_no_thread_records_nothing_and_still_ends(
 # entry-mode round trip through `manager.start`, and the restore-on-finish step — is retired
 # (`manager.py`'s own `_do_finalize`/Write-end docstring: "Write is no longer a dead end the
 # thread has to be rescued from — that was the whole point of the convergence", predating even
-# this enum collapse). `Conversation.kind` is chosen once at creation and never changes (R14/R15;
-# no route mutates it), so there is nothing left to restore. `_live_write_thread` and the old
+# this enum collapse). `Conversation.kind` is chosen once at creation and never changes (no
+# route mutates it), so there is nothing left to restore. `_live_write_thread` and the old
 # `_run_to_terminal`, the two helpers that drove that round trip, were deleted rather than
 # type-patched: they called `manager.start(..., entry_mode=...)`, a method that no longer exists
 # at all, so "fixing" their types would have kept dead, non-callable code alive. What remains

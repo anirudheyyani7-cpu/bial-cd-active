@@ -1,10 +1,10 @@
-"""The `feedback` table — one row per user-submitted feedback message (R30).
+"""The `feedback` table — one row per user-submitted feedback message.
 
-Mirrors the Express `feedback` collection (`server/feedback-repo.js`): the author is the
+Mirrors the Express `feedback` collection: the author is the
 authenticated user (never a body-supplied name), plus a short free-text `message` and an
 advisory `page` path. No rating, no other fields — feedback is message + page only.
 
-`OwnedByUserMixin` scopes the row to its author (the admin read in Plan B lists across
+`OwnedByUserMixin` scopes the row to its author (the admin read lists across
 users, but a citizen only ever writes their own). `page` is a sanitized same-origin path
 (or empty) — never trusted raw input (sanitization happens at the API boundary).
 """

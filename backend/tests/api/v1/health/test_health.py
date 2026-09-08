@@ -18,14 +18,10 @@ from src.services.redis import client as redis_client
 
 
 async def test_health_returns_not_configured_without_a_redis_fixture(client) -> None:
-    """Deliberately FIXTURE-FREE (`.claude/rules/testing.md`). `fake_redis` binds the
-    client singleton, so with it in place the `not_configured` branch is unreachable BY
-    CONSTRUCTION and could never be tested — which is exactly how a previous incident
-    hid a 503 on every deployment that had the dependency switched off.
+    """Binds no fixture on purpose — `fake_redis` in `tests/conftest.py` says why.
 
-    Redis is genuinely optional outside production, so this IS a supported deployment:
-    it must report the certain answer `not_configured` and stay `ok` at HTTP 200. A dev
-    box with no Redis is not a sick API.
+    With no client bound the endpoint owes the certain answer `not_configured`, and stays
+    `ok` at HTTP 200: a box with no Redis is not a sick API.
     """
     response = await client.get("/v1/health")
     assert response.status_code == 200
@@ -33,8 +29,6 @@ async def test_health_returns_not_configured_without_a_redis_fixture(client) -> 
 
 
 async def test_health_returns_ok_when_redis_is_reachable(client, fake_redis) -> None:
-    # Happy path: DB reachable (real test session via the get_db override) and a Redis
-    # that answers PING. No auth required — health is public.
     response = await client.get("/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "ok", "redis": "ok"}
@@ -101,7 +95,6 @@ async def test_health_503_when_db_down(app, client, fake_redis) -> None:
 
 
 async def test_health_sets_security_headers(client) -> None:
-    # The security-headers middleware applies to every response.
     response = await client.get("/v1/health")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"

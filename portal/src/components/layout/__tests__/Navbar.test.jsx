@@ -1,9 +1,9 @@
 /**
- * N4 — the daily-token meter has to be BOTH live and visible.
+ * The daily-token meter has to be BOTH live and visible.
  *
- * Two halves of one regression, both introduced on this branch. F7 removed the in-rail meter on
- * the grounds that "the header already shows real usage" — but the header's badge was
- * `hidden md:flex`, so below 768px there was no usage feedback anywhere at all; and the header
+ * Two halves of one regression, both introduced on this branch. An earlier version removed the
+ * in-rail meter on the grounds that "the header already shows real usage" — but the header's
+ * badge was `hidden md:flex`, so below 768px there was no usage feedback anywhere at all; and the header
  * only ever refetched on mount, because `notifyUsageChanged` had exactly one caller in the
  * retiring relay hook and the turn transport never signalled. Between them a citizen could spend
  * their entire daily budget watching a number that never moved — or that was not on screen.
@@ -73,7 +73,7 @@ const renderNavbar = () =>
     </MemoryRouter>,
   )
 
-describe('the usage meter is visible on a narrow screen (N4)', () => {
+describe('the usage meter is visible on a narrow screen', () => {
   it('THE BUG: the meter is never hidden behind a breakpoint', async () => {
     // jsdom has no viewport-driven CSS, so the honest assertion is on the MECHANISM: a
     // `hidden md:flex` container is unreachable below 768px no matter what the media query
@@ -101,7 +101,7 @@ describe('the usage meter is visible on a narrow screen (N4)', () => {
   })
 })
 
-describe('the navbar the boards draw (plan 002, U1)', () => {
+describe('the navbar matches what the design board draws, without losing any existing feature', () => {
   it('the meter is amber well below any 80% threshold, because the board draws it amber at 54%', async () => {
     // The board's own worked example is `537,102 / 1,000,000 tokens` over a 54%-wide `--amb`
     // fill. The code turned the bar amber only past 80%, so at the board's own figures it
@@ -178,7 +178,7 @@ describe('the navbar the boards draw (plan 002, U1)', () => {
   })
 })
 
-describe('the meter settles without a reload (N4)', () => {
+describe('the meter settles without a reload', () => {
   it('subscribes to the usage-changed signal and refetches when it fires', async () => {
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalledTimes(1))
@@ -208,14 +208,14 @@ describe('the meter settles without a reload (N4)', () => {
 })
 
 /**
- * U13/P1 — the waiting count an administrator cannot miss.
+ * The waiting count an administrator cannot miss.
  *
  * The badge sits on the admin nav entry so a superadmin sees the queue WITHOUT navigating
  * into it, carries a real accessible name rather than a bare numeral, and is not even
  * REQUESTED for anyone else (the route is superadmin-only; asking would spend a request
  * to earn a 403 in every citizen's console).
  */
-describe('the waiting-count badge (P1)', () => {
+describe('the waiting-count badge is accurate, accessible, and admin-only', () => {
   it('renders the pending count on the admin entry, with an accessible name', async () => {
     h.getStoredUser.mockReturnValue(ADMIN)
     h.fetchAppStatusCounts.mockResolvedValue(counts(7))
@@ -227,7 +227,6 @@ describe('the waiting-count badge (P1)', () => {
     // is the sentence beside it.
     expect(screen.getByText('7 apps waiting for review')).toBeTruthy()
     expect(badge.querySelector('[aria-hidden="true"]').textContent).toBe('7')
-    // …and it hangs off the ADMIN entry, not off Projects or Help.
     expect(badge.closest('a').getAttribute('href')).toBe('/admin')
   })
 
@@ -299,16 +298,11 @@ describe('the waiting-count badge (P1)', () => {
 
 
 /**
- * The avatar menu's state machine.
- *
- * #157 A removed three of the four header dropdowns, which left a `DropdownName` union with one
- * member and a `toggle(name)` comparing it against itself; a later commit collapsed both into a
- * boolean. Nothing in this file covered the open/close behaviour either before or after, so the
- * rewrite rested entirely on a manual browser pass. These are the three ways the menu closes.
+ * The avatar menu's state machine — these are the three ways it closes.
  */
-describe('the avatar menu opens and closes (#157 A)', () => {
+describe('the avatar menu opens and closes', () => {
   // Resolved ONCE, while the menu is closed, and the node is reused afterwards. Two traps
-  // here, both of which bit during #157:
+  // here, both of which bit:
   //   - `getAllByRole('button').at(-1)` re-resolves, and once the menu is open the last
   //     button in the nav IS "Sign out" — the browser harness clicked it and logged itself
   //     out mid-run, then asserted the rest against a login page.
@@ -362,7 +356,7 @@ describe('the avatar menu opens and closes (#157 A)', () => {
 
   it('closes when Feedback opens, instead of sitting behind the modal', async () => {
     // Pre-existing gap the dropdown union had too: the Feedback button lives OUTSIDE the
-    // menu, so opening the modal left the menu rendered underneath it (#157 review).
+    // menu, so opening the modal left the menu rendered underneath it.
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
@@ -374,15 +368,12 @@ describe('the avatar menu opens and closes (#157 A)', () => {
 })
 
 /**
- * U15 — THE HEADLINE. A failed sign-out used to call `showToast(...)` and then
- * `navigate('/login')` on the very next line: the navigate unmounts ProjectsPage —
- * unmounts the navbar — which OWNS the toast state, destroying the message in the same
- * tick it was created. Nobody has ever seen it, on any device. The fix hands the warning
- * forward as router state instead, so the screen the person actually LANDS ON renders it.
+ * THE HEADLINE: a failed sign-out used to `showToast(...)` then `navigate('/login')` on the next
+ * line — the navigate unmounts Navbar, which OWNS the toast state, destroying the message in the
+ * same tick it was created. The fix carries the warning forward as router state instead.
  *
- * `LoginScreenProbe` stands in for LoginPage here — it reads exactly the same
- * `location.state.signoutWarning` LoginPage reads, so a passing test proves what reaches
- * the destination screen, not merely what Navbar tried to render before leaving.
+ * `LoginScreenProbe` reads the same `location.state.signoutWarning` LoginPage reads, so a pass
+ * proves what reaches the destination screen, not what Navbar tried to render before leaving.
  */
 function LoginScreenProbe() {
   const location = useLocation()
@@ -406,7 +397,7 @@ const signOut = async () => {
   fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
 }
 
-describe('the sign-out warning outlives the navigation (U15)', () => {
+describe('the sign-out warning outlives the navigation', () => {
   it('THE BUG: a failed sign-out leaves the warning readable on the screen the person lands on', async () => {
     h.logout.mockResolvedValue(false)
     renderNavbarWithLoginRoute()
@@ -432,7 +423,7 @@ describe('the sign-out warning outlives the navigation (U15)', () => {
 })
 
 /**
- * THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD (Plan F, U8).
+ * THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD.
  *
  * `beforeunload` cannot cover a nav link: a single-page navigation is not an unload, so leaving the
  * workspace this way used to discard unsaved work in silence.
@@ -484,9 +475,9 @@ describe('Navbar — the workspace exit guard', () => {
 })
 
 /**
- * THE BRAND LINK CARRIES THE PROJECTS LIST STATE BACK (R45, plan U35, `#208`).
+ * THE BRAND LINK CARRIES THE PROJECTS LIST STATE BACK.
  *
- * `#208` put `page`, `pageSize` and `q` in `/projects`'s own address — reading that in is
+ * `/projects`'s own address carries `page`, `pageSize` and `q` — reading that in is
  * `ProjectsPage.test.tsx`'s job. This link is mounted on a DIFFERENT address (a project, a chat,
  * admin, marketplace, help) and has always had to name a destination without ever having read
  * that query string itself; before this it hardcoded a bare `/projects`. `ProjectsPage` mounts
@@ -494,7 +485,7 @@ describe('Navbar — the workspace exit guard', () => {
  * render while the address bar reads `/projects?…`, navigate away, and check where the brand
  * link goes — without needing `ProjectsPage` in the tree at all.
  */
-describe('Navbar — the brand link carries the projects list state back (R45, `#208`)', () => {
+describe('Navbar — the brand link carries the projects list state back', () => {
   // Every test in this block sees a clean, "nothing remembered yet" tab — otherwise the FIRST
   // test's memory would silently stand in for the second's fresh session.
   afterEach(() => sessionStorage.removeItem('projectsListSearch'))

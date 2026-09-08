@@ -1,20 +1,14 @@
-"""U10 — the confidence-tier classifier (R4, R5, R6).
+"""The confidence-tier classifier.
 
 WRITTEN BEFORE THE IMPLEMENTATION, deliberately: this function IS the safety argument for every
-destructive unit downstream, so the tier table from ADR-0029 §3 is spelled out as tests first and
-the code is written to satisfy them.
-
-The classifier is pure and I/O-free — the same shape as `appdb/reconcile.py::classify_databases`,
-and for the same reason. Every dangerous combination can then be proven against a synthetic fleet
-that holds all of them at once, with no Azure, no Redis and no database in the way.
+destructive unit downstream, so the tier table is spelled out as tests first and the
+code written to satisfy them. They run on synthetic fleets only — no Azure, Redis or database.
 
 THE TWO ASSERTIONS THAT MATTER MOST, both mutation-checked:
-
-* `test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` — reverting the spare
-  set to "registered ⇒ spared" silently disables ~all reclamation while every other test here
-  stays green.
-* `test_a_partially_lost_spare_list_trips_the_store_fault_guard` — the eviction shape. Reverting
-  the guard to empty-only leaves a live build routed into staging with every signal reading normal.
+`test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` (reverting the spare
+set to "registered ⇒ spared" silently disables ~all reclamation) and
+`test_a_partially_lost_spare_list_trips_the_store_fault_guard` (reverting the eviction-shape
+guard to empty-only routes a live build into staging with every signal reading normal).
 """
 
 from __future__ import annotations
@@ -47,9 +41,9 @@ from src.services.sandbox.base import (
 from tests.fakes import a_fleet_member
 
 NOW = dt.datetime(2026, 8, 11, 12, 0, tzinfo=dt.UTC)
-#: A staging tag old enough to authorise the second read. Deliberately past the minimum
-#: rather than exactly on it: a boundary-exact fixture turns any future tightening of the
-#: interval into a suite-wide failure that says nothing about what actually broke.
+#: A staging tag old enough to authorise the second read. Deliberately past the minimum, not
+#: exactly on it — a boundary-exact fixture would turn any future tightening of the interval
+#: into a suite-wide failure that says nothing about what actually broke.
 STAGED_LONG_ENOUGH = MINIMUM_STAGING_AGE * 2
 USER = uuid.uuid4()
 APP = uuid.uuid4()
@@ -116,12 +110,12 @@ def _healthy_padding(count: int = 6) -> tuple[list[FleetMember], dict[str, Regis
     return members, claims
 
 
-# --- the tier table (ADR-0029 §3) -------------------------------------------------
+# --- the tier table ----------------------------------------------------------------
 
 
 def test_high_confidence_orphan_is_destroyed_at_one_hour() -> None:
-    """*Covers AE1.* Carries our identity, absent from the spare set, no matching app record,
-    staged on an earlier pass, past its hour. Every signal concurs, so the wait is short."""
+    """Every signal here concurs, which is why the wait before destruction is the
+    shortest in the tier table."""
     live, claims = _healthy_padding()
     doomed = a_fleet_member(
         "sbx-ghost", tags=_tags(age=dt.timedelta(hours=2), staged=STAGED_LONG_ENOUGH)
@@ -135,9 +129,8 @@ def test_high_confidence_orphan_is_destroyed_at_one_hour() -> None:
 
 
 def test_an_untagged_container_escalates_forever_however_old_it_is() -> None:
-    """*Covers AE2.* Predates identity stamping, so nothing about it can be verified. Age is not
-    evidence — the nineteen-day ghost was exactly this shape, and guessing would have been guessing
-    about somebody's unsaved work."""
+    """Predates identity stamping, so nothing about it can be verified and its age
+    is not evidence — however large the number gets, the verdict stays `ESCALATE`."""
     live, claims = _healthy_padding()
     ancient = a_fleet_member("sbx-prehistoric", tags={})
 
@@ -156,7 +149,7 @@ def test_an_untagged_container_escalates_forever_however_old_it_is() -> None:
 def test_an_unclaimed_container_with_a_real_app_record_waits_longer(
     age: dt.timedelta, expected: Verdict
 ) -> None:
-    """*Covers AE3.* A matching app record means a real builder's real app whose ownership record
+    """A matching app record means a real builder's real app whose ownership record
     alone is gone — one fewer independent signal concurring, so a longer wait before it is touched
     (four hours, against the high-confidence hour)."""
     live, claims = _healthy_padding()
@@ -170,15 +163,13 @@ def test_an_unclaimed_container_with_a_real_app_record_waits_longer(
 
 
 def test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate() -> None:
-    """*The fifth tier (F1), and the mutation-check that guards it.*
-
-    Registered, but lock, stay and liveness lease have ALL lapsed. `_pardon_the_container` keeps
-    the registry entry after a turn completes and `preview_stay_until` is a hash field rather than
-    a TTL'd key, so a pardoned-then-abandoned container sits in the registry forever. This is the
+    """*The fifth tier, and the mutation-check that guards it.* Registered, but lock, stay and
+    liveness lease have ALL lapsed: `_pardon_the_container` keeps the registry entry after a
+    turn completes, so a pardoned-then-abandoned container sits there forever — this is the
     path that produces essentially all of the cost saving.
 
-    MUTATION: revert the spare set to "registered ⇒ spared" and this goes red while every other
-    test in this file stays green — which is precisely why it is worth writing."""
+    MUTATION: revert the spare set to "registered ⇒ spared" and this goes red while every
+    other test in this file stays green."""
     live, claims = _healthy_padding()
     abandoned = a_fleet_member("sbx-pardoned", tags=_tags(staged=STAGED_LONG_ENOUGH))
     claims["sbx-pardoned"] = _claim()  # registered; every signal lapsed
@@ -194,7 +185,7 @@ def test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate() -
 
 
 def test_a_build_ninety_seconds_in_is_spared_by_its_liveness_lease() -> None:
-    """*Covers AE6.* The heartbeat is seeded once per turn against a 90-second TTL, so from ~90s
+    """The heartbeat is seeded once per turn against a 90-second TTL, so from ~90s
     into any build the lease is the ONLY thing a process that is not running the build can see."""
     live, claims = _healthy_padding()
     building = a_fleet_member("sbx-building", tags=_tags(age=dt.timedelta(minutes=90)))
@@ -247,7 +238,7 @@ def test_a_container_mid_provision_is_not_a_candidate() -> None:
 
 
 def test_a_first_sighting_is_staged_never_destroyed() -> None:
-    """ADR-0029 §5. One read is an opinion; the tag is how the second pass learns the first one
+    """One read is an opinion; the tag is how the second pass learns the first one
     happened, and the interval between them is what makes them independent."""
     live, claims = _healthy_padding()
     fresh = a_fleet_member("sbx-firstlook", tags=_tags())
@@ -287,7 +278,7 @@ def test_a_staged_container_that_came_back_to_life_is_spared_not_destroyed() -> 
 
 
 def test_a_container_from_another_control_plane_is_never_ours_to_sentence() -> None:
-    """R22. Reading somebody else's container is fine; sentencing it is not."""
+    """Reading somebody else's container is fine; sentencing it is not."""
     live, claims = _healthy_padding()
     theirs = a_fleet_member("sbx-theirs", tags=_tags(control_plane="some-other-plane"))
 
@@ -321,11 +312,11 @@ def test_a_published_app_is_not_ours_and_is_never_counted_as_an_orphan() -> None
     assert plan.by_name["sbx-mislabelled"].verdict is Verdict.NOT_OURS
 
 
-# --- the store-fault guard (R6, and past its literal wording) ---------------------
+# --- the store-fault guard ----------------------------------------------------------
 
 
 def test_an_empty_spare_list_against_a_live_fleet_destroys_nothing() -> None:
-    """*Covers AE4.* Eleven live sandboxes and a registry that claims none of them is a story about
+    """Eleven live sandboxes and a registry that claims none of them is a story about
     Redis, not about eleven abandoned containers."""
     fleet = [a_fleet_member(f"sbx-{i}", tags=_tags(staged=STAGED_LONG_ENOUGH)) for i in range(11)]
 
@@ -337,15 +328,13 @@ def test_an_empty_spare_list_against_a_live_fleet_destroys_nothing() -> None:
 
 
 def test_a_partially_lost_spare_list_trips_the_store_fault_guard() -> None:
-    """THE EVICTION SHAPE, and the more dangerous of the two.
-
-    The registry hash is the only key family with no TTL, so under any `volatile-*` policy the
-    lock, the stay and the lease evict FIRST while the registry survives. A live build then reads
-    as registered-but-lapsed — the fifth tier — with a non-empty registry, so a binary
-    empty-or-not guard sees nothing wrong and routes it into staging and destruction mid-build.
+    """THE EVICTION SHAPE, and the more dangerous of the two. The registry hash is the only key
+    family with no TTL, so under any `volatile-*` policy the lock/stay/lease evict FIRST while
+    the registry survives — a live build then reads as registered-but-lapsed with a non-empty
+    registry, so a binary empty-or-not guard routes it into staging and destruction mid-build.
 
     MUTATION: revert the guard to `not claims` and this goes red while every other test stays
-    green. That is the whole reason the guard is proportional rather than binary."""
+    green."""
     fleet = [a_fleet_member(f"sbx-{i}", tags=_tags(staged=STAGED_LONG_ENOUGH)) for i in range(11)]
     claims = {"sbx-0": _claim(lock=True, heartbeat=True), "sbx-1": _claim(lease=True)}
 
@@ -385,7 +374,7 @@ def test_a_tiny_fleet_cannot_trip_the_guard() -> None:
 def test_every_container_lands_in_exactly_one_bucket() -> None:
     """`scanned == spared + staged + destroy + escalate + not_ours`, stated as an invariant rather
     than hoped for. A container that silently vanished from the accounting is a container nobody
-    is deciding about — which is how the first ghost survived nineteen days."""
+    is deciding about."""
     live, claims = _healthy_padding()
     fleet = [
         *live,

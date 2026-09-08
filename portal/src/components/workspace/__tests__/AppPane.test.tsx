@@ -1,13 +1,10 @@
 /**
- * THE APP PANE (Plan F, U4) — what it is called, how to get past it, and what it says instead.
+ * THE APP PANE — what it is called, how to get past it, and what it says instead.
  *
- * ═══ THE TRAP THIS FILE EXISTS FOR ═══
- *
- * U4 removes the four start affordances that lived inside `LivePreview`'s no-frame placeholders.
- * Those were, until this plan, the ONLY way to bring a stopped app back. An inertness-only
- * assertion — "the old strings are gone" — passes just as happily on a screen with no start control
- * at all, which would satisfy R3's "exactly one control starts it" with zero. So every no-frame
- * state that used to carry one is asserted here for the affordance's PRESENCE, not its absence.
+ * THE TRAP THIS FILE EXISTS FOR: an inertness-only assertion — "the old strings are gone" —
+ * passes just as happily on a screen with no start control at all, which would satisfy
+ * "exactly one control starts it" with zero. So every no-frame state that can carry a start
+ * control is asserted here for the affordance's PRESENCE, not its absence.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -84,8 +81,8 @@ function renderPane(prime: (channel: WorkspaceChannel) => void, paneVisible = tr
   prime(channel)
   const result = render(
     <MemoryRouter>
-      {/* The rail the skip control moves focus to — the shell owns it in the product; here it is
-          stood up so the focus assertion is about the behaviour rather than about a missing node. */}
+      {/* The shell owns this rail in the product; stood up here so the focus assertion is about
+          behaviour, not a missing node. */}
       <div id={WORKSPACE_RAIL_ID}>
         <button type="button">a rail control</button>
       </div>
@@ -116,10 +113,8 @@ describe('the pane says what it is, and a keyboard can get past it', () => {
   })
 
   it('★ offers a way past the frame, and it moves focus to the rail', () => {
-    // An iframe swallows the tab sequence into a cross-origin document whose length nothing here
-    // can know and whose focus behaviour is the generated app's business — so a way out has to
-    // exist OUTSIDE it. Without one a person navigating by keyboard is trapped in somebody else's
-    // application.
+    // An iframe swallows the tab sequence into a cross-origin document — a way out must exist
+    // OUTSIDE it, or someone navigating by keyboard is trapped in the generated app.
     renderPane((c) => c.workspace.set(reportFor(reading())))
 
     fireEvent.click(screen.getByRole('button', { name: /skip past your app/i }))
@@ -135,8 +130,8 @@ describe('the pane says what it is, and a keyboard can get past it', () => {
 })
 
 describe('★ NOT ORPHANED — every no-frame state still offers a way to start the app', () => {
-  // The four states that used to carry a `RelaunchAffordance` inside `LivePreview`. Asserting the
-  // old strings are absent would pass on a pane with no control at all; this asserts PRESENCE.
+  // These are the states that used to carry LivePreview's `RelaunchAffordance` — the presence
+  // check the file docstring's trap requires.
   const restorable = [
     ['asleep, with a saved copy', reading({ state: 'asleep', restorable: true })],
     ['never built, but restorable', reading({ state: 'never_built', restorable: true })],
@@ -198,8 +193,7 @@ describe('the seam is the resolved address, not a URL that happens to be in hand
   })
 
   it('mounts NO iframe of its own when there is no address', () => {
-    // A second host is the remount AE4 and AE37 exist to forbid: the app would reload on every
-    // navigation and every crossing of the layout threshold, with nothing red anywhere.
+    // Calling `LivePreview` from here would build a second host — see `AppPaneHost`.
     const { container } = renderPane((c) => c.workspace.set(reportFor(reading())))
     expect(container.querySelector('iframe')).toBeNull()
   })
@@ -223,10 +217,8 @@ describe('one author for every pane sentence', () => {
   })
 
   it('★ draws the board\'s mark above the headline on the three states that have one', () => {
-    // `NothingBuilt`, `PreviewOff` and `PreviewStarting` each put a 30px #9AA5B1 glyph directly
-    // above the headline, and it is the only thing that makes a blank half-screen read as a
-    // deliberate state rather than as a page that failed to load. The card and the "YOUR APP"
-    // label landed; its contents were still headline + sentence + button.
+    // `NothingBuilt`, `PreviewOff` and `PreviewStarting` put a 30px #9AA5B1 glyph above the
+    // headline — the only thing that reads a blank half-screen as deliberate, not broken.
     const withGlyph: [string, PreviewState][] = [
       ['never-built', reading({ state: 'never_built', restorable: false })],
       ['not-running', reading({ state: 'asleep', restorable: true })],
@@ -245,9 +237,8 @@ describe('one author for every pane sentence', () => {
   })
 
   it('★ and draws none for a state no board has a mark for', () => {
-    // Seven of the ten states are hand-overs, read failures and start outcomes that the canvas has
-    // never drawn. Borrowing one of the three marks for them would be this file inventing the
-    // design; saying nothing is the honest answer, and the sentence still carries the state.
+    // Seven of the ten states are hand-overs, read failures and start outcomes the canvas has
+    // never drawn — borrowing one of the three marks would be this file inventing the design.
     renderPane((c) => c.workspace.set(reportFor(reading({ state: 'unknown' }))))
 
     expect(screen.queryByTestId('app-pane-glyph')).toBeNull()
@@ -256,7 +247,7 @@ describe('one author for every pane sentence', () => {
     expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
   })
 
-  it('never says what the app is NOT (R-16)', () => {
+  it('never says what the app is NOT', () => {
     for (const preview of [
       reading({ state: 'asleep', restorable: true }),
       reading({ state: 'never_built', restorable: false }),
@@ -276,20 +267,16 @@ describe('one author for every pane sentence', () => {
 })
 
 /**
- * ★ THE THREE DEFECTS AN EARLIER CUT OF THIS FILE SHIPPED, all caught by the suites that pin the
- * surfaces around this one rather than by review.
- *
- * The shared cause was reading `address.url` as the whole seam. It is not: the resolver also
- * returns a STATUS, deliberately independent of the URL, and an address deliberately OUTLIVES its
- * publisher — so a URL alone is neither necessary nor sufficient evidence that something is
- * serving.
+ * The shared risk across these cases is reading `address.url` as the whole seam. It is not: the
+ * resolver also returns a STATUS independent of the URL, and a held address can outlive the
+ * container behind it — so a URL alone is neither necessary nor sufficient evidence that
+ * something is serving.
  */
 describe('the seam is the address AND the state, not the URL alone', () => {
   it('★ frames the LOADING state — a status with no URL yet, which is a first build coming up', () => {
-    // `previewAddress.ts` says it in its own docblock: "a build that is provisioning has a status
-    // and no URL yet, and that pair is what renders the loading state instead of an empty pane."
-    // Gating on the URL alone put "We could not check on your app." in front of a citizen watching
-    // their first build.
+    // See `previewAddress.ts`'s own docblock: a provisioning build has a status and no URL yet,
+    // and gating on the URL alone put "We could not check on your app." in front of a citizen
+    // watching their first build.
     //
     // Mutation receipt: change the gate back to `address.url !== null` and this goes red.
     const { container } = renderPane((c) => {
@@ -308,10 +295,8 @@ describe('the seam is the address AND the state, not the URL alone', () => {
   })
 
   it('★ stops framing a HELD address once the workspace says nothing is serving', () => {
-    // The address outlives its publisher — that is R8's mechanism — so a URL stays held after the
-    // container behind it has stopped. Framing it regardless meant an app that went to sleep showed
-    // a card saying "nothing is lost" with NO way to bring it back: R3's "exactly one control
-    // starts it", satisfied by zero, in an entirely ordinary state.
+    // A URL stays held after the container behind it has stopped. Framing it regardless meant an
+    // app that went to sleep showed a card saying "nothing is lost" with no way to bring it back.
     renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep', restorable: true })))
       c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
@@ -351,16 +336,9 @@ describe('the seam is the address AND the state, not the URL alone', () => {
   })
 })
 
-describe('the column a plan chat does not get (plan 002, U6)', () => {
-  // THE DEFECT THIS BLOCK IS WRITTEN AGAINST, found in a browser and not by any suite: `AppPane`
-  // read the report and the address but never the VISIBILITY, so its `flex-1` section claimed half
-  // the window on a plan chat — filled with the "Your app is saved / Launch Application" card,
-  // offering to start an app the citizen had not asked about. `AppPaneHost` hides itself correctly,
-  // but a plan chat never reaches it: with nothing to frame, `NoFrame` renders instead.
-  //
-  // The knock-on was the visible half of the bug. `ConversationSurface` centres a plan chat with
-  // `mx-auto max-w-3xl`, which does nothing inside a rail that is only half the screen — so the
-  // board's one centred column rendered as a left-aligned half-width one.
+describe('the column a plan chat does not get', () => {
+  // AppPane used to read the report and the address but never the VISIBILITY, so its `flex-1`
+  // section claimed half the window on a plan chat nobody had asked to start an app from.
 
   // WHOLE CLASSES, NOT SUBSTRINGS. `min-w-0` contains `w-0`, so a `toContain` here passes on the
   // very layout this block exists to forbid.
@@ -398,8 +376,7 @@ describe('the column a plan chat does not get (plan 002, U6)', () => {
   })
 
   it('is HIDDEN, never unmounted — a running app survives the move to a plan chat', () => {
-    // The reason the pane is a sibling of the outlet at all. Unmounting re-issues the frame's
-    // `src` on the way back, which is a full reload of somebody's application.
+    // Unmounting would re-issue the frame's `src` on the way back — see `AppPaneHost`.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
       c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
@@ -419,7 +396,7 @@ describe('the column a plan chat does not get (plan 002, U6)', () => {
   })
 })
 
-describe('the movement between the two layouts (plan 002, U6)', () => {
+describe('the movement between the two layouts', () => {
   const paneClasses = (container: HTMLElement) =>
     (container.querySelector('[data-testid="app-pane-region"]')?.className ?? '').split(/\s+/)
 
@@ -432,11 +409,9 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
   }
 
   it('★ slides out at full width and only then collapses', async () => {
-    // `T2Sliding` is a whole artboard of this one moment — "the app card is sliding out to the
-    // right and fading as it goes … a moment later the app is gone" — and until now the keyframe
-    // existed, was suppressed under reduced motion, and was applied to nothing. Applying it to the
-    // collapsed arm would have changed nothing either: an element at `w-0 invisible` cannot be
-    // watched fading, which is why the column holds its size for the length of the animation.
+    // Applying the leave keyframe to the collapsed arm would change nothing — an element at
+    // `w-0 invisible` cannot be watched fading — which is why the column holds its size for the
+    // length of the animation.
     const { container, channel } = renderPane(framed, true)
     expect(paneClasses(container)).not.toContain('animate-pane-leave')
 
@@ -457,24 +432,19 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
   })
 
   it('★ stays out of the keyboard’s reach for the WHOLE leave, not only once it has gone', async () => {
-    // THE GAP THIS IS WRITTEN AGAINST. The column holds its size for the length of the animation so
-    // the card can be watched leaving, which means `visibility:hidden` — the thing that takes a
-    // subtree out of the tab order — cannot land yet. For those 240ms the pane was announced as
-    // gone and still one Tab away: a keyboard could land on the skip control, or inside the frame
-    // of an app that was no longer on the screen. `hiddenSubtree.ts` names that pairing a WCAG
-    // 4.1.2 violation, and this is the applier where what is hidden is a whole application.
+    // The column holds its size during the leave, so `visibility:hidden` — which takes a subtree
+    // out of the tab order — cannot land yet. Without `inert` covering that gap, the pane reads as
+    // gone (aria-hidden) but stays one Tab away: a WCAG 4.1.2 violation on a whole application.
     //
-    // ASSERTED AS THE ATTRIBUTE, and honestly: jsdom implements no part of `inert` — it neither
-    // reflects the property nor refuses a `focus()` inside one — so a focus simulation here would
-    // be inventing a browser rather than testing one. The attribute IS the mechanism a browser
-    // obeys, which is the same bargain the `aria-hidden` assertions in this file already make.
+    // Asserted as the attribute, not a focus simulation: jsdom implements no part of `inert` (no
+    // reflected property, no refused `focus()`), so the attribute is the only mechanism here that
+    // a real browser actually obeys.
     const { container, channel } = renderPane(framed, true)
     // A pane somebody is looking at is reachable, or the assertion below proves nothing.
     expect(region().hasAttribute('inert')).toBe(false)
 
     act(() => channel.visible.set(false))
 
-    // MID-LEAVE: still sized, still animating, still framing the app — and unreachable.
     expect(paneClasses(container)).toContain('animate-pane-leave')
     expect(paneClasses(container)).not.toContain('invisible')
     expect(region().hasAttribute('inert')).toBe(true)
@@ -528,7 +498,6 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
   it('★ both halves are suppressed for a reader who asked for less motion', () => {
     // Asserted against the STYLESHEET because that is where the suppression lives, and jsdom
     // loads no stylesheet: nothing else in the suite would notice the media block being deleted.
-    // A citizen sets this preference because motion makes them ill, so it is not decoration.
     // Resolved from the vitest root (`portal/`), not from `import.meta.url`: under vite the
     // module's own URL is not a `file:` one, so `new URL(…, import.meta.url)` cannot be read.
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
@@ -537,7 +506,7 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
 
     // Each utility is looked up in whatever rule carries it, rather than in a rule matching the
     // two of them ADJACENT. The old regex demanded `.animate-pane-leave, .animate-pane-return {`
-    // literally, so #210 — which suppressed the same way by adding `.animate-spin`,
+    // literally, so a later change that suppressed the same way by adding `.animate-spin`,
     // `.animate-pulse` and `.animate-bounce` to this very selector list — turned this guard red
     // while the guarantee it protects was strictly widened. A guard that breaks when the thing it
     // guards gets stronger is a guard that gets deleted.
@@ -556,11 +525,10 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
 })
 
 /**
- * ★ A BLOCKED PROJECT TAKES ITS WORKSPACE BACK (`#196`, U13) — the pane half.
+ * ★ A BLOCKED PROJECT TAKES ITS WORKSPACE BACK — the pane half.
  *
- * ═══ WHAT THIS BLOCK IS WRITTEN AGAINST ═══
- *
- * The unit's three structural traps, each of which passes review and fails in a browser:
+ * WHAT THIS BLOCK IS WRITTEN AGAINST: the unit's three structural traps, each of which passes
+ * review and fails in a browser:
  *
  *  1. A take-back that reports `onStartPending` UNMOUNTS ITS OWN BUTTON. `resolveWorkspaceState`
  *     answers `gettingReady()` on an in-flight press, that arm offers no action, and `NoFrame`
@@ -569,13 +537,13 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
  *     still there" and "the pane is still held" are two different failures.
  *  2. THE DIALOG OWNS `busy` AND `error` ITSELF, and its `run()` catches every rejection into one
  *     alert while staying mounted. If the take-back's handlers rejected, that alert would be what
- *     a citizen reads on all five of D2's endings and none of the pane states below would be
- *     reachable. Every failing ending here asserts the dialog is GONE.
+ *     a citizen reads on all five of the take-back's endings and none of the pane states below
+ *     would be reachable. Every failing ending here asserts the dialog is GONE.
  *  3. THE REOPENED DIALOG IS A NEW MOUNT. It takes focus in a mount-time effect, so a dialog
  *     updated in place would leave a keyboard user parked where the busy state put them while the
  *     copy in front of them started naming a different project.
  */
-describe('★ taking the workspace back (#196)', () => {
+describe('★ taking the workspace back', () => {
   const HELD: Partial<PreviewState> = {
     state: 'slot_taken', occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,
   }
@@ -600,8 +568,8 @@ describe('★ taking the workspace back (#196)', () => {
    * `onStartPending` IS WIRED TO THE MAP, exactly as both real publishers wire it — the project
    * hook's `reportStartPending` and the chat surface's `setStartPending` both feed
    * `resolveWorkspaceState`. Without that the arm assertion below would be vacuous: a harness
-   * holding one frozen state cannot show a take-back unmounting its own button, which is the
-   * precise failure D2 describes.
+   * holding one frozen state cannot show a take-back unmounting its own button, which is trap 1
+   * above.
    */
   function heldPane(startOutcome: StartOutcome | null = null) {
     const channel = createWorkspaceChannel()
@@ -645,7 +613,8 @@ describe('★ taking the workspace back (#196)', () => {
 
   it('★ the held arm draws TWO controls, and the first is untouched', async () => {
     heldPane()
-    // Unchanged in label and in behaviour, per the owner's decision on #196.
+    // The take-back was added BESIDE this control, never in place of it: the open-holder button
+    // keeps the label and the behaviour it already had.
     expect(openHolder()).toBeTruthy()
     expect(takeBack()).toBeTruthy()
   })
@@ -724,7 +693,8 @@ describe('★ taking the workspace back (#196)', () => {
     // "That did not work. Please try again." alert never appeared.
     await waitFor(() => expect(dialog()).toBeNull())
     expect(screen.queryByRole('alert')).toBeNull()
-    // LIVENESS: the pane is still on the held arm with both ways out, which is where D2 puts it.
+    // LIVENESS: the pane is still on the held arm with both ways out, which is the outcome this
+    // ending specifies.
     expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
     expect(takeBack()).toBeTruthy()
   })
@@ -770,8 +740,8 @@ describe('★ taking the workspace back (#196)', () => {
     expect(pane.report.onRefresh).toHaveBeenCalled()
     await waitFor(() => expect(dialog()).toBeNull())
 
-    // And that outcome, over the reading that follows it, is the pane D2 describes: the ordinary
-    // failed-to-start sentence, one line naming the holder, and the same Try again.
+    // And that outcome, over the reading that follows it, is the pane this ending specifies: the
+    // ordinary failed-to-start sentence, one line naming the holder, and the same Try again.
     cleanup()
     renderPane((c) =>
       c.workspace.set(
@@ -818,7 +788,7 @@ describe('★ taking the workspace back (#196)', () => {
     expect(working.getAttribute('aria-disabled')).toBe('true')
     // BOTH, which is a fact about a pair of siblings and so cannot live in either of them.
     expect(openHolder().getAttribute('aria-disabled')).toBe('true')
-    // ★ TRAP 1, asserted as the ARM rather than as the button — that is the failure D2 describes:
+    // ★ TRAP 1, asserted as the ARM rather than as the button:
     // a take-back on the in-flight channel reaches `starting`, which offers no action at all and
     // un-frames the pane. The harness feeds `onStartPending` back through the map (see `heldPane`),
     // so reporting one here really does move this arm.
@@ -828,14 +798,14 @@ describe('★ taking the workspace back (#196)', () => {
   })
 
   it('the pane itself is a polite region, mounted before it has anything to say and on arms with no buttons', () => {
-    // ★ CORRECTED (U8, `#197`). This asserted the region was `takeBack().parentElement` — the ROW
-    // THE TWO CONTROLS SIT IN — which was true and was the defect: the region lived inside the
-    // block that renders the buttons, so any state with `action: null` had no live region at all.
-    // `starting` is exactly such a state, and it is the one wait in the product with nothing to
-    // press, so a sandbox start announced NOTHING. What this test now rejects is a region scoped
-    // to the controls rather than to the pane.
+    // ★ THE DEFECT THIS TEST NOW GUARDS. This asserted the region was `takeBack().parentElement`
+    // — the ROW THE TWO CONTROLS SIT IN — which was true and was the defect: the region lived
+    // inside the block that renders the buttons, so any state with `action: null` had no live
+    // region at all. `starting` is exactly such a state, and it is the one wait in the product
+    // with nothing to press, so a sandbox start announced NOTHING. What this test now rejects is
+    // a region scoped to the controls rather than to the pane.
     //
-    // #210's rule still holds and is why the region exists here at all: `LivePreview` keeps the
+    // The rule still holds and is why the region exists here at all: `LivePreview` keeps the
     // pane's other permanent region and is not mounted on these arms, so without this one the
     // wait would pass in silence. Never a second `sr-only` copy of a sentence already on screen —
     // the two regions divide the pane, and this one owns the states with no app in them.
@@ -993,7 +963,7 @@ describe('★ taking the workspace back (#196)', () => {
 
 describe('★ the wait counter measures the wait, it does not count its own ticks', () => {
   // This line is the ONLY thing the pane can say truthfully about how long a start has taken —
-  // R28 rules out a bar, so honesty is the whole feature. `setSeconds(was => was + 1)` counted
+  // there is no progress bar, so honesty is the whole feature. `setSeconds(was => was + 1)` counted
   // how many times the interval FIRED, and a browser throttles a hidden tab's timers (to 1/s,
   // and to 1/MINUTE after ~5 minutes hidden). A citizen who switches tabs during a two-minute
   // start and comes back was told a number minutes short of the truth.

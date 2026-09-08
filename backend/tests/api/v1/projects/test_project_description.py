@@ -1,8 +1,5 @@
-"""Project description generation (U7, R15-R20, KD-5/KD-8).
-
-Foundry-only agent path (a TestModel/FunctionModel stands in): fresh project rejects with
-409, code-bearing project generates + persists, regenerate feeds the current description in,
-the daily gate is honored, the fed code is bounded, and the result is length-capped.
+"""Project description generation, exercised through the Foundry-only agent path — a
+TestModel/FunctionModel stands in for the real client.
 """
 
 from __future__ import annotations
@@ -59,7 +56,7 @@ def _all_text(messages: list[ModelMessage]) -> str:
 async def test_generate_fresh_project_409(client, db_session, set_chat_model) -> None:
     set_chat_model(TestModel(custom_output_text="should not run"))
     headers, user = await _auth(db_session)
-    project = await ProjectFactory.create(db_session, user.id)  # no app at all
+    project = await ProjectFactory.create(db_session, user.id)
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 409
@@ -71,7 +68,6 @@ async def test_generate_null_current_code_409(client, db_session, set_chat_model
     set_chat_model(TestModel(custom_output_text="should not run"))
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id)
-    # An app with NULL current_code — provisioned but never built.
     await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project.id)
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
@@ -88,7 +84,7 @@ async def test_generate_from_code_persists(client, db_session, set_chat_model) -
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    assert resp.json()["description"] == "Tracks VIP movements at the airport."  # stripped
+    assert resp.json()["description"] == "Tracks VIP movements at the airport."
     reloaded = await db_session.get(Project, project.id)
     assert reloaded is not None
     assert reloaded.description == "Tracks VIP movements at the airport."
@@ -112,9 +108,8 @@ async def test_regenerate_feeds_current_description(client, db_session, set_chat
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    # The current description was fed to the model so it revises rather than discards (R19).
+    # The current description was fed to the model so it revises rather than discards.
     assert "An old, stale description the author wrote." in captured["prompt"]
-    # ...and the result overwrites.
     assert resp.json()["description"] == "A revised, sharper description."
 
 
@@ -139,7 +134,6 @@ async def test_generated_input_is_bounded(client, db_session, set_chat_model, mo
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    # The code was truncated to the budget — the full 500-char body is not present.
     assert "[... code truncated" in captured["prompt"]
     assert big_source not in captured["prompt"]
 
@@ -160,10 +154,10 @@ async def test_generated_result_is_length_capped(client, db_session, set_chat_mo
 async def test_generation_is_metered_against_the_citizen_but_not_billed_to_them(
     client, db_session, set_chat_model
 ) -> None:
-    """★ R14, AND BOTH HALVES ARE THE TEST. The platform reasons about the citizen's code
-    because they pressed "generate a description", not because they asked for tokens — so the
-    spend is RECORDED against them (it stays attributable, and an operator can see what the
-    feature costs) and does NOT come out of the day's allowance they build with.
+    """★ BOTH HALVES ARE THE TEST. The platform reasons about the citizen's code because they
+    pressed "generate a description", not because they asked for tokens — so the spend is
+    RECORDED against them (it stays attributable, and an operator can see what the feature
+    costs) and does NOT come out of the day's allowance they build with.
 
     It writes under `review`, the kind `gate._used_today` does not read — the same carve-out the
     pre-publish classification review already uses, reached through the same `kind` parameter
@@ -200,10 +194,10 @@ async def test_generation_is_metered_against_the_citizen_but_not_billed_to_them(
 
 
 def test_the_code_budget_is_an_absolute_number_not_a_share_of_the_window() -> None:
-    """★ THE MUTANT THIS FILE HAD NO GUARD FOR (R11b). The budget used to be
-    `MODEL_CONTEXT_WINDOW * 3`, so correcting the window from 200,000 to the 1,000,000 the
-    deployment actually serves would have handed this generator FIVE TIMES more source — a cost
-    and latency change nobody decided, in a feature that writes two to four sentences.
+    """★ THE MUTANT THIS FILE HAD NO GUARD FOR. The budget used to be `MODEL_CONTEXT_WINDOW * 3`,
+    so correcting the window from 200,000 to the 1,000,000 the deployment actually serves would
+    have handed this generator FIVE TIMES more source — a cost and latency change nobody decided,
+    in a feature that writes two to four sentences.
 
     So the number is pinned as a number, and the first assertion goes red the moment anyone
     re-derives it. The second is the subtler guard: it fails whenever the budget once again
@@ -216,7 +210,7 @@ def test_the_code_budget_is_an_absolute_number_not_a_share_of_the_window() -> No
 async def test_blank_generation_clears_to_null_not_empty_string(
     client, db_session, set_chat_model
 ) -> None:
-    # KD-8: the empty string is never persisted — a blank generation lands as NULL,
+    # The empty string is never persisted — a blank generation lands as NULL,
     # matching the schema-boundary normalization on the author path.
     set_chat_model(TestModel(custom_output_text="   "))
     headers, user = await _auth(db_session)
@@ -312,7 +306,7 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
     # runs first (a project deleted before it just 409s). The flush's description UPDATE then
     # matches zero rows (StaleDataError). The loser must get the same non-leaking 404 a PATCH
     # one second later would — never a 500 — AND the usage row generation billed rides the same
-    # rolled-back commit, so nothing is charged for the lost turn (KD-5 billing note).
+    # rolled-back commit, so nothing is charged for the lost turn.
     import importlib
 
     from src.services.projects import generate_project_description as real_generate
@@ -363,19 +357,17 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
     assert resp.json() == {"error": {"message": "Project not found."}}
     # The turn DID bill before losing the race, so record_usage rode the failed commit — the
     # usage write and the description write share one transaction (record_usage never commits
-    # on its own; the success side is pinned by test_generation_bills_usage), so the 404 rolls
-    # the billing back with it rather than charging for a turn that never landed.
+    # on its own; the success side is pinned by the metered-but-not-billed test above), so the
+    # 404 rolls the billing back with it rather than charging for a turn that never landed.
     assert billed["n"] == 1
 
 
-# --- U8: description injected as shared chat context (R16) ---------------------
+# --- WHAT THIS FILE DOES NOT COVER, AND WHERE IT LIVES -------------------------
 #
-# MOVED, not dropped. These four tests posted to the retired `POST /v1/claude` relay and
-# asserted its `_compose_system` output. The property — a turn is grounded in its project's
-# description, and never in another user's — now lives at the surface that actually sends:
-# `tests/api/v1/conversations/test_project_grounding.py`. What stays in this file is the
-# `description:generate` ENDPOINT, which is a different thing from where a description is
-# later read.
+# This file owns the `description:generate` ENDPOINT. Whether a turn is GROUNDED in its project's
+# description — and never in another user's — is a property of the surface that SENDS, which is a
+# different thing from where a description is written. It is pinned in
+# `tests/api/v1/conversations/test_project_grounding.py`; do not re-add it here.
 
 
 async def test_a_burst_of_generations_is_rate_limited_per_user(
@@ -383,7 +375,7 @@ async def test_a_burst_of_generations_is_rate_limited_per_user(
 ) -> None:
     """THE ROUTE'S ONLY PER-USER SPEND BOUND. Its daily-token exemption is deliberate —
     what this route spends is recorded under `review` and never counted back into the
-    citizen's budget (R14) — so `enforce_daily_limit` above admits call N for every N.
+    citizen's budget — so `enforce_daily_limit` above admits call N for every N.
     Each admitted call ships up to `CODE_BUDGET_CHARS` of app source to the premium
     deployment. Without the limiter the exemption is an uncapped spend channel, which is
     exactly the pairing the classification review already ships (its exemption travelled

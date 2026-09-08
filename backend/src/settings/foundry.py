@@ -22,17 +22,13 @@ from pydantic import (
 
 
 class FoundryConfig(BaseModel):
-    """Azure AI Foundry (Claude) model access — the ONLY sanctioned path to the model; the public
-    Anthropic API is never used (R11 / AE5). Populated from one `FOUNDRY__*` env block, mirroring
-    `services/auth/config.py`.
+    """Azure AI Foundry (Claude) model access — the ONLY sanctioned path; the public Anthropic API
+    is never used. Populated from one `FOUNDRY__*` env block, mirroring `services/auth/config.py`.
 
     `extra="forbid"` fails a mistyped nested key at startup; `SecretStr` masks the key; required
     inner fields carry NO default (fail-first). Exactly one auth mode: a static API key
     (`auth_mode="api_key"`, needs `api_key`) or an Entra token provider (`auth_mode="entra"`,
-    managed identity — no static secret).
-
-    Re-exported from `src/config.py`, which five call sites import it from.
-    """
+    managed identity — no static secret). Re-exported from `src/config.py` (five call sites)."""
 
     # `extra="forbid"` makes a mistyped FOUNDRY__* nested key fail at startup instead of silently
     # defaulting (fail-first). This — not the profile's own extra="forbid" — is what actually

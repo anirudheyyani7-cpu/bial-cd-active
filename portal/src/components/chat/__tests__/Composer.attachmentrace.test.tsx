@@ -1,5 +1,5 @@
 /**
- * A FILE PICKED IN ONE CHAT NEVER LANDS IN THE NEXT ONE (plan 002, U5).
+ * A FILE PICKED IN ONE CHAT NEVER LANDS IN THE NEXT ONE.
  *
  * Reading a file is asynchronous and a citizen can step to another chat while it is still being
  * read, so the read resolves against a composer that by then belongs to a different conversation.

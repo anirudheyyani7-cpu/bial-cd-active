@@ -1,4 +1,4 @@
-"""The Azure-side sandbox inventory (#83 follow-up) — the fleet view the Redis sweep cannot
+"""The Azure-side sandbox inventory — the fleet view the Redis sweep cannot
 produce. No DB: a fake lister plus the real registry namespace."""
 
 from __future__ import annotations
@@ -44,8 +44,7 @@ async def test_a_container_no_registry_entry_tracks_is_reported_as_unregistered(
     fake_redis: aioredis.Redis,
 ) -> None:
     """THE LEAK, and the whole reason this module exists. `sweep_all` walks the registry, so a
-    container with no entry there is one it will never reach — it just bills. One did, for
-    twelve days, and nothing in the platform could have told anyone."""
+    container with no entry there is one it will never reach — it keeps billing forever."""
     tracked_user, tracked_app = uuid.uuid4(), uuid.uuid7()
     await _register(fake_redis, tracked_user, app_name_for(tracked_app))
     orphan = "sbx-019f74300c9f747db10b73b6dcdd"
@@ -86,15 +85,15 @@ async def test_a_listing_failure_propagates_rather_than_reporting_a_clean_fleet(
     fake_redis: aioredis.Redis,
 ) -> None:
     """A partial inventory is indistinguishable from a clean one, and "clean" is the answer
-    that gets a billing container forgotten for another twelve days. The route maps this to a
-    503; what it must never do is return an empty `unregistered` list."""
+    that lets a billing container go unnoticed. The route maps this to a 503; what it must
+    never do is return an empty `unregistered` list."""
     with pytest.raises(SandboxError):
         await take_sandbox_inventory(fake_redis, _Fleet([], error=SandboxError("ARM said no")))
 
 
 def test_the_concrete_client_satisfies_the_protocol_by_shape() -> None:
     """The capability deliberately lives on `AcaSandboxClient`, not the frozen `SandboxClient`
-    ABC (C2). This is what keeps that decision honest — drop the method and the admin route's
+    ABC. This is what keeps that decision honest — drop the method and the admin route's
     `isinstance` check starts answering 503 on a healthy deployment."""
     from src.services.sandbox.client import AcaSandboxClient
 

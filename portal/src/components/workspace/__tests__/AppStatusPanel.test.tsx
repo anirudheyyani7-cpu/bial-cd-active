@@ -1,10 +1,8 @@
 /**
- * THE APP STATUS PANEL (plan 002, U4) — every state, drawn open.
+ * THE APP STATUS PANEL — every state, drawn open.
  *
  * The boards make this the fuller of the two publishing surfaces: a coloured pill, three
- * provenance rows with dates and short build ids, one sentence, one action. None of it existed —
- * the rail said nothing about publishing at all, and everything a citizen could learn lived
- * inside a popover, one row at a time.
+ * provenance rows with dates and short build ids, one sentence, one action.
  *
  * WHAT THIS FILE OWNS AND WHAT IT DOES NOT. The words, the colour and the action come from
  * `utils/publishPresentation.ts`, which the chip reads too — so a copy assertion here would be a
@@ -57,7 +55,7 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   savedHead: null,
   savedAt: null,
   // `null` is "the server did not say", which keeps the saved row — the neutral default
-  // for suites that are not about U16's never-saved omission.
+  // for suites that are not about the never-saved omission.
   savedState: null,
   ...over,
 })
@@ -90,10 +88,8 @@ afterEach(cleanup)
 
 describe('the state pill', () => {
   it('★ shares the section label\'s row, carried to its right', () => {
-    // `PreviewOff`, `NothingBuilt` and `Main` draw the label and the pill on one band. The pill was
-    // a `float-right` in the block BELOW the heading — and a float cannot rise onto a preceding
-    // block's line, so it dropped to a row of its own and left a stray strip of empty rail under
-    // "APP STATUS" in every single state.
+    // The pill was a `float-right` in the block BELOW the heading — a float cannot rise onto a
+    // preceding block's line, so it dropped to a row of its own.
     wire({ deployment: view('draft') })
     mount()
     const pill = screen.getByTestId('status-pill')
@@ -123,8 +119,8 @@ describe('the state pill', () => {
 
 describe('the provenance rows', () => {
   it('★ shows published, approved and the citizen\'s own saved version together', () => {
-    // THE BOARD'S THREE ROWS. The third is the one that needed a server field: the saved head
-    // and its timestamp did not reach this client at all before U4.
+    // THE BOARD'S THREE ROWS. The third needed a server field: the saved head and its
+    // timestamp.
     wire({
       deployment: view('live_current', {
         finishedAt: '2026-08-20T09:14:00Z',
@@ -208,7 +204,7 @@ describe('the provenance rows', () => {
 })
 
 /**
- * U14 / R34 / AE9 — sharing a published app without leaving the product.
+ * Sharing a published app without leaving the product.
  *
  * The panel already linked the address; copying it meant opening the tab and taking it out of
  * the browser's own address bar. What is asserted here is the VALUE copied, not the presence of
@@ -317,13 +313,13 @@ describe('the copy control on a published app', () => {
 })
 
 /**
- * U15 / R35 / AE9 — the reviewer's reason, on the rail, without opening anything.
+ * The reviewer's reason, on the rail, without opening anything.
  *
- * WHAT IS NOT HERE, DELIBERATELY: the geometric half of AE9 — that a 1,000-character note
- * leaves "Send for review" in view. jsdom has no layout engine, so a test here could only
- * assert that both elements EXIST, which is exactly the false pass this campaign has already
- * produced once. It lives in the browser suite; what this file pins is source order, which is
- * the mechanism the geometry depends on.
+ * WHAT IS NOT HERE, DELIBERATELY: the geometric half of that rule — that a 1,000-character
+ * note leaves "Send for review" in view. jsdom has no layout engine, so a test here could
+ * only assert that both elements EXIST, which is exactly the false pass this campaign has
+ * already produced once. It lives in the browser suite; what this file pins is source order,
+ * which is the mechanism the geometry depends on.
  */
 describe('the reviewer\'s reason on the rail', () => {
   const NOTE = 'Move the hardcoded database URL and API key out of lib/db.ts, then send it again.'
@@ -385,7 +381,7 @@ describe('the reviewer\'s reason on the rail', () => {
 })
 
 /**
- * U16 / R37a / AE9a — a project that has never been saved stops claiming the platform lost it.
+ * A project that has never been saved stops claiming the platform lost it.
  */
 describe('the LAST SAVED row on a project with no save', () => {
   it('★ is not rendered at all, rather than rendered as "we could not tell"', () => {
@@ -457,11 +453,10 @@ describe('the action', () => {
   })
 
   it('★ draws the ONE action the canvas does not paint teal as a secondary', () => {
-    // `StatusCardStates` fills every action button with `#0D7377` except state 3's, which it draws
-    // white with ink on a hairline. Every other action moves the app forward — send for review,
-    // send the newer version, publish. Taking a submission back moves it backwards, out of an
-    // administrator's queue, and painting it in the encouraging colour asked a citizen to withdraw
-    // their own work in exactly the same voice as it asked them to submit it.
+    // Every other action moves the app forward — send for review, send the newer version, publish.
+    // Taking a submission back moves it backwards, out of an administrator's queue, and painting it
+    // in the encouraging colour asked a citizen to withdraw their own work in the same voice as it
+    // asked them to submit it.
     wire({ deployment: view('in_review'), approval: approval({ status: 'pending' }) })
     mount()
     const back = screen.getByTestId('status-action')

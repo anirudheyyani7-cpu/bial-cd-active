@@ -1,4 +1,4 @@
-"""Deck (pptx) → PDF conversion (U11) — the validate-before-render pipeline + caps.
+"""Deck (pptx) → PDF conversion — the validate-before-render pipeline + caps.
 
 The Gotenberg HTTP call is exercised only in the `integration`-marked test (needs a sidecar);
 the pipeline logic is unit-tested with an injected renderer.

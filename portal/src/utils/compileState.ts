@@ -1,22 +1,13 @@
 /**
  * What the app's dev server is compiling right now — the signal the preview pane covers its
- * frame with (R17/R18).
+ * frame with. FOUR values, and the fourth is the whole point: `unknown` means the platform has
+ * no idea (HMR socket not yet connected, down between reconnects, an older image, or a failed
+ * transport) — it must NEVER read as `clean`, or the pane uncovers itself over the exact error
+ * screen it exists to hide. Mirrors `CompileState` in `backend/src/services/sandbox/base.py`.
  *
- * FOUR values, and the fourth is the whole point. `unknown` means the platform has no idea:
- * the container has not connected to its dev server's HMR socket yet, the socket is down
- * between reconnects, the container runs an image built before the signal existed, or the
- * transport failed. Every one of those must read as "no idea", NEVER as `clean` — a pane that
- * treats an absent signal as good news uncovers itself over the exact error screen the cover
- * exists to hide.
- *
- * Mirrors `CompileState` in `backend/src/services/sandbox/base.py`; the wire values are the
- * StrEnum's own, so the two lists are the same four strings.
- *
- * NOTE ON TIMING: the debounce that settles a `clean` before it is published lives entirely in
- * the container (`_COMPILE_DEBOUNCE_S` in `sandbox/supervisor/app.py`). This side keeps no copy
- * of it and runs no timer of its own — the pane is purely reactive to the state it is handed,
- * which is what makes "the cover clears one debounce after the app compiles" a property of one
- * number in one place.
+ * The settle debounce before a `clean` publishes lives ONLY in the container
+ * (`_COMPILE_DEBOUNCE_S`, `sandbox/supervisor/app.py`) — this side keeps no copy and runs no
+ * timer of its own, so the cover-clear delay stays one number in one place.
  */
 export type CompileState = 'building' | 'clean' | 'failed' | 'unknown'
 

@@ -1,44 +1,26 @@
 /**
- * Guard: the vendored-registry and hand-written CSS residue these sweeps removed stays removed.
+ * Guards that the vendored-registry and hand-written CSS residue two earlier sweeps removed
+ * stays removed.
  *
- * TWO SWEEPS, ONE LIST. The vendored primitives and design tokens came out first; the
- * assistant-ui era's CSS tail — the shimmer label that never landed and the keyframes the
- * Collapsible primitive left behind when it was deleted — came out after. Same defect, same
- * invisibility, same rule shape, so they are asserted together rather than in a second file that
- * would have to repeat all of the reasoning below.
+ * WHY THIS EXISTS
  *
- * NOTHING ELSE CAN GO RED WHEN IT COMES BACK, which is how all of it arrived. Every item below
- * was an EXPORT nobody imported, a `cva` key nobody selected, or a raw CSS rule no class name
- * reached — so neither `tsc` nor `eslint` nor any render test has an opinion about it. One
- * `npx shadcn@latest add` of a component that lists `dialog` or `popover` in its
- * registryDependencies restores the whole alias set and the four button variants in a diff that
- * looks like a routine upgrade, and a thin-scrollbar rule is one paste away from being beside
- * the scroller that replaced it.
+ * Every item here was an export nobody imported, a `cva` key nobody selected, or a raw CSS rule
+ * no class name reached — `tsc`/`eslint`/render tests have no opinion on any of it, so a routine
+ * `shadcn add` or a careless paste can bring a whole alias set or a dead rule straight back.
  *
- * WHY A NAMED LIST RATHER THAN A REACHABILITY WALK. `components/ui/__tests__/no-orphan-primitives.test.ts`
- * already walks import specifiers, and it is deliberately FILE-level — it cannot see an unused
- * export inside a file something else imports, which is the shape of every removal here. The
- * obvious generalisation, "no primitive exports a name nothing imports", is not available: this
- * folder deliberately keeps two such names (`toggle.tsx`'s `Toggle`, whose file is imported for
- * its variants, and `button.tsx`'s `buttonVariants`, which the registry convention exports and
- * the file itself uses), so the general rule would need an allowlist — and an allowlist that
- * grows is the thing it was written to prevent. A list of what ONE sweep removed cannot rot that
- * way: it is either still true or it is red.
+ * A NAMED LIST, not a reachability walk: `no-orphan-primitives.test.ts` already walks import
+ * specifiers but is file-level, so it can't see an unused export inside a file something else
+ * imports — the shape of every removal here. A general "no dead export" rule needs an allowlist
+ * (this folder deliberately keeps `Toggle` and `buttonVariants`), and a growing allowlist is the
+ * thing this file exists to avoid.
  *
- * EVERY RULE CARRIES ITS OWN LIVENESS PROBE, BECAUSE A SOURCE-SCANNING RULE THAT MATCHES NOTHING
- * PASSES FOR EVER. `forbidden.test(file) === false` is an ABSENCE check: a regex that had drifted
- * into matching nothing would satisfy it on every file, for ever, silently. So each rule also
- * carries the text the sweep actually deleted and must still flag it — not to catch a typo in the
- * transcription, but to prove the rule can fire at all. Without that half the whole file is
- * green-by-construction.
+ * EVERY RULE CARRIES ITS OWN LIVENESS PROBE: `forbidden.test(file) === false` is an absence
+ * check, and a regex that drifted into matching nothing would pass forever, silently. Each rule
+ * also runs against the exact text the sweep deleted, to prove it can still fire at all.
  *
- * WHAT THIS DOES NOT COVER, STATED RATHER THAN IMPLIED. The plan behind this sweep also asked
- * for a rule that no CSS rule anywhere emits `animate-pane-leave`. That was true at the audited
- * base and is false here: `03bcba52` gave the class a caller (`workspace/AppPane.tsx`, holding
- * the column open through `paneExit.ts`), so the keyframe was kept and there is nothing to
- * assert. Its pairing with `.animate-pane-return` under `prefers-reduced-motion` is already
- * pinned by `components/workspace/__tests__/AppPane.test.tsx`, which reads the stylesheet rule
- * AND checks that both classes are applied by the two components.
+ * NOT COVERED: no rule asserts `animate-pane-leave` is gone — `03bcba52` gave it a real caller
+ * (`workspace/AppPane.tsx`), so the keyframe was kept. Its pairing with `.animate-pane-return`
+ * is pinned separately by `components/workspace/__tests__/AppPane.test.tsx`.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -132,8 +114,7 @@ describe('vendored and hand-written residue', () => {
       if (rule.scope === 'exports') expect(scoped, `${rule.file} has no export block`).not.toBe('')
       if (rule.forbidden.test(scoped)) back.push(`${rule.file} → ${rule.what}`)
 
-      // The liveness half: the same rule, against the exact text the sweep deleted. See the
-      // docblock — this is what stops `forbidden.test(scoped) === false` passing vacuously.
+      // The liveness half — see the docblock: stops `forbidden.test(scoped) === false` passing vacuously.
       const fixture = rule.scope === 'exports' ? exportBlock(rule.deleted) : rule.deleted
       expect(
         rule.forbidden.test(fixture),

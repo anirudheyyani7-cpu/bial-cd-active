@@ -26,44 +26,25 @@ export default defineConfig({
     },
   },
   server: {
-    // Disable vite's own dev-server CORS. EVERY REASON THIS LINE ORIGINALLY HAD IS NOW
-    // FALSE, and it is kept on a different one — recorded here so the next reader does not
-    // delete it as residue. It was added for the shared data plane: an opaque-origin
-    // (Origin: null) preview iframe called /api/apps/:id/records, and vite's built-in CORS
-    // middleware answered the preflight itself, without an Access-Control-Allow-Origin for
-    // null, so the browser blocked it. Turning it off let the preflight proxy through to the
-    // control-plane's null-reflecting branch. That branch is gone with that plane
-    // (services/cors/middleware.py says so), the records routes with it, and a generated app
-    // now reaches its own database rather than a shared endpoint.
-    //
-    // WHY IT STAYS. Vite's default is to answer cross-origin requests for any origin, so a
-    // page on any site can read what this dev server serves while a developer has it running.
-    // Off is the safe default and costs nothing: the SPA is same-origin with vite at :5173,
-    // so no /api call preflights, and the one CORS layer that matters is the control-plane's,
-    // which reflects FRONTEND_URL alone.
+    // Disable vite's own dev-server CORS. The reason this was ADDED (a null-origin preview
+    // iframe hitting a since-removed shared-data-plane endpoint) no longer applies — kept
+    // instead because vite's default answers cross-origin requests from ANY origin, so any
+    // site could read what this dev server serves while it's running. Off is the safe
+    // default and costs nothing: the SPA is same-origin with vite at :5173, so nothing here
+    // actually preflights.
     cors: false,
-    // Dev parity for the portal's document CSP (prod sets this via nginx envsubst; C8 §2, KTD-3).
-    // A concrete, non-empty value so a dev-server load exercises the SAME framing constraint the
-    // built SPA ships with — only framing is constrained (no default-src/script-src/connect-src),
-    // so vite's HMR client, module graph, and the API proxy below are untouched.
+    // Dev parity for the portal's document CSP (prod sets this via nginx envsubst); only
+    // framing is constrained, so HMR, the module graph, and the API proxy are untouched.
     //
-    // THIS IS THE FOURTH COPY OF THE FRAMING POLICY and the only one nginx does not emit, which is
-    // exactly why it gets forgotten: it has no envsubst variable to follow, so it silently keeps
-    // whatever host it was born with while the edge moves on. Left behind, a dev-server load
-    // refuses to frame the preview once its address moves to the shared apps hostname, with
-    // nothing but a console message and no server-side trace at all — the failure looks like a
-    // broken preview, not like a stale config. The ACA wildcard that used to sit beside the apps
-    // hostname is GONE: it covered the per-session sandbox FQDN the cockpit used to be handed,
-    // and that address has moved. Do not re-add it — an internal Container Apps environment
-    // publishes no public DNS, so nothing produces that origin any more. Literal rather than an
-    // env var: the deployed value is a fixed BIAL name, and a dev-only knob with a fallback would
-    // just be a second thing to forget. Pinned against nginx.conf by
-    // src/__tests__/nginx-apps-routing.test.ts.
+    // THE FOURTH COPY OF THE FRAMING POLICY — and the one nginx does NOT emit. No envsubst
+    // variable means it silently drifts if the apps hostname ever moves: a stale value fails
+    // with a console message only, no server-side trace, looking like a broken preview rather
+    // than stale config. Literal, not an env var (this value is a fixed BIAL name). The old
+    // ACA wildcard is GONE — an internal Container Apps env publishes no public DNS — do not
+    // re-add it. Pinned against nginx.conf by src/__tests__/nginx-apps-routing.test.ts.
     //
-    // CONSEQUENCE FOR THE LOCAL DEV LOOP, stated here because it is not obvious: a preview is now
-    // addressed through the platform's router, so `npm run dev` alone cannot frame one. Running
-    // the portal CONTAINER (which carries the apps vhost) is what makes a local preview work —
-    // that is exactly what portal/tests/ stands up.
+    // A bare `npm run dev` cannot frame a preview; run the portal CONTAINER instead
+    // (portal/tests/ does exactly that) — previews are addressed through the platform router.
     headers: {
       'Content-Security-Policy':
         "frame-src 'self' https://citizenapps.bialairport.com; frame-ancestors 'self'",
@@ -74,7 +55,7 @@ export default defineConfig({
       // The production edge strips /api before FastAPI (which serves /v1/auth/*),
       // so mirror that here with rewrite — the browser-visible path stays
       // /api/v1/auth/* dev↔prod, keeping the refresh cookie's Path and the OIDC
-      // redirect_uri consistent (KD-8).
+      // redirect_uri consistent.
       '/api/v1/auth': {
         target: 'http://localhost:8000',
         changeOrigin: true,

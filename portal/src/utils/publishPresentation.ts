@@ -1,27 +1,14 @@
 /**
- * WHAT A PUBLISH STATE LOOKS LIKE AND WHAT IT SAYS — one map, two surfaces.
- *
- * ═══ WHY THIS IS ITS OWN MODULE (plan 002, U4) ═══
- *
- * The boards give the app's status TWO renderings: an always-visible APP STATUS panel in the
- * project rail, and a chip beside the title in the toolbar row. The panel is the fuller surface
- * and the chip is a summary of it, and the requirement is not that they look alike — it is that
- * they can never SAY different things.
- *
- * A shared component would not have given that. They differ in shape (a panel with three
- * provenance rows against a pill with a popover behind it) and in lifetime (the panel is on the
- * project screen, the chip is on both). What they must share is the DECISION: which words, which
- * colour, which action, which rows. So the decision is here, as pure functions over the one
- * server-computed field, and each surface renders it in its own shape.
- *
- * ═══ THE RULE THAT CAME WITH IT, UNCHANGED ═══
+ * ONE map, two surfaces: an always-visible APP STATUS panel in the project rail, and a status
+ * chip in the toolbar. They differ in shape and lifetime, but must never SAY different things —
+ * so the decision (which words, colour, action, row) lives here as pure functions over one
+ * server-computed field, and each surface only renders it.
  *
  * `presentationFor` switches on `publishState` and on NOTHING ELSE. A client that recombines a
- * server decision from parts has produced the same class of bug four times in this one feature,
- * most recently promising "this can publish automatically" moments before the server routed the
- * app to an administrator. `status`, `unpublishedAt`, `failureCode`, the approval lineage and the
- * pin are all still on the wire for the version ROWS to render — not one of them decides what
- * state the app is in.
+ * server decision from parts has produced this same bug four times — most recently promising an
+ * auto-publish moment before the server routed the app to an administrator. `status`,
+ * `unpublishedAt`, `failureCode`, the approval lineage and the pin stay on the wire only for the
+ * version ROWS to render.
  */
 import { assertNever } from './assertNever'
 import type { ApprovalState, DeploymentView, PublishState } from './deployApi'
@@ -50,29 +37,21 @@ export const ACTION_LABEL: Record<ActionKind, string> = {
 }
 
 /**
- * THE ONE ACTION THE CANVAS DOES NOT PAINT TEAL, and the reason is the point.
- *
- * `StatusCardStates` fills every action button with `#0D7377` — the canvas's single primary-action
- * colour — except state 3's, which it draws white with ink on a hairline. Every other action moves
- * the app FORWARD: send it for review, send the newer version, publish. Taking a submission back
- * moves it backwards, out of an administrator's queue. Painting it in the encouraging colour asked
- * a citizen to withdraw their own work in exactly the same voice as it asked them to submit it.
- *
- * Read by both surfaces that draw an action — the rail panel and the chip's popover — so the two
- * cannot disagree about which one this is.
+ * `take_it_back` is the one action NOT painted teal (`#0D7377`, `StatusCardStates`' primary-action
+ * colour): every other action moves the app FORWARD, but taking a submission back moves it out of
+ * an administrator's queue, and the encouraging colour would ask a citizen to withdraw their own
+ * work in the same voice that asked them to submit it. Read by both surfaces that draw an action —
+ * the rail panel and the chip's popover — so the two cannot disagree.
  */
 export const SECONDARY_ACTIONS: ReadonlySet<ActionKind> = new Set<ActionKind>(['take_it_back'])
 
 /**
- * Which version this state is ABOUT — the ONE version the chip's popover names. Every one comes
- * from a column the status read already selects: the registry row's submission and approval
- * stamps, the deployment row's head and timestamps.
+ * Which version this state is ABOUT — the ONE version the chip's popover names, drawn from
+ * columns the status read already selects.
  *
- * THE CITIZEN'S OWN SAVE IS NOT ONE OF THESE, and not because it is unavailable — U4 made the
- * status read return the saved head and its timestamp, and `savedRow` below renders them. It is
- * not here because this type answers "which version is this state about", which has one answer,
- * while the saved version exists to be CONTRASTED with it. That contrast is a list rather than a
- * row, so it belongs to `provenanceRows` and the rail panel that draws them.
+ * THE CITIZEN'S OWN SAVE IS DELIBERATELY NOT ONE OF THESE: this type answers "which version is
+ * this state about" (one answer), while the saved version exists to be CONTRASTED with it — a
+ * list, not a row, so it belongs to `provenanceRows` and the rail panel instead.
  */
 export type VersionRow = 'none' | 'submitted' | 'submitted_with_note' | 'approved' | 'live' | 'last_published'
 
@@ -88,17 +67,11 @@ export interface Presentation {
 }
 
 /**
- * THE map: one publish state in, one presentation out, ending in `assertNever` so a value
- * the server adds and this map has not labelled is a COMPILE error rather than a chip with
- * no words.
- *
- * TWO STATES DELIBERATELY SHARE THE LABEL "Approved" (reconciliation R-1.8). They are the
- * same state to a citizen — their app is approved — and R38 puts the difference exactly
- * where it belongs: on the button, `Publish` against `Send for review`, plus one sentence
- * each. Every other pair of states has different words, which is what makes the CLOSED
- * chip a complete answer: "Live", "Live · newer work saved" and "Live · couldn't check"
- * are three different things in three words each, and a citizen reading the last is not
- * being told that nothing of theirs is waiting.
+ * THE map: one publish state in, one presentation out, ending in `assertNever` so an unlabelled
+ * state is a COMPILE error. TWO STATES DELIBERATELY SHARE THE LABEL "Approved" (the difference
+ * is on the button/sentence); every other pair differs in words, so the CLOSED chip stays a
+ * complete answer — "Live", "Live · newer work saved" and "Live · couldn't check" are three
+ * different things, and the last never reads as "nothing of yours is waiting".
  */
 export function presentationFor(state: PublishState): Presentation {
   switch (state) {
@@ -115,7 +88,7 @@ export function presentationFor(state: PublishState): Presentation {
       // described a button rather than the app, and "Only you can see it" made a privacy
       // claim nobody asked this chip to make.
       //
-      // THE PRIVACY CLAIM IS GONE (plan 002, U4). The sentence opened "Nobody else can see
+      // THE PRIVACY CLAIM IS GONE. The sentence opened "Nobody else can see
       // this yet", which is the same kind of assertion the board's own notes record being
       // retired one word earlier: "Only you can see it" described WHO CAN REACH the app,
       // "which sounds like a privacy setting, and is a claim nobody asked the chip to
@@ -163,7 +136,7 @@ export function presentationFor(state: PublishState): Presentation {
       // NO ARTBOARD. Adapted from the retired review card's approved arm with its
       // lineage promise removed: it says an administrator approved this version and that
       // pressing Publish is the next step, and it does NOT say whether that will publish
-      // or route. That is the R38 discipline, and it is not pedantry — the decision is
+      // or route. That is the discipline, and it is not pedantry — the decision is
       // taken inside the request, against a tree a `saveFirst` can move first, so no read
       // taken before the press can honestly promise either outcome.
       return {
@@ -267,11 +240,11 @@ export function presentationFor(state: PublishState): Presentation {
       // not take the container down, so reachability is not a claim this platform can
       // stand behind. The remedy-less truth is the part that matters and it stays.
       //
-      // IT NO LONGER MENTIONS PUBLISHING (plan 001, U31, R41a). The kill switch used to
-      // reach approved apps only, so "nothing can be published" was the whole of what it
-      // meant; it now reaches DRAFT and REJECTED apps too (`#163`), and to the owner of an
-      // app that has never been published — the ordinary case — that sentence named a
-      // consequence they were not pursuing and left the one they are hitting unsaid.
+      // IT NO LONGER MENTIONS PUBLISHING. The kill switch used to reach approved apps only,
+      // so "nothing can be published" was the whole of what it meant; it now reaches DRAFT
+      // and REJECTED apps too, and to the owner of an app that has never been published —
+      // the ordinary case — that sentence named a consequence they were not pursuing and
+      // left the one they are hitting unsaid.
       //
       // The second sentence is the true one and it is deliberately the WIDER claim: the
       // workspace refuses to start, and every turn of every kind is refused with it, at
@@ -380,26 +353,13 @@ export function versionRowData(
 }
 
 /**
- * THE NINE STATES' COLOURS, from `StatusCardStates` — a text/ground pair and a leading dot each.
- *
- * THE COLOUR IS THE SIGNAL AND IT WAS ENTIRELY MISSING. Every state rendered one neutral grey
- * pill, so "Draft" was chromatically indistinguishable from "Changes requested" and from
- * "Didn't start". The board is a whole artboard devoted to this, titled "The status chip, nine
- * states", with nine `color:`/`background:`/dot triples on it.
- *
- * SIX FAMILIES COVER THIRTEEN STATES, because three pairs share a look and differ only in their
- * words, and four of the portal's states have no board at all:
- *
- *   `approved_ready_to_publish` / `approved_needs_review_again` take the GREEN of "Starting up",
- *   because what they have in common with it is the platform having said yes. The difference
- *   between the two is on the button, which is where R38 puts it.
- *
- *   `live_drift_unknown` is green like the other two live states — the app IS live, and the
- *   thing that could not be checked is in the label, not in the colour. Painting it amber would
- *   say something is wrong with the app when nothing is.
- *
- *   `taken_offline` shares `switched_off`'s off-grey. Both are down; only one has a remedy, and
- *   again that difference is on the button.
+ * THE STATE COLOURS (`StatusCardStates`) — previously all one grey pill; now an explicit
+ * text/ground pair + dot each. SIX FAMILIES COVER THIRTEEN STATES: three pairs share a look and
+ * differ only in their words, and four of the portal's states have no board at all. `approved_*`
+ * takes GREEN (platform said yes; the difference is on the button); `live_drift_unknown` stays
+ * GREEN like the other live states (the uncertainty is in the label, not an amber that would
+ * wrongly say something broke); `taken_offline` shares `switched_off`'s off-grey (only one has a
+ * remedy, again on the button).
  */
 export interface StateLook {
   /** Tailwind classes for the pill: its text and its ground. */
@@ -442,21 +402,11 @@ export function lookFor(state: PublishState): StateLook {
 }
 
 /**
- * THE PANEL'S PROVENANCE ROWS — what is published, what was approved, and what the citizen last
- * saved, each with its date and its short build id.
- *
- * THE SAVED ROW IS WHY U4 NEEDED A SERVER FIELD. Everything else here comes from columns the
- * status read already selects; the citizen's own last save did not reach this client at all,
- * because the server spent its one metadata HEAD on the drift comparison and returned only the
- * verdict. It returns the head and its timestamp now.
- *
- * ITS LABEL CHANGES WITH THE STATE, exactly as the boards draw it: "YOUR LATEST" where something
- * is live, because the row exists to be CONTRASTED with what is serving; "LAST SAVED" where
- * nothing is, because there is nothing to contrast it with.
- *
- * AND ITS COLOUR IS THE DRIFT SIGNAL. `live_newer_work` prints the date in #B45309 — the only
- * amber TEXT the canvas uses anywhere — because that is the state where what is live and what is
- * theirs are two different versions. Every other state prints it in ink.
+ * THE PANEL'S PROVENANCE ROWS: published, approved, and the citizen's own last save, each dated
+ * with a short build id. The saved row needed a NEW server field — the server previously
+ * returned only the drift verdict, not the head/timestamp. Its label tracks the state ("YOUR
+ * LATEST" to CONTRAST with something live, "LAST SAVED" otherwise); `live_newer_work` alone
+ * prints its date in #B45309, the canvas's only amber text, since live and saved differ there.
  */
 export type RowTone = 'ink' | 'drift'
 
@@ -472,14 +422,14 @@ export interface ProvenanceRow {
   /** Offered only where the state says the address is worth pointing at. */
   url?: string | null
   /**
-   * FREE TEXT INSTEAD OF A DATE AND AN ID (plan 001, U15) — the reviewer's own words, and
-   * the one row that is prose rather than provenance.
+   * FREE TEXT INSTEAD OF A DATE AND AN ID — the reviewer's own words, and the one row
+   * that is prose rather than provenance.
    *
    * IT RIDES ON THIS TYPE RATHER THAN BESIDE IT because the rail had nowhere else to put
    * it: the note reached the browser on every read and rendered only inside the dialog a
    * citizen opens when they believe they are FINISHED, which is one press too late to be
-   * the thing they act on. A row carries it above the state's action, which is where R35
-   * puts it so a long note cannot push "Send for review" out of view.
+   * the thing they act on. A row carries it above the state's action so a long note
+   * cannot push "Send for review" out of view.
    *
    * A ROW HAS EITHER A NOTE OR A STAMP/SHA PAIR, never both — the panel branches on this
    * being a string and draws a bounded, scrollable block instead of a dated line.
@@ -495,13 +445,13 @@ export interface ProvenanceRow {
  * case is not hypothetical and it is not an error: the row prints its date and says the version
  * is unknown, rather than printing a blank or inventing an id.
  *
- * BOTH NULL is the "cannot tell" rendering, and it now means ONE thing rather than three
- * (plan 001, U16). It used to be reached three ways — the store said there is no bundle, the
- * store was not configured, or the store raised — and the panel spoke all three as "LAST SAVED —
- * We could not tell". On the first of them that sentence is false and it is false in the
- * frightening direction: a citizen who has never saved reads it as the platform having LOST their
- * work, on the exact panel they open when they are unsure their work is safe. The backend now
- * says which of the three happened (`SavedState`), so:
+ * BOTH NULL is the "cannot tell" rendering, and it now means ONE thing rather than three. It used
+ * to be reached three ways — the store said there is no bundle, the store was not configured, or
+ * the store raised — and the panel spoke all three as "LAST SAVED — We could not tell". On the
+ * first of them that sentence is false and it is false in the frightening direction: a citizen
+ * who has never saved reads it as the platform having LOST their work, on the exact panel they
+ * open when they are unsure their work is safe. The backend now says which of the three happened
+ * (`SavedState`), so:
  *
  *   NEVER SAVED  → no row, exactly as an app nobody approved gets no APPROVED row (see
  *                  `provenanceRows` below) and for the same reason: the absent row says the true
@@ -559,21 +509,12 @@ export function provenanceRows(
   }
 
   /**
-   * NO APPROVAL MEANS NO APPROVED ROW, rather than an APPROVED row saying it cannot tell.
-   *
-   * An app that published unattended under ladder rule 7 was never seen by an administrator, and
-   * that is the common case rather than the exotic one: `approved_at` and `approved_commit_sha`
-   * are both NULL for every one of them. The row rendered anyway, and a row whose heading is
-   * APPROVED and whose whole value is "We could not tell" reads as "an administrator approved
-   * this and the platform lost the record" — an approval that never happened, which is exactly
-   * the claim the sentences above are written three times over to avoid. The absent row says the
-   * true thing by saying nothing.
-   *
-   * EITHER HALF ANSWERS IT: the two are written together in one place server-side and are never
-   * apart (`deployApi.ts`, `ApprovalState.approvedAt`).
-   *
-   * The two `approved_*` states keep the row unconditionally, and must: those states ASSERT an
-   * approval, so a missing stamp there is a genuine "we could not tell" about a real event.
+   * NO APPROVAL MEANS NO APPROVED ROW, not an APPROVED row saying "cannot tell". An unattended
+   * ladder-rule-7 publish is the COMMON case with `approved_at`/`approved_commit_sha` both NULL —
+   * rendering the row anyway would read as an approval whose record got lost, which never happened.
+   * Either field answers it (server always writes both together). The two `approved_*` states keep
+   * the row unconditionally: those states ASSERT an approval, so a missing stamp there is a genuine
+   * "cannot tell" about a real event.
    */
   const wasApproved = (approval?.approvedAt ?? approval?.approvedCommitSha ?? null) !== null
 
@@ -585,7 +526,7 @@ export function provenanceRows(
   }
 
   /**
-   * THE REVIEWER'S OWN WORDS, on the state that asks the citizen to act on them (R35).
+   * THE REVIEWER'S OWN WORDS, on the state that asks the citizen to act on them.
    *
    * NO NOTE MEANS NO ROW, on exactly the `wasApproved` reasoning above: an administrator may
    * reject without writing anything, and a row headed WHY whose whole value is "We could not

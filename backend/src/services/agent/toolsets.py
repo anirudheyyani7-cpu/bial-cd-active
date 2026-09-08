@@ -1,66 +1,23 @@
-"""The chat-kind → toolset registry (U8 / R6 / D1): tool gating AT THE SERVER.
+# `present_plan_options` below is a registered tool: its docstring is sent to the model
+# verbatim as that tool's description. Edit it as prompt text, not as an internal note.
+"""The chat-kind → toolset registry: tool gating AT THE SERVER.
 
-The registry keys on the server-owned `conversation.kind` — never anything the client
-sends. Structural gating, not prompt gating: the single `chat_agent` is constructed with NO
-tools, and every run passes exactly its kind's toolsets — Plan through `chat_agent.run(...,
-toolsets=...)`, Build through `chat_agent.iter(..., toolsets=...)` (pydantic-ai 2.5.0:
-per-run toolsets are ADDITIVE, so a tool-less agent plus a kind's list IS that kind's whole
-surface). A wrong-kind tool is absent from the model's tool list AND uncallable — a forged
-call gets the runtime's unknown-tool rejection.
+WHY THIS EXISTS. The registry keys on the server-owned `conversation.kind` — NEVER anything
+the client sends. Gating is structural, not prompt-based: the single `chat_agent` is built with
+NO tools, and each run passes exactly its kind's toolsets (pydantic-ai toolsets are additive).
+A wrong-kind tool is therefore absent from the model's tool list AND uncallable — a forged call
+gets the runtime's unknown-tool rejection, never a policy check that could be bypassed.
 
-The kind → tool matrix:
+| Kind  | reads                | run_command         | writes | present_plan_options |
+|-------|----------------------|----------------------|--------|-----------------------|
+| Plan  | yes (live workspace) | allowlisted, read    | —      | yes                   |
+| Build | yes (live workspace) | full (+SQL guard)    | yes    | —                     |
 
-| Kind  | read/list/search tools | run_command       | write tools | present_plan_options |
-|-------|------------------------|-------------------|-------------|----------------------|
-| Plan  | yes (live workspace)   | allowlisted, read | —           | yes                  |
-| Build | yes (live workspace)   | full (+SQL guard) | yes         | —                    |
-
-BOTH arms additionally carry `CONVERSATION_TOOLSET` — the tools that are about the person
-waiting rather than about what the run can do (`agent/conversation_tools.py`). It is the one
-place this file registers the SAME object on both arms, and that is the point: a tool whose
-presence does not depend on the kind must not be listed twice, or the two lists drift.
-
-Two arms, because there are two kinds. The third row this table used to carry ("Ask") had no
-arm in the code by the time anyone read it, and the two that remained were named for modes
-that no longer exist — which is the failure this docstring is meant to prevent, committed by
-the docstring itself.
-
-Build additionally gets `fetch_output_slice` (U22/R28) and `apply_schema_change` (U23/R29), and
-both reach Build the ONLY way they could: registered on `sandbox_toolset`, beside the
-`run_command` whose truncation notice hands out the slice handles and whose two-step migration
-sequence the composite replaces. Putting either on `read_only_toolset` would have been the silent
-failure this file's allowlist is designed to produce — `_WRITE_STRUCTURED_READS` names two tools
-and nothing else, so a tool added there would be filtered out of the one kind that runs commands,
-with no test going red. `test_toolsets.py` asserts their membership through
-`registered_tool_definitions(ChatKind.BUILD)` — see
-`test_fetch_output_slice_reaches_the_only_kind_that_runs_commands`.
-
-BUILD's surface is COMPOSED here, from two factories: the eight sandbox tools
-(`orchestrator/tools.sandbox_toolset`, resolved through the run's attached
-`SandboxSession`) plus exactly `list_files`/`search_files` off `read_only_toolset`. The
-read-only side is `.filtered()` down to those two names by an ALLOWLIST — its `read_file`
-and `run_command` are dropped, so no name is ever registered twice (duplicate tool names
-are a pydantic-ai `UserError`) and the version Build gets is the sandbox-routed one. The
-allowlist direction matters: a tool added to `read_only_toolset` later stays OUT of Build
-until it is named, so the wrong-direction failure is a missing tool, never a silently
-shadowed one (a read-only `run_command` winning would leave Build unable to run anything).
-
-GENERIC over the deps type (U10): the registry itself is deps-agnostic — the caller
-supplies the accessors that resolve the run's workspace, and for Build the attached sandbox,
-from ITS deps. `ReadDeps` (+ `workspace_from_read_deps`) is the minimal agent-level shape the
-U8 tests exercise; the turn engine passes `ChatDeps`-typed accessors for real traffic.
-
-`present_plan_options` is registered here and CARRIES THE PLAN IN ITS ARGUMENT — the seam is
-no longer a bare name. The turn-engine mechanics are `turns/plan_options.py`'s: the user's
-click, minutes or days later, is stored as this call's RESULT. What used to be described here
-— a detect-and-force-on-retry that re-ran the turn, and a snapshot-SHA stamp on the pending
-card — is retired; see the notes at both former sites.
-
-Two more things live in this module and are not the registry: the chat-kind CATALOGUE
-(U16/R73 — what the two kinds are, served on `GET /v1/auth/me`) and the prompt's TOOL SURFACE
-renderer (U20/R26 — what the Build prompt is allowed to say about its tools). Each has its own
-banner below; both are here because they only stay honest with the registry if changing one
-puts the other under your cursor.
+Both arms also carry `CONVERSATION_TOOLSET` (registered once, so the two lists can't drift).
+`toolsets_for_kind` is the ONLY place permitted to read the chat kind to decide capability —
+see its own docstring. Two more things live here, not the registry: the citizen-facing chat-kind
+CATALOGUE (served on `GET /v1/auth/me`) and the TOOL SURFACE prompt-block renderer — each has its
+own banner below, kept beside the registry so a change to one puts the other under your cursor.
 """
 
 from __future__ import annotations
@@ -89,30 +46,29 @@ from src.services.orchestrator.tools import sandbox_toolset
 
 @dataclass
 class ReadDeps:
-    """Minimal per-run deps for a Plan-kind agent-level run (the U8 test surface).
+    """Minimal per-run deps for a Plan-kind agent-level run (the agent-level test surface).
     `workspace` is the turn-pinned read surface (the live workspace); `user_id` scopes
-    everything downstream (ADR-0004)."""
+    everything downstream."""
 
     workspace: ReadOnlyWorkspace
     user_id: uuid.UUID
 
 
 def workspace_from_read_deps(ctx: RunContext[ReadDeps]) -> ReadOnlyWorkspace:
-    """The `ReadDeps` accessor (agent-level tests; U10 supplies its own for `ChatDeps`)."""
+    """The `ReadDeps` accessor (agent-level tests; the turn engine supplies its own for
+    `ChatDeps`)."""
     return ctx.deps.workspace
 
 
 @dataclass(frozen=True)
 class ToolSurface[DepsT]:
-    """Everything one run of a given kind is allowed to do — the toolsets it is handed, and
+    """Everything one run of a given kind is allowed to do: the toolsets it's handed, and
     whether any of them can change the app.
 
-    `may_write` RIDES WITH THE TOOLSETS RATHER THAN BEING RE-DERIVED, and that is the whole
-    point of returning a pair. It was previously computed a second time at the sandbox door
-    (`turns/engine.py`) by re-reading the enum, and the session manager's own docstring already
-    described it as "coming from the toolset" — a claim only convention kept true. Now the one
-    function that decides what a run can reach is the one that answers the question, so a kind
-    whose surface changes cannot leave the sandbox's write flag saying something else."""
+    `may_write` rides WITH the toolsets rather than being re-derived — it was previously
+    recomputed at the sandbox door by re-reading the enum, a second copy that "convention" kept
+    honest. Now the one function that decides what a run can reach also answers this, so a
+    kind's surface can't drift from its write flag."""
 
     toolsets: list[AbstractToolset[DepsT]]
     may_write: bool
@@ -168,9 +124,13 @@ sandbox-routed ones."""
 
 
 def _structured_reads_only(_ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
-    """ALLOWLIST, not a denylist: a tool added to `read_only_toolset` later stays out of
-    Write until it is named in `_WRITE_STRUCTURED_READS`. Wrong-direction failure is a
-    missing tool, never a shadowed one."""
+    """ALLOWLIST, not a denylist: a tool added to `read_only_toolset` later stays out of Write
+    until it is named in `_WRITE_STRUCTURED_READS`.
+
+    Wrong-direction failure is a missing tool, never a shadowed one — and it is SILENT, so a Build-
+    only tool belongs on `sandbox_toolset` (where `fetch_output_slice` and `apply_schema_change`
+    are), not here. `test_fetch_output_slice_reaches_the_only_kind_that_runs_commands` is what pins
+    that."""
     return tool_def.name in _WRITE_STRUCTURED_READS
 
 
@@ -179,15 +139,13 @@ def toolsets_for_kind[DepsT](
     workspace_of: Callable[[RunContext[DepsT]], ReadOnlyWorkspace],
     sandbox_of: Callable[[RunContext[DepsT]], SandboxSession] | None = None,
 ) -> ToolSurface[DepsT]:
-    """The per-run tool surface for a chat kind, over whatever deps type the caller's
-    accessors resolve the workspace (and, for Build, the attached sandbox) from.
+    """The per-run tool surface for a chat kind, over whatever deps type the caller's accessors
+    resolve the workspace (and, for Build, the sandbox) from.
 
-    THIS MATCH IS THE GUARDRAIL, and this module is the only one permitted to read the chat
-    kind in order to decide what the model can do. A Plan chat cannot change the app because
-    `write_file`, `edit_file`, `insert_lines`, `apply_schema_change`, the sandbox-routed
-    `run_command` and `declare_done` are not in the list handed to that run — never because
-    something downstream notices which kind of chat it is. Exhaustive over the enum
-    (fail-first: an unknown kind is a programming error, not a fallback)."""
+    THIS MATCH IS THE GUARDRAIL — the only place permitted to read the chat kind to decide what
+    the model can do. Plan cannot change the app because the write tools and `run_command` are
+    simply absent from its list, never because something downstream notices the kind. Exhaustive
+    over the enum: an unknown kind is a programming error, not a fallback."""
     match kind:
         case ChatKind.PLAN:
             return ToolSurface(
@@ -202,7 +160,7 @@ def toolsets_for_kind[DepsT](
             if sandbox_of is None:
                 raise ValueError(
                     "a Build run needs a sandbox accessor; None means this caller cannot "
-                    "run Build (the U8 agent-level ReadDeps surface)."
+                    "run Build (the agent-level ReadDeps surface)."
                 )
             # `.filtered()` filters at `get_tools` time, so the model never even sees the
             # read-only `read_file`/`run_command` — the duplicate-name `UserError` is
@@ -217,7 +175,7 @@ def toolsets_for_kind[DepsT](
             )
 
 
-# --- U16 / R73: one catalogue of what the two kinds ARE, beside the registry of what they --
+# --- One catalogue of what the two kinds ARE, beside the registry of what they -------------
 # --- CAN DO ---------------------------------------------------------------------------------
 #
 # WHY IT LIVES HERE, NEXT TO `toolsets_for_kind`, RATHER THAN IN THE API SCHEMA IT IS SERVED
@@ -283,12 +241,12 @@ fetches before first paint — and read on the client by the single module `chat
 from. No second endpoint, no second wording."""
 
 
-# --- U20 / R26: the prompt's TOOL SURFACE block is GENERATED, never hand-written ---------
+# --- The prompt's TOOL SURFACE block is GENERATED, never hand-written ----------------------
 #
 # WHY. Prose drifts in two directions and a name list only catches one of them. The
 # hand-written block named SIX tools while the Write arm registered eight (`list_files` and
-# `search_files` were simply missing), and — the class a name comparison is blind to — U18
-# changed what `declare_done` DOES while the sentence describing it still promised a
+# `search_files` were simply missing), and — the class a name comparison is blind to — a later
+# change to what `declare_done` DOES left the sentence describing it still promising a
 # follow-up round-trip. Rendering the block from the registry closes both: a tool the mode
 # does not register cannot be named, one it does register cannot be missed, and no line can
 # describe a tool differently from how the model is told it behaves, because the line and
@@ -308,11 +266,11 @@ from. No second endpoint, no second wording."""
 # THE FIRST SENTENCE, NOT THE WHOLE DOCSTRING — the one decision this unit left to
 # implementation. pydantic-ai already sends every description IN FULL on the tool schema of
 # every request, so rendering the whole docstring here would put each one in front of the
-# model TWICE per turn: ~350 extra words on the request that this plan is otherwise spending
-# units trimming. The first sentence is a roll-call — "these are the tools you have, this is
+# model TWICE per turn: ~350 extra words on a request whose token budget is already tight.
+# The first sentence is a roll-call — "these are the tools you have, this is
 # what each is for" — and the registration carries the detail. Both are slices of the one
 # string, so the two can restate each other but can never contradict each other, which is
-# the property R26 actually asks for.
+# the property this check actually asks for.
 
 
 def _the_renderer_never_calls_a_model(

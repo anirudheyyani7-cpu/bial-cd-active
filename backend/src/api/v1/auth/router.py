@@ -1,16 +1,15 @@
 """Auth HTTP endpoints — interactive sign-in (this unit), plus /me, /refresh,
-/logout (U6/U7). The browser round-trip:
+/logout. The browser round-trip:
 
     GET /auth/login    -> 302 to Entra (PKCE state in the oauth_transient cookie)
     GET /auth/callback -> validate fail-closed, provision by oid, mint session,
                           set cookies, 302 to the SPA (or /login?authError=... )
 
-The session/refresh/csrf cookies follow the KD-4 matrix and are ENVIRONMENT-AWARE:
+The session/refresh/csrf cookies follow a fixed matrix and are ENVIRONMENT-AWARE:
 `__Host-`/`__Secure-` prefixes + `Secure` in production, relaxed over plain http in
 dev. `SameSite=Lax` (never Strict) so the top-level redirect back from Microsoft
 carries them. The callback redirect_uri is the configured `AUTH__REDIRECT_URI`
-(byte-matched through the /api-stripping edge), never `request.url_for` (KD-8).
-"""
+(byte-matched through the /api-stripping edge), never `request.url_for`."""
 
 from __future__ import annotations
 
@@ -75,7 +74,7 @@ OAuthClient = Annotated[OAuth, Depends(get_oauth)]
 
 
 # --- cookie helpers (private; the names/Secure decision live in services/auth/
-# cookies.py, shared with the current_user dependency — ADR-0010) --------------
+# cookies.py, shared with the current_user dependency, by design) --------------
 
 
 def _set_session_cookies(
@@ -94,7 +93,7 @@ def _set_session_cookies(
     )
     # refresh — HttpOnly, PATH-SCOPED to the refresh endpoint, and NO Domain
     # (host-only; __Secure- does not browser-enforce that, so the omission is the
-    # guarantee — KD-4). Lives as long as the refresh token itself.
+    # guarantee). Lives as long as the refresh token itself.
     response.set_cookie(
         refresh_cookie_name(),
         refresh_token,
@@ -136,7 +135,7 @@ def _clear_session_cookies(response: Response) -> None:
 
 def _login_error_redirect(reason: str) -> RedirectResponse:
     # Fail closed: no session, no user row — bounce to the SPA login with a stable,
-    # non-secret reason code (U8 maps it to banner copy).
+    # non-secret reason code (the SPA maps it to banner copy).
     return RedirectResponse(
         f"{settings.FRONTEND_URL}/login?authError={quote(reason, safe='')}", status_code=302
     )
@@ -149,7 +148,7 @@ def _login_error_redirect(reason: str) -> RedirectResponse:
 async def login(request: Request, oauth: OAuthClient) -> Response:
     # Generates state + nonce + PKCE verifier (stored in the oauth_transient
     # session cookie) and 302s to Entra. redirect_uri is the configured external
-    # callback, byte-matching the Entra reply URL through the edge (KD-8).
+    # callback, byte-matching the Entra reply URL through the edge.
     response: Response = await oauth.entra.authorize_redirect(request, settings.auth.redirect_uri)
     return response
 
@@ -164,7 +163,7 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
         # provider-side errors (OAuthError), plus a transient httpx transport /
         # HTTP-status failure or malformed-JSON (ValueError, incl. JSONDecodeError)
         # reaching out to Entra's token/userinfo endpoints — all fail CLOSED to the
-        # login bounce instead of escaping as a raw 500 (security.md).
+        # login bounce instead of escaping as a raw 500.
         # Log the exception CLASS + provider message (never a credential — Authlib's
         # OAuthError / httpx str carry the AADSTS code or transport error, not the
         # client secret or the token POST body) so an operator can distinguish a
@@ -177,10 +176,10 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
         )
         return _login_error_redirect(REASON_AUTH_FAILED)
     except AuthError as exc:
-        # Wrong tenant (AE1) / invalid callback (AE4) — reason drives the banner.
+        # Wrong tenant / invalid callback — reason drives the banner.
         return _login_error_redirect(exc.reason)
 
-    # Provision by the stable Entra oid (never email). Inlined upsert (ADR-0010):
+    # Provision by the stable Entra oid (never email). Inlined upsert:
     # a returning sign-in updates the mutable profile fields but PRESERVES
     # token_version (revocation state), and a brand-new row defaults it to 0.
     upsert = (
@@ -206,7 +205,7 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
     user_id, token_version = row.id, row.token_version
 
     if row.suspended_at is not None:
-        # Suspension seam 1 of 3 (R11, KD-6): a suspended user authenticates fine at
+        # Suspension seam 1 of 3: a suspended user authenticates fine at
         # Entra but gets NO local session — bounce to the login banner. Nothing is
         # committed (get_db rolls the profile touch back), so the refused sign-in
         # leaves no trace beyond this log line.
@@ -217,7 +216,7 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
     await db.commit()
 
     # The Entra tokens are discarded here — never stored, never reused as the app
-    # session (R5). Our own short-lived session JWT is the session.
+    # session. Our own short-lived session JWT is the session.
     session_jwt = mint_session_jwt(user_id, token_version, settings.auth.access_ttl_seconds)
     csrf_token = issue_csrf_token(user_id, token_version)
 
@@ -247,7 +246,7 @@ async def me(user: CurrentUser, db: DbSession) -> UserProfile:
         limits=ProfileLimits(
             daily_token_limit=daily, context_soft_limit=soft, context_hard_limit=hard
         ),
-        # U16/R73: the whole chat-kind catalogue, straight off the registry that also decides
+        # The whole chat-kind catalogue, straight off the registry that also decides
         # what each kind can do — served here rather than a dedicated endpoint because this
         # bootstrap is already fetched once, before first paint, and there is nothing about
         # "what is a Plan chat" that changes per request.
@@ -270,7 +269,7 @@ def _csrf_ok(request: Request, user_id: uuid.UUID, token_version: int) -> bool:
 @router.post(
     "/refresh",
     # Returns a JSONResponse (for Set-Cookie) so the 200 model is documented-only, NOT
-    # enforced. 401/403 keep the hand-built `{"detail"}` shape (R11 — auth carve-out).
+    # enforced. 401/403 keep the hand-built `{"detail"}` shape (an auth carve-out).
     responses=error_responses(
         (200, RefreshResponse, "Session refreshed"),
         AUTH_401,
@@ -296,7 +295,7 @@ async def refresh(request: Request, db: DbSession) -> Response:
     if user is None:
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
     if user.suspended_at is not None:
-        # Suspension seam 3 of 3 (R11, KD-6): deactivation already revoked the
+        # Suspension seam 3 of 3: deactivation already revoked the
         # family, so this is belt-and-suspenders — but rotation must never re-mint
         # for a suspended user even if a family somehow survived. Same generic 401
         # as every other refresh failure (no state disclosure at this endpoint).
@@ -337,7 +336,7 @@ async def _user_from_session_cookie(
 
     `verify_exp=False` accepts a validly-signed but EXPIRED session cookie so an
     idle-window logout can still resolve the owner FOR REVOCATION ONLY — never to
-    authenticate (KD-6). Signature/alg and token_version checks stay intact."""
+    authenticate. Signature/alg and token_version checks stay intact."""
     token = request.cookies.get(session_cookie_name())
     if not token:
         return None
@@ -374,14 +373,14 @@ async def logout(request: Request, db: DbSession) -> Response:
         # validly-signed but EXPIRED JWT. Decode it expiry-blind — FOR REVOCATION
         # ONLY, never to authenticate — so a lapsed session still bumps
         # token_version and kills the refresh family instead of leaving a
-        # captured refresh token live until the 8h absolute cap (Finding #7).
+        # captured refresh token live until the 8h absolute cap.
         user = await _user_from_session_cookie(request, db, verify_exp=False)
     if user is not None:
         # CSRF-gate the server-side revocation (a state change).
         if not _csrf_ok(request, user.id, user.token_version):
             return JSONResponse({"detail": "CSRF check failed"}, status_code=403)
-        # Bump token_version (invalidates every live session JWT — KD-6) and revoke
-        # all active refresh families (shared with admin deactivation, U10).
+        # Bump token_version (invalidates every live session JWT) and revoke
+        # all active refresh families (shared with admin deactivation).
         await revoke_all_sessions(db, user.id)
         await db.commit()
 

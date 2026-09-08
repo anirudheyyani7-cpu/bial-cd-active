@@ -1,21 +1,13 @@
-"""Alembic round-trip for the deployments table (0025): head → 0024 → head against the
+"""Alembic round-trip for the deployments table (0025): head -> 0024 -> head against the
 real test DB.
 
-Two things a plain `create_table` migration can still get wrong, both pinned here:
+Two things a plain `create_table` migration can get wrong, both pinned here: dropping
+`postgresql_where` still applies cleanly but leaves every app undeployable after its
+first deploy, and leaving the `create_type=False` enum behind on downgrade fails the
+next upgrade on a duplicate type — on someone else's machine, not this one.
 
-* **The partial index.** `postgresql_where` is what makes `uq_deployments_one_in_flight`
-  partial. Drop that clause and the migration still applies cleanly — and every app becomes
-  undeployable after its first deploy. So the test reads the index DEFINITION back out of
-  `pg_indexes` and asserts the predicate is there, rather than merely asserting the index
-  exists.
-* **The enum lifecycle.** `create_type=False` on the model means THIS migration owns
-  `CREATE`/`DROP TYPE`. A downgrade that drops the table but leaves the type behind makes
-  the next upgrade fail on a duplicate type, which only ever shows up on someone else's
-  machine.
-
-Mirrors `test_app_registry_submissions_migration.py`: programmatic `alembic.command` off
-the shared `alembic.ini`, the DB returned to head in a `finally` so a failed assertion
-cannot poison the rest of the suite.
+Mirrors `test_app_registry_submissions_migration.py`; the DB returns to head in a
+`finally` so a failed assertion cannot poison the rest of the suite.
 """
 
 from __future__ import annotations
@@ -63,8 +55,6 @@ def _run_sql(work) -> Any:
 
 
 def _snapshot() -> dict[str, Any]:
-    """Columns, the partial-index definition, and whether the enum type exists."""
-
     async def _read(conn) -> dict[str, Any]:
         rows = await conn.execute(
             text(
@@ -88,14 +78,8 @@ def _snapshot() -> dict[str, Any]:
     return _run_sql(_read)
 
 
-# THE WHOLE `deployments` TABLE AT HEAD, not just what revision 0025 created.
-#
-# The last three arrived AFTER this file was written and were never added to it, so this
-# assertion has been red since revision 0026 — invisibly, because it only runs in the opt-in
-# `destructive_migration` lane that nobody runs on a routine change. Corrected here rather than
-# left standing: this lane is the pre-ship check for a migration, and a lane with a permanent
-# red in it is a lane whose green means nothing. (Unrelated to the chat-kind work; noted so the
-# diff is not mistaken for it.)
+# THE WHOLE `deployments` TABLE AT HEAD, not just what revision 0025 created — the later
+# columns marked below belong in this frozen set too, so it stays exhaustive as the table grows.
 _EXPECTED_COLUMNS = frozenset(
     {
         "id",
@@ -129,8 +113,6 @@ def test_deployments_round_trip() -> None:
     at_head = _snapshot()
     assert at_head["columns"] == _EXPECTED_COLUMNS
     assert at_head["enum_present"] == 1
-    # THE assertion this file exists for: the index must be PARTIAL. An index without the
-    # predicate applies cleanly and then forbids every redeploy.
     assert at_head["index_def"] is not None
     assert "UNIQUE" in at_head["index_def"]
     assert "WHERE (status = 'running'" in at_head["index_def"]
@@ -140,11 +122,8 @@ def test_deployments_round_trip() -> None:
         gone = _snapshot()
         assert gone["columns"] == set()
         assert gone["index_def"] is None
-        # The type goes WITH the table. Leaving it behind makes the next upgrade fail on a
-        # duplicate type — on someone else's machine, not this one.
         assert gone["enum_present"] is None
     finally:
-        # ALWAYS return to head so the rest of the suite sees the table.
         command.upgrade(config, "head")
 
     restored = _snapshot()

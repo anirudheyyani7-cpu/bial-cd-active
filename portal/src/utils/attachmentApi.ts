@@ -30,7 +30,7 @@ interface UploadAttachmentArgs {
 }
 
 /**
- * The uploaded ref, traced from its one real consumer (`attachmentStore.js`'s
+ * The uploaded ref, traced from its one real consumer (`attachmentStore.ts`'s
  * `buildUserParts`, which spreads exactly these fields into a `file` message
  * part per `messageTypes.ts`'s `FilePart` union) — `attachmentId`/`key`/`kind`/
  * `name`/`mediaType`/`size` always; `format`/`text`/`truncated`/`truncationNote`

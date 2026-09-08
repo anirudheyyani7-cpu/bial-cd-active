@@ -1,12 +1,11 @@
-"""Computed RBAC roles — no stored role column (ADR-0005 drift cleared, KTD).
+"""Computed RBAC roles — no stored role column.
 
 A user's role is DERIVED per request from `settings.superadmin_emails` vs the
 authenticated user's email (case-insensitive), never a mutable DB column. This
-module is the pure computation; the FastAPI gate lives in `api/deps_rbac.py`.
+module is the pure computation; the FastAPI gate is `requires_superadmin`.
 
-Single-tenant, 2-admin model (R7): everyone is a citizen by default; a handful of
-env-configured emails are super-admins. Per `.claude/rules/naming.md` the internal
-predicate is `is_super_duper_admin`; the public role name stays plain.
+Single-tenant, 2-admin model: everyone is a citizen by default; a handful of
+env-configured emails are super-admins.
 """
 
 from __future__ import annotations

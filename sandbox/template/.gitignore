@@ -5,7 +5,7 @@
 /build
 
 # Local env (the injected BIAL_* vars arrive at provision — see .env.example). A values file must
-# never enter the C4 git-bundle snapshot, so .env*.local stays ignored as a backstop.
+# never enter the git-bundle snapshot, so .env*.local stays ignored as a backstop.
 .env
 .env.local
 .env*.local
@@ -15,7 +15,7 @@
 # later `git add -A` commit the multi-MB base64 into a future snapshot bundle.
 /.bial-restore.b64
 
-# Same hazard, production restore path: the C4 restore writes the base64 bundle into the worktree
+# Same hazard, production restore path: the restore writes the base64 bundle into the worktree
 # and only `rm`s it as its last step — a restore killed mid-way would leave it for the next
 # snapshot to commit. GLOBBED, not literal: `write_snapshot` names each bundle
 # `app.bundle.<random>` so concurrent snapshots cannot clobber each other's file, and every one of

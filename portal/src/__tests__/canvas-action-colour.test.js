@@ -3,24 +3,18 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /**
- * THE ACTION COLOUR IS TEAL, AND NOTHING ELSE PAINTS AN ACTION (plan 002, U1).
+ * THE ACTION COLOUR IS TEAL, AND NOTHING ELSE PAINTS AN ACTION.
  *
- * Across the 41 boards of `docs/ux-canvas/`, #0D7377 fills every primary action without
- * exception — Send for review, Launch Application, Try again, Build this plan, the composer's
- * send control, Create project. The brand gold #D9A036 occurs exactly ONCE in 3,100+ literal
- * hexes, as a `:root` declaration nothing uses; the brand orange #F5A623 appears on exactly two
- * controls, the header token meter and the 6px unsaved dot. The implementation had inverted all
- * three: three primary actions filled gold, the Plan/Build control filled orange, and the one
- * place the canvas puts amber TEXT had no amber at all.
+ * Across the design canvas, #0D7377 fills every primary action without exception. The brand gold
+ * #D9A036 has exactly one legitimate site, a login label; the brand orange #F5A623 has exactly
+ * two, the token meter and the unsaved dot — the implementation once had all three inverted.
  *
- * WHY THIS IS A SOURCE-TEXT TEST AND NOT A RENDER TEST. jsdom computes no Tailwind styles, so a
- * `getComputedStyle` assertion cannot tell gold from teal — every DOM assertion passes either
- * way. The same reasoning `tailwind-tokens.test.js` sets out in its own docblock. What can be
- * checked cheaply is which class names exist in the tree, so that is what this checks.
+ * A SOURCE-TEXT TEST, NOT A RENDER TEST: jsdom computes no Tailwind styles, so a
+ * `getComputedStyle` assertion cannot tell gold from teal. Checking which class names exist in
+ * the tree is what is cheap and reliable instead (`tailwind-tokens.test.js` makes the same call).
  *
- * THE ALLOWLISTS ARE THE POINT. Neither token is banned outright — each has a real board role,
- * and a blanket ban would be a rule nobody could keep. What is banned is the DEFAULT of each
- * being used as a surface, anywhere outside the sites named below.
+ * THE ALLOWLISTS ARE THE POINT — neither token is banned outright, only banned as the DEFAULT
+ * surface colour outside the sites named below.
  */
 const ROOT = path.resolve(__dirname, '..')
 
@@ -85,7 +79,7 @@ function offenders(pattern, allowed) {
   return found
 }
 
-describe('U1 — teal is the action colour', () => {
+describe('teal is the action colour', () => {
   it('paints no surface with the brand gold outside its one label site', () => {
     expect(
       offenders(GOLD_SURFACE, GOLD_ALLOWED),

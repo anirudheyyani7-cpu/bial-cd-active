@@ -1,16 +1,15 @@
 # BIAL sandbox base image: Node 24 LTS + next dev + Caddy + the supervisor, with a MINIMAL
 # Next.js starter template and its node_modules PRE-BAKED as a fast base. The open-sandbox build
-# agent may `npm install` more dependencies on demand at runtime (the vibe-coding model, R8), and
-# the restore path reconciles the snapshotted lockfile — so the baked deps are a SPEED BASE, not a
-# frozen set (no longer "no per-session npm install").
+# agent may `npm install` more dependencies on demand at runtime, and the restore path reconciles
+# the snapshotted lockfile — so the baked deps are a SPEED BASE, not a frozen set.
 #
 # Build via `docker buildx build --platform linux/amd64 --push ...` from macOS/Linux (this
 # free-trial subscription blocks ACR Tasks / `az acr build`; the Windows VM + `az acr build` path
-# is org/prod only — ADR-0015 / D9). The shipped artifact is amd64 whatever the host; a native
+# is org/prod only). The shipped artifact is amd64 whatever the host; a native
 # same-arch `docker build` is a dev-loop convenience, and only the in-container smoke tests
 # (tests/test_supervisor_guards_incontainer.py) verify the built image. See README.md.
 #
-# Node 24 = latest active LTS (D11): supersedes the spike's node:20-slim (EOL ~Apr 2026);
+# Node 24 = latest active LTS: supersedes the spike's node:20-slim (EOL ~Apr 2026);
 # Node 26 does not enter LTS until ~Oct 2026, so hold at 24.
 # Debian 12 (bookworm) left regular security support on 12 July 2026 — this is the LIFECYCLE
 # move, not a count reduction. Measured like-for-like, trixie carries a slightly larger unfixed
@@ -18,11 +17,11 @@
 #
 # Node and npm are IDENTICAL across the two bases (v24.19.0 / 11.17.0), so this introduces no
 # JavaScript-runtime variable. What DOES move is the apt-installed Python below: 3.11 -> 3.13.
-# R5 digests (resolved 2026-08-13): index sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d
+# Digests (resolved 2026-08-13): index sha256:0711b541c1c33a8a530ac4f0d391baa9a15b3d804695b1b24a47daa5fb60e74d
 # linux/amd64 sha256:f2925910482dc53394bc0034c5f4abffcd01de400794c050ca343fe0d733b486
 FROM node:24-trixie-slim
 
-# THE PACKAGE MANAGER'S OWN BUNDLED MODULES (R3), which the base move does not touch.
+# THE PACKAGE MANAGER'S OWN BUNDLED MODULES, which the base move does not touch.
 #
 # npm vendors its dependencies inside itself at /usr/local/lib/node_modules/npm/node_modules,
 # and the scanner reads them as findings like any other package — 10 rows here, one of them a
@@ -42,19 +41,17 @@ FROM node:24-trixie-slim
 RUN npm install -g npm@12.0.2 --cache /tmp/npm-self-cache --loglevel=error \
     && rm -rf /tmp/npm-self-cache /root/.npm
 
-# System deps: git (snapshot/restore, Track SANDBOX), python (supervisor), curl (fetch
+# System deps: git (snapshot/restore), python (supervisor), curl (fetch
 # Caddy), procps (ps), ca-certificates (TLS out of the container: the npm registry at runtime,
 # the app's own PostgreSQL over `BIAL_DATABASE_URL`, and Azure Blob over `BIAL_BLOB_SAS`).
-# It said "the data-service" — the shared platform data plane was deleted with the per-app
-# database (ADR-0028) and nothing in this image talks to it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git ca-certificates curl python3 python3-pip procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Caddy static binary (build-time egress only; runtime egress is separate). Pinned to v2.11.4 for
-# CVE remediation, superseding the spike's v2.8.4 (.mythos/sandbox-spike/results/RESULTS.md) —
-# do not revert toward the spike's pin. This is the only genuinely network-facing component in
+# CVE remediation, superseding the spike's v2.8.4 — do not revert toward that pin. This is the
+# only genuinely network-facing component in
 # the image and it carried every Critical in its bucket: 123 scanner rows against the Go
 # toolchain and vendored modules of the 2.8.4 binary.
 #
@@ -79,11 +76,11 @@ RUN pip3 install --no-cache-dir --break-system-packages \
         "fastapi==0.141.1" "uvicorn[standard]==0.52.2" "websockets==17.0.1"
 
 # Unprivileged user for `next dev` — the untrusted app process. It CANNOT read root's env,
-# so it cannot read the supervisor token (ADR-0014 in-sandbox-RCE closure). C1 demotes
+# so it cannot read the supervisor token. The supervisor demotes
 # children to `appuser` by name; THIS image pins its uid at 10001.
 RUN useradd -m -u 10001 -s /usr/sbin/nologin appuser
 
-# Baked git identity for the C4 snapshot commits (Track SANDBOX). `git config --system`
+# Baked git identity for the snapshot commits. `git config --system`
 # writes world-readable /etc/gitconfig, so `snapshot.sh` — which runs as the demoted `appuser`
 # via /exec — commits WITHOUT per-invocation `-c user.name=…` flags, keeping the scripts clean.
 # `safe.directory=*` is defensive: git keeps working if /workspace/app is ever re-owned (nothing
@@ -99,11 +96,11 @@ WORKDIR /supervisor
 COPY supervisor/app.py /supervisor/app.py
 COPY Caddyfile /etc/caddy/Caddyfile
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-# C4 snapshot/restore mechanics (Track SANDBOX). Baked onto PATH so the reference client drives them
+# Snapshot/restore mechanics. Baked onto PATH so the reference client drives them
 # over the frozen /exec (`/usr/local/bin/{snapshot,restore}.sh <workspace> [b64]`).
 COPY scripts/snapshot.sh scripts/restore.sh /usr/local/bin/
 
-# ADR-0015 cross-platform guard: strip any CR a Windows checkout introduced, THEN chmod. (A
+# Cross-platform guard: strip any CR a Windows checkout introduced, THEN chmod. (A
 # `#!/bin/sh\r` shebang would make the container fail at start — CRLF has burned BIAL twice.) The
 # guard is extended to cover the incoming scripts/ before they are marked executable.
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /etc/caddy/Caddyfile \
@@ -112,12 +109,12 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /etc/caddy/Caddyfile \
 
 # --- golden template + baked node_modules -------------------------------------------------
 # Copy manifests first for layer caching, install with the pinned lockfile (byte-identical
-# installs — D11), then copy the rest of the template. `npm ci` keeps devDependencies
+# installs), then copy the rest of the template. `npm ci` keeps devDependencies
 # (typescript / tailwind / types) which `next dev` needs, so DO NOT set NODE_ENV=production here.
 #
 # The app process AND every runtime `npm install` run as appuser, so appuser must own the
 # workspace to write node_modules (on-demand installs), `.next` and the HMR caches — otherwise
-# they EACCES (R8/R13). That ownership is established at COPY/install time (`--chown` + an
+# they EACCES. That ownership is established at COPY/install time (`--chown` + an
 # appuser `npm ci`) rather than by a trailing `RUN chown -R appuser:appuser /workspace/app`:
 # a chown changes only metadata, but a metadata change rewrites all ~20.8k entries into a new
 # layer — a file-for-file duplicate of node_modules costing ~196 MB compressed, which also broke
@@ -141,7 +138,7 @@ RUN HOME=/home/appuser npm ci --cache /tmp/npm-build-cache --no-audit --no-fund 
     && rm -rf /tmp/npm-build-cache
 COPY --chown=appuser:appuser template/ ./
 # Back to root for the remainder: entrypoint.sh runs as PID 1 root so the supervisor can demote
-# children to appuser (C1). The image's final USER and WORKDIR are unchanged by U7.
+# children to appuser. The image ends as `USER root` with WORKDIR `/workspace/app`.
 USER root
 
 ENV CHOKIDAR_USEPOLLING=true \

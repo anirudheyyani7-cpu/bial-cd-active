@@ -1,5 +1,5 @@
 /**
- * The preview address resolver (Plan A, U2).
+ * The preview address resolver.
  *
  * The whole precedence, every arm violated independently, and above all the ASYMMETRIC cell: the
  * project predicate false while the turn arm still frames. A resolver that "tidied" the two
@@ -62,7 +62,7 @@ describe('resolvePreviewAddress — the precedence', () => {
   })
 
   it('the project preview resolves last, when nothing above it qualifies', () => {
-    // Plan F's first screen: arrive at a project, see the app. There is no chat here at all, so
+    // The first screen: arrive at a project, see the app. There is no chat here at all, so
     // the three arms above are structurally unavailable — this arm is the only one that can
     // answer, and without it the project screen frames nothing.
     expect(
@@ -169,13 +169,13 @@ describe('resolvePreviewAddress — a session id is not the project predicate', 
   })
 })
 
-describe('resolvePreviewAddress — liveness, which is a THIRD question (#96, #199, #200)', () => {
+describe('resolvePreviewAddress — liveness, which is a THIRD question', () => {
   // WHAT THIS ANSWERS, AND WHAT IT MUST NOT. `serving` says a container is still answering at the
   // framed address, which is what lets a terminal status keep its frame. It says NOTHING about
   // whether the newest build compiled — that is the compile state's job, and conflating the two is
   // what put "Build complete" on a screen where no build ever runs.
 
-  it('★ a turn that reset its narrative on a SEND stays serving (#200)', () => {
+  it('★ a turn that reset its narrative on a SEND stays serving', () => {
     // THE REMOUNT-ON-EVERY-MESSAGE DEFECT, at the resolver. A send clears the turn narrative, so
     // `turnStatus` drops to `null` while `turnPreviewUrl` keeps the URL the last `preview_ready`
     // named. Requiring a terminal phase here blinks liveness off for exactly that render — and the
@@ -194,19 +194,19 @@ describe('resolvePreviewAddress — liveness, which is a THIRD question (#96, #1
     ).toEqual({ url: TURN, status: 'ended', serving: true })
   })
 
-  it('★ a STOPPED turn is serving, exactly as a completed one is (#96)', () => {
-    // The whole of `#96`, at the resolver. A stop and a completion both leave the phase at `ended`
-    // (`turnNarrative.turnPhase`) because the backend pardons the container either way, so both
-    // resolve to a serving address and the pane keeps framing the running app.
+  it('★ a STOPPED turn is serving, exactly as a completed one is', () => {
+    // THE STOP/COMPLETE EQUIVALENCE, at the resolver. A stop and a completion both leave the
+    // phase at `ended` (`turnNarrative.turnPhase`) because the backend pardons the container
+    // either way, so both resolve to a serving address and the pane keeps framing the app.
     expect(
       resolve({ turnPreviewUrl: TURN, turnStatus: 'ended', narratingChatIsOpenChat: true }),
     ).toEqual({ url: TURN, status: 'ended', serving: true })
   })
 
   it('★ a FAILED turn is not (its liveness is not widened as a side effect)', () => {
-    // `#96`'s third acceptance criterion, and the line the widening must not cross: "alive" and
-    // "worth framing" stay two questions. A turn that genuinely failed — or that lost its
-    // workspace, which is the other way `turnPhase` reaches `failed` — asserts nothing.
+    // THE LINE THE WIDENING MUST NOT CROSS: "alive" and "worth framing" stay two questions. A
+    // turn that genuinely failed — or that lost its workspace, which is the other way
+    // `turnPhase` reaches `failed` — asserts nothing.
     //
     // Mutation check: relax the arm to `turnStatus !== null` and this goes red while every other
     // scenario in this block stays green.

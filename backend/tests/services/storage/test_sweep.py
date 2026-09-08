@@ -1,4 +1,4 @@
-"""Post-commit blob sweep (KD-3): NOTHING may surface after the rows are committed.
+"""Post-commit blob sweep: NOTHING may surface after the rows are committed.
 
 The Azure backend wraps most failures into `StorageError`, but transport errors
 (e.g. `ServiceResponseError`) escape that hierarchy — the sweep must swallow-and-log
@@ -30,7 +30,6 @@ async def test_sweep_survives_any_failure_and_finishes_the_batch() -> None:
     storage = _FlakyStorage()
     storage.objects = {"a": b"1", "c": b"3"}
 
-    # "boom" raises a raw RuntimeError mid-batch — the sweep neither raises nor stops.
     await sweep_blobs(storage, ["a", "boom", "c"])
 
     assert storage.objects == {}  # every real key was still swept
@@ -67,13 +66,12 @@ async def test_sweep_runs_concurrently_but_bounded() -> None:
 
     await sweep_blobs(storage, keys)
 
-    assert storage.objects == {}  # every key swept
-    # Fanned out past a serial sweep (peak > 1) yet never exceeded the semaphore ceiling.
+    assert storage.objects == {}
     assert storage.max_in_flight > 1
     assert storage.max_in_flight <= _SWEEP_CONCURRENCY
 
 
-# --- sweep_app_containers (per-app Blob container sweep, KTD-7) ---------------
+# --- sweep_app_containers (per-app Blob container sweep) ---------------
 
 _A1 = uuid.UUID("019f1c00-0000-7000-8000-0000000000a1")
 _A2 = uuid.UUID("019f1c00-0000-7000-8000-0000000000a2")
@@ -101,13 +99,12 @@ async def test_sweep_app_containers_deletes_every_id() -> None:
 
 async def test_sweep_app_containers_survives_failure_and_finishes_the_batch() -> None:
     store = _FakeContainerStore()
-    # _BOOM raises a raw RuntimeError mid-batch — the sweep neither raises nor stops.
     await sweep_app_containers(store, [_A1, _BOOM, _A2])
     assert set(store.deleted) == {_A1, _A2}  # the other two were still swept
 
 
 async def test_sweep_app_containers_store_none_is_noop_even_with_ids() -> None:
-    # Storage disabled (dev/test): the sweep no-ops even though app_ids is non-empty (KTD-2),
+    # Storage disabled (dev/test): the sweep no-ops even though app_ids is non-empty,
     # so a project delete still succeeds without an object store.
     await sweep_app_containers(None, [_A1, _A2])  # no raise, nothing to assert but the no-throw
 

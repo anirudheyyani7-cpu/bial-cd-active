@@ -1,6 +1,7 @@
-"""Alembic round-trip for the tombstone's description column (0037, #184): head → 0036 →
+"""Alembic round-trip for the tombstone's description column (0037): head → 0036 →
 head against the real test database.
 
+WHY THIS EXISTS
 Mirrors `test_app_registry_deployed_url_migration.py` — programmatic `alembic.command` off the
 shared `alembic.ini`, database returned to head in a `finally` so a failed assertion cannot
 poison the rest of the suite — and pins the two things that are decisions rather than defaults:
@@ -10,7 +11,7 @@ poison the rest of the suite — and pins the two things that are decisions rath
     row that is already gone — a NOT NULL with no default would fail the migration outright, and
     a nullable column would make "this project had no description" and "we did not record one"
     the same value to the administrator reading it.
-  * An existing tombstone survives the upgrade carrying `''`. That is the R3 loss, asserted
+  * An existing tombstone survives the upgrade carrying `''`. That is the accepted loss, asserted
     rather than assumed: rows written before this shipped cannot be backfilled and are accepted
     as lost, so this test is the record of what they end up holding.
 
@@ -184,7 +185,7 @@ def test_the_column_is_not_null_with_an_empty_default() -> None:
 
 
 def test_a_tombstone_written_before_this_shipped_upgrades_to_an_empty_description() -> None:
-    """R3, asserted rather than assumed: the already-deleted cannot be backfilled.
+    """The accepted loss, asserted rather than assumed: the already-deleted cannot be backfilled.
 
     Seed a tombstone at 0036 — the shape every existing row is in — and upgrade. It must
     survive, because the project it describes is long gone and there is nothing to reconstruct

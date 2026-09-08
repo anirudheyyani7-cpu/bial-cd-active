@@ -55,7 +55,7 @@ describe('listProjectConversations', () => {
 })
 
 describe('getConversation', () => {
-  it('hydrates header + PROJECTION into the in-memory message shape (U7)', async () => {
+  it('hydrates header + PROJECTION into the in-memory message shape', async () => {
     // `mode` is gone from the wire doc entirely — ConversationHeader lost the field, and the
     // reload projection no longer carries a per-item mode either. `kind` is the whole of what
     // a chat is now, fixed at creation. No assertion below reads `.mode`; that IS the proof.
@@ -130,7 +130,7 @@ describe('messagesFromProjection', () => {
       },
     ])
   })
-  it('maps a plan_options item to a card part carrying the NARROWED item (U13) — mode/reason do not ride along', () => {
+  it('maps a plan_options item to a card part carrying the NARROWED item — mode/reason do not ride along', () => {
     // The stored item is fed through toPlanOptionsItem, same as the live path (turnStreamApi.ts)
     // — not forwarded verbatim. `mode` and `reason` are given here as an old stored row could
     // still carry them, and neither reaches the rendered part: PlanOptionsItem dropped `reason`
@@ -145,7 +145,7 @@ describe('messagesFromProjection', () => {
       },
     ])
   })
-  it('maps visible steps and the in-progress anchor; hidden (read) steps stay out (U15)', () => {
+  it('maps visible steps and the in-progress anchor; hidden (read) steps stay out', () => {
     const visible = { type: 'step', seq: 1, tool: 'write_file', label: 'Updated x', state: 'ok', hidden: false }
     expect(
       messagesFromProjection([
@@ -155,7 +155,7 @@ describe('messagesFromProjection', () => {
       ]),
     ).toEqual([
       // The step part is now toStepItem(visible), not the raw stored item — the same
-      // narrowing function turnStreamApi.ts's live path uses (PR #93 review finding 9).
+      // narrowing function turnStreamApi.ts's live path uses.
       // It used to default-fill two fields the stored row never had, `mode` and
       // `detail: {args: null, result: null}`; StepItem carries neither any more, so a
       // reloaded step is exactly the six fields below and nothing is synthesized.
@@ -171,7 +171,7 @@ describe('messagesFromProjection', () => {
     ])
   })
 
-  it('drops a malformed plan_options item (no toolCallId) instead of rendering a dead card (PR #93 review finding 9)', () => {
+  it('drops a malformed plan_options item (no toolCallId) instead of rendering a dead card', () => {
     // The concrete "drop" case toPlanOptionsItem defines: a card without a toolCallId is
     // an unclickable ghost, so it's dropped rather than rendered — same as the live path
     // (turnStreamApi.ts's 'plan_options' case returns null for the same input, and its
@@ -180,7 +180,7 @@ describe('messagesFromProjection', () => {
     expect(messagesFromProjection([malformed])).toEqual([])
   })
 
-  it('drops a malformed step item the same way (parity with the live path, PR #93 review finding 9)', () => {
+  it('drops a malformed step item the same way (parity with the live path)', () => {
     // toStepItem only returns null for a non-record value, which a RawProjectionItem
     // can't be — so this can't fire through messagesFromProjection today. Pinned anyway
     // for parity with the plan_options case above and with the live path's own guard.
@@ -188,7 +188,7 @@ describe('messagesFromProjection', () => {
   })
 })
 
-describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () => {
+describe('messagesFromProjection — the loud fallback arm', () => {
   // Until this arm existed the if/else-if chain simply ENDED, so a projection item type this
   // client did not recognise vanished with no error, no warning and no trace — on the one path a
   // reloaded transcript is rebuilt from, for both kinds of chat. That is the four-edit change no
@@ -219,8 +219,8 @@ describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () 
   })
 
   it('stays silent for a COMPLETED turn_terminal, which is KNOWN and deliberately draws nothing', () => {
-    // ★ THE MUTANT'S TEST. #186 narrowed this silence to completed terminals; it did not remove
-    // it, and the difference is the whole design. `_write_turn_terminal` writes one of these
+    // ★ THE MUTANT'S TEST. Narrowing this silence to completed terminals did not remove it, and
+    // the difference is the whole design. `_write_turn_terminal` writes one of these
     // rows for EVERY turn of BOTH kinds, unconditionally — so a `turn_terminal` arm that drew
     // whatever it was handed would stamp "Build finished." after every single exchange in every
     // chat, including a Plan conversation that never built anything. Make the arm render
@@ -284,7 +284,7 @@ describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () 
 
 describe('the create / patch / delete round trips are gone', () => {
   /**
-   * A GUARD, not deleted coverage (plan 001, unit 6). All three were clients with no caller, and
+   * A GUARD, not deleted coverage. All three were clients with no caller, and
    * each lost its caller to a decision rather than to an accident.
    *
    * `createConversation` and `patchConversation`: a row's parentage rides its FIRST TURN now
@@ -295,7 +295,7 @@ describe('the create / patch / delete round trips are gone', () => {
    * with it, to `turnStreamApi.test.ts`, against the request that now carries it.
    *
    * `deleteConversation` had exactly one caller, the project rail's past-conversations list, and
-   * the ruling of 2026-09-02 deleted the list: nothing points back to a chat, so nothing offers
+   * a later product decision deleted the list: nothing points back to a chat, so nothing offers
    * to delete one. The SERVER routes are all untouched. Asserted rather than left silent so that
    * re-adding any of these clients has to be a decision someone makes on purpose.
    */
@@ -314,7 +314,7 @@ describe('the create / patch / delete round trips are gone', () => {
   })
 })
 
-// ADR-0006: the client-minted conversation id IS the row's primary key (the create route builds
+// The client-minted conversation id IS the row's primary key (the create route builds
 // `Conversation(id=body.id, …)`, overriding the server's UUIDv7 default), so minting a v4 here
 // scatters inserts across the btree. `crypto.randomUUID()` mints v4 and is not a substitute.
 describe('uuidv7', () => {
@@ -366,16 +366,16 @@ describe('deriveTitle', () => {
   })
 })
 
-// N3 — one `messages` row can project SEVERAL items, and every one of them inherits that row's
+// One `messages` row can project SEVERAL items, and every one of them inherits that row's
 // seq. Keyed `srv_{seq}_{kind}`, those collided. React states plainly that duplicate keys "may
 // cause children to be duplicated and/or omitted", so this was latent message-list corruption
 // rather than a console warning: a re-render could drop a bubble or paint one twice.
-describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)', () => {
+describe('messagesFromProjection — keys are unique per ITEM, not per row', () => {
   const keysOf = (projection) => messagesFromProjection(projection).map((m) => m.id)
   const unique = (keys) => new Set(keys).size === keys.length
 
   it('two assistant_text items in one row become ONE reply, under one key', () => {
-    // N3's collision is answered by there being nothing to collide: consecutive assistant
+    // The collision is answered by there being nothing to collide: consecutive assistant
     // content is now PARTS of one reply rather than separate messages. The source ordinal is
     // still in the key, which is what keeps it unique against everything around it.
     const messages = messagesFromProjection([
@@ -388,9 +388,6 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
   })
 
   it('keys stay unique across kinds that can repeat within one row', () => {
-    // Two user turns, one coalesced reply carrying both steps, and two in-progress markers —
-    // five messages, five distinct keys. What matters here is uniqueness, not the count: a
-    // duplicate key is what React says "may cause children to be duplicated and/or omitted".
     const keys = keysOf([
       { type: 'user_text', seq: 1, mode: 'ask', text: 'a', attachmentIds: [] },
       { type: 'user_text', seq: 1, mode: 'ask', text: 'b', attachmentIds: [] },
@@ -434,19 +431,15 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
   })
 
   it('a hidden step does not renumber the items after it', () => {
-    // The ordinal counts SOURCE position precisely so that flipping a step's `hidden` cannot
-    // shift every later key — which an output-array index would have done.
-    // A user turn between the two replies, so each one opens its OWN message and therefore
-    // shows its own key — otherwise the trailing text joins the reply above it and the ordinal
-    // under test never reaches an id.
+    // The ordinal counts SOURCE position, so a hidden step does not shift the keys after it —
+    // which an output-array index would have done. The interposed user turn gives the trailing
+    // text its own message, so `srv_3_u_2` (not `_2`) is the ordinal actually under test.
     const withHidden = [
       { type: 'step', seq: 1, tool: 'write_file', label: 'x', state: 'ok', hidden: false },
       { type: 'step', seq: 2, tool: 'read_file', label: 'y', state: 'ok', hidden: true },
       { type: 'user_text', seq: 3, mode: 'ask', text: 'and now?', attachmentIds: [] },
       { type: 'assistant_text', seq: 4, mode: 'write', text: 'done' },
     ]
-    // `_3` and not `_2`: the ordinal counts SOURCE position, so dropping the hidden step at
-    // index 1 does not pull the items after it down.
     expect(keysOf(withHidden)).toEqual(['srv_1_s_0', 'srv_3_u_2', 'srv_4_a_3'])
   })
 })
@@ -459,7 +452,7 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
  * messages. Anything mounted per message multiplied with them: a real eight-turn transcript
  * offered 41 copy buttons, and none of them copied the reply that had been read — only the
  * fragment beside it. The live path never had this shape (`streamingParts` builds one ordered
- * part list per turn), so this was also a live-vs-reload divergence against R72/AE43.
+ * part list per turn), so this was also a live-vs-reload divergence.
  */
 describe('one reply is one message (the copy-control guard)', () => {
   it('prose and steps interleaved come back as ONE assistant message, in order', () => {
@@ -513,7 +506,7 @@ describe('one reply is one message (the copy-control guard)', () => {
   })
 })
 
-describe('messagesFromProjection — a stopped turn still looks stopped after a reload (#186)', () => {
+describe('messagesFromProjection — a stopped turn still looks stopped after a reload', () => {
   // A stopped build used to say NOTHING once the page was refreshed. Live, the surface writes a
   // sentence the moment the turn ends; the durable `turn_terminal` row is the only record of that
   // ending (a turn writes no build-outcome part on purpose — that would render the same ending
@@ -547,9 +540,8 @@ describe('messagesFromProjection — a stopped turn still looks stopped after a 
    * 'completed' ? 'ended' : sink.terminal`, then the shared table. It is here so the assertions
    * below can compare the two DERIVATIONS rather than compare each of them to a string literal:
    * two tests that each pin their own copy of the expected sentence both stay green while the
-   * paths drift apart, which is exactly the failure
-   * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`
-   * records — fixing one emitter only changed WHEN the wrong text appeared.
+   * paths drift apart — exactly the failure that let two independent emitters disagree: fixing
+   * one of them only changed WHEN the wrong text appeared.
    */
   const live = (terminal, reason) =>
     outcomeSummary({ status: terminal === 'completed' ? 'ended' : terminal, reason })

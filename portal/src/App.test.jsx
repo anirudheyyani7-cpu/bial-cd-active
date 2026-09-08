@@ -1,22 +1,15 @@
 /**
  * The route table, and the workspace shell's wiring.
  *
- * Project-first put every chat on a flat `/chat/:id`, and the standalone App Builder / Sandbox
- * scheme is now fully retired: `/workspace*`, `/sandbox`, and `/builder` have NO routes and NO
- * redirect shims. Any such stray URL falls through to the `*` catch-all (→ /login) rather than
- * being carried anywhere.
+ * Project-first put every chat on a flat `/chat/:id`; the standalone App Builder / Sandbox
+ * scheme is fully retired, with no routes and no redirect shims — a stray URL under
+ * `/workspace*`, `/sandbox`, or `/builder` falls through to the `*` catch-all (→ /login).
  *
- * WHY THE SHELL'S CLAIM IS ASSERTED HERE AND NOT IN A COMPONENT TEST. The whole of R8 rests on one
- * structural fact — that `/projects/:projectId` and `/chat/:chatId` are children of a pathless
- * layout route, so React Router renders the same shell element at the same position across a move
- * between them and only the outlet content is replaced. A hand-built route table inside a
- * component test would prove the component and not the wiring, and the wiring is the part that can
- * be got wrong. This file renders the REAL `<App/>` and drives it by URL, so the thing under test
- * is the table the product ships.
- *
- * Every page is stubbed: this file asserts routing, nothing else. `RequireAuth` is NOT stubbed —
- * where the guard sits relative to the shell is one of the claims (an unauthenticated visit must
- * not paint the workspace frame around a redirect), so it runs for real against a mocked session.
+ * This file renders the REAL `<App/>` and drives it by URL rather than a hand-built route
+ * table, because a component test would prove the component and not the wiring — the part that
+ * can be got wrong. Every page is stubbed except `RequireAuth`, which runs for real: where the
+ * guard sits relative to the shell is one of the claims (an unauthenticated visit must not paint
+ * the workspace frame around a redirect).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
@@ -165,7 +158,7 @@ describe('App — the SPA must never claim /apps/*', () => {
   })
 })
 
-describe('App — the workspace shell is one element across a move inside a project (AE4, the wiring half)', () => {
+describe('App — the workspace shell is one element across a move inside a project, the wiring half', () => {
   it('keeps the SAME shell element across project → chat → project; only the outlet content changes', () => {
     renderAt('/projects/p1')
     const frame = shell()
@@ -215,7 +208,7 @@ describe('App — the auth guard sits ABOVE the shell', () => {
   // discriminates is `loading`: a guard nested inside the layout paints the workspace's navbar and
   // two-column frame around the auth spinner, so somebody who may not be signed in at all watches
   // the frame of a workspace assemble around a spinner first. (Mutation-checked both ways.)
-  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph (`#210`). The spinner is
+  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph. The spinner is
   // `aria-hidden` now — `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so
   // a named-but-frozen circle was the whole of what this screen said — and the sentence carries it.
   const wait = () => screen.queryByText(/Getting things ready/)
@@ -248,7 +241,7 @@ describe('App — the auth guard sits ABOVE the shell', () => {
   })
 })
 
-describe('the welcome page is gone (#158 §7)', () => {
+describe('the welcome page is gone — its old addresses now land on the project list', () => {
   it.each(['/dashboard', '/enterprise', '/teamspace'])(
     '%s lands on the project list instead of its own page',
     (path) => {
@@ -276,7 +269,7 @@ describe('App — addresses outside a project get no workspace frame', () => {
   })
 })
 
-describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', () => {
+describe('the boot / silent-refresh wait keeps WORDS and a busy state', () => {
   /**
    * Every live region in the document that is currently SAYING the given thing.
    *
@@ -310,11 +303,12 @@ describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', (
   })
 
   it('★ the region is already in the tree, EMPTY, before the text arrives — and it is the SAME node', () => {
-    // THE ARM ASM5 EXISTS FOR. A live region inserted together with its first text is missed
-    // entirely by several reader-and-browser combinations, so the region has to outlive the wait
-    // rather than arrive with it. Mount it together with its text — render it inside
-    // `AuthLoading`, or gate the whole `<div role="status">` on `status === 'loading'` — and the
-    // empty-region assertion below goes red. A leaf-component fix is precisely what breaks here.
+    // THE MOUNT-BEFORE-FILL ORDERING THIS ARM GUARDS: a live region inserted together with its
+    // first text is missed entirely by several reader-and-browser combinations, so the region
+    // has to outlive the wait rather than arrive with it. Mount it together with its text —
+    // render it inside `AuthLoading`, or gate the whole `<div role="status">` on
+    // `status === 'loading'` — and the empty-region assertion below goes red. A leaf-component
+    // fix is precisely what breaks here.
     renderAt('/projects/p1') // signed in: the guard is decided, no wait running
 
     const before = screen.getByTestId('auth-wait')

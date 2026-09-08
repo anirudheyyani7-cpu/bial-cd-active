@@ -1,27 +1,22 @@
-"""#13/R2 — the pardoned preview's lifecycle: a COMPLETED build's container outlives its
-build under the bounded stay-of-execution lease, and every owner in the lifecycle triad
-still does its job:
+"""What happens to a pardoned preview after its build ends.
 
-* liveness: nothing renews it (deliberate — the lease is the owner, exactly like a
-  relaunched preview);
-* teardown: the background sweep honors the unexpired lease, then reaps through it once
-  it lapses;
-* reclaim: reconcile-on-start reaps through even an UNEXPIRED lease (covered in
-  `test_manager.py::test_clean_end_then_start_restores_from_snapshot_not_fresh`).
-
-The pardon itself (no teardown, registry kept, stay granted, lock released) is asserted
-on the happy path in `test_manager.py`; this module covers what happens NEXT.
+The pardon itself (no teardown, registry kept, stay granted, lock released) is asserted on the
+happy path in `test_manager.py`; this module covers what happens next: nothing renews liveness
+(deliberate — the lease is the owner, exactly like a relaunched preview), the background sweep
+honors an unexpired lease and reaps through it once it lapses, and reconcile-on-start reaps
+through even an unexpired one (covered in
+`test_manager.py::test_clean_end_then_start_restores_from_snapshot_not_fresh`).
 
 HOW THE SESSIONS GET HERE. `SessionManager.start` is deleted, so a session is allocated by
 `ensure_sandbox` — the door production uses — and driven into the end sequence by `_finalize`,
-which is the exact call the deleted `_run_and_finalize` made when a run ended. `_finalize` with
-`"completed"` reaches `_do_finalize` with the inputs a naturally-completed build reached it with
-(that reason, a derived status of ENDED, `force_ended=False`, a live handle), which is precisely
-what the pardon decision reads; `"build_failed"` derives FAILED and takes the teardown arm.
+the call the deleted `_run_and_finalize` made when a run ended. `_finalize` with `"completed"`
+reaches `_do_finalize` with the inputs a naturally-completed build reached it with (that reason,
+a derived status of ENDED, `force_ended=False`, a live handle) — precisely what the pardon
+decision reads; `"build_failed"` derives FAILED and takes the teardown arm.
 
-NOT `stop`, deliberately: `stop` goes through `_end`, which marks the registry `ending` first.
-That is right for a user-driven stop and wrong for a completion — it would leave a pardoned
-container behind an `ending` registry, a pair production never produces.
+NOT `stop`: it goes through `_end`, which marks the registry `ending` first — right for a
+user-driven stop, wrong for a completion, since it would leave a pardoned container behind an
+`ending` registry, a pair production never produces.
 """
 
 from __future__ import annotations
@@ -95,8 +90,8 @@ async def _completed_build(
 async def test_sweep_spares_a_pardoned_preview_inside_its_lease(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The heartbeat is deleted FIRST so the lease alone is what spares the container —
-    # otherwise the ≤90 s residue of the build's last renew would mask a broken stay.
+    # The heartbeat is deleted FIRST so the lease alone spares the container — otherwise its
+    # ≤90 s residue would mask a broken stay.
     client = FakeSandboxClient()
     user, manager, app_id = await _completed_build(db_session, "pardon1@rvaiglobal.com", client)
     await fake_redis.delete(heartbeat_key(user.id))
@@ -112,9 +107,9 @@ async def test_sweep_spares_a_pardoned_preview_inside_its_lease(
 async def test_sweep_reaps_a_pardoned_preview_once_its_lease_lapses(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # Idle expiry: overwrite the granted stay with a lapsed stamp (the reaper-suite
-    # technique) and the next sweep executes the pardon — teardown, registry gone. This is
-    # the server half of the portal's "placeholder + Relaunch" journey.
+    # Idle expiry: overwrite the granted stay with a lapsed stamp (the reaper-suite technique)
+    # and the next sweep executes the pardon — teardown, registry gone. This is the server half
+    # of the portal's "placeholder + Relaunch" journey.
     client = FakeSandboxClient()
     user, manager, app_id = await _completed_build(db_session, "pardon2@rvaiglobal.com", client)
     await fake_redis.delete(heartbeat_key(user.id))
@@ -158,9 +153,10 @@ async def test_pardon_survives_a_stay_grant_failure(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Best-effort per the end-sequence policy: a Redis blip on the grant must not hang the
-    # feed or strand the lock. Degraded mode is the pre-#13 lifetime — the registry is
-    # still there for the sweep to find at heartbeat lapse, so nothing is orphaned.
+    # Best-effort per the end-sequence policy: a Redis blip on the grant must not hang the feed
+    # or strand the lock.
+    # Degraded mode is the pre-stay lifetime — the registry stays for the sweep to find at
+    # heartbeat lapse, so nothing is orphaned.
     async def boom_grant(*_a: object, **_k: object) -> datetime:
         raise RuntimeError("redis blip on the stay grant")
 

@@ -31,8 +31,7 @@ const pageOf = (users: ReturnType<typeof user>[], over: Record<string, unknown> 
   hasMore: over.hasMore ?? false,
 })
 
-// `mode` defaults to 'all' (finding #6's actual fix — the roster never loads until the
-// admin actively asks for it), so any test that needs the roster switches explicitly.
+// `mode` defaults to 'all', so any test that needs the roster switches explicitly.
 const enterSelectedMode = async () => {
   fireEvent.click(screen.getByTestId('mode-selected'))
   await screen.findByText('Alice')

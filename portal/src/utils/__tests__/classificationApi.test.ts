@@ -181,7 +181,7 @@ describe('getClassificationReview', () => {
     expect(review.status).toBe('complete')
   })
 
-  it('parses the nothing-to-review state: all-null fields, no verdicts (R21)', async () => {
+  it('parses the nothing-to-review state: all-null fields, no verdicts', async () => {
     const review = await getClassificationReview(
       'p1',
       deps(vi.fn(async () => ok({ status: 'nothing_to_review' }))),

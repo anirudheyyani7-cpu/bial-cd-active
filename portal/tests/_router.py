@@ -4,13 +4,11 @@ A private helper (leading underscore, so pytest never collects it as a test modu
 container control and the HTTP/WebSocket client the fixtures and tests share. Mirrors
 `sandbox/tests/_docker.py`, which is the repo's existing shape for a Docker-backed suite.
 
-WHY DOCKER AND NOT A STRING ASSERTION. Six implementation units land against this router before
-a request from a real BIAL desk ever traverses it, and the failure modes this design is most
-exposed to are the ones a structural test cannot see: a missing `proxy_http_version` answers a
-WebSocket upgrade as an ordinary request, a `proxy_pass` with a stray URI collapses every
-request to `/`, and a keyless request reaches the right container with the wrong path. All three
-leave `nginx -t` green. The Vitest suite next door pins the config's SHAPE; this one pins its
-BEHAVIOUR, and only one of the two would have caught any of those.
+WHY DOCKER AND NOT A STRING ASSERTION. The failure modes this design is most exposed to are
+ones a structural test cannot see: a missing `proxy_http_version` answers a WebSocket upgrade
+as an ordinary request, a `proxy_pass` with a stray URI collapses every request to `/`, and a
+keyless request reaches the right container with the wrong path — all three leave `nginx -t`
+green. The Vitest suite next door pins the config's SHAPE; this one pins its BEHAVIOUR.
 
 Every subprocess call uses list-form args (no shell), so there is no shell-injection surface.
 """

@@ -1,33 +1,18 @@
 /**
  * Frontend auth/session store — COOKIE-session semantics (Entra ID via the
- * FastAPI control-plane). This is the cookie migration the file's old header
- * anticipated.
+ * FastAPI control-plane). The SPA holds NO tokens: session, refresh, and CSRF
+ * live in cookies the browser attaches automatically (session/refresh
+ * HttpOnly + host-only; csrf readable by JS). Auth state derives from a
+ * ONCE-CACHED `GET /auth/me`, re-fetched only on bootstrap or an explicit
+ * invalidate; a server revoke surfaces on the next 401.
  *
- * The SPA holds NO tokens: the session JWT, refresh token, and CSRF token live in
- * cookies (session/refresh HttpOnly + host-only; csrf readable by JS) that the
- * browser attaches automatically. Auth state derives from a ONCE-CACHED
- * `GET /auth/me` — the "session context" — re-fetched only on bootstrap or an
- * explicit invalidate (after login/logout/refresh). A server-side revoke surfaces
- * on the next refresh/mutation 401.
- *
- * THE TWO BEARER-ERA NAMES ARE NOT A MATCHED PAIR, and this paragraph replaces one that said
- * they were. It described both `getAccessToken` and `refreshAccessToken` as shims kept so
- * "not-yet-migrated Express (Bearer) call sites still compile", with those calls 401ing until
- * each API migrated. There are no Express call sites: that backend was deleted in fde58e8b, and
- * nothing in this package depends on it. And only ONE of the two is a shim:
- *
- *  - `getAccessToken` IS one. It returns null and always will, and it survives for a reason that
- *    has nothing to do with Express — it is the default of `authFetch`'s injectable `getToken`
- *    seam, and its widened return type is what stops every TypeScript caller's dep bag from
- *    narrowing to `() => null`. Its own docblock says so.
- *  - `refreshAccessToken` is LIVE, load-bearing, and the most delicate function in this file:
- *    the cross-tab Web-Locks single-flight silent refresh, called on the `/auth/me` 401 retry in
- *    `fetchMe`, and by `authFetch`. It keeps its Bearer-era NAME and nothing else; two tabs racing the
- *    same refresh cookie would trip the server's reuse-detection and force a full re-auth.
+ * `getAccessToken` and `refreshAccessToken` are NOT a matched pair — see
+ * their own docblocks: one is a permanent shim, the other is LIVE and
+ * load-bearing (cross-tab silent refresh). Both keep Bearer-era names.
  */
 
 // Relative path: the vite dev proxy (and the production edge) route /api/v1/auth/*
-// to the FastAPI control-plane, stripping the /api prefix (KD-8).
+// to the FastAPI control-plane, stripping the /api prefix.
 const AUTH_API = '/api/v1/auth'
 
 /** Mirrors the backend's `ProfileLimits` (`backend/src/api/v1/auth/schemas.py`) —
@@ -39,7 +24,7 @@ export interface ProfileLimits {
 }
 
 /** Mirrors the backend's `ChatKindInfo` (`backend/src/api/v1/auth/schemas.py`) — one entry
- * in the U16/R73 catalogue of what a chat kind IS: its wire value, its display name, and the
+ * in the catalogue of what a chat kind IS: its wire value, its display name, and the
  * one line a citizen reads about what it does. `utils/chatKind.ts` is the only module that
  * reads this array; nothing else should hold a literal chat-kind name or description. */
 export interface ChatKindInfo {
@@ -176,9 +161,9 @@ export function isAuthenticated(): boolean {
 // --- CSRF (non-HttpOnly cookie -> X-CSRF-Token header) -----------------------
 
 // Exported so the first business-route client that enforces double-submit CSRF —
-// the C3 build-session control API (`buildSessionApi.ts`) — reuses this exact
-// cookie read instead of re-implementing it (ADR-0007; ORIG-§5 reuse-don't-reimplement).
-// Additive: `auth.js`'s own `doRefresh`/`logout` still call it unchanged.
+// the build-session control API (`buildSessionApi.ts`) — reuses this exact
+// cookie read instead of re-implementing it.
+// Additive: this module's own `doRefresh`/`logout` still call it unchanged.
 export function getCsrfToken(): string | null {
   try {
     const match = document.cookie.match(/(?:^|;\s*)(?:__Host-)?csrf=([^;]+)/)
@@ -230,14 +215,12 @@ function hardRedirect(url: string): void {
 let alreadyBouncing = false
 
 /**
- * Mid-session suspension teardown. An admin deactivated this user while they were
- * signed in, so the control-plane now answers every authed request with
- * `403 {"detail":"Account suspended"}`. Drop the cached session, record why, and
- * hard-navigate to the login screen's (non-alarming) suspension banner.
- *
- * Idempotent / single-flight: concurrent 403s from several in-flight requests
- * produce exactly one navigation. Lives here rather than in `api.ts` so `authFetch` and the
- * turn-stream reader — which does NOT go through `authFetch` — share one path.
+ * Mid-session suspension teardown: drop the cached session, record why, and
+ * hard-navigate to the login screen's suspension banner — an admin
+ * deactivating this user mid-session makes every authed request 403.
+ * Idempotent/single-flight so concurrent 403s produce exactly one
+ * navigation. Lives here, not api.ts, so `authFetch` and the turn-stream
+ * reader (which bypasses it) share one path.
  */
 export function handleSuspendedSession(): void {
   if (alreadyBouncing) return
@@ -254,7 +237,7 @@ let inflight: Promise<true | null> | null = null
  * Silently refresh the cookie session via POST /auth/refresh. The Web-Locks
  * single-flight is REQUIRED (not an optimization): cookies are shared across
  * tabs, so two tabs racing the same refresh cookie would trip the server's
- * reuse-detection and force a full re-auth (KD-5/U8). Returns truthy on success,
+ * reuse-detection and force a full re-auth. Returns truthy on success,
  * null on failure — NOT a bearer token (the new session is in cookies). The name
  * is retained for the legacy call sites that still invoke it.
  */
@@ -326,7 +309,7 @@ export async function logout(): Promise<boolean> {
 // docblock below, which states the reason that actually still holds.
 
 /**
- * No bearer token exists in the cookie model — always null (KD-10 shim). The
+ * No bearer token exists in the cookie model — always null. The
  * declared return type is widened to `string | null` on purpose: this is the
  * default of `authFetch`'s injectable `getToken` seam, and a bare `null` literal
  * narrows every TypeScript caller's dep bag to `() => null`.

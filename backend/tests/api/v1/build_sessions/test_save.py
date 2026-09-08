@@ -1,23 +1,15 @@
-"""Router-level tests for the two Save endpoints (issue #77): #82 shipped
-`POST /projects/{project_id}/save` and `GET .../save-state` with no cross-user 404, no
-same-user happy path, and the mutating POST absent from `test_csrf.py`'s
-`_MUTATING_POSTS` table.
+"""Router-level tests for the two Save endpoints: `POST /projects/{project_id}/save` and
+`GET .../save-state`.
 
-NOT "zero HTTP-level tests", which is what this docstring claimed until a later review
-checked: `test_control.py`'s build-ordering test already drives `POST .../save` over HTTP
-through the REAL manager mid-build and asserts the 409 plus its message. That makes
-`test_save_while_a_build_is_running_is_409` below the WEAKER of the two — it monkeypatches
-the manager, so it can only prove the router maps `BuildSessionConflictError` to a 409, not
-that the manager ever raises it. Kept because that mapping is this file's subject and the
-router arm deserves a test that fails for one reason; recorded here so nobody reads this
-file as the sole HTTP coverage for `save` and drops the other one as redundant.
+NOT THE SOLE HTTP COVERAGE: `test_control.py`'s build-ordering test already drives
+`POST .../save` mid-build through the REAL manager and asserts the 409, making
+`test_save_while_a_build_is_running_is_409` below the WEAKER sibling (it only proves the
+router's `BuildSessionConflictError` → 409 mapping) — kept so nobody drops it as redundant.
 
-`save_project_snapshot`'s own mechanics (git state, the dirty ladder, session-conflict
-detection) already have deep coverage in `tests/services/build_sessions/test_write_turn_sandbox.py`
-— this file is specifically the router-level gap: does the HTTP layer wire scoping, CSRF,
-and status-code mapping correctly. Following `test_deploy_routes.py`'s own precedent for
-testing these two exact manager methods, both are monkeypatched on the `wire` fixture's
-manager instance rather than re-driving real sandbox mechanics through `FakeSandboxClient`."""
+`save_project_snapshot`'s mechanics have deep coverage in
+`tests/services/build_sessions/test_write_turn_sandbox.py`; this file covers only the
+router-level gap — scoping, CSRF, status-code mapping — so both manager methods are
+monkeypatched on `wire` rather than re-driving real sandbox mechanics."""
 
 from __future__ import annotations
 
@@ -60,12 +52,11 @@ async def test_save_happy_path_returns_the_app_id_and_head_sha(
 ) -> None:
     user, project = await _user_project(db_session, "save1@rvaiglobal.com")
     app_id = uuid.uuid4()
-    # RECORD the arguments, don't just bind them. `owned_project_or_404` authorizes an id and
-    # then DISCARDS its return value; the manager is handed `project_id` again by convention
-    # alone, so nothing otherwise ties the id that was authorized to the id that is acted on.
-    # Since `save_project_snapshot` IS the write, an authorize-A/act-on-B drift would silently
-    # overwrite a different project's saved bundle. Same recording precedent as
-    # `test_deploy_routes.py`'s `FakeService.start`, which this file's docstring already cites.
+    # RECORD the arguments, don't just bind them: `owned_project_or_404` authorizes an id and
+    # DISCARDS the return value, so the manager is handed `project_id` again by convention
+    # alone — nothing else ties the id authorized to the id acted on, and since
+    # `save_project_snapshot` IS the write, an authorize-A/act-on-B drift would silently
+    # overwrite a different project's saved bundle.
     seen: list[tuple[uuid.UUID, uuid.UUID]] = []
 
     async def _fake_save(db, user, project_id, *, sandbox_client) -> SaveOutcome:
@@ -114,10 +105,8 @@ async def test_save_with_no_live_workspace_is_409(
     client: AsyncClient, db_session: AsyncSession, wire
 ) -> None:
     user, project = await _user_project(db_session, "save2@rvaiglobal.com")
-    # The same `seen` machinery the happy path uses, extended to the error path: the ids must
-    # still be the authorized ones on the way to a 409, not just on the way to a 200. Recorded
-    # BEFORE the raise — an append placed after it would be unreachable, and an assertion on a
-    # list nothing can ever append to discriminates nothing.
+    # The same `seen` machinery as the happy path, extended to the error path — recorded
+    # BEFORE the raise, since an append placed after it would be unreachable and prove nothing.
     seen: list[tuple[uuid.UUID, uuid.UUID]] = []
 
     async def _fake_save(db, user, project_id, *, sandbox_client) -> SaveOutcome:
@@ -183,13 +172,13 @@ async def test_save_of_an_unknown_project_is_404(
 async def test_save_of_another_users_project_is_404(
     client: AsyncClient, db_session: AsyncSession, wire
 ) -> None:
-    """Owner-scoped (ADR-0004): saving another user's project is a non-leaking 404, not a
+    """Owner-scoped: saving another user's project is a non-leaking 404, not a
     403 that would confirm the project exists."""
     owner, project = await _user_project(db_session, "save6-owner@rvaiglobal.com")
     intruder = await UserFactory.create(db_session, email="save6-intruder@rvaiglobal.com")
-    # The negative half of the happy path's `seen` assertion: the guard has to short-circuit
-    # BEFORE the write, not merely produce a 404 on the way out. Without this, a route that
-    # saved first and only then checked ownership would still answer 404 and pass.
+    # The negative half of the happy path's `seen` assertion: the guard must short-circuit
+    # BEFORE the write — without this, a route that saved first then checked ownership would
+    # still answer 404 and pass.
     seen: list[uuid.UUID] = []
 
     async def _fake_save(db, user, project_id, *, sandbox_client) -> SaveOutcome:
@@ -221,11 +210,10 @@ async def test_save_state_happy_path_returns_every_field(
 ) -> None:
     user, project = await _user_project(db_session, "save8@rvaiglobal.com")
     app_id = uuid.uuid4()
-    # A FIXED sentinel, never `now()`: `router.py` forwards the stored autosave timestamp, and
-    # the mutant worth killing is `recovery_at=datetime.now(UTC)` — the exact substitution
-    # `manager.py`'s own docstring forbids ("it is the value the caller shows the user — 'your
-    # work from 14:47' — so it must be the write time, never `now`"). Binding this from
-    # `now()` would make that mutant a microsecond-margin race instead of a clean kill.
+    # A FIXED sentinel, never `now()`: the mutant worth killing is `recovery_at=datetime.now(UTC)`
+    # — the exact substitution `manager.py`'s docstring forbids ("it is the value the caller
+    # shows the user... so it must be the write time, never `now`"). Binding this from `now()`
+    # would make that mutant a microsecond-margin race instead of a clean kill.
     recovery_at = datetime(2026, 5, 4, 14, 47, tzinfo=UTC)
     seen: list[tuple[uuid.UUID, uuid.UUID]] = []
 
@@ -249,9 +237,8 @@ async def test_save_state_happy_path_returns_every_field(
     assert body["dirty"] is True
     assert body["containerHead"] == "b" * 40
     assert body["savedHead"] == "c" * 40
-    # VALUE, not presence — dropping the field is already caught by `SaveStateResponse`'s
-    # `None` default, so only a wrong non-null value survives, which is the documented failure.
-    # `fromisoformat` reads both the `+00:00` and `Z` spellings, so this stays
+    # VALUE, not presence — a dropped field is already caught by the `None` default, so only a
+    # wrong non-null value survives. `fromisoformat` reads both `+00:00` and `Z`, staying
     # serialization-agnostic.
     assert datetime.fromisoformat(body["recoveryAt"]) == recovery_at
     assert seen == [(user.id, project.id)]
@@ -260,19 +247,14 @@ async def test_save_state_happy_path_returns_every_field(
 async def test_save_state_passes_an_unknown_dirty_through_as_null(
     client: AsyncClient, db_session: AsyncSession, wire
 ) -> None:
-    """`dirty=None` is UNKNOWN, and it is a DISTINCT answer from False — `SaveState`'s own
-    docstring: "no live container (nothing to compare), or a store we could not read. A UI
-    that renders unknown as clean tells the user their work is safe when nobody checked."
+    """`dirty=None` is UNKNOWN, distinct from False — per `SaveState`'s docstring, rendering
+    unknown as clean tells the user their work is safe when nobody checked. Not hypothetical:
+    `project_save_state` returns `dirty=None` on three separate paths with a sandbox configured.
 
-    Not a hypothetical arm: `project_save_state` returns `dirty=None` on three paths with a
-    sandbox configured — no app yet, `NoLiveSandboxError` from `_attach_for_read` (the
-    ordinary "container isn't running" case), and `container_state` returning `None`.
-
-    Note the asymmetry that makes this worth a test of its own: the DANGEROUS direction is
-    already caught, because hardcoding `dirty=False` fails the happy path above. It is the
-    documented `None`-to-`False` collapse (`dirty=bool(state.dirty)`) that survives — and the
-    sandbox is deliberately left at the `wire` default here, because the no-sandbox test
-    below asserts the manager is never called and so cannot cover a manager-produced `None`."""
+    The DANGEROUS direction is already caught elsewhere (hardcoding `dirty=False` fails the
+    happy path above), so this pins the documented `None`-to-`False` collapse surviving. The
+    sandbox stays at the `wire` default here on purpose: the no-sandbox test below asserts the
+    manager is never called, so it can't cover a manager-produced `None`."""
     user, project = await _user_project(db_session, "save8b@rvaiglobal.com")
     app_id = uuid.uuid4()
     seen: list[tuple[uuid.UUID, uuid.UUID]] = []

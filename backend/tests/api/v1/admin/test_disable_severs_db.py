@@ -1,6 +1,7 @@
-"""U5 — the admin database levers: `disable` severs, `enable` restores, the reveal
-endpoint hands over the DSN, and `hard_delete` salts the earth after committing (ADR-0028).
+"""The admin database levers: `disable` severs, `enable` restores, the reveal
+endpoint hands over the DSN, and `hard_delete` salts the earth after committing.
 
+WHY THIS EXISTS
 Real cluster, real connections, no fakes on the database side. That is not thoroughness
 theatre: after the shared `data_records` plane is retired, `disable`'s sever is the ONLY
 data kill for a deployed app — there is no `X-App-Key` 403 left to fall back on — so the
@@ -161,16 +162,14 @@ async def test_disable_severs_a_live_session_and_refuses_the_next_connection(
 async def test_a_reconnecting_pool_finds_the_door_already_locked(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # The generated app talks to its database through node-postgres'
-    # `new Pool({ max: 4, idleTimeoutMillis: 30_000 })`, which parks idle connections and
-    # transparently opens a replacement the moment one dies. Modelled here with a real
-    # 4-slot pool plus pre-ping (the pool's own liveness check): terminating backends is NOT
-    # a kill on its own, because a pool's whole job is to route around a dropped socket. The
-    # kill is the revoke, and this is what proves the pool cannot self-heal past it.
+    # Modelled on the generated app's node-postgres `new Pool({ max: 4, idleTimeoutMillis:
+    # 30_000 })`: a real 4-slot pool plus pre-ping (the pool's own liveness check), because
+    # terminating backends is NOT a kill on its own — a pool's whole job is to route around a
+    # dropped socket. The kill is the revoke; this proves the pool cannot self-heal past it.
     #
-    # (The narrower race the sever's ORDER exists for — a reconnect landing between the
-    # terminate and the revoke — is unreachable by construction rather than merely unlikely,
-    # and is not what this test times.)
+    # (The narrower race the sever's ORDER exists for — a reconnect landing between terminate
+    # and revoke — is unreachable by construction, not merely unlikely, and is not what this
+    # test times.)
     row, record = await _with_database(db_session, **_approved())
     headers = await _admin(db_session)
     dsn = control_plane_dsn(record)
@@ -242,12 +241,11 @@ async def test_a_kill_switch_that_cannot_reach_the_cluster_is_503_never_500(
     monkeypatch: pytest.MonkeyPatch,
     boom: Exception,
 ) -> None:
-    # `disable` documents a 503 and is, after the X-App-Key plane was retired, the ONLY data
-    # kill for a deployed app. An unreachable cluster raises a bare OSError out of
-    # `engine.connect()` BEFORE the driver wraps it, so catching only SQLAlchemyError turns
-    # the kill switch into an undocumented 500 — the one response an operator is least
-    # likely to retry. The size probe and `reconcile-databases` in the same module already
-    # catch both families; this pins that the levers agree with them.
+    # `disable` documents a 503 and is the ONLY data kill for a deployed app. An unreachable
+    # cluster raises a bare OSError out of `engine.connect()` BEFORE the driver wraps it, so
+    # catching only SQLAlchemyError turns the kill switch into an undocumented 500. The size
+    # probe and `reconcile-databases` in the same module already catch both families; this
+    # pins that the levers agree with them.
     row, _record = await _with_database(db_session, **_approved())
     headers = await _admin(db_session)
     # A plain scalar: the rollback below expires every ORM instance, and touching one
@@ -311,8 +309,8 @@ async def test_disable_for_an_app_with_no_database_is_a_clean_no_op(
     # ★ AND THE ABSENCE IS SAID OUT LOUD, not left to be inferred from a missing row. `disable`
     # is the only data kill there is for a deployed app, so "the database was closed" and "there
     # was no database to close" must not read the same in the log — a missing second row is also
-    # what a half-written transaction looks like. #163 widened this lever to DRAFT and REJECTED
-    # apps, which are the population most likely to have no database at all.
+    # what a half-written transaction looks like. This lever covers DRAFT and REJECTED apps too,
+    # which are the population most likely to have no database at all.
     disabled = await _audit_rows(db_session, "disable")
     assert [event.detail for event in disabled] == [{"databaseSevered": False}]
 
@@ -559,7 +557,7 @@ async def test_a_failing_drop_never_un_deletes_the_registry(
 ) -> None:
     # Post-commit best-effort: by the time the drop runs the commit is durable, so raising
     # would 500 a delete that in fact succeeded. The database becomes a logged orphan for
-    # the reconciler (U7) instead.
+    # the reconciler instead.
     _wire_storage(app)
     row, record = await _with_database(db_session, **_approved())
 

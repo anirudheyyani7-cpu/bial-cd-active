@@ -1,19 +1,13 @@
 /**
- * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT (plan 002, U9) — issue #161.
+ * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT.
  *
- * ═══ THE DEFECT, IN ONE SENTENCE ═══
+ * The defect: the browser navigated before the server's refusal arrived, so someone building in
+ * project A for two minutes could be interrupted by a question about a chat that had already
+ * opened. The backend's ordering was always right; the browser jumped ahead of it.
  *
- * The browser navigated first. A citizen typed into project B, the address changed, the chat
- * mounted, its send hit the server — and only THEN did the refusal arrive, so somebody who had
- * been building in project A for two minutes was interrupted by a question about a chat that had
- * already opened in front of them. The backend's ordering was always right; the browser jumped
- * ahead of it.
- *
- * ═══ WHAT THESE SCENARIOS PIN ═══
- *
- * Rendered through the REAL shell, because every one of them is about the relationship between a
- * composer, a dialog the shell mounts, and an address that must not change. A test that mounted
- * the composer alone could not see any of it — which is exactly how the defect survived.
+ * These scenarios render through the REAL shell — every one is about the relationship between a
+ * composer, a dialog the shell mounts, and an address that must not change — because a composer
+ * mounted alone could not see any of it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
@@ -167,7 +161,7 @@ describe('the question arrives BEFORE anything moves', () => {
 
     const dialog = await screen.findByRole('dialog')
     const text = dialog.textContent ?? ''
-    expect(text).toContain('Visitor Log') // the one being started — issue #161's framing half
+    expect(text).toContain('Visitor Log') // the one being started
     expect(text).toContain('Car pool') // the one in the way
     for (const word of [/container/i, /sandbox/i, /workspace slot/i, /session/i, /409/]) {
       expect(text, String(word)).not.toMatch(word)
@@ -217,11 +211,9 @@ describe('a project with nothing built yet — the first message anybody sends',
   })
 
   it('★ opens the chat anyway — nothing to bring back is not a failed send', async () => {
-    // THE ONBOARDING PATH, AND THE ONE THIS PREFLIGHT BROKE. A citizen creates a project,
-    // describes their app in the rail and presses Send. There is no snapshot, so asking for the
-    // workspace answers 404 — and treating that as a failure left them reading "That message did
-    // not send" with no chat, on every attempt. The container this project needs is provisioned
-    // by the turn itself, once the chat is open.
+    // THE ONBOARDING PATH THIS PREFLIGHT BROKE: a citizen's first-ever send has no snapshot, so
+    // the workspace check answers 404 — treating that as a failure left them reading "That
+    // message did not send" with no chat, on every attempt.
     api.relaunchPreview.mockRejectedValue(nothingToRelaunch())
     render(<Workspace project={NEVER_BUILT} />)
     type('an app to log visitors at the gate')
@@ -236,9 +228,8 @@ describe('a project with nothing built yet — the first message anybody sends',
   })
 
   it('★ still asks the one-workspace question first, even with nothing built', async () => {
-    // Issue #161's own reproduction is a submit in a project that has never been built, so the
-    // 404 mapping must not become a way past the gate: the server refuses a held workspace ABOVE
-    // its snapshot gate, and that refusal still stops the address changing.
+    // The 404-for-no-snapshot mapping must not become a way past this gate: the server refuses a
+    // held workspace ABOVE its snapshot gate, and that refusal must still stop the address.
     api.relaunchPreview.mockRejectedValue(heldBy())
     render(<Workspace project={NEVER_BUILT} />)
     type('an app to log visitors at the gate')
@@ -251,10 +242,10 @@ describe('a project with nothing built yet — the first message anybody sends',
   })
 
   it('★ a project that is gone is reported, not opened — same 404, no code', async () => {
-    // THE ARM IS ON THE CODE, NOT THE STATUS. `owned_project_or_404` answers this endpoint with
-    // an uncoded 404 for a deleted or someone else's project. Matching the status alone opened a
-    // chat onto it, which then died a beat later with no explanation attached to the send that
-    // caused it. Mutation receipt: drop `&& err.code === 'no_saved_build'` from the rail and this
+    // The arm is on the CODE, not the status: `owned_project_or_404` answers this endpoint with
+    // an uncoded 404 for a deleted or someone else's project. Matching status alone opened a chat
+    // onto it, which then died a beat later with no explanation attached to the send.
+    // Mutation receipt: drop `&& err.code === 'no_saved_build'` from the rail and this
     // goes red while the scenario above stays green.
     api.relaunchPreview.mockRejectedValue(projectGone())
     render(<Workspace project={NEVER_BUILT} />)
@@ -376,7 +367,7 @@ describe('transferring', () => {
   })
 
   it('★ narrates the start too, then hands the telling over to the chat itself', async () => {
-    // R9 asks every transition to narrate itself, and the start is the longest of them: the
+    // The rule asks every transition to narrate itself, and the start is the longest of them: the
     // dialog stays up across it saying so, rather than spinning. It stops there on purpose —
     // opening the chat unmounts the surface that publishes this dialog, so the sequence ends
     // where the destination begins narrating itself.
@@ -407,8 +398,8 @@ describe('transferring', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('★ carries the FILES across the hand-over too, not just the words (plan 002, U5)', async () => {
-    // U5's verification is that "a refused send never loses a message, and a hand-over never eats
+  it('★ carries the FILES across the hand-over too, not just the words', async () => {
+    // This test's claim is that "a refused send never loses a message, and a hand-over never eats
     // an attachment". The refused half was pinned; the files were not — and they are the half most
     // easily lost, because they live only as decoded bytes in a composer the hand-over is about to
     // navigate away from. Removing `pendingAttachments` from the navigation's state passed every
@@ -445,7 +436,7 @@ describe('transferring', () => {
     expect(screen.getByTestId('carried-files').textContent).toContain('visitors.csv')
   })
 
-  it('★ a reload part-way through the transfer strands neither a chat nor a message (plan 002, U9)', async () => {
+  it('★ a reload part-way through the transfer strands neither a chat nor a message', async () => {
     // The transfer spans a stop that can run for over a minute, and a citizen can reload in the
     // middle of it. The dialog is in-memory and goes with the tab; what must NOT happen is a chat
     // opening without anybody asking, or the typed message disappearing with the dialog.
@@ -512,22 +503,22 @@ describe('transferring', () => {
 })
 
 /**
- * ★ AND THE SAME QUESTION, REACHED WITHOUT SENDING ANYTHING (`#196`, U13).
+ * ★ AND THE SAME QUESTION, REACHED WITHOUT SENDING ANYTHING.
  *
- * ═══ WHY THIS BLOCK IS HERE AND NOT IN `AppPane.test.tsx` ═══
+ * WHY THIS BLOCK IS HERE AND NOT IN `AppPane.test.tsx`.
  *
- * `#196` is the citizen who does NOT want to send a message: they want their own app open, and
+ * This is the citizen who does NOT want to send a message: they want their own app open, and
  * until now the only thing on the screen that could get it for them was a composer send. This file
  * is the one that mounts the whole of that — the real shell, the real `ProjectWorkspace`, the real
  * rail composer, and a route that records what a navigation carried — so it is the only place the
  * guarantee can be stated as what it actually is: THE ADDRESS DOES NOT MOVE AND THE MESSAGE IS NOT
  * SENT. A pane-level suite has no composer and no router to be wrong about.
  *
- * The trap it is written against is D1's: `resolveReclaim` awaits `retry()`, which on this surface
+ * The trap it is written against: `resolveReclaim` awaits `retry()`, which on this surface
  * is the rail's own "open the chat with what they typed". A take-back routed through that slot
  * would post the citizen's held message as a build instruction — the exact thing the owner forbade.
  */
-describe('★ taking the workspace back, with nothing sent (#196)', () => {
+describe('★ taking the workspace back, with nothing sent', () => {
   const held = {
     state: 'slot_taken' as const, alive: false, previewUrl: null,
     occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,

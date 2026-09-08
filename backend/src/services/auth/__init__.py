@@ -1,4 +1,4 @@
-"""Backend-owned Entra ID authentication (ADR-0007).
+"""Backend-owned Entra ID authentication.
 
 The FastAPI control-plane runs the OpenID Connect Authorization-Code + PKCE flow
 itself (Authlib), validates the Entra token fail-closed against a single

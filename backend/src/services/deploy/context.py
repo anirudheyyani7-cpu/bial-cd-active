@@ -1,25 +1,22 @@
 """Turn an extracted snapshot into the Docker build context the registry builds from.
 
-The workspace this reads was written by an AI the citizen drove, so the tree is UNTRUSTED
-input and the build configuration must not come from it. Four independent layers enforce
-that, and they are listed here because each one closes a different hole:
+WHY THIS EXISTS: the workspace was written by an AI the citizen drove, so the tree is
+UNTRUSTED input and build configuration must never come from it. Four independent layers
+enforce that:
 
-1. **Exclusion, not overwrite.** An agent-authored `Dockerfile` never enters the archive at
-   all. Overwriting instead would make correctness depend on ordering — one refactor that
-   copies assets before walking the tree and the agent's file wins silently.
-2. **Assets come from the backend image**, loaded through `importlib.resources` from a path
-   no sandbox can reach. They are not read from the context and cannot be influenced by it.
-3. **The Dockerfile is named explicitly** in the build request, so a file smuggled at some
-   other path is never selected.
-4. **The Dockerfile itself** runs `npm ci --ignore-scripts` and `npx next build` rather than
-   `npm run build`, because `package.json` is agent-editable and is otherwise an
-   arbitrary-code-execution vector inside the build agent.
+1. **Exclusion, not overwrite** — an agent-authored `Dockerfile` never enters the archive,
+   so correctness never depends on write order.
+2. **Assets load from the backend image** via `importlib.resources`, from a path no sandbox
+   can reach or influence.
+3. **The Dockerfile is named explicitly** in the build request, so a smuggled file at another
+   path is never selected.
+4. **The build runs `npm ci --ignore-scripts` + `npx next build`**, not `npm run build` —
+   `package.json` is agent-editable and otherwise an arbitrary-code-execution vector.
 
-The archive is DETERMINISTIC — sorted entries, zeroed mtimes, normalized ownership and
-modes, and a gzip header with no timestamp. Two consequences: an unchanged tree produces
-byte-identical bytes, so the registry's layer cache turns a no-op redeploy into seconds
-instead of minutes; and the context can be hashed to answer "is this the same code we
-already built?" without a second source of truth.
+The archive is also DETERMINISTIC (sorted entries, zeroed mtimes, normalized ownership/modes,
+timestamp-free gzip header): an unchanged tree produces byte-identical output, so the
+registry cache turns a no-op redeploy into seconds, and the context can be hashed to answer
+"is this the same code we already built?" without a second source of truth.
 """
 
 from __future__ import annotations

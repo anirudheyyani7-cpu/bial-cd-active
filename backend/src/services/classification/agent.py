@@ -1,31 +1,15 @@
-"""The classification review agent (U5, R1-R5) — six verdicts from the saved code alone.
+"""The classification review agent — six verdicts from the saved code alone.
 
 ONE module-level `Agent`, built without a bound model — the Foundry model is passed
-per-run (the chat agent's shape), so importing this module never requires a configured
-Foundry and tests inject a scripted model. Instructions are applied as `instructions`,
-not `system_prompt`, and here they are a STATIC string: byte-identical on every run of
-every app, which is what makes the cache breakpoints a platform-wide hit (`prompts.py`).
+per-run, so importing this module never requires a configured Foundry. Instructions are
+a STATIC string so the cache breakpoints hit platform-wide (`prompts.py`).
+TOOL-CALLING OUTPUT (`ToolOutput`), not provider-native: the latter is selected by
+matching the deployment name string, so a rename would silently downgrade it. EXTENDED
+THINKING MUST STAY OFF — `ensure_thinking_off` RAISES (never `assert`) rather than
+assuming it, because thinking reroutes output onto that fragile native path.
 
-STRUCTURED OUTPUT GOES THROUGH TOOL-CALLING MODE (`ToolOutput`), deliberately.
-Provider-native structured output is selected by matching the deployment name string, so
-a renamed deployment would silently downgrade it with no error — the review would keep
-"working" on a strictly weaker path. Tool-calling is explicit and deployment-agnostic.
-
-EXTENDED THINKING MUST STAY OFF, and the module ENFORCES it rather than assuming it:
-thinking reroutes output handling onto that same fragile provider-native path. Two ways
-it can sneak back on — a thinking config in the settings, or an effort level above
-`high` (`xhigh`/`max` force thinking on) — and `ensure_thinking_off` RAISES on both (a
-typed error, never `assert`: this is a runtime guard per the repo's fail-first rule, and
-it must survive `python -O`).
-
-Tools are the snapshot read toolset over the extracted saved version (R2): no sandbox,
-no write surface, no network. `ReviewDeps` carries the owning user and the workspace and
-NOTHING else — there is no sandbox field to reach, structurally.
-
-The runner (U6) owns invoking this agent: the detached task, the truncation guided
-retry, evidence validation, and storage. This module owns the agent, its settings, and
-the one run entry U6 calls.
-"""
+Tools are read-only over the extracted saved version — no sandbox, no write, no network.
+The runner owns invoking this agent; this module owns the agent and its one run entry."""
 
 from __future__ import annotations
 
@@ -73,7 +57,7 @@ class ReviewDeps:
     """Per-run agent dependencies. `user_id` is the owning citizen (attribution, and
     the user-scope convention every agent deps carries); `workspace` is the extracted
     snapshot the read tools resolve through. DELIBERATELY no sandbox field: the review
-    reads saved code only (R2), and a surface that is not in the deps cannot be
+    reads saved code only, and a surface that is not in the deps cannot be
     reached by any tool."""
 
     user_id: uuid.UUID
@@ -132,7 +116,7 @@ def ensure_thinking_off(settings: AnthropicModelSettings) -> None:
 
 
 def review_model_settings() -> AnthropicModelSettings:
-    """The review's settings block — the harness's shape with U5's own values. Three of
+    """The review's settings block — the harness's shape with its own values. Three of
     these are load-bearing (see `constants.py` for the reasoning each carries): the
     three cache breakpoints at the 1-hour tier, the explicit `low` effort, and the
     explicit `max_tokens`. Guarded on the way out so a drifted constant can never ship
@@ -160,17 +144,14 @@ async def run_review(
     model_settings: AnthropicModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
 ) -> AgentRunResult[ReviewOutput]:
-    """One review run over an extracted snapshot — the entry U6 calls.
+    """One review run over an extracted snapshot — the entry the runner calls.
 
-    `snapshot_root` is the extraction directory (U6 owns extracting and deleting it);
-    the workspace, deps and volatile prompt are built here. `scan_hits` are the
-    credential scan's findings, formatted into the prompt as directed evidence (P8) —
-    location and family, never a value. On the guided truncation retry U6 passes the
-    retained conversation as `message_history` and its constraining nudge as `prompt`,
-    which skips the default prompt assembly. `usage_limits` is the runner's request
-    budget, passed through untouched. A `model_settings` override is guarded exactly
-    like the default block: a thinking-enabling combination raises before any model
-    call."""
+    `snapshot_root` is the extraction directory (runner owns extracting/deleting it).
+    `scan_hits` are the credential scan's findings, formatted as directed evidence —
+    location and family, never a value. On the guided truncation retry the runner passes
+    `message_history` + a constraining `prompt`, skipping default assembly. A
+    `model_settings` override is guarded like the default: a thinking-enabling
+    combination raises before any model call."""
     settings = review_model_settings() if model_settings is None else model_settings
     ensure_thinking_off(settings)
     workspace = ExtractedSnapshotWorkspace(root=snapshot_root)

@@ -1,5 +1,6 @@
-"""The C2-observable test double (U4) — the semantics every later unit is tested against. If the
-fake drifts from C2, every downstream test is testing a fiction."""
+"""The `SandboxClient`-observable test double — the semantics every later unit is tested against.
+If the fake drifts from the real `SandboxClient` contract, every downstream test is testing a
+fiction."""
 
 from __future__ import annotations
 
@@ -44,7 +45,8 @@ async def test_str_replace_non_unique_is_opaque_sandbox_error(old_str: str) -> N
     fake = FakeSandbox(seed_files={"a.tsx": "line line line"})
     with pytest.raises(SandboxError) as exc:
         await fake.files(fake.handle(), FileStrReplace(path="a.tsx", old_str=old_str, new_str="x"))
-    # C2 collapses C1's 400/422 into an opaque error — no HTTP-status attribute leaks through.
+    # The SandboxClient wrapper collapses the underlying HTTP 400/422 into an opaque error — no
+    # HTTP-status attribute leaks through.
     assert not hasattr(exc.value, "status")
     assert not hasattr(exc.value, "status_code")
 
@@ -64,7 +66,7 @@ async def test_nonzero_exit_is_a_normal_result_not_an_exception() -> None:
     fake.queue_commands(ExecResult(stdout="", stderr="error TS2322: boom", exit=2))
     run_command = fake.exec  # alias avoids a literal method-call token
     result = await run_command(fake.handle(), ["npx", "tsc", "--noEmit"])
-    assert result.exit == 2  # a non-zero exit never raises
+    assert result.exit == 2
     assert "TS2322" in result.stderr
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
 
@@ -159,7 +161,8 @@ async def test_fake_implements_the_full_abc_but_an_incomplete_one_cannot_instant
 
 async def test_scripted_model_drives_per_turn_usage_verbatim() -> None:
     # The metering seam de-risk: a scripted write→done sequence, per-turn RequestUsage read back
-    # off CallToolsNode.model_response.usage verbatim (KD-1) — the exact mechanic U6 relies on.
+    # off CallToolsNode.model_response.usage verbatim — the exact mechanic the metering harness
+    # relies on.
     from pydantic_ai.usage import RequestUsage
 
     agent = Agent(deps_type=list, retries=2)

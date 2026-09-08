@@ -1,53 +1,16 @@
-"""The classification review runner (U6): start a review for a version, land exactly one
+"""The classification review runner: start a review for a version, land exactly one
 result, and turn every way it can fail into a state the rest of the system can act on.
+START is synchronous (cap check, claim, detach); RUN is a detached task that never
+raises and outlives the request. A restart still strands the row RUNNING — that is what
+`_aged_out` and the `FAIL_ABANDONED` settle exist to recover, not a case that cannot happen.
 
-Two halves with a hard line between them, the deploy service's shape deliberately.
-
-The START half is synchronous and fast: enforce the three-runs-per-version cap, claim (or
-get back) the app's one review row, and detach the run. `head_sha` is the CALLER'S to
-resolve — U7's routes read it from the snapshot blob's stored metadata (the save-state
-reader's exact move, never an extraction), and U10's drift path hands over the extraction
-it already holds. The service takes the stamp as input and fails closed if the tree it
-extracts turns out to be a different commit; resolving metadata here would put a storage
-read inside a service that otherwise only needs it mid-run, and would give the two
-callers two different ways to disagree with themselves.
-
-The RUN half is a detached task held in a strong-reference set. It NEVER raises, and
-every write opens its own short session from the session factory — it outlives its
-request. It extracts into a throwaway directory of its own (under the process temp root —
-the plan's deferred location question, settled as the one-line choice) and deletes it in
-a `finally`, unconditionally: success, every failure bucket, the wall-clock ceiling, and
-cancellation. A root a CALLER handed over (U10) is never deleted — ownership stays with
-whoever created it — and the run never joins the shared SHA-keyed extraction cache, so
-nothing it removes was ever another consumer's.
-
-THE SCAN RUNS FIRST, then the model (P8): hits go into the prompt as directed evidence —
-location and family, never a value. The review's verdict is the credentials answer,
-including against the scan; a Tier A overrule is recorded as a dispute, and when the
-model never returned at all, a Tier A hit from a COMPLETE sweep stands in as the
-credentials answer on the failed row (the floor), with the other five left unanswered.
-
-TRUNCATION IS CAUGHT AT THE MODEL SEAM, not in the agent loop. `_MeteredModel` wraps
-whatever model the run was given and raises on `finish_reason == "length"` BEFORE the
-response reaches output validation — otherwise a clipped structured output presents as a
-validation failure and the agent's `retries=2` re-runs it at the same cap, twice, for a
-guaranteed second failure. One guided retry follows, in the same conversation minus
-exactly the truncated turn, with a nudge that CONSTRAINS the output; a second truncation
-is review-failed, and no partial verdicts are ever salvaged.
-
-THE SPEND IS METERED BUT IS NOT THE CITIZEN'S TO PAY (ASM14). Two halves, both
-deliberate: the daily token gate is NEVER consulted (a heavy build day must not make an
-app unpublishable), and usage is recorded on the `review` kind, which that gate does not
-read (opening the publish dialog must not silently spend build budget the citizen never
-chose to spend). The spend is still recorded against them — knowing who generates review
-cost is the point. The real bound is `MAX_MODEL_RUNS_PER_VERSION` plus the per-run
-request budget and wall-clock ceiling in `constants.py`.
-
-EVERY TERMINAL RUN WRITES AN AUDIT ROW (P7): the triggering citizen as actor plus their
-email in detail (the actor reference nulls when a user is removed), the version stamp,
-the outcome or failure bucket, and the six verdicts. The store row is one-per-app and
-overwritten, so the audit trail is the only place re-runs can be counted — a run not
-recorded is gone.
+WHY THIS EXISTS
+`head_sha` is always the CALLER's to resolve — this service fails closed on version
+drift rather than trusting a second, possibly stale, read of its own. Review spend is
+metered but deliberately excluded from the citizen's daily token gate (`kind=REVIEW`;
+`enforce_daily_limit` is never called here) — a heavy build day must not block
+publishing, nor must opening the publish dialog spend budget the citizen never chose
+to spend, though the spend is still recorded per-citizen.
 """
 
 from __future__ import annotations
@@ -103,8 +66,8 @@ _log = structlog.get_logger()
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
-# Failure buckets (the plan's taxonomy) plus the drift code. Stable and greppable — U7
-# maps each to its own citizen-facing sentence, and an operator alerts on the string.
+# Failure buckets plus the drift code. Stable and greppable: the routes map each to its
+# own citizen-facing sentence, and an operator alerts on the string.
 FAIL_NO_APP: Final = "no_app_yet"
 """Nothing saved to check yet (`NoAppYet`) — publishing already refuses this state."""
 FAIL_BUNDLE_UNREADABLE: Final = "bundle_unreadable"
@@ -125,16 +88,13 @@ open claims a fresh review for the real version."""
 MAX_MODEL_RUNS_PER_VERSION: Final = 3
 """The attempt cap that makes the token-gate carve-out honest: at most three model runs
 per version, counted on the review row. A fourth start returns the stored failure without
-touching the model, and the app routes to an administrator — where R20 was sending it."""
+touching the model, and the app routes to an administrator either way."""
 
 AUDIT_ACTION: Final = "classification_review"
-"""The P7 audit action. App-scoped (`resource_type="app"`, `resource_id=str(app_id)`)
-with the app id repeated in detail, so the admin app drawer's resource-or-detail match
-finds it either way (ASM7)."""
+"""The audit action. App-scoped (`resource_type="app"`, `resource_id=str(app_id)`) with
+the app id ALSO repeated in detail, so the admin app drawer's resource-or-detail match
+finds the row either way."""
 
-# This runner's own ceiling on a stored failure detail. The redact-then-cap RULE is
-# shared (`core.redaction.redact_and_cap`); only how much diagnostic is worth keeping is
-# a per-pipeline decision, and a review's detail is a bucket plus a sentence, never a log.
 _DETAIL_MAX_CHARS: Final = 2_000
 
 # The guided-retry nudge (user-role). It must DIFFER from the original ask and CONSTRAIN
@@ -147,7 +107,7 @@ _TRUNCATION_NUDGE: Final = (
     "sentence per reason, and only the single strongest evidence location per question."
 )
 
-# Canned floor copy — plain language, no locations, no values (R3 applies to these too).
+# Canned floor copy — plain language, no locations, no values.
 _FLOOR_CREDENTIALS_REASON: Final = (
     "The automatic check could not finish, but a pattern scan found what looks like a "
     "real credential written into the app's saved code."
@@ -158,15 +118,13 @@ _FLOOR_UNANSWERED_REASON: Final = (
 
 
 class _TruncatedAtTheCapError(Exception):
-    """The model stopped at the output token cap (`finish_reason == "length"`). Raised
-    by `_MeteredModel` from INSIDE the model seam, so the truncated response never
-    reaches output validation and the agent's own retries never re-run at the same cap.
+    """The model stopped at the output token cap (`finish_reason == "length"`), raised
+    by `_MeteredModel` INSIDE the model seam so the truncated response never reaches
+    output validation and the agent's own retries never re-run at the same cap.
 
-    Carries the raw provider finish reason (for `failure_detail` — a cap overshoot must
-    stay diagnosable from an endpoint problem) and the conversation UP TO the truncated
-    turn: the messages handed to the model on the truncating request are exactly "the
-    entire conversation minus the trailing partial assistant turn" the guided retry
-    must resend."""
+    Carries the raw finish reason (for diagnosing a cap overshoot vs. an endpoint
+    problem) and the conversation UP TO the truncated turn — exactly what the guided
+    retry must resend."""
 
     def __init__(self, *, raw_finish_reason: str, history: list[ModelMessage]) -> None:
         super().__init__(f"model output truncated (finish_reason={raw_finish_reason!r})")
@@ -220,7 +178,7 @@ class _MeteredModel(WrapperModel):
 
 class _ReviewFailedError(Exception):
     """A run failure with its taxonomy bucket and an operator-grade detail. The citizen
-    prose lives in U7's route (keyed on the code), not here."""
+    prose lives in the route (keyed on the code), not here."""
 
     def __init__(self, code: str, detail: str | None = None) -> None:
         super().__init__(code)
@@ -241,7 +199,7 @@ class _RunScratch:
 class ReviewReadout:
     """The read verb's answer: the stored row plus the one derivation the store cannot
     make — whether a RUNNING row has aged out past the wall-clock ceiling. A restart
-    kills the detached task but leaves the row RUNNING; readers (U7) must render an
+    kills the detached task but leaves the row RUNNING; readers must render an
     aged-out row as the review-abandoned state, never as still-in-flight, and `start`
     un-wedges it on the next request."""
 
@@ -273,8 +231,8 @@ def _aged_out(review: ReviewRecord) -> bool:
 
 
 class ClassificationReviewService:
-    """Owns the in-flight review tasks. One process-wide instance (U7 wires the
-    singleton below into its routes; tests build their own with a scripted model)."""
+    """Owns the in-flight review tasks. One process-wide instance (the routes wire in
+    the singleton below; tests build their own with a scripted model)."""
 
     def __init__(
         self,
@@ -290,8 +248,8 @@ class ClassificationReviewService:
         # A SUPERSEDED RUN IS DELIBERATELY NOT CANCELLED. Keying this by app and cancelling
         # the previous task looks like the obvious tidy-up, but the superseded run still
         # has a job to do: it writes its OWN audit row marked `superseded` on the way out,
-        # and P7 counts RUNS, not rows — the store keeps one row per app and overwrites it,
-        # so that audit trail is the only place a re-run is ever recorded. Cancelling
+        # and the trail counts RUNS, not rows — the store keeps one row per app and
+        # overwrites it, so that trail is the only place a re-run is recorded. Cancelling
         # trades a recorded run for a silent one. Its WRITE is already harmless: the
         # store's compare-and-swap settles only a run's own claim (id + running + head_sha
         # + attempt), and since `_bounded` every phase is inside the wall-clock ceiling, so
@@ -310,10 +268,10 @@ class ClassificationReviewService:
         extracted: ExtractedSnapshot | None = None,
     ) -> ReviewRecord:
         """Ensure a review exists for this app at `head_sha` and return its row: the
-        stored answer when the version is unchanged (R6), the stored failure when the
+        stored answer when the version is unchanged, the stored failure when the
         attempt cap is spent, or a fresh RUNNING row with the run detached.
 
-        `extracted` is for U10's drift path only — a tree the CALLER extracted and
+        `extracted` is for the drift path only — a tree the CALLER extracted and
         still owns; the run uses it and never deletes it. Every other caller leaves it
         None and the run extracts (and unconditionally removes) its own copy."""
         stored = await store.get_for_app(db, app_id=app_id)
@@ -348,7 +306,7 @@ class ClassificationReviewService:
             ):
                 # The fourth claim: the cap is the review's real spend bound. Return
                 # the stored failure WITHOUT claiming or touching the model — the app
-                # routes to an administrator, which is where R20 was sending it anyway.
+                # routes to an administrator either way.
                 return stored
 
         outcome = await store.claim(db, app_id=app_id, user_id=user_id, head_sha=head_sha)
@@ -405,18 +363,14 @@ class ClassificationReviewService:
             )
 
     async def _settle(self, write: Coroutine[Any, Any, None]) -> None:
-        """The terminal write, guarded so `_run`'s "NEVER raises" is true on EVERY exit.
+        """The terminal write, guarded so `_run`'s "NEVER raises" is true on every exit.
 
-        Both settles open their own session and commit; a transient Postgres error there
-        — dropped connection, statement timeout, deadlock — used to raise straight out of
-        the detached task on the SUCCESS path, which nothing awaits. The exception went
-        nowhere, the review had actually succeeded, and the row simply never learned it:
-        the citizen sat out the whole ceiling and was told the review was unavailable,
-        with the model spend already paid. Swallowing here is the lesser harm — the row
-        ages out and `start` re-claims it — but it is logged loudly, because a settle that
-        cannot write is a database problem, not a review outcome.
-
-        `CancelledError` is deliberately NOT caught: shutdown must stay propagating."""
+        A transient Postgres error here (dropped connection, timeout, deadlock) used to
+        escape the detached task on the SUCCESS path, which nothing awaits: the review
+        had actually succeeded but the row never learned it, so the citizen sat out the
+        ceiling and was told it failed — with the spend already paid. Swallowing is the
+        lesser harm (the row ages out and `start` re-claims it) but is logged loudly.
+        `CancelledError` is NOT caught: shutdown must keep propagating."""
         try:
             await write
         except asyncio.CancelledError:
@@ -431,16 +385,14 @@ class ClassificationReviewService:
         extracted: ExtractedSnapshot | None,
         scratch: _RunScratch,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Extraction ownership, and nothing else. A caller-owned tree (U10) is used and
+        """Extraction ownership, and nothing else. A caller-owned tree is used and
         NEVER deleted; otherwise the run extracts into a throwaway root of its own and
         removes it in the `finally` — unconditionally: success, every failure bucket,
         the wall-clock ceiling, and cancellation."""
         if extracted is not None:
             return await self._examine(review=review, extracted=extracted, scratch=scratch)
-        # The run's throwaway extraction root, under the process temp root (the plan's
-        # deferred location question, settled as this one line). Never the shared
-        # SHA-keyed cache: verdicts live in a row, so reuse buys nothing, and a private
-        # root can never delete a directory another request is mid-read on.
+        # Never the shared SHA-keyed cache: verdicts live in a row, so reuse buys nothing,
+        # and a private root can never delete a directory another request is mid-read on.
         own_root = await asyncio.to_thread(_make_throwaway_root)
         try:
             extracted = await self._bounded(
@@ -471,7 +423,7 @@ class ClassificationReviewService:
                 f"claimed {review.head_sha} but extracted {extracted.head_sha}",
             )
 
-        # The scan FIRST (P8): model-free, fast, and its hits become the prompt's
+        # The scan FIRST: model-free, fast, and its hits become the prompt's
         # directed evidence. From here on the Tier A floor is armed via `scratch`.
         sweep = await self._bounded(
             review, scan_snapshot(extracted.root), phase="the credential scan"
@@ -518,11 +470,10 @@ class ClassificationReviewService:
 
         The ceiling is measured from the row's `started_at` and every phase is charged
         against it, but only the model call was ever BOUNDED by it. Extraction pulls the
-        saved bundle out of object storage and the sweep walks the whole tree; a hung
-        storage read therefore ran past the ceiling that was supposed to end it, with the
-        citizen watching a spinner the row had already given up on. Same shape as the 60s
-        watchdog that guarded only `reader.read()` and left the request phase unbounded
-        (issue #137) — so the guard goes where the waiting actually happens."""
+        saved bundle out of object storage and the sweep walks the whole tree, so a hung
+        storage read ran past the ceiling that was supposed to end it, with the citizen
+        watching a spinner the row had already given up on. The bound belongs on every
+        phase that waits, not only the last one."""
         remaining = _seconds_left(review)
         if remaining <= 0:
             raise _ReviewFailedError(
@@ -659,9 +610,9 @@ class ClassificationReviewService:
         failure: _ReviewFailedError,
         scratch: _RunScratch,
     ) -> None:
-        # P8's second obligation: the model never returned, but a COMPLETE sweep with a
-        # Tier A hit is strong enough to stand in as the credentials answer. The row is
-        # still FAILED (it still routes, R20) — the verdicts just carry the floor.
+        # The model never returned, but a COMPLETE sweep with a Tier A hit is strong
+        # enough to stand in as the credentials answer. The row is still FAILED (it still
+        # routes) — the verdicts just carry the floor.
         floor = _floor_record(scratch.sweep)
         verdicts, evidence = floor if floor is not None else (None, None)
         async with self._session_factory() as db:
@@ -700,8 +651,8 @@ class ClassificationReviewService:
         scratch: _RunScratch,
         superseded: bool,
     ) -> None:
-        """The per-run records: the citizen's spend (raw, `review` kind) and the P7
-        audit row. Best-effort by design — the review row is the record of truth, and a
+        """The per-run records: the citizen's spend (raw, `review` kind) and the audit
+        row. Best-effort by design — the review row is the record of truth, and a
         bookkeeping write that fails must not turn a settled review into a crash."""
         try:
             metered = scratch.metered
@@ -747,7 +698,7 @@ class ClassificationReviewService:
         verdict_summary: dict[str, str] | None,
         superseded: bool,
     ) -> None:
-        """One P7 row in the caller's transaction (the caller commits). App-scoped, and
+        """One audit row in the caller's transaction (the caller commits). App-scoped, and
         the actor's email rides in detail because the actor REFERENCE nulls when a user
         is removed — the trail must keep saying who triggered the run."""
         email = await db.scalar(sa.select(User.email).where(User.id == review.user_id))
@@ -800,9 +751,9 @@ def _usage_columns(scratch: _RunScratch) -> dict[str, int]:
 
 
 def _cites_a_real_location(root: Path, rel_path: str) -> bool:
-    """R4's machine check: the cited path must resolve to a real FILE inside the
-    extracted tree. Resolution-jailed like the read tools — a traversal or an absolute
-    path is simply not evidence."""
+    """The machine check behind a cited location: the path must resolve to a real FILE
+    inside the extracted tree. Resolution-jailed like the read tools — a traversal or an
+    absolute path is simply not evidence."""
     try:
         resolved = (root / rel_path).resolve()
         root_resolved = root.resolve()
@@ -816,20 +767,14 @@ def _cites_a_real_location(root: Path, rel_path: str) -> bool:
 def _build_record(
     output: ReviewOutput, *, root: Path, sweep: CredentialSweep
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The completed output → the two stored documents.
-
-    `verdicts` is the citizen/administrator-safe half: per-question verdict, REDACTED
-    reason, scan agreement, and the downgrade marker — plus a compact `scan` block
-    (booleans only, no locations) so U7/U9 can read the Tier A dispute and an
-    incomplete sweep straight off the row. `evidence` is the internal half (R4): the
-    cited locations with their validity, the scan's located hits, and the downgraded
-    keys — stored for machine checking, never rendered to a person (OD-B).
+    """The completed output → the two stored documents: `verdicts` (citizen/admin-safe
+    — per-question verdict, REDACTED reason, scan agreement, downgrade marker, plus a
+    booleans-only `scan` summary) and `evidence` (internal — cited locations, the
+    scan's located hits, downgraded keys; never rendered to a person).
 
     Two rules run BEFORE anything is written: a Yes with no VALID cited location is
-    downgraded to unanswered (R4/R5 — the question goes to the citizen, a flag is never
-    silently cleared), and every reason passes through the shared redactor — the
-    deterministic backstop behind the prompt's plain-language instruction, since this
-    text reaches both the citizen and the administrator."""
+    downgraded to unanswered, never silently cleared; every reason passes the shared
+    redactor, the deterministic backstop behind the prompt's own plain-language ask."""
     tier_a = any(located.hit.tier is Tier.A for located in sweep.hits)
     tier_b = any(located.hit.tier is Tier.B for located in sweep.hits)
 
@@ -850,14 +795,14 @@ def _build_record(
         verdict = question.verdict
         was_downgraded = False
         if verdict is Verdict.YES and not any(ref["valid"] for ref in refs):
-            # R4: a Yes whose every cited location does not exist is not evidence. It
-            # becomes exactly the state R5 defines — unanswered, handed to the citizen
-            # — and the downgrade is recorded, never silently absorbed.
+            # A Yes whose every cited location does not exist is not evidence: it becomes
+            # unanswered, handed to the citizen, and the downgrade is recorded rather than
+            # silently absorbed.
             verdict = Verdict.UNANSWERED
             was_downgraded = True
             downgraded.append(question.key)
         if question.key == "credentials_secrets" and tier_a and question.verdict is Verdict.NO:
-            # The model was SHOWN a Tier A hit and said No. Its No is the verdict (P8)
+            # The model was SHOWN a Tier A hit and said No. Its No is the verdict
             # — but an overrule nobody can see is the same as having no scan.
             tier_a_dispute = True
         questions[question.key] = {
@@ -892,7 +837,7 @@ def _floor_record(sweep: CredentialSweep | None) -> tuple[dict[str, Any], dict[s
     It stands only when the sweep RAN, is COMPLETE, and holds a Tier A hit — an
     incomplete sweep saw a prefix of the app and must not be promoted to an answer,
     and a Tier B lead was never strong enough to answer on its own. `source:
-    "scan_floor"` is the marker U7/U9 read as "the Tier A floor stands" (the row's
+    "scan_floor"` is the marker a reader takes as "the Tier A floor stands" (the row's
     status is still FAILED, so the app still routes)."""
     if sweep is None or sweep.incomplete:
         return None
@@ -944,7 +889,7 @@ def _scan_hit_refs(sweep: CredentialSweep) -> list[dict[str, Any]]:
 
 
 def _verdict_summary(verdicts: dict[str, Any]) -> dict[str, str]:
-    """The six verdict strings alone — what the P7 audit row carries. Reasons and
+    """The six verdict strings alone — what the audit row carries. Reasons and
     locations stay out of the trail; the row is about WHO ran WHAT and what came back."""
     questions: dict[str, Any] = verdicts["questions"]
     return {key: str(entry["verdict"]) for key, entry in questions.items()}

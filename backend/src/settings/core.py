@@ -1,6 +1,7 @@
 """What EVERY process needs, and the one env-source config they all share.
 
-Split out of `src/config.py` by U23 (ADR-0029 §9). The old single `Settings` carried every field
+WHY THIS EXISTS
+Split out of `src/config.py`. The old single `Settings` carried every field
 every subsystem might need, so a worker importing it had to satisfy the union of everything —
 and the natural operator response to that is to narrow `ENVIRONMENT=development` to dodge the
 production gates. That is the most dangerous misconfiguration this platform has: with object
@@ -34,7 +35,7 @@ from src.services.sandbox.base import base_path_for
 # The single env-source contract, shared verbatim by every profile.
 #
 # `SettingsConfigDict` rather than a bare dict literal ON PURPOSE: it is a TypedDict, so all four
-# type gates (ADR-0003) catch a misspelled config key that a plain dict would silently swallow.
+# type gates catch a misspelled config key that a plain dict would silently swallow.
 #
 # Declared here and INHERITED by each role manifest, which is safe only because every manifest has
 # exactly ONE base. pydantic merges `model_config` along the MRO with a plain left-to-right
@@ -68,7 +69,7 @@ class CoreSettings(BaseSettings):
 
     Required settings carry NO default, so pydantic-settings raises at construction when they are
     missing — the process fails at startup in every environment rather than booting in dev and
-    exploding in prod (`.claude/rules/fail-first-python.md`). `ENVIRONMENT` is a closed `Literal`
+    exploding in prod. `ENVIRONMENT` is a closed `Literal`
     for the same reason: a default would silently disable every `is_production` gate.
     """
 
@@ -82,7 +83,7 @@ class CoreSettings(BaseSettings):
     DATABASE_URL: SecretStr
 
     # How DATABASE_URL authenticates. "password" (default) = the password embedded in the DSN
-    # (local Docker Postgres, tests, and — per ADR-0027 as amended — the deployment too).
+    # (local Docker Postgres, tests, and the deployment too).
     # "entra" = Azure Flexible Server with Microsoft Entra: no static password, a short-lived
     # token fetched per new connection via managed identity (db/base.py::attach_entra_token).
     # The default is correct everywhere it is used, so it stays a plain knob with no prod gate.
@@ -160,14 +161,10 @@ class CoreSettings(BaseSettings):
     def app_url(self, app_name: str) -> str:
         """The browser-facing address of the app whose container is called `app_name`.
 
-        `app_name` is `sbx-`/`pub-` plus 28 hex — the container app's own name — which is what
-        makes this a string composition rather than a lookup, and is why the router needs no
-        registry.
+        `app_name` (`sbx-`/`pub-` + 28 hex, the container app's own name) makes this a string
+        composition, not a lookup — no registry needed.
 
-        NO TRAILING SLASH, and this is measured rather than chosen. Against a real Next 16 dev
-        server, `/<base>/` answers 308 and redirects to `/<base>`; only the unslashed form
-        answers 200. A slash here would put a redirect in front of every framed preview and
-        every published link somebody shares — the opposite of what an earlier draft of this
-        docstring claimed it was avoiding.
-        """
+        NO TRAILING SLASH, measured not chosen: against a real Next 16 dev server, `/<base>/`
+        redirects (308) to `/<base>`, only the unslashed form answers 200. A slash here would
+        put a redirect in front of every framed preview and published link."""
         return f"{self.APPS_BASE_URL}{base_path_for(app_name)}"

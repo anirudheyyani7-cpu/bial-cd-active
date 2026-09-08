@@ -1,4 +1,4 @@
-"""Writing the counters down (U25, R32).
+"""Writing the counters down.
 
 ONE FUNCTION, AND IT NEVER RAISES. Every call site is on a path that is doing something else —
 finishing a turn, refusing a claim, restoring a workspace — and a counter that can fail the thing
@@ -54,7 +54,7 @@ async def count(
     except Exception:  # noqa: BLE001 - see the module docstring: a counter must never raise
         # BROAD ON PURPOSE, and it is the one place in this codebase where that is right. The
         # narrow alternative is a list of database and driver exceptions that has to stay
-        # complete; get it wrong once and a counter takes down a turn. `.claude/rules/fail-first`
-        # forbids swallowing an error the caller could act on — the caller here cannot act on
-        # this one, and the log line is what an operator acts on instead.
+        # complete; get it wrong once and a counter takes down a turn. The general rule against
+        # swallowing an error the caller could act on doesn't apply here — the caller cannot act
+        # on this one, and the log line is what an operator acts on instead.
         _log.warning("harness_counter_not_recorded", counter=name, exc_info=True)

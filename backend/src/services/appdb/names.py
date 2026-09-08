@@ -1,24 +1,15 @@
 """Deterministic per-project database/role names, their fail-closed inverse parser,
 and the ONE helper allowed to interpolate a name into DDL.
 
-Names are derived from the project UUID and nothing else, so provisioning is idempotent
-by re-derivation (a retry computes the same name; a duplicate-object SQLSTATE is then the
-idempotency signal) and teardown handles are re-derivable with no schema baggage:
+Names derive from the project UUID alone, so provisioning is idempotent by
+re-derivation (retry computes the same name; a duplicate-object SQLSTATE is the
+idempotency signal), and teardown needs no stored schema. The FULL 32-char hex is
+carried in `bialapp_<hex>`/`bialrole_<hex>` — under PostgreSQL's 63-char limit, not
+truncated — so the reconciler's diff stays an exact registry-existence check.
 
-    database:  bialapp_<project_id.hex>    #  8 + 32 = 40 chars (PG limit is 63)
-    role:      bialrole_<project_id.hex>   #  9 + 32 = 41 chars
-
-The FULL uuid hex (32 lowercase chars, no dashes) is carried, not a truncation, so the
-orphan reconciler's diff is an exact registry-existence check rather than a fuzzy prefix
-scan — and the prefix + full-uuid anchor is what stops the reconciler from ever
-mis-attributing an unrelated database on a shared dev server.
-
-Identifiers CANNOT be bound as query parameters, so `quote_identifier` is the single
-sanctioned interpolation seam (`.claude/rules/security.md`): it validates against a closed
-character class BEFORE quoting, and every DDL statement in this package builds its
-identifiers through it. Same posture for the role password via `quote_password_literal` —
-`CREATE ROLE ... PASSWORD` takes a literal, never a bind parameter.
-"""
+Identifiers cannot be bound as query parameters, so `quote_identifier` is the single
+sanctioned interpolation seam, validating a closed character class before quoting;
+`quote_password_literal` holds the same posture for the role password."""
 
 from __future__ import annotations
 
@@ -44,8 +35,7 @@ _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 class UnsafeIdentifierError(ValueError):
     """A name or password failed its character-class check and must never reach DDL.
 
-    Raised, not asserted: `python -O` strips `assert`, and this is a SQL-injection guard
-    (`.claude/rules/fail-first-python.md`).
+    Raised, not asserted: `python -O` strips `assert`, and this is a SQL-injection guard.
     """
 
 
@@ -63,14 +53,11 @@ def project_id_from_database_name(name: str) -> uuid.UUID | None:
     """The owning project id, or `None` when `name` is not one of ours.
 
     FAIL-CLOSED: anything that does not parse exactly — wrong prefix, wrong length,
-    non-hex tail, a uuid the constructor rejects — is reported as unowned/not-actionable
-    rather than guessed at. The reconciler (U7) turns `None` into "leave it alone", which
-    is what protects the unrelated databases sharing a dev server. Mirrors
-    `_owned_by_app_row` in `services/storage/reconcile.py`.
-
-    `None` here is a legitimately-absent result ("this name is not a project database"),
-    not an error channel.
-    """
+    non-hex tail, a rejected uuid — is reported as unowned/not-actionable rather than
+    guessed at. The reconciler turns `None` into "leave it alone", protecting unrelated
+    databases sharing a dev server (mirrors `_owned_by_app_row` in
+    `services/storage/reconcile.py`). `None` is a legitimate absence, not an error
+    channel."""
     return _project_id_after(name, DATABASE_PREFIX)
 
 

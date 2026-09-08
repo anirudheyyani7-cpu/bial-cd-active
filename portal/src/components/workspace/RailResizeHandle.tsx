@@ -1,27 +1,19 @@
 /**
- * THE BOUNDARY BETWEEN THE RAIL AND THE APP (plan 002, U7).
+ * THE BOUNDARY BETWEEN THE RAIL AND THE APP.
  *
- * ═══ WHY THIS IS HAND-BUILT, SAID AT THE POINT IT HAPPENS ═══
+ * WHY THIS EXISTS: the board names `react-resizable-panels`, but the plan overrules it for
+ * reasons specific to this shell — a panel group takes its direction as a VALUE, not a class,
+ * and applies sizes inline, while the shell's stacking crossing is a responsive class on one
+ * container (so no measured breakpoint or resize observer exists, and crossing the threshold
+ * is a layout change, not a remount, by construction); and a plan chat has no pane, so a
+ * conditionally rendered second panel would remount the group's children — including the
+ * iframe holding the citizen's running app — on every move between a plan and a build chat.
+ * What the library would give for free (keyboard resizing, the right ARIA) is supplied here
+ * instead: a `separator` with an orientation, a value, its bounds, and arrow keys.
  *
- * The board names `react-resizable-panels` and the plan overrules it, for reasons that are about
- * this shell rather than about that library:
- *
- *   · A PANEL GROUP TAKES ITS DIRECTION AS A VALUE, not as a class, and applies sizes inline. The
- *     shell's stacking crossing is a responsive class on one container — chosen precisely so that
- *     no measured breakpoint and no resize observer exists, and so that "crossing the threshold is
- *     a layout change, not a remount" holds by construction rather than by a test.
- *   · A PLAN CHAT HAS NO PANE. A conditionally rendered second panel would remount the group's
- *     children on every move between a plan chat and a build chat — and one of those children is
- *     the iframe holding the citizen's running app.
- *
- * What the library would have given for free is keyboard resizing and the right ARIA, so both are
- * supplied here rather than skipped: a `separator` with an orientation, a value, its bounds, and
- * arrow keys that move it.
- *
- * ═══ WHAT IT DRIVES ═══
- *
- * One custom property on the rail element, consumed only above the stacking threshold. Nothing
- * here measures anything: the pointer's own `clientX` is the width, clamped to the board's stops.
+ * WHAT IT DRIVES: one custom property on the rail element, consumed only above the stacking
+ * threshold. Nothing here measures anything — the pointer's own `clientX` is the width,
+ * clamped to the board's stops.
  */
 import { useCallback, useRef, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from 'react'
 import { GripVertical } from 'lucide-react'
@@ -46,18 +38,12 @@ export default function RailResizeHandle({ width, onResize, onCommit, controls }
   latest.current = width
 
   /**
-   * THE GESTURE IN FLIGHT, AND WHETHER IT EVER MOVED — the difference between a drag and a click.
-   *
-   * A remembered width replaces BOTH opening widths (see `railWidth.ts`), so committing on every
-   * `pointerup` meant one stray click on the 9px divider inside a chat pinned every project screen
-   * at the chat's 520px, without the citizen ever having dragged anything. A gesture that produced
-   * no movement expressed no preference, and writing one is inventing an answer.
-   *
-   * It is also what makes the commit happen ONCE. Three events land in `end` — `pointerup`,
-   * `pointercancel`, `lostpointercapture` — and releasing capture inside `end` queues a
-   * `lostpointercapture` that re-enters it. Clearing the gesture first makes the echo a no-op,
-   * while a capture genuinely lost mid-drag still arrives with the gesture intact and still
-   * commits, which is the case the release below cannot cover.
+   * THE GESTURE IN FLIGHT, and whether it moved — a drag vs. a click. Committing on every
+   * `pointerup` pinned a screen at 520px on one stray divider click, nothing dragged: no
+   * movement, no preference. Also fires the commit ONCE — `end` gets three events
+   * (`pointerup`/`pointercancel`/`lostpointercapture`), and releasing capture inside it queues a
+   * re-entrant `lostpointercapture`; clearing the gesture first makes that echo a no-op, while a
+   * capture genuinely lost mid-drag still commits.
    */
   const gesture = useRef<{ moved: boolean } | null>(null)
 

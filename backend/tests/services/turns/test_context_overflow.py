@@ -1,9 +1,9 @@
-"""U26 / R9b — the one context overflow no pre-flight can catch, said in the platform's words.
+"""The one context overflow no pre-flight can catch, said in the platform's words.
 
-WHAT THIS IS NOT. It is not a leak fix. `engine._run_turn` has always ended a broken turn with a
+WHY THIS EXISTS. This is not a leak fix. `engine._run_turn` has always ended a broken turn with a
 broad `except Exception` that says "the assistant hit a problem", so the citizen never saw the
-provider's own sentence — the origin document (#194) assumed otherwise. What was wrong is that
-the sentence was USELESS here: the assistant is fine, the chat is full, and the thing to do is
+provider's own sentence — the work was scoped as though they did. What was wrong is that the
+sentence was USELESS here: the assistant is fine, the chat is full, and the thing to do is
 start a new one. So this is a SPECIFIC match placed ahead of that broad handler, and the two
 risks it carries are both about placement rather than about wording.
 
@@ -57,7 +57,7 @@ from tests.fakes import FakeSandboxClient
 _CTX = PromptContext(user_name="Ada", project_name="Visitors", project_description=None)
 
 # The provider's real refusal, copied from the probe run rather than paraphrased. The numbers are
-# incidental — nothing reads them, which is the point of R9b being error handling rather than a
+# incidental — nothing reads them, which is the point of this being error handling rather than a
 # second estimate — but they are kept so the fixture is recognisably the thing that was measured.
 OVERFLOW_BODY: dict[str, Any] = {
     "type": "error",
@@ -176,14 +176,14 @@ def _terminal(state) -> TurnEndedFrame:
     return frames[-1]
 
 
-# --- AE3a: the refusal a citizen can act on -------------------------------------------------
+# --- the refusal a citizen can act on -------------------------------------------------------
 
 
 async def test_a_provider_context_refusal_reaches_the_citizen_as_the_chat_being_full(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """★ AE3a. The overflow that gets past the admission check is answered with the guardrail's
-    own sentence, not with "the assistant hit a problem".
+    """★ The overflow that gets past the admission check is answered with the guardrail's own
+    sentence, not with "the assistant hit a problem".
 
     THE SAME SENTENCE AS THE 413, DELIBERATELY. `turns.start_turn` refuses an already-over-full
     conversation with `CHAT_TOO_LONG_TEXT`; this is the identical condition arriving a moment
@@ -210,7 +210,7 @@ async def test_a_provider_context_refusal_reaches_the_citizen_as_the_chat_being_
 async def test_the_sentence_names_no_number_and_no_provider(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """R9b is error handling, not estimation. The provider's message carries two token counts
+    """This is error handling, not estimation. The provider's message carries two token counts
     and a request id, and not one character of it may reach the citizen — this is the assertion
     that catches an "improvement" that interpolates the real figures for helpfulness."""
     _conv_id, state = await _run_until_settled(

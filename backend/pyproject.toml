@@ -31,14 +31,12 @@ dependencies = [
 ]
 
 [dependency-groups]
-# PEP 735 groups (ADR-0002), four tiers following the sibling `badger` repo:
+# PEP 735 groups, four tiers following the sibling `badger` repo:
 #   [project] dependencies = shared runtime, incl. `taskiq` — the task decorators and
 #                            `src/broker.py` are importable by ANY role
 #   api    = runtime web deps
 #   worker = the CONCRETE broker, needed only where it connects
 #   dev    = tooling + tests
-# ADR-0011 flipped Deferred -> Accepted on 2026-08-11 when sandbox reclamation (ADR-0029)
-# met its written flip condition; this comment used to say "no `worker` group this phase".
 api = [
     "fastapi[standard]>=0.141.1",
     "mammoth>=1.12.1",
@@ -91,7 +89,7 @@ python-version = "3.14"
 [tool.ty.terminal]
 error-on-warning = true
 
-# Four gates, by design (ADR-0003): ty is the fast everyday/IDE checker; mypy
+# Four gates, by design: ty is the fast everyday/IDE checker; mypy
 # --strict is the completeness gate (full annotations, no implicit Any / bare
 # generics); pyright (pyrightconfig.json) is the code-quality gate that catches
 # attribute-access issues through multi-inheritance and untyped library
@@ -119,7 +117,7 @@ module = ["asyncpg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# authlib ships no py.typed marker (KD-2). It's the OIDC client for the Entra
+# authlib ships no py.typed marker. It's the OIDC client for the Entra
 # Authorization-Code + PKCE flow; treat as untyped so the direct imports in
 # services/auth/oidc.py don't fail mypy --strict. ty / pyright need no such
 # accommodation, and joserfc (the session-JWT + JOSE stack) DOES ship py.typed.
@@ -127,7 +125,7 @@ module = ["authlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# The office-extraction stack (U11) ships no py.typed / stubs: mammoth (docx→html),
+# The office-extraction stack ships no py.typed / stubs: mammoth (docx→html),
 # markdownify (html→markdown), and openpyxl (xlsx). Treat as untyped so the direct
 # imports in services/extract/office.py don't fail mypy --strict.
 module = ["mammoth.*", "markdownify.*", "openpyxl.*"]

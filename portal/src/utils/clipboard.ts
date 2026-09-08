@@ -1,10 +1,9 @@
 /**
- * COPYING TEXT TO THE SYSTEM CLIPBOARD — the portal's only clipboard route (plan 001, U14).
+ * COPYING TEXT TO THE SYSTEM CLIPBOARD — the portal's only clipboard route.
  *
- * ═══ WHY A MODULE FOR ONE CALL ═══
- *
+ * WHY THIS EXISTS
  * There was no clipboard code anywhere in this tree, so the first surface to need one
- * (R34, the published app's address) would otherwise have written `navigator.clipboard
+ * (the published app's address) would otherwise have written `navigator.clipboard
  * .writeText(url)` inline — and inline is exactly where the refusal path gets skipped.
  *
  * THE REFUSAL PATH IS THE WHOLE REASON THIS EXISTS. `navigator.clipboard` is a
@@ -14,8 +13,8 @@
  * browser denies the permission or the document is not focused. Three shapes, one of which
  * is not a rejection at all — a caller that only wrote `.catch()` would let the first one
  * escape as an unhandled error, and a caller that wrote neither would fail in total
- * silence, which is the defect R34 is about (`.claude/rules/fail-first.md`: no silent
- * failure).
+ * silence — and a failure that reaches a citizen as silence is the one outcome this module
+ * exists to prevent.
  *
  * So the three collapse into ONE typed error the caller must handle, and the caller is
  * then obliged to say something a citizen can act on. This module deliberately does NOT
@@ -31,7 +30,7 @@
  * missing API than about a denied permission: both mean "the text is not on their
  * clipboard", and the remedy offered to the citizen is the same either way. The original
  * failure rides on `cause` for anyone debugging, and is never shown to a citizen —
- * `.claude/rules/security.md` (internal errors do not reach the frontend's own copy).
+ * internal errors do not reach the frontend's own copy.
  */
 export class ClipboardRefused extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -44,8 +43,8 @@ export class ClipboardRefused extends Error {
  * Put `text` on the system clipboard, or throw `ClipboardRefused`.
  *
  * NOTHING IS RETURNED, and no boolean either: a boolean is a return value you can ignore
- * by accident, and this is precisely the call whose failure must not be ignorable
- * (`.claude/rules/fail-first.md` — never return a value to signal an error).
+ * by accident, and this is precisely the call whose failure must not be ignorable —
+ * never return a value to signal an error.
  */
 export async function copyToClipboard(text: string): Promise<void> {
   // ANNOTATED `| undefined` DELIBERATELY. The DOM lib types `navigator.clipboard` as a

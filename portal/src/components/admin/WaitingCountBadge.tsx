@@ -1,21 +1,14 @@
 /**
- * The waiting-count badge (U13/P1) — how many apps sit in the review queue.
+ * The waiting-count badge — how many apps sit in the review queue. It exists as ONE component,
+ * not two spans, because it appears in two places (the admin nav entry and the panel's Pending
+ * tab) which must never disagree about the number or how it's announced.
  *
- * It appears in TWO places, which is the reason it is a component rather than two spans:
- * on the admin navigation entry, so a superadmin signing in sees the queue without
- * navigating into it, and mirrored on the panel's Pending tab. Those two must never
- * disagree about the number OR about how it is announced, and a duplicated span is one
- * copy-edit away from doing exactly that.
+ * ACCESSIBILITY: the visible numeral is `aria-hidden`; the real accessible name is the
+ * visually-hidden "N apps waiting for review" beside it, so the count is announced once, with
+ * its meaning, not twice without it.
  *
- * ACCESSIBILITY. The visible text is a bare numeral, which a screen reader would read as
- * "seven" with no subject. The real accessible name is the visually-hidden sentence
- * beside it — "7 apps waiting for review" — and the numeral is `aria-hidden`, so the
- * count is announced once, with its meaning, rather than twice without it.
- *
- * ZERO RENDERS NOTHING. An empty queue has nothing to say, and a "0" badge would train
- * an administrator to ignore the exact pixel that is supposed to catch their eye.
- * `null` (we haven't asked, or the request failed) renders nothing for the same reason:
- * a badge must never claim a number it does not have.
+ * ZERO AND `null` BOTH RENDER NOTHING: an empty queue has nothing to say (a "0" badge would
+ * train an administrator to ignore this pixel), and an unknown count must never claim a number.
  */
 
 interface Props {
@@ -27,7 +20,7 @@ interface Props {
 
 /** The accessible sentence. Singular is not pedantry — "1 apps waiting" is the kind of
  *  thing that makes a person trust the rest of the screen slightly less. */
-// Module-local since #157 A removed the bell, which was its only outside caller. Still
+// Module-local now that the bell that called it is gone, its only outside caller. Still
 // used by the badge's own sr-only label below, so it stays a function — it just stops
 // advertising itself as part of this module's surface.
 function waitingForReviewLabel(count: number): string {

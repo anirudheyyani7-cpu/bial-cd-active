@@ -1,5 +1,5 @@
 /**
- * RENAMING A PROJECT — the guards, kept where the control moved to (plan 002, U2).
+ * RENAMING A PROJECT — the guards, kept where the control moved to.
  *
  * These assertions lived in `ProjectPage.test.tsx`, against the pencil in the rail's header. That
  * header is surrendered to the shell's toolbar row and the editor is this dialog, so the guards
@@ -80,9 +80,9 @@ describe('renaming a project', () => {
   })
 
   it('carries the 8-word cap, so a rename is not a round trip that exists to be refused', async () => {
-    // §14: "Both entry points, or neither." Create had this from the start; the rename path
-    // did not, and it has slipped through two relocations — out of `ProjectPage` under #172,
-    // out of the rail under #175 — which is why the guard now lives beside the input.
+    // "Both entry points, or neither." Create had this from the start; the rename path
+    // did not, and it has slipped through two relocations — out of `ProjectPage`,
+    // out of the rail — which is why the guard now lives beside the input.
     render(<ProjectRenameDialog project={PROJECT} onProjectUpdate={vi.fn()} onClose={vi.fn()} />)
 
     const input = screen.getByLabelText('Project name')
@@ -107,11 +107,11 @@ describe('renaming a project', () => {
     for (const el of screen.getAllByRole('button')) expect(el.hasAttribute('disabled')).toBe(false)
   })
 
-  // NOTE ON THE OVERLAP: #180's review of #174/#175 and #173's round-4 review found the
-  // double-submit independently, on two branches, and both added the same `if (busy) return`.
-  // #180's three cases below are the more thorough pair of hands — they hold the button node
-  // across the busy transition and check `onClose` is not called twice — so this branch's own
-  // single-request test was dropped in the merge rather than kept alongside them.
+  // NOTE ON THE OVERLAP: two review branches found the double-submit bug independently and
+  // both added the same `if (busy) return`. The three cases below are the more thorough pair
+  // of hands — they hold the button node across the busy transition and check `onClose` is
+  // not called twice — so this branch's own single-request test was dropped in the merge
+  // rather than kept alongside them.
 
   describe('a second press while the first rename is still in flight', () => {
     /** A request that never settles, so the whole test happens inside the busy window. */
@@ -201,7 +201,7 @@ describe('renaming a project', () => {
   })
 })
 
-describe('cancelling a rename that is already in flight (R44a, #187)', () => {
+describe('cancelling a rename that is already in flight', () => {
   it('leaves the project with its ORIGINAL name — asserted on the name, not on the dialog closing', async () => {
     // ★ THE DEFECT: Cancel called `onClose` unconditionally. Pressing Save fires the request; the
     // dialog closing does nothing to a request already away, so the citizen was told the rename

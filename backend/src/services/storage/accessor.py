@@ -1,16 +1,11 @@
-"""App-level storage accessor + lifecycle for the Azure Blob backend. Two caching
-layers, kept distinct:
+"""App-level storage accessor + lifecycle for the Azure Blob backend. Two caching layers:
+*backend level* — `azure_backend`'s config-fingerprint client cache, the source of truth for
+open SDK clients; and *app level* — `get_storage()`, which reads `settings.object_store`, calls
+`create_storage` ONCE, and memoises the result without opening a client of its own.
 
-1. *Backend level* (the source of truth for open SDK clients) — the Azure
-   backend's config-fingerprint client cache (`azure_backend`).
-2. *App level* — `get_storage()` reads `settings.object_store`, calls
-   `create_storage` ONCE, and memoises the returned backend. It opens no clients
-   of its own; it just holds a reference into layer 1.
-
-`get_storage()` returns the base `ObjectStorage` because `settings.object_store`
-is statically the storage port — the honest dynamic contract (concrete types are
-for code holding a named config). It lazy-imports `settings` so this module can be
-re-exported from the package `__init__` without an import cycle through
+`get_storage()` returns the base `ObjectStorage`, not a concrete type, because
+`settings.object_store` is statically the storage port. It lazy-imports `settings` so this
+module can be re-exported from the package `__init__` without an import cycle through
 `src.config` (which itself imports `storage.config`).
 """
 
@@ -51,11 +46,11 @@ def get_storage() -> ObjectStorage:
 
 def get_app_container_store() -> AppContainerStore | None:
     """The per-app container store (layer-2 singleton), or **`None` when object storage is
-    unconfigured** (dev/test). This deliberately DIVERGES from `get_storage()`, which *raises*
-    when unset (KTD-2): per-app storage is a gracefully-disable-able feature, so callers branch
-    on `None` (`storage off → skip`) rather than swallowing a real error. Owns no client — the
-    store resolves the shared `azure_backend` client per-op — so caching it here is cheap and it
-    needs no `aclose` of its own; `aclose_storage` / `reset_storage_for_tests` just drop the ref.
+    unconfigured** (dev/test) — unlike `get_storage()` above, which raises. Callers branch on
+    `None` (`storage off → skip`) rather than wrapping this in a `try` that would also swallow
+    a real storage error. Owns no client — the store resolves the shared `azure_backend` client
+    per-op — so caching it here is cheap and it needs no `aclose` of its own; `aclose_storage` /
+    `reset_storage_for_tests` just drop the ref.
     """
     global _app_container_store_singleton
     if _app_container_store_singleton is None:

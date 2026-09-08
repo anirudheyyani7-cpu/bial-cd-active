@@ -1,29 +1,26 @@
-"""Super-admin app-registry governance (R27, R29, R9) — the lifecycle state machine and the
-danger ops, all `requires_superadmin`-gated and audited. This opener also advertised "the
-durable clear-data confirm token"; there is no clear-data route, no token and no minting code
-anywhere in this package — the only surviving trace of that vocabulary is `db/models/audit.py`
-naming "clear-data" as an EXAMPLE of the open action set. The nearest live thing is a plain
-`confirm_all: bool` request flag on the bulk-limits route, which is a body field, not a token.
+"""Super-admin app-registry governance — the lifecycle state machine and the danger ops,
+all `requires_superadmin`-gated and audited.
 
-Ported from Express `admin/apps-routes.js`, but gated by Plan A's env
-allowlist (`requires_superadmin`), NOT Express's `role==='admin'` claim. Approval
-pins an immutable git-bundle SUBMISSION (APPROVAL D5): approve carries the reviewed
-submission id, verifies the artifact exists (R11), and the guarded UPDATE refuses a
-re-submitted-since-review app — there is no compiled artifact and no server compile.
+WHY THIS EXISTS
 
-The state machine is enforced atomically (`UPDATE ... WHERE status = ANY(allowed)`);
-an illegal transition updates zero rows → 409. `enable` carries an explicit
-`status==disabled` guard because the `→approved` transition also permits `pending`
-(without it, enable would promote an unvetted pending app past the approve gate);
-`approve` carries the mirror-image `status==pending` guard for the same reason
-(without it, an admin could approve a kill-switched DISABLED app directly).
+The gate is an env allowlist (`requires_superadmin`), NOT a `role === 'admin'` claim: a
+claim carried on the request is something the request can assert about itself.
 
-Approvals carry a LINEAGE (U4: R17a/P5): `runbook` items get no new approvals (the
-citizen must re-submit through the publish flow), and `self_publish` apps get neither
-the deploy-needed prompt nor the mark-deployed marker — their owner publishes the
-approved version themselves, so a runbook record here would describe a deployment
-nobody performed.
-"""
+Approval pins an immutable git-bundle SUBMISSION: approve carries the reviewed submission
+id, verifies the artifact exists, and the guarded UPDATE refuses a re-submitted-since-review
+app — there is no compiled artifact and no server compile.
+
+The state machine is enforced atomically (`UPDATE ... WHERE status = ANY(allowed)`); an
+illegal transition updates zero rows → 409. `enable` carries an explicit `status==disabled`
+guard because the `→approved` transition also permits `pending` (without it, enable would
+promote an unvetted pending app past the approve gate); `approve` carries the mirror-image
+`status==pending` guard (without it, an admin could approve a kill-switched DISABLED app
+directly).
+
+Approvals carry a LINEAGE: `runbook` items get no new approvals (the citizen must re-submit
+through the publish flow), and `self_publish` apps get neither the deploy-needed prompt nor
+the mark-deployed marker — their owner publishes the approved version themselves, so a
+runbook record here would describe a deployment nobody performed."""
 
 from __future__ import annotations
 
@@ -181,7 +178,7 @@ router = APIRouter(prefix="/admin/apps", tags=["admin"])
 # route's `responses=` alongside that route's own explicit 4xx.
 #
 # The tuple itself now lives in `src/schemas/responses.py` beside `AUTH_401`, because
-# `deploy/router.py`'s `unpublish` (#113) is gated by the same dependency and a second
+# `deploy/router.py`'s `unpublish` is gated by the same dependency and a second
 # copy would be free to drift. Aliased under the module-private name the routes below
 # already spread, so the shared definition costs no churn at any of the call sites in this file.
 # (A count stood here and had drifted from 24 to 26; a number in a comment cannot go red.)
@@ -229,9 +226,9 @@ def _project(
         # lineage suppresses the PROMPT below, never the history.
         deployed_at=app.deployed_at,
         deployed_url=app.deployed_url,
-        # Exact and clock-skew-free (D7): ids, not timestamps. False for a
+        # Exact and clock-skew-free: ids, not timestamps. False for a
         # never-approved app (None == None); True for approved-but-undeployed —
-        # UNLESS the lineage is self-publish (R17a/ASM8): the flag is a runbook
+        # UNLESS the lineage is self-publish: the flag is a runbook
         # prompt, a self-published app never sets `deployed_submission_id`, and the
         # bare derivation would therefore read "Deploy needed" forever, prompting an
         # administrator to run a runbook that must not be run.
@@ -239,8 +236,8 @@ def _project(
             app.approval_route is not ApprovalRoute.SELF_PUBLISH
             and app.approved_submission_id != app.deployed_submission_id
         ),
-        # The lineage itself (R17a/P5) — what the SPA keys the runbook affordances off
-        # — and the submitted declaration (R15), so the review screen can lead with
+        # The lineage itself — what the SPA keys the runbook affordances off
+        # — and the submitted declaration, so the review screen can lead with
         # the disagreement without a second call.
         approval_route=app.approval_route,
         declaration=app.declaration,
@@ -267,7 +264,7 @@ async def _transition(
 ) -> bool:
     """Atomic guarded status transition (Express `setStatus`): update only when the
     current status is a legal source for `target` AND every extra `guard` predicate
-    holds (the D5 seam — approve adds `source_submission_id == reviewed_id`, so a
+    holds (the guarded-update seam — approve adds `source_submission_id == reviewed_id`, so a
     re-submit since review updates zero rows); zero rows updated → illegal (409).
     No `user_id` predicate here: an admin acts across owners."""
     result = await db.execute(
@@ -283,7 +280,7 @@ async def _transition(
     return result.first() is not None
 
 
-# WHERE A RE-ENABLE LANDS (R42, #163) — the status `disable` remembered, or APPROVED when
+# WHERE A RE-ENABLE LANDS — the status `disable` remembered, or APPROVED when
 # there is nothing remembered. Used TWICE inside `enable`'s one UPDATE, as the SET target and
 # inside the guard that decides which arm the artifact-pin check applies to, so it is written
 # once: two copies of this expression that drifted would silently apply the approved arm's
@@ -304,7 +301,7 @@ _RESTORE_TARGET = sa.func.coalesce(
 def _db_detail(app_id: uuid.UUID, handles: TeardownHandles) -> dict[str, Any]:
     """Audit `detail` for a database lever: NAMES only.
 
-    Never the DSN, never the password, never the host's credentials (`security.md`, D11) —
+    Never the DSN, never the password, never the host's credentials —
     the same discipline `deploy-credential:mint` applies when it audits nothing but an
     expiry. A name is an identifier an operator can act on; the DSN is a credential.
     """
@@ -321,7 +318,7 @@ _DB_LEVER_FAILED = "The app's database could not be reached. Please try again."
 # hits this is most likely to have meant. PENDING is the only status this refusal really
 # fires for in practice — the panel renders the control for the other three — and "reject
 # it instead" is the lever they actually want, so the copy names it rather than leaving a
-# bare refusal (#163).
+# bare refusal.
 _NOT_DISABLABLE = (
     "Only an approved, draft or rejected app can be disabled — "
     "an app waiting for review must be rejected instead."
@@ -332,8 +329,8 @@ _NOT_DISABLABLE = (
 # clean one, so an unreachable cluster is a retryable failure, not an empty tally.
 _DB_CLUSTER_UNREACHABLE = "The app-database cluster could not be reached. Please try again."
 
-# The lineage refusals (U4: R17a, P5). Both NAME the dead end instead of looping in it —
-# the administrator reading these is non-technical (P3), so the copy says what to DO, not
+# The lineage refusals. Both NAME the dead end instead of looping in it —
+# the administrator reading these is non-technical, so the copy says what to DO, not
 # which column disagreed. The first is the cutover's cost made visible: a queue item that
 # predates the publish flow was backfilled `runbook`, and approving it would burn the
 # admin's approval on an app its owner still could not publish (they would need a SECOND
@@ -350,8 +347,8 @@ _SELF_PUBLISHED_HAS_NO_RUNBOOK = (
     "and there is no runbook deployment to record."
 )
 
-# The withdrawal race (U13, and the moment U8's withdraw docstring hands over). An
-# administrator can be reading a submission at the instant its owner pulls it back (P6):
+# The withdrawal race — the moment a citizen's own withdraw call hands over. An
+# administrator can be reading a submission at the instant its owner pulls it back:
 # withdraw sets DRAFT and clears the pin, so approve/reject arrive at a row that is no
 # longer pending and no longer carries the submission on the admin's screen. The generic
 # "only a pending app can be…" copy is true and useless there — it describes a column,
@@ -388,15 +385,14 @@ async def _advisory_sizes(db: DbSession, project_ids: Sequence[uuid.UUID]) -> di
 
     Two queries total for the whole page — one registry read, one cluster read — never a
     per-row probe. Every failure mode returns an empty map instead of raising: no substrate
-    configured, no provisioned database on the page, or a cluster we could not reach. That
-    asymmetry with `reconcile_databases` (which 503s on the same condition) is deliberate —
-    a size is decoration, and an admin queue that 500s because a decoration failed is a far
-    worse outcome than a queue that renders with the size column blank.
-
-    Only `db_ready` rows are probed: a claim whose external sequence never finished may name
-    a database that does not exist yet, and the size of a database is not the thing that
-    tells anyone about it.
-    """
+    configured, no provisioned database on the page, or a cluster we could not reach."""
+    # That asymmetry with `reconcile_databases` (which 503s on the same condition) is
+    # deliberate — a size is decoration, and an admin queue that 500s because a decoration
+    # failed is a far worse outcome than a queue that renders with the size column blank.
+    #
+    # Only `db_ready` rows are probed: a claim whose external sequence never finished may name
+    # a database that does not exist yet, and the size of a database is not the thing that
+    # tells anyone about it.
     if not project_ids:
         return {}
     # Resolved lazily, in the body — this is the same accessor a route must never take as an
@@ -443,7 +439,7 @@ async def list_apps(
         raise AppApiError(400, "Invalid status filter.")
     if status_filter in valid:
         where.append(AppRegistry.status == AppStatus(status_filter))
-    # The pending list is a REVIEW QUEUE (R16): oldest submission first, so the
+    # The pending list is a REVIEW QUEUE: oldest submission first, so the
     # next app to review is on top — `created_at` is the wrong axis (it dates the
     # provision, not the submission). Every other view stays newest-created-first.
     order_by = (
@@ -479,22 +475,19 @@ async def list_apps(
 
 @router.get("/counts", responses=error_responses(*_ADMIN_AUTH))
 async def app_counts(admin: CurrentSuperadmin, db: DbSession) -> AppCountsResponse:
-    """How many apps sit in each status — the waiting-count badge's source (P1).
+    """How many apps sit in each status — the waiting-count badge's source.
 
-    A DEDICATED route, not a derived count off the listing, and the difference is the
-    point: `list_apps` projects up to 200 rows and probes the app-database cluster for a
-    size column on every page. Polling that for one number would pay both costs on a
-    cadence, and would pay MORE of the first as the queue it is reporting on grows —
-    exactly backwards. This is one `GROUP BY` over an indexed column, with no join, no
-    row projection, and NO SIZE PROBE (`_advisory_sizes` is not called here; a test pins
-    that, because "it's cheap" is a claim that rots the first time someone adds a field).
-
-    Zero-filled from the enum rather than from the result set: a status with no apps must
-    read as 0, and a missing key would render as a blank badge on the one surface whose
-    job is to distinguish "nothing waiting" from "we didn't ask".
-
-    No `user_id` predicate — an admin counts across owners, like every route in this file.
-    """
+    One `GROUP BY` over an indexed column, with no join, no row projection, and NO SIZE PROBE.
+    Zero-filled from the enum rather than from the result set: a status with no apps must read
+    as 0, and a missing key would render as a blank badge on the one surface whose job is to
+    distinguish "nothing waiting" from "we didn't ask". No `user_id` predicate — an admin counts
+    across owners, like every route in this file."""
+    # A DEDICATED route, not a derived count off the listing, and the difference is the point:
+    # `list_apps` projects up to 200 rows and probes the app-database cluster for a size column
+    # on every page. Polling that for one number would pay both costs on a cadence, and would
+    # pay MORE of the first as the queue it is reporting on grows — exactly backwards.
+    # `_advisory_sizes` is not called here, and a test pins that, because "it's cheap" is a
+    # claim that rots the first time someone adds a field.
     rows = (
         await db.execute(
             sa.select(AppRegistry.status, sa.func.count()).group_by(AppRegistry.status)
@@ -529,7 +522,7 @@ async def approve(
     db: DbSession,
     storage: OptionalStorage,
 ) -> AdminAppStatusResponse:
-    """Pin EXACTLY the submission the admin reviewed (D5/R7): the request carries the
+    """Pin EXACTLY the submission the admin reviewed: the request carries the
     reviewed submission id, and the guarded UPDATE adds it as a predicate — a
     re-submit between review and this click updates zero rows → 409."""
     app = await _get_app_or_404(db, app_id)
@@ -542,7 +535,7 @@ async def approve(
         raise AppApiError(409, _SUBMISSION_WITHDRAWN, code=_WITHDRAWN_CODE)
     if app.status is not AppStatus.PENDING:
         raise AppApiError(409, "Only a pending app can be approved.")
-    # The runbook lineage gets no new approvals (U4: P5, cutover). This item was in the
+    # The runbook lineage gets no new approvals, by cutover design. This item was in the
     # queue before the publish flow became the only route in — approving it would grant
     # nothing the citizen can use (the gate's self-publish rule needs the self_publish
     # lineage), wasting the admin's decision and looping the citizen back here for a
@@ -556,18 +549,15 @@ async def approve(
     # Captured BEFORE any commit (never read ORM attributes across one). If a
     # re-submit lands after this read, the guarded UPDATE below refuses — and
     # submission ids are never reused, so on success this SHA belongs to the
-    # reviewed submission. The owner id travels the same way, for the ASM19
+    # reviewed submission. The owner id travels the same way, for the
     # self-approval check at the audit call below.
     commit_sha = app.source_commit_sha
     app_user_id = app.user_id
 
-    # R11 — verify the reviewed artifact still exists before pinning it, so an app
-    # can never reach APPROVED with a bundle that 404s at runbook time. Fail
-    # closed: a storage ERROR is ambiguity, not absence (503, not 409).
-    # An UNCONFIGURED store is the same ambiguity, and arrives as `None` (the None-tolerant
-    # `OptionalStorage`): with no store there is nothing to verify against, so approving would
-    # pin an artifact nobody checked. Answers the DOCUMENTED 503 the eager `Storage` dependency
-    # could never reach — it raised at dependency-solve time, before this body ran at all.
+    # Verify the reviewed artifact still exists before pinning it, so an app can never reach
+    # APPROVED with a bundle that 404s at runbook time. Fail closed: a storage ERROR is
+    # ambiguity, not absence (503, not 409), and an UNCONFIGURED store is the same ambiguity —
+    # with nothing to verify against, approving would pin an artifact nobody checked.
     if storage is None:
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
@@ -587,14 +577,14 @@ async def approve(
         # UPDATE would let a kill-switched app be approved directly under a race. A pure
         # tightening — the mirror image of enable's DISABLED-only source.
         AppRegistry.status == AppStatus.PENDING,
-        # The D5 guard: pin only what was actually reviewed.
+        # Pin only what was actually reviewed.
         AppRegistry.source_submission_id == body.submission_id,
         approved_submission_id=body.submission_id,
         approved_commit_sha=commit_sha,
         approved_by=admin.id,
         approved_at=now,
         # Lifting the standing rejection is an ADMINISTRATOR'S act and this is the only
-        # place it happens (P4). An approval is exactly the "an administrator lifts it"
+        # place it happens. An approval is exactly the "an administrator lifts it"
         # half of the rule, so it clears unconditionally rather than only when raised.
         rejection_standing=False,
     )
@@ -602,13 +592,13 @@ async def approve(
         raise AppApiError(
             409, "This app was re-submitted since you reviewed it — please re-review."
         )
-    # ASM19 — A SUPERADMIN APPROVING THEIR OWN APP IS RECORDED DISTINGUISHABLY, not
+    # A SUPERADMIN APPROVING THEIR OWN APP IS RECORDED DISTINGUISHABLY, not
     # forbidden. RBAC has two computed roles and no concept of a second approver, and
-    # ADR-0005 already books the missing separation of duties as an accepted risk — so
+    # the missing separation of duties is already an accepted risk — so
     # the answer is a trail that can be QUERIED, not a refusal that would leave a
     # superadmin unable to publish their own work at all. `approve:self` follows this
     # codebase's existing variant-action convention (`unpublish:unconfirmed`,
-    # `config:loginRequired`) and the vocabulary is deliberately open (ASM6), so no
+    # `config:loginRequired`) and the vocabulary is deliberately open, so no
     # migration is involved. Both rows carry identical detail: only the action word
     # differs, which is exactly what makes "list every self-approval" one predicate.
     self_approved = app_user_id == admin.id
@@ -641,9 +631,9 @@ async def reject(
     if app.status is not AppStatus.PENDING:
         raise AppApiError(409, "Only a pending app can be rejected.")
     # Both ends are enforced by `RejectRequest.note` (422 at the boundary) — no silent
-    # slice here, and since U13 no `or ""` either: the note is required and non-blank, so
-    # the citizen can never be handed a rejection with nothing in it (P3).
-    # `rejection_standing` is the half that OUTLIVES this status (P4): the citizen may
+    # slice here, and no `or ""` either: the note is required and non-blank, so
+    # the citizen can never be handed a rejection with nothing in it.
+    # `rejection_standing` is the half that OUTLIVES this status: the citizen may
     # legitimately move the row out of REJECTED by publishing (which routes) and then
     # withdrawing, so the refusal cannot live in `status`. Only `approve` lowers it.
     #
@@ -658,7 +648,7 @@ async def reject(
     # The gap is RECOVERY: only the OWNER can re-submit, so an app whose owner has left
     # BIAL stays running-but-invisible with no admin path back. `approve` is the only
     # thing that lowers `rejection_standing`, and it needs a pending submission to act on.
-    # Use `unpublish` if the intent is to actually take the app down (#147 round 3 review).
+    # Use `unpublish` if the intent is to actually take the app down.
     moved = await _transition(
         db,
         app_id,
@@ -688,7 +678,7 @@ async def patch_app(
         login_flipped = bool(app.login_required) != body.login_required
         app.login_required = body.login_required
     await db.flush()
-    # Audit the gated change (ADR-0005). A no-op patch still writes nothing.
+    # Audit the gated change. A no-op patch still writes nothing.
     if login_flipped:
         await append_audit(
             db,
@@ -700,7 +690,7 @@ async def patch_app(
         )
     await db.commit()
     # Re-read the row joined to its project + owner so the response name is project-sourced
-    # (#48) and every column reflects the committed state; the joined scalars are non-null by
+    # and every column reflects the committed state; the joined scalars are non-null by
     # the FK invariants, and `.one()` fails closed if the row vanished under us.
     app, project_name, owner_email = (
         await db.execute(
@@ -725,39 +715,38 @@ async def patch_app(
 async def disable(
     app_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> AdminAppStatusResponse:
-    """THE kill switch. Flipping the status stops the platform serving the app; SEVERING
-    its database is what stops the app's own running container reaching data, and that is
-    now the only data kill there is — the shared-table plane and its per-request app-key
-    403 are gone, so a deployed container holds a real credential and answers to nobody but
-    PostgreSQL. Hence the sever, not merely the status.
+    """THE kill switch. Flipping the status stops the platform serving the app; SEVERING its
+    database is what stops the app's own running container reaching data.
 
-    REACHES DRAFT AND REJECTED APPS TOO (#163), not approved ones only. The ordinary member
-    of the marketplace catalog is a DRAFT — one-click deploy never writes a status — so the
+    REACHES DRAFT AND REJECTED APPS TOO, not approved ones only. The ordinary member of the
+    marketplace catalog is a DRAFT — one-click deploy never writes a status — so the
     approved-only version of this lever could not switch off the very apps most likely to
     need it; the only remaining answer was `nuke_app`, which destroys the owner's work.
     PENDING stays out: an app waiting for review is REJECTED, not switched off, and the copy
     below says so rather than leaving the administrator to guess which lever they wanted.
 
-    Order: the status transition FIRST, the sever after it. `→approved` legally accepts
-    `pending`, so the guarded UPDATE is the only thing separating "disable an approved app"
-    from "touch some other app's state machine" — an early-return 409 must leave the
-    database exactly as it found it. A sever failure then 503s and rolls the transition back
-    (`get_db`), so status and reality never disagree in the dangerous direction: whatever
-    the sever did manage is `NOLOGIN` first, i.e. it fails CLOSED, and the retry is safe
-    because `sever` is idempotent.
-
     NOT severed here, deliberately and per the runbook: the app's deploy Blob SAS (see
     `mint_deploy_credential`). Revoking that means deleting the container's stored access
-    policy, which is an operator step — do not read this response as "the files are locked".
-
-    IT REMEMBERS WHAT THE APP WAS (R42), and that is what makes `enable` honest now that this
-    reaches three statuses instead of one. `previous_status = AppRegistry.status` is a
-    COLUMN reference, not `app.status` read a moment ago in Python: PostgreSQL evaluates an
-    UPDATE's SET expressions against the row's pre-update values, so the remembered status is
-    read from the very row this statement is guarding, inside the same statement. Reading it
-    off the ORM object would open a window in which the row's status changed between the load
-    and the update, and the memory would be a lie the return trip could not detect.
-    """
+    policy, which is an operator step — do not read this response as "the files are locked"."""
+    # The sever, not merely the status, because the shared-table plane and its per-request
+    # app-key 403 are gone: a deployed container holds a real credential and answers to nobody
+    # but PostgreSQL.
+    #
+    # Order: the status transition FIRST, the sever after it. `→approved` legally accepts
+    # `pending`, so the guarded UPDATE is the only thing separating "disable an approved app"
+    # from "touch some other app's state machine" — an early-return 409 must leave the database
+    # exactly as it found it. A sever failure then 503s and rolls the transition back
+    # (`get_db`), so status and reality never disagree in the dangerous direction: whatever the
+    # sever did manage is `NOLOGIN` first, i.e. it fails CLOSED, and the retry is safe because
+    # `sever` is idempotent.
+    #
+    # IT REMEMBERS WHAT THE APP WAS, and that is what makes `enable` honest now that this
+    # reaches three statuses instead of one. `previous_status = AppRegistry.status` is a
+    # COLUMN reference, not `app.status` read a moment ago in Python: PostgreSQL evaluates an
+    # UPDATE's SET expressions against the row's pre-update values, so the remembered status is
+    # read from the very row this statement is guarding, inside the same statement. Reading it
+    # off the ORM object would open a window in which the row's status changed between the load
+    # and the update, and the memory would be a lie the return trip could not detect.
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     if not await _transition(db, app_id, AppStatus.DISABLED, previous_status=AppRegistry.status):
@@ -775,8 +764,8 @@ async def disable(
         # for a deployed app, and a project with no `project_databases` row skips the sever AND
         # the `db:revoke` row below — so an operator reading the log afterwards could not tell
         # "the database was closed" from "there was no database to close" except by the absence
-        # of a second row, which is also what a half-written transaction looks like. #163 widened
-        # this lever to DRAFT and REJECTED apps, which are the population most likely to have no
+        # of a second row, which is also what a half-written transaction looks like. Widening
+        # this lever to DRAFT and REJECTED apps brought in the population most likely to have no
         # database, so the ambiguous case stopped being the rare one. Read BEFORE the audit
         # append for this reason — the order is the point, not incidental.
         detail={"databaseSevered": handles is not None},
@@ -828,7 +817,7 @@ async def enable(
     two 409s below are the approve gate, and a refused enable must not re-open a database
     the kill switch closed.
 
-    IT PUTS THE APP BACK WHERE IT WAS, not where APPROVED would be (R42, #163). `disable`
+    IT PUTS THE APP BACK WHERE IT WAS, not where APPROVED would be. `disable`
     reaches DRAFT and REJECTED apps as well as approved ones, so resolving every re-enable
     to the literal APPROVED would invent an approval nobody gave — and the artifact-pin
     guard below would instead have stranded those apps in DISABLED with no way out. The
@@ -855,8 +844,8 @@ async def enable(
       migration 0038): APPROVED is what the code this replaces resolved such a row to, so
       a row that predates the column re-enables exactly as it would have yesterday.
     * ARTIFACT PIN — `approved_submission_id IS NOT NULL`, ON THE APPROVED ARM ONLY. It
-      exists to stop a re-enable resurrecting an approved-with-no-artifact row (the D13
-      state the schema otherwise prevents); a draft or rejected app has no pin and is not
+      exists to stop a re-enable resurrecting an approved-with-no-artifact row (a state
+      the schema otherwise prevents); a draft or rejected app has no pin and is not
       supposed to, so applying it to every arm would refuse every restore this unit exists
       to make possible.
 
@@ -917,8 +906,8 @@ async def enable(
     return AdminAppStatusResponse(app_id=app_id, status=restored_status)
 
 
-# Minutes-scale (deliberately far under the ABC's 7-day ceiling): long enough for an
-# out-of-band review download, short enough that a leaked URL dies fast (R15).
+# Minutes-scale: long enough for an out-of-band review download, short enough that a leaked
+# URL dies fast.
 _BUNDLE_URL_TTL = timedelta(minutes=15)
 
 
@@ -935,8 +924,8 @@ async def bundle_download_url(
     app_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession, storage: OptionalStorage
 ) -> BundleUrlResponse:
     """Mint a short-TTL signed download URL for the app's submission under review,
-    and AUDIT the pull (R15): an admin reading a citizen's full source is precisely
-    the gated action ADR-0005 says to record. Deliberately NOT part of the list
+    and AUDIT the pull: an admin reading a citizen's full source is precisely
+    a gated action that must be recorded. Deliberately NOT part of the list
     projection — the URL is a bearer credential, and listing would mass-issue one
     per row. The URL is blob-scoped (bound to this one submission's key), and the
     audit `detail` carries only the submission id + SHA — NEVER the URL itself."""
@@ -945,9 +934,8 @@ async def bundle_download_url(
     if submission_id is None:
         # No submission is a non-event: no URL, and no audit row for nothing.
         raise AppApiError(409, "This app has no submission to download.")
-    # An unconfigured store arrives as `None` (the None-tolerant `OptionalStorage`) → the SAME
-    # documented 503 as a signing failure below, and no audit row for a URL that never existed.
-    # An eager `Storage` dependency raised at solve time, ahead of even the 404/409 above.
+    # An unconfigured store is the SAME documented 503 as a signing failure below, and no audit
+    # row for a URL that never existed.
     if storage is None:
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
@@ -988,29 +976,26 @@ async def mint_deploy_credential(
     db: DbSession,
     container_store: ContainerStore,
 ) -> DeployCredentialResponse:
-    """Mint the deployed app's long-lived, container-scoped Blob credential (R2) — the runbook's
-    step-5 `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS` pair, and the answer to its former KNOWN
-    GAP (a session SAS expires in ≤7 days and stranded every live app's storage).
+    """Mint the deployed app's long-lived, container-scoped Blob credential — the runbook's
+    step-5 `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS` pair.
 
     Deliberately independent: the credential reaches the app's own container DIRECTLY, so a
     deployed app never proxies file traffic through the control-plane. That independence cuts
     both ways and the runbook says so — `disable` kill-switches the DATA plane but does NOT
-    revoke this SAS; revoking it means deleting the app's stored access policy.
-
-    Like `bundle-url`, the minted token is a bearer credential: audited as an EVENT (who, which
-    app, when it dies) with the SAS value itself never logged and never in the audit `detail`
-    (security.md). Not part of any list projection — a mint is always an explicit, recorded act.
-    """
+    revoke this SAS."""
+    # Like `bundle-url`, the minted token is a bearer credential: audited as an EVENT (who,
+    # which app, when it dies) with the SAS value itself never logged and never in the audit
+    # `detail`. Not part of any list projection — a mint is always an explicit, recorded act.
     await _get_app_or_404(db, app_id)
     if container_store is None:
         # Fail closed and say what to fix: object storage is simply not configured here, so
-        # there is no container and nothing to sign with (the dependency yields None, D2).
+        # there is no container and nothing to sign with.
         raise AppApiError(409, "Object storage is not configured on this deployment.")
     try:
         credential = await container_store.mint_deploy_container_sas(app_id)
     except StorageSignError as exc:
-        # The managed-identity config: only a user-delegation key is available and Azure caps
-        # those at 7 days. Actionable, and admin-only — but still no internal error text.
+        # Actionable, and admin-only — but still no internal error text: the copy names the
+        # configuration to change, never what the SDK raised.
         raise AppApiError(
             409,
             "This deployment's storage uses managed identity, which cannot issue a credential "
@@ -1047,23 +1032,21 @@ async def reveal_database_credential(
     app_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> DatabaseCredentialResponse:
     """Reveal the project database's connection string — the go-live runbook's
-    `BIAL_DATABASE_URL`, byte-for-byte the value the sandbox is injected with (ADR-0028).
-
-    The database is keyed by PROJECT while this router is keyed by app, and that is fine
-    rather than merely tolerable: the runbook only ever reveals for an APPROVED app, so an
-    app row always exists and `app.project_id` is the resolution. The audit row is
-    project-scoped and carries `appId` so it still shows up in the app's trail.
-
-    Modelled on `mint_deploy_credential`, including the parts that are security decisions
-    rather than style: the secret is returned in the RESPONSE BODY ONLY, it is never part of
-    any list projection (a listing would mass-reveal one credential per row), and the audit
-    `detail` records the role name and the host — WHO can connect and WHERE — but never the
-    DSN and never the password. A reveal is an event, and the event is what gets recorded.
+    `BIAL_DATABASE_URL`, byte-for-byte the value the sandbox is injected with.
 
     There is no rotation lever here on purpose: one role serves both the sandbox and the
     deployed container, so a reset would cut a live deployment off. Leak response is a
-    deliberate, separate operator story.
-    """
+    deliberate, separate operator story."""
+    # The database is keyed by PROJECT while this router is keyed by app, and that is fine
+    # rather than merely tolerable: the runbook only ever reveals for an APPROVED app, so an app
+    # row always exists and `app.project_id` is the resolution. The audit row is project-scoped
+    # and carries `appId` so it still shows up in the app's trail.
+    #
+    # Modelled on `mint_deploy_credential`, including the parts that are security decisions
+    # rather than style: the secret is returned in the RESPONSE BODY ONLY, it is never part of
+    # any list projection (a listing would mass-reveal one credential per row), and the audit
+    # `detail` records the role name and the host — WHO can connect and WHERE — but never the
+    # DSN and never the password. A reveal is an event, and the event is what gets recorded.
     app = await _get_app_or_404(db, app_id)
     record = (
         await db.execute(
@@ -1128,22 +1111,22 @@ async def mark_deployed(
     db: DbSession,
     body: MarkDeployedRequest | None = None,
 ) -> MarkDeployedResponse:
-    """Record that a human ran the go-live runbook for the approved pin (R17, D7),
-    and — optionally — WHERE the app now lives (R5).
-    A MARKER, not a status: `STATUS_TRANSITIONS` is untouched — but still a guarded
-    UPDATE, so a marker can never attach to an unapproved app, and it pins the
-    approved submission ATOMICALLY (`deployed := approved` inside the UPDATE, so a
-    racing re-approval cannot tear the pair). `redeploy_needed` derives as
-    `approved_submission_id != deployed_submission_id` in the projection.
+    """Record that a human ran the go-live runbook for the approved pin, and — optionally —
+    WHERE the app now lives.
 
-    The URL is DATA, not automation: whatever the runbook operator pastes is what the
-    owner's Live link points at — the platform never derives, probes, or verifies it.
-    The body (and the field) stay optional, so the pre-R5 call — the admin SPA's bare
-    `{}` — still marks a deploy exactly as it did before. `.returning()` gives the
-    stamped values as detached scalars: nothing ORM-shaped crosses the `commit()`
-    below (`prefer-returning-over-refresh-across-commit`)."""
+    A MARKER, not a status: `STATUS_TRANSITIONS` is untouched. The URL is DATA, not automation:
+    whatever the runbook operator pastes is what the owner's Live link points at — the platform
+    never derives, probes, or verifies it. The body (and the field) stay optional, so a bare
+    `{}` still marks a deploy."""
+    # Still a guarded UPDATE, so a marker can never attach to an unapproved app, and it pins the
+    # approved submission ATOMICALLY (`deployed := approved` inside the UPDATE, so a racing
+    # re-approval cannot tear the pair). `redeploy_needed` derives as
+    # `approved_submission_id != deployed_submission_id` in the projection.
+    #
+    # `.returning()` gives the stamped values as detached scalars: nothing ORM-shaped crosses the
+    # `commit()` below, so nothing has to be re-fetched from an expired instance afterwards.
     app = await _get_app_or_404(db, app_id)
-    # A self-published app has NO runbook step (U4: R17a): its owner publishes the
+    # A self-published app has NO runbook step: its owner publishes the
     # approved version themselves, so a marker here would record a deployment nobody
     # performed — and `deployed := approved` would then read as redeploy-not-needed on
     # a runbook nobody is meant to run. Refuse with copy naming the lineage; the
@@ -1169,7 +1152,7 @@ async def mark_deployed(
                 # Belt over braces: approve is the only path to APPROVED and always
                 # pins, but a marker referencing NO submission would be a lie.
                 AppRegistry.approved_submission_id.is_not(None),
-                # The lineage pre-check's atomic twin (U4). Reachable only through a
+                # The lineage pre-check's atomic twin. Reachable only through a
                 # double race (a re-submit through the publish flow AND a re-approval,
                 # both between our read and this UPDATE), but the cost of a miss is a
                 # recorded deployment nobody performed — belt over braces again.
@@ -1223,40 +1206,42 @@ async def hard_delete(
     storage: Storage,
     container_store: ContainerStore,
 ) -> OkResponse:
-    """Hard-delete an app and sweep its artifacts. The ONLY storage route on this router that
-    keeps the raising `Storage`, deliberately: it neither documents a 503 nor maps `StorageError`
-    — `nuke_app` requires a real store (its submissions ENUMERATION raises rather than strand
-    blobs nobody can find), and it has no storage-unavailable copy to answer with. Storage
-    missing here is a deploy bug, and a 500 is the honest answer to a deploy bug; inventing a
-    503 would be inventing a contract. Contrast `approve` / `bundle-url` / `reconcile-storage`
-    above, which all promise a 503 and so must take `OptionalStorage`.
+    """Hard-delete an app and sweep its artifacts.
 
-    Restructured to `delete_project`'s shape for the database half (D10): gather handles →
-    audit → `nuke_app` → COMMIT → `salt_the_earth`. `DROP DATABASE` cannot run inside a
-    transaction block, so the drop physically cannot sit next to `nuke_app`; and the
-    ordering is the safety argument anyway — nothing irreversible outside PostgreSQL's own
-    rows happens until the commit that authorizes it. `nuke_app` stays blob-only.
+    The ONLY storage route on this router that keeps the raising `Storage`, deliberately: it
+    neither documents a 503 nor maps `StorageError`. `nuke_app` requires a real store (its
+    submissions ENUMERATION raises rather than strand blobs nobody can find), and it has no
+    storage-unavailable copy to answer with. Storage missing here is a deploy bug, and a 500 is
+    the honest answer to one; inventing a 503 would be inventing a contract.
 
-    The PROJECT survives an app hard-delete, so its `project_databases` row is deleted
-    explicitly (the project-delete path gets that for free via `ON DELETE CASCADE`). No row
-    = never provisioned, which is precisely what makes the next build re-provision a clean
-    database instead of injecting a DSN to one that is about to stop existing.
-
-    WHAT SURVIVED IS ON THE RECORD (U22/R7), the citizen's own delete's discipline applied to
-    the harsher lever. Every post-commit arm here is best-effort by construction — the rows are
-    already gone, so a failed drop must not 500 a delete that succeeded — and this route used to
-    discard all of those answers, `salt_the_earth`'s included. So the one lever that destroys
-    somebody ELSE's work was the one that left no trace of what it failed to destroy, and
-    nothing automatic collects any of it (`appdb/reconcile.py` is operator-invoked and
-    report-only). The response is `{"ok": true}` either way: the delete did happen, and this
-    platform has no notification path with which to promise the citizen an operator was told.
-
-    IT REQUIRES A REASON, in 5-50 words (R5). Destroying somebody else's work with no undo is
-    the harshest lever on this router and was the only one that asked for nothing — the browser
+    IT REQUIRES A REASON, in 5-50 words. Destroying somebody else's work with no undo is the
+    harshest lever on this router and was the only one that asked for nothing — the browser
     `window.confirm` behind it could not have collected an answer if it wanted to. The reason
     rides the `app:delete` row below, which is written before destruction and has no foreign key
     to the app, so it is still readable by app id long after the app is gone (`read_audit` says
     so outright: no existence pre-check)."""
+    # Contrast `approve` / `bundle-url` / `reconcile-storage` above, which all promise a 503 and
+    # so must take `OptionalStorage`.
+    #
+    # The database half follows `delete_project`'s shape: gather handles → audit → `nuke_app` →
+    # COMMIT → `salt_the_earth`. `DROP DATABASE` cannot run inside a transaction block, so the
+    # drop physically cannot sit next to `nuke_app`; and the ordering is the safety argument
+    # anyway — nothing irreversible outside PostgreSQL's own rows happens until the commit that
+    # authorizes it. `nuke_app` stays blob-only.
+    #
+    # The PROJECT survives an app hard-delete, so its `project_databases` row is deleted
+    # explicitly (the project-delete path gets that for free via `ON DELETE CASCADE`). No row =
+    # never provisioned, which is precisely what makes the next build re-provision a clean
+    # database instead of injecting a DSN to one that is about to stop existing.
+    #
+    # WHAT SURVIVED IS ON THE RECORD, the citizen's own delete's discipline applied to the
+    # harsher lever. Every post-commit arm here is best-effort by construction — the rows are
+    # already gone, so a failed drop must not 500 a delete that succeeded — and this route used
+    # to discard all of those answers, `salt_the_earth`'s included. So the one lever that
+    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy,
+    # and nothing automatic collects any of it (`appdb/reconcile.py` is operator-invoked and
+    # report-only). The response is `{"ok": true}` either way: the delete did happen, and this
+    # platform has no notification path with which to promise the citizen an operator was told.
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     # Plain scalars, read BEFORE the commit that removes the row they come from.
@@ -1268,8 +1253,8 @@ async def hard_delete(
         action="app:delete",
         resource_type="app",
         resource_id=str(app_id),
-        # THE ADMINISTRATOR'S JUSTIFICATION, on the one row that outlives what it destroyed
-        # (R5/D17). `projectId` rides along because the project SURVIVES an app delete, so it
+        # THE ADMINISTRATOR'S JUSTIFICATION, on the one row that outlives what it destroyed.
+        # `projectId` rides along because the project SURVIVES an app delete, so it
         # is the only handle left connecting this row to something still readable. `audit.py`'s
         # "no user data beyond ids" rule is amended in the same commit rather than stretched
         # quietly: this is metadata about the ACT, not content of the deleted app.
@@ -1297,9 +1282,6 @@ async def hard_delete(
         # still on the cluster after an administrator destroyed their app.
         if not await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name):
             survivors.append(("app_database", handles.db_name))
-    # WHAT SURVIVED IS ON THE RECORD (U22/R7), the citizen's own delete's discipline applied to
-    # the harsher lever. This path used to discard every sweep's answer, so the one delete that
-    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy.
     # The project survives an app hard-delete, so its id is the handle the row hangs off.
     await record_what_survived(
         db, actor_id=admin.id, project_id=project_id, survivors=survivors, app_id=app_id
@@ -1338,16 +1320,17 @@ def _reconcile_response(
 async def _reclaim_orphans_for_all_users(
     db: DbSession, storage: ObjectStorage
 ) -> AttachmentReclaimResult:
-    """Fold the U9 never-sent-upload reclaim into the operator sweep, summed across every owner.
+    """Fold the never-sent-upload reclaim into the operator sweep, summed across every owner.
 
-    Per-user by contract (ADR-0004): `reclaim_orphaned_attachments` is user-scoped — a colliding
-    client token in another user's transcript must never shield an orphan — so the sweep enumerates
-    the distinct owners that have any attachment and drives one pass each. This reclaims exactly
-    the orphans the blob-vs-row `reconcile_orphaned_storage` pass CANNOT: that pass treats any
-    still-rowed upload as owned, so a never-sent attachment (row intact, referenced by no message)
-    survives it forever — the quota leak U9 fixes. Each pass commits + best-effort-sweeps its own
-    user's blobs; nothing here is left pending, so the endpoint's trailing audit `commit` still
-    lands."""
+    Per-user by contract: `reclaim_orphaned_attachments` is user-scoped — a colliding client
+    token in another user's transcript must never shield an orphan — so the sweep enumerates the
+    distinct owners that have any attachment and drives one pass each."""
+    # This reclaims exactly the orphans the blob-vs-row `reconcile_orphaned_storage` pass CANNOT:
+    # that pass treats any still-rowed upload as owned, so a never-sent attachment (row intact,
+    # referenced by no message) survives it forever — the quota leak this fixes.
+    #
+    # Each pass commits + best-effort-sweeps its own user's blobs; nothing here is left pending,
+    # so the endpoint's trailing audit `commit` still lands.
     owner_ids = (await db.execute(sa.select(sa.distinct(Attachment.user_id)))).scalars().all()
     reclaimed = freed_bytes = swept_keys = 0
     for owner_id in owner_ids:
@@ -1369,38 +1352,27 @@ async def _reclaim_orphans_for_all_users(
 async def reconcile_storage(
     admin: CurrentSuperadmin, db: DbSession, storage: OptionalStorage
 ) -> StorageReconcileResponse:
-    """Sweep the whole object store against the database and reclaim ownerless, past-grace blobs
-    (R11/R12/R13) — the recovery lever for a cleanup that a `_log.warning` was the only trail of.
+    """Sweep the whole object store against the database and reclaim ownerless, past-grace
+    blobs.
 
-    OPERATOR-INVOKED (KD-7): THIS sweep is not on a schedule — nothing but a superadmin calls it.
-    A superadmin drives this endpoint by hand (headlessly too — the admin router declares no CSRF,
-    so `curl -b "session=<jwt>"` works); a grace-period sweep nothing calls reclaims nothing.
-
-    Corrected 2026-08-11 (ADR-0029): this said "there is NO scheduler in this repo, and an
-    in-process one was deliberately rejected". That was FALSE when written — a 300 s sandbox
-    sweeper had run in the lifespan since v1.6.5 — and is doubly false now that ADR-0011 is
-    Accepted. Sixteen copies of that claim are why two data-loss incidents were triaged as
-    scheduling failures. Only the narrow statement above survives; putting this sweep on the
-    Taskiq scheduler is available and unclaimed.
-
-    Two passes, one operator action. First the blob-vs-row diff sweep (`att/` + `snapshots/`
-    delete; `submissions/` + `apps/` report-only). Then the U9 never-sent-upload reclaim, per
-    owning user (`_reclaim_orphans_for_all_users`) — the pass that finally runs
-    `reclaim_orphaned_attachments` in prod rather than only in its unit test, closing the
-    quota leak the diff sweep cannot (it treats a still-rowed orphan as owned). `attachmentReclaim`
-    in the response and the `reclaimed*` audit fields carry its tallies (counts only, security.md).
-
-    Safe at any time: only a key with NO owning row AND older than the 24h grace is deleted, so a
-    blob a concurrent submit/upload is about to record a row for is protected (R12). `submissions/`
-    and `apps/` are REPORT-ONLY (the report's whole point) — `submissions` because deleting the
-    immutable approval record is the open D7 governance call, `apps` because it has no known writer
-    since migration 0017. Idempotent: a second run is a no-op. A `StorageError` surfaces as a
-    retryable 503 rather than being lost to a log line — INCLUDING the unconfigured-store case,
-    which arrives here as `storage is None` (the None-tolerant `OptionalStorage` dependency)
-    rather than the solve-time 500 an eager `Storage` (`get_storage()`) annotation raised."""
+    Safe at any time: only a key with NO owning row AND older than the 24h grace is deleted, so
+    a blob a concurrent submit/upload is about to record a row for is protected. Idempotent: a
+    second run is a no-op. A `StorageError` surfaces as a retryable 503 rather than being lost
+    to a log line, and so does an unconfigured store."""
+    # OPERATOR-INVOKED: nothing but a superadmin calls this sweep, headlessly too — the admin
+    # router declares no CSRF, so `curl -b "session=<jwt>"` works.
+    #
+    # Two passes, one operator action. First the blob-vs-row diff sweep (`att/` + `snapshots/`
+    # delete; `submissions/` + `apps/` report-only). Then the never-sent-upload reclaim, per
+    # owning user (`_reclaim_orphans_for_all_users`) — the pass that finally runs
+    # `reclaim_orphaned_attachments` in prod rather than only in its unit test, closing the quota
+    # leak the diff sweep cannot (it treats a still-rowed orphan as owned). `attachmentReclaim`
+    # in the response and the `reclaimed*` audit fields carry its tallies.
+    #
+    # `submissions/` and `apps/` are REPORT-ONLY (the report's whole point) — `submissions`
+    # because deleting the immutable approval record is an open governance call on retention
+    # policy, `apps` because it has no known writer.
     if storage is None:
-        # An unconfigured store is the documented 503, the same class of answer as the transient
-        # failure below — never the solve-time 500 an eager `Storage` dependency would raise.
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
         report = await reconcile_orphaned_storage(db, storage)
@@ -1412,8 +1384,8 @@ async def reconcile_storage(
         actor_id=admin.id,
         action="storage:reconcile",
         resource_type="storage",
-        # Counts only in the trail (never keys, security.md): what each sweep reclaimed + the
-        # ownerless-submission tally the D7 call needs.
+        # Counts only in the trail, never keys: what each sweep reclaimed, plus the
+        # ownerless-submission tally the open governance call needs.
         detail={
             "attDeleted": report.attachments.deleted,
             "snapshotsDeleted": report.snapshots.deleted,
@@ -1461,26 +1433,21 @@ async def reconcile_sandboxes(
     admin: CurrentSuperadmin, db: DbSession, sandbox: OptionalSandbox
 ) -> SandboxReconcileResponse:
     """Diff the sandbox containers Azure is billing for against the ones the registry tracks,
-    and REPORT the ones nothing is tracking (#83 follow-up).
-
-    THE GAP THIS CLOSES. `sweep_all` walks `bial:sandbox:registry:*`, so it reaches exactly the
-    containers it already has a record of. A sandbox whose registry entry is gone — a flushed or
-    replaced Redis, a container older than the registry, a teardown that failed after
-    `delete_registry` — is invisible to it forever and bills until a human goes looking. One did,
-    for twelve days.
+    and REPORT the ones nothing is tracking.
 
     REPORTS, NEVER DELETES, and that is the design rather than a first iteration: a container
     provisioned seconds ago by a start that has not yet written its registry hash is
     indistinguishable from an orphan here (`_start_locked` takes the lock BEFORE it provisions),
-    and that ambiguity is not something to hand an irreversible ARM delete. The operator deletes,
-    with `release` or the CLI.
-
-    A sibling of `reconcile-storage` and `reconcile-databases` in every operational respect:
-    superadmin-gated, operator-invoked, idempotent, and AUDITED WITH COUNTS ONLY — a sandbox name
-    embeds its app's uuid, so a name list is an inventory of who is running what.
-
-    The names come back in the RESPONSE (the operator has to know what to delete) but never in
-    the audit row or a log line — the same split `reconcile-storage` makes for blob keys."""
+    and that ambiguity is not something to hand an irreversible ARM delete. The operator
+    deletes, with `release` or the CLI."""
+    # THE GAP THIS CLOSES. `sweep_all` walks `bial:sandbox:registry:*`, so it reaches exactly the
+    # containers it already has a record of. A sandbox whose registry entry is gone — a flushed
+    # or replaced Redis, a container older than the registry, a teardown that failed after
+    # `delete_registry` — is invisible to it forever and bills until a human goes looking.
+    #
+    # A sibling of `reconcile-storage` and `reconcile-databases` in every operational respect:
+    # superadmin-gated, operator-invoked, idempotent, and AUDITED WITH COUNTS ONLY. The container
+    # names come back in the RESPONSE, because the operator has to know what to delete.
     if sandbox is None:
         raise AppApiError(503, _SANDBOX_UNAVAILABLE)
     if not isinstance(sandbox, FleetLister):
@@ -1528,19 +1495,18 @@ async def reconcile_sandboxes(
 async def _what_the_worker_actually_did(db: DbSession) -> tuple[PassOutcome | None, str | None]:
     """The newest reclamation pass's `(outcome, detail)`, or `(None, None)` if none was ever run.
 
-    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD (`#190`). It is the API
-    process's own flag; the pass is gated on the worker's, in another container reading another
-    env file. The row the worker wrote is the only artefact in this deployment that both processes
-    agree about, so it is what the report quotes.
-
-    A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
-    function owns exactly one question — is the worker alive — and answers it for two endpoints;
-    widening its return to carry an outcome would push the reporting concern into the liveness
-    check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
-    select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a pass
-    landing between the two reads, which pairs a fresh timestamp with the previous outcome — one
-    tick of staleness in a report whose whole subject is a 15-minute cadence.
+    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD. It is the API process's own
+    flag; the pass is gated on the worker's, in another container reading another env file. The
+    row the worker wrote is the only artefact in this deployment that both processes agree about,
+    so it is what the report quotes.
     """
+    # A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
+    # function owns exactly one question — is the worker alive — and answers it for two endpoints;
+    # widening its return to carry an outcome would push the reporting concern into the liveness
+    # check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
+    # select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a
+    # pass landing between the two reads, which pairs a fresh timestamp with the previous outcome
+    # — one tick of staleness in a report whose whole subject is a 15-minute cadence.
     row = (
         await db.execute(
             sa.select(WorkerPass.outcome, WorkerPass.detail)
@@ -1566,29 +1532,27 @@ async def _what_the_worker_actually_did(db: DbSession) -> tuple[PassOutcome | No
 async def reclamation_report(
     admin: CurrentSuperadmin, db: DbSession, sandbox: OptionalSandbox
 ) -> ReclamationReportResponse:
-    """WHAT WOULD THE RECLAMATION PASS DELETE RIGHT NOW? (R20.)
-
-    THE QUESTION THERE WAS NO WAY TO ASK. Before flipping `SANDBOX__RECLAIM_DESTROY` an operator
-    could learn what a pass would do in exactly two ways: read the worker's logs after a pass had
-    already run, or turn destruction on and find out. Both answer after the decision is made. The
-    whole two-flag design rests on there being a state in which somebody reads a candidate list
-    and agrees with it — and until now that list only existed in a log.
+    """WHAT WOULD THE RECLAMATION PASS DELETE RIGHT NOW?
 
     IT DESTROYS NOTHING, AND CANNOT. `run_reclamation_pass` is the pure half: it enumerates ARM,
     reads the coordination store as a spare-list, reads the app table, and returns verdicts. The
-    staging stamp and the destroy arm live in the worker task, not here, and neither is reachable
-    from this function. That is a property of the seam, not a flag this endpoint remembers to
-    check.
-
-    ANSWERS WITH THE FLAGS OFF, deliberately. Refusing to preview because reclamation is disabled
-    would withhold the report exactly when it is most wanted — the deployment deciding whether to
-    enable it. So the flags come back in the response instead, because they change what the same
-    `destroy` list MEANS: a preview on a report-only deployment, a description of what is about to
-    happen on an armed one.
-
-    Audited with COUNTS ONLY, like every sibling report here. A sandbox name embeds 28 hex
-    characters of its app's uuid, so a name list in the audit log is a durable record of who was
-    running what. The names go in the response, where the operator needs them."""
+    staging stamp and the destroy arm live in the worker task, not here, and neither is
+    reachable from this function. That is a property of the seam, not a flag this endpoint
+    remembers to check."""
+    # THE QUESTION THERE WAS NO WAY TO ASK. Before flipping `SANDBOX__RECLAIM_DESTROY` an
+    # operator could learn what a pass would do in exactly two ways: read the worker's logs after
+    # a pass had already run, or turn destruction on and find out. Both answer after the decision
+    # is made. The whole two-flag design rests on there being a state in which somebody reads a
+    # candidate list and agrees with it.
+    #
+    # ANSWERS WITH THE FLAGS OFF, deliberately. Refusing to preview because reclamation is
+    # disabled would withhold the report exactly when it is most wanted — the deployment deciding
+    # whether to enable it. So the flags come back in the response instead, because they change
+    # what the same `destroy` list MEANS: a preview on a report-only deployment, a description of
+    # what is about to happen on an armed one.
+    #
+    # Audited with COUNTS ONLY, like every sibling report here. The names go in the response,
+    # where the operator needs them.
     if sandbox is None or not isinstance(sandbox, FleetLister):
         # Retryable-shaped, not a 500: nothing is wrong with the request — this deployment has no
         # ARM access, or a substrate that cannot enumerate, so it cannot answer.
@@ -1658,33 +1622,32 @@ async def reclamation_report(
 async def backfill_sandbox_tags_endpoint(
     admin: CurrentSuperadmin, db: DbSession, sandbox: OptionalSandbox
 ) -> SandboxTagBackfillResponse:
-    """Stamp C10 identity tags onto every sandbox container that predates identity stamping (U8).
-
-    WHY THIS IS A RELEASE PREREQUISITE AND NOT A FOLLOW-UP. Everything provisioned from U8 onward
-    carries owner, app, control plane and a self-stamped creation time on the ARM resource, so it
-    can be judged with Redis down. Every container created BEFORE that carries nothing — and those
-    are exactly the ghosts this whole plan exists to collect. Until this has run and the fleet
-    reports zero untagged sandboxes, `SANDBOX_RECLAIM_DESTROY` must stay off (C10 §3.5).
+    """Stamp identity tags onto every sandbox container that predates identity stamping.
 
     THIS DESTROYS NOTHING. It only writes tags, via ARM merge-`PATCH`, which creates no revision
     and cannot touch container env — a live sandbox being stamped keeps its replica, its restart
-    count and its supervisor bearer.
-
-    OWNERSHIP IS RECOVERED, NEVER GUESSED. `app_name_for` keeps 28 of an app_id's 32 hex
-    characters, so a sandbox name is NOT invertible; names are matched FORWARD against the app
-    table. A container matching no row is stamped `kind` + `backfilled_at` and nothing else — no
-    owner, no app — which leaves it escalate-forever: reported on every pass, destroyed by none of
-    them. Inventing a plausible owner for it is the one move the escalate-never-destroy
-    architecture exists to prevent.
-
-    A sibling of the three reconcilers above in every operational respect: superadmin-gated,
-    operator-invoked, idempotent (an already-tagged container is skipped, so the age clock is never
-    reset by a second press), and AUDITED WITH COUNTS ONLY. A sandbox name embeds 28 hex characters
-    of its app's uuid, so a name list is an inventory of who is running what; the names of
-    containers that could not be stamped go to the logs, never to the audit row.
-
-    Unlike `reconcile-sandboxes` this needs NO Redis: identity comes from ARM and the app table,
-    and that independence is the property being installed."""
+    count and its supervisor bearer. Until this has run and the fleet reports zero untagged
+    sandboxes, `SANDBOX_RECLAIM_DESTROY` must stay off."""
+    # WHY THIS IS A RELEASE PREREQUISITE AND NOT A FOLLOW-UP. Everything provisioned from the
+    # identity-stamping release onward carries owner, app, control plane and a self-stamped
+    # creation time on the ARM resource, so it can be judged with Redis down. Every container
+    # created BEFORE that carries nothing — and those are exactly the ghosts this whole plan
+    # exists to collect.
+    #
+    # OWNERSHIP IS RECOVERED, NEVER GUESSED. `app_name_for` keeps 28 of an app_id's 32 hex
+    # characters, so a sandbox name is NOT invertible; names are matched FORWARD against the app
+    # table. A container matching no row is stamped `kind` + `backfilled_at` and nothing else — no
+    # owner, no app — which leaves it escalate-forever: reported on every pass, destroyed by none
+    # of them. Inventing a plausible owner for it is the one move the escalate-never-destroy
+    # architecture exists to prevent.
+    #
+    # A sibling of the three reconcilers above in every operational respect: superadmin-gated,
+    # operator-invoked, idempotent (an already-tagged container is skipped, so the age clock is
+    # never reset by a second press), and AUDITED WITH COUNTS ONLY — the names of containers that
+    # could not be stamped go to the logs, never to the audit row.
+    #
+    # Unlike `reconcile-sandboxes` this needs NO Redis: identity comes from ARM and the app table,
+    # and that independence is the property being installed.
     if sandbox is None:
         raise AppApiError(503, _SANDBOX_UNAVAILABLE)
     if not isinstance(sandbox, FleetTagger):
@@ -1742,28 +1705,22 @@ async def reconcile_databases(
     orphans — databases a failed teardown stranded, and roles whose database is already gone.
 
     THIS DELETES NOTHING, and that is the design, not a first iteration. The blob sweep can
-    reclaim because a blob has a provable `last_modified` and a 24h grace protects an
-    in-flight write; `pg_database` has no creation timestamp at all, so the provision-time
-    COMMENT is the only age evidence that survives orphaning — mutable, absent on anything
-    we did not create, and not something to hang an irreversible `DROP DATABASE` on. Three
-    guards decide what is even reportable (denylist, full-uuid name anchor, fail-closed
-    parse), and the sweep still stops at telling an operator the number.
-
-    A sibling of `reconcile-storage` in every operational respect: superadmin-gated,
-    OPERATOR-INVOKED (this reconciler is not on a schedule; nothing but a superadmin calls it —
-    corrected 2026-08-11 from "there is no scheduler in this repo, by decision", which was false
-    when written and is doubly false now, see ADR-0029), headless-friendly
-    because the admin router declares no CSRF, idempotent, and audited with counts only —
-    a database name embeds its project's uuid, so a name list is an inventory of who has
-    what, exactly the leak the storage report's key list is pinned against.
-
-    The maintenance engine is resolved HERE, in the body, never as an eager `Depends`: a
-    route that documents a 503 must be able to answer with it, and a dependency that raises
-    at solve time turns the documented 503 into an undocumented 500 (commit 6be7a9c). An
-    unconfigured substrate and an unreachable cluster are the same answer to the caller —
-    retryable — because a sweep that reported "no orphans" for either would be actively
-    dangerous.
-    """
+    reclaim because a blob has a provable `last_modified` and a 24h grace protects an in-flight
+    write; `pg_database` has no creation timestamp at all, so the provision-time COMMENT is the
+    only age evidence that survives orphaning — mutable, absent on anything we did not create,
+    and not something to hang an irreversible `DROP DATABASE` on."""
+    # Three guards decide what is even reportable (denylist, full-uuid name anchor, fail-closed
+    # parse), and the sweep still stops at telling an operator the number.
+    #
+    # A sibling of `reconcile-storage` in every operational respect: superadmin-gated,
+    # OPERATOR-INVOKED (this reconciler is not on a schedule; nothing but a superadmin calls it),
+    # headless-friendly because the admin router declares no CSRF, idempotent, and audited with
+    # counts only.
+    #
+    # The maintenance engine is resolved HERE, in the body, never as an eager `Depends`: this
+    # route documents a 503 and must be able to answer with it. An unconfigured substrate and an
+    # unreachable cluster are the same answer to the caller — retryable — because a sweep that
+    # reported "no orphans" for either would be actively dangerous.
     engine = get_maintenance_engine()
     if engine is None:
         raise AppApiError(503, _DB_CLUSTER_UNREACHABLE)
@@ -1780,7 +1737,7 @@ async def reconcile_databases(
         # Cluster-wide, so it belongs to no single app or project — the `storage:reconcile`
         # shape (a resource TYPE with no id), with `database` as the subject.
         resource_type="database",
-        # Counts only (security.md): never a database name, never a role name, never a host.
+        # Counts only: never a database name, never a role name, never a host.
         detail={
             "orphanedDatabases": report.databases.orphaned,
             "unknownAgeDatabases": report.databases.unknown_age,
@@ -1801,52 +1758,46 @@ async def reconcile_databases(
     ),
 )
 async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployReconcileResponse:
-    """Settle deployment rows whose pipeline died with the process — on demand (U6).
+    """Settle deployment rows whose pipeline died with the process — on demand.
 
-    THE GAP THIS CLOSES. Of the four reconciling sweeps this platform runs, three already had a
-    superadmin lever (`reconcile-storage`, `reconcile-sandboxes`, `reconcile-databases`) and this
-    one had none: deploy reconciliation was reachable only from the boot path and a 300-second
-    in-process timer. So an operator staring at an app whose Deploy button 409s had exactly two
-    options — wait out `store.DEPLOY_STALE_AFTER_S` (thirty minutes) or restart the control
-    plane. Now there is a third.
-
-    A SIBLING of the other three in every operational respect: superadmin-gated, operator-invoked,
-    headless-friendly (the admin router declares no CSRF, so `curl -b "session=<jwt>"` works),
-    idempotent, and audited with COUNTS ONLY — a deployment id or an app name would make the trail
-    an inventory of who deployed what (`.claude/rules/security.md`).
-
-    Deliberately NOT gated on `DEPLOY__RECONCILE_ENABLED`. That flag switches off the CLOCK (the
-    scheduled pass in `src/workers/deploy_reconcile.py`); an operator who has silenced the timer
-    must still be able to settle a wedged deploy by hand, and a lever that the kill switch also
-    kills is not a recovery lever.
-
-    SAFE TO PRESS AT ANY TIME, including alongside the other two things that reconcile: the
-    scheduled pass on the worker (`src/workers/deploy_reconcile.py`) and the API's boot one-shot
-    (`main._reconcile_interrupted_deploys`). It used to name "the in-process loop" as the second
-    of those — U15 deleted that `while True` from the lifespan, and `main.py`'s own docstring is
-    the authority. Staleness is measured from `heartbeat_at`, so a live pipeline is never in the
-    work list at all, and every terminal write is guarded on `status = 'running'` — of two racing
-    reconcilers exactly one settles a given row and the other learns it lost.
-
-    The publish client is resolved HERE, in the body, never as an eager `Depends`: a dependency
-    that raises at solve time turns this route's documented 503 into an undocumented 500 (commit
-    6be7a9c). An unconfigured `DEPLOY__*` block therefore 503s, which is the honest answer — there
-    is nothing to reconcile *with*.
-
-    A 200 FROM THIS ROUTE DOES NOT MEAN THE FLEET IS SETTLED, and the difference is worth knowing
-    before you act on the number. `reconcile_stalled_deployments` **never raises** — by design, so
-    that a failure cannot take the lifespan or the scheduled pass down with it — so an unreachable
-    ARM is caught PER ROW: `AcaTransientError` defers that row to the next pass, anything else is
-    logged. Either way the pass completes and returns a `resolved` count that is simply lower.
-    So the two failures are NOT the same answer: unconfigured is a 503, unreachable ARM is a 200
-    with rows deferred, visible only as `deployment_reconcile_deferred` / `_failed` in the logs.
-    An earlier version of this docstring claimed they were identical; they are not, and a 200 read
-    as "everything settled" is exactly the misleading answer it was trying to avoid.
-
-    It opens its OWN sessions through `async_session_factory` rather than borrowing the request's:
-    each row is settled and committed independently, so a slow ARM call on row three cannot hold a
-    transaction open across the whole pass, and a failure there does not roll back rows one and
-    two."""
+    SAFE TO PRESS AT ANY TIME, including alongside the scheduled worker pass and the API's boot
+    one-shot. Staleness is measured from `heartbeat_at`, so a live pipeline is never in the work
+    list at all, and every terminal write is guarded on `status = 'running'` — of two racing
+    reconcilers exactly one settles a given row and the other learns it lost. A 200 DOES NOT
+    MEAN THE FLEET IS SETTLED: an unreachable ARM defers rows and still returns 200, with a
+    lower `resolved` count."""
+    # THE GAP THIS CLOSES. Of the four reconciling sweeps this platform runs, three already had a
+    # superadmin lever (`reconcile-storage`, `reconcile-sandboxes`, `reconcile-databases`) and
+    # this one had none: deploy reconciliation was reachable only from the boot path and a
+    # 300-second in-process timer. So an operator staring at an app whose Deploy button 409s had
+    # exactly two options — wait out `store.DEPLOY_STALE_AFTER_S` (thirty minutes) or restart the
+    # control plane.
+    #
+    # A SIBLING of the other three in every operational respect: superadmin-gated,
+    # operator-invoked, headless-friendly (the admin router declares no CSRF, so
+    # `curl -b "session=<jwt>"` works), idempotent, and audited with COUNTS ONLY.
+    #
+    # Deliberately NOT gated on `DEPLOY__RECONCILE_ENABLED`. That flag switches off the CLOCK (the
+    # scheduled pass in `src/workers/deploy_reconcile.py`); an operator who has silenced the timer
+    # must still be able to settle a wedged deploy by hand, and a lever that the kill switch also
+    # kills is not a recovery lever.
+    #
+    # The publish client is resolved HERE, in the body, never as an eager `Depends`: this route
+    # documents a 503 and must be able to answer with it. An unconfigured `DEPLOY__*` block
+    # therefore 503s, which is the honest answer — there is nothing to reconcile *with*.
+    #
+    # The 200-vs-503 difference is worth knowing before acting on the number.
+    # `reconcile_stalled_deployments` **never raises** — by design, so that a failure cannot take
+    # the lifespan or the scheduled pass down with it — so an unreachable ARM is caught PER ROW:
+    # `AcaTransientError` defers that row to the next pass, anything else is logged. Either way
+    # the pass completes and returns a lower `resolved` count. So the two failures are NOT the
+    # same answer: unconfigured is a 503, unreachable ARM is a 200 with rows deferred, visible
+    # only as `deployment_reconcile_deferred` / `_failed` in the logs.
+    #
+    # It opens its OWN sessions through `async_session_factory` rather than borrowing the
+    # request's: each row is settled and committed independently, so a slow ARM call on row three
+    # cannot hold a transaction open across the whole pass, and a failure there does not roll back
+    # rows one and two.
     try:
         published_apps = get_published_apps()
     except DeployNotConfiguredError as exc:
@@ -1861,7 +1812,7 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
         # TYPE with no id), with `deployment` as the subject.
         resource_type="deployment",
         resource_id=None,
-        # Counts only (security.md): never a deployment id, never an app name, never a URL.
+        # Counts only: never a deployment id, never an app name, never a URL.
         detail={"resolved": resolved},
     )
     await db.commit()
@@ -1911,7 +1862,7 @@ async def read_audit(
 
 
 # ==============================================================================
-# U9 — per-user limits management + feedback read (R28). A sibling `/admin` router
+# Per-user limits management + feedback read. A sibling `/admin` router
 # (the governance router is prefixed `/admin/apps`).
 # ==============================================================================
 
@@ -1955,10 +1906,10 @@ async def list_users(
     q: SearchQuery = None,
 ) -> UsersResponse:
     """Keyset page of the roster, newest-first, optionally filtered by a case-insensitive
-    email/display-name substring (KD-1 — replaces the unbounded full-table load). Each row
-    carries raw + effective limits, the suspension marker, and today's folded token spend.
-    Overrides and usage are fetched for the PAGE in one query each — the usage read is a
-    single `GROUP BY user_id` aggregate keyed to the IST day, never a per-row N+1 (R9)."""
+    email/display-name substring. Each row carries raw + effective limits, the suspension
+    marker, and today's folded token spend. Overrides and usage are fetched for the PAGE in one
+    query each — the usage read is a single `GROUP BY user_id` aggregate keyed to the IST day,
+    never a per-row N+1."""
     after = parse_cursor(cursor)
     search = clean_search(q)
     limit = clean_limit(limit)
@@ -1987,7 +1938,7 @@ async def list_users(
         # `billable_spend` (the cost-weighted spend: fresh + output + cache_read/10 +
         # cache_write*1.25) is the SHARED expression the daily gate's `_used_today` also
         # uses, so the roster agrees with the gate on "used today" by construction
-        # (services/usage/gate.py). Grouped by kind (U15): `usageToday` counts `build`
+        # (services/usage/gate.py). Grouped by kind: `usageToday` counts `build`
         # rows only — EXACTLY what the gate reads, so the admin comparing it against the
         # cap sees the number the cap actually measures — and review spend is reported
         # as its OWN figure beside it, never folded in. One number that meant two things
@@ -2117,34 +2068,31 @@ async def set_user_limits(
 async def bulk_set_user_limits(
     body: BulkLimitsRequest, admin: CurrentSuperadmin, db: DbSession
 ) -> BulkLimitsResponse:
-    """Admin "Global Limits" — set the SAME daily token limit for many users in one
-    request, either every user system-wide (`userIds` omitted/null, `confirmAll`
-    required) or a hand-picked subset (`userIds` provided). Unlike `set_user_limits`,
-    this never resets-to-default (bulk always sets an exact value) and never touches
-    `context_soft_limit`/`context_hard_limit` — those stay per-user, per-conversation
-    knobs.
+    """Admin "Global Limits" — set the SAME daily token limit for many users in one request,
+    either every user system-wide (`userIds` omitted/null, `confirmAll` required) or a
+    hand-picked subset (`userIds` provided).
 
-    This is a SNAPSHOT, not a standing policy: it writes one row per user targeted
-    right now. A user who joins after an "all" apply has no override row and runs at
-    `settings.DAILY_TOKEN_LIMIT` until a re-apply — there is no persisted fleet-level
-    setting `resolve_daily_limit` consults ahead of that default.
-
-    The "all" scope resolves the roster IN THE INSERT itself (`INSERT ... SELECT ...
-    FROM users`) rather than materializing every id into Python first — past ~10,922
-    users that overflowed asyncpg's bind-parameter ceiling (3 params/row: the
-    client-side `id` default, `user_id`, `daily_token_limit`), and it drops the
-    all-scope apply to a single bind parameter. The "selected" scope stays a
-    multi-VALUES upsert (the id list is already bounded + validated), sorted for a
-    deterministic lock order — `ON CONFLICT DO UPDATE`'s row-lock order follows
-    `VALUES` order, and an unordered list let two concurrent applies deadlock.
-
-    ACCEPTED RISK: the "all" scope has no before-image, only a count. Unlike
-    "selected" (bounded by the request, cheap to snapshot), "all" is a JSONB-sized
-    per-user structure — a different order of object — and at BIAL's realistic scale
-    (hundreds of internal users) building that snapshot isn't worth the complexity
-    yet. This means a mis-applied "all" scope apply is NOT scriptably reversible:
-    only "selected" is. Revisit if the fleet grows large enough that this stops
-    being an acceptable trade-off."""
+    Unlike `set_user_limits`, this never resets-to-default (bulk always sets an exact value) and
+    never touches `context_soft_limit`/`context_hard_limit` — those stay per-user,
+    per-conversation knobs. It is a SNAPSHOT, not a standing policy: a user who joins after an
+    "all" apply has no override row and runs at `settings.DAILY_TOKEN_LIMIT` until a re-apply."""
+    # There is no persisted fleet-level setting `resolve_daily_limit` consults ahead of that
+    # default.
+    #
+    # The "all" scope resolves the roster IN THE INSERT itself (`INSERT ... SELECT ... FROM
+    # users`) rather than materializing every id into Python first — past ~10,922 users that
+    # overflowed asyncpg's bind-parameter ceiling (3 params/row: the client-side `id` default,
+    # `user_id`, `daily_token_limit`), and it drops the all-scope apply to a single bind
+    # parameter. The "selected" scope stays a multi-VALUES upsert (the id list is already bounded
+    # + validated), sorted for a deterministic lock order — `ON CONFLICT DO UPDATE`'s row-lock
+    # order follows `VALUES` order, and an unordered list let two concurrent applies deadlock.
+    #
+    # ACCEPTED RISK: the "all" scope has no before-image, only a count. Unlike "selected"
+    # (bounded by the request, cheap to snapshot), "all" is a JSONB-sized per-user structure — a
+    # different order of object — and at this deployment's realistic scale (hundreds of internal
+    # users) building that snapshot is not worth the complexity yet. This means a mis-applied
+    # "all" scope apply is NOT scriptably reversible; only "selected" is. Revisit if the fleet
+    # grows large enough that this stops being an acceptable trade-off.
     if body.daily_token_limit <= 0 or body.daily_token_limit > MAX_DAILY_TOKEN_LIMIT:
         raise AppApiError(
             400,
@@ -2277,7 +2225,7 @@ async def bulk_set_user_limits(
     return BulkLimitsResponse(updated_count=updated_count)
 
 
-# --- local suspension (U10, R10–R14) ---------------------------------------------
+# --- local suspension ---------------------------------------------
 
 
 async def _get_user_or_404(db: DbSession, user_id: uuid.UUID) -> User:
@@ -2294,7 +2242,7 @@ async def _get_user_or_404(db: DbSession, user_id: uuid.UUID) -> User:
         # The RBAC gate's own 403 is the DetailBody shape; this route's 403 (below)
         # is the envelope. OpenAPI allows one schema per status — the envelope is
         # documented since it is this route's own raise.
-        (403, ErrorEnvelope, "Target is a super-admin (never suspendable, AE6)"),
+        (403, ErrorEnvelope, "Target is a super-admin and can never be suspended"),
         (404, ErrorEnvelope, "No such user"),
         (409, ErrorEnvelope, "User is already suspended"),
     ),
@@ -2302,12 +2250,12 @@ async def _get_user_or_404(db: DbSession, user_id: uuid.UUID) -> User:
 async def deactivate_user(
     user_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> SuspensionResponse:
-    """Immediately block a user (R10/R11, KD-6): stamp `suspended_at`, bump
+    """Immediately block a user: stamp `suspended_at`, bump
     `token_version`, and revoke every refresh family — so live sessions, captured
     refresh cookies, and outstanding runner tokens all die NOW, and the login
     callback refuses a fresh Entra sign-in until reactivation."""
     user = await _get_user_or_404(db, user_id)
-    # AE6: no super-admin is ever suspendable — and because the CALLER is gated as
+    # No super-admin is ever suspendable — and because the CALLER is gated as
     # one, this single allowlist check also covers self-suspension.
     if is_super_duper_admin(user, settings.superadmin_emails):
         raise AppApiError(403, "A super-admin cannot be suspended.")
@@ -2338,7 +2286,7 @@ async def deactivate_user(
 async def reactivate_user(
     user_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> SuspensionResponse:
-    """Restore a suspended user (R12). Clears the marker so login works again —
+    """Restore a suspended user. Clears the marker so login works again —
     deliberately WITHOUT touching `token_version`, so every pre-suspension session
     and token stays dead; the user signs in fresh."""
     user = await _get_user_or_404(db, user_id)
@@ -2364,32 +2312,30 @@ async def reactivate_user(
 async def reset_user_usage(
     user_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> UsageResetResponse:
-    """Zero out a user's TODAY-only token usage. Deletes the `token_usage` BUILD row for
-    `ist_today()` if one exists — `_used_today` already reads 0 for an absent row
-    (services/usage/gate.py), so this is equivalent to zeroing every column and
-    simpler than an UPDATE, and leaves no stale row whose timestamps would misleadingly
-    predate the reset. `record_usage`'s `INSERT … ON CONFLICT` recreates the row
-    cleanly on the user's next turn either way.
+    """Zero out a user's TODAY-only token usage.
 
-    Build row ONLY (U15): the reset exists to let the citizen build again today, and the
-    gate reads build spend only — a same-day `review` row changes nothing the cap
-    measures, and deleting it would erase the attribution record that is the whole point
-    of metering review cost. Scoping by kind also keeps `.first()` below well-defined:
-    the `(user_id, usage_date, kind)` uniqueness allows at most ONE build row per day.
-
-    Idempotent (no 409): resetting an already-zero/absent day is a harmless no-op —
-    unlike deactivate/reactivate there is no suspended/not-suspended STATE to conflict
-    with. Prior days' rows are never touched (only `usage_date == ist_today()` is
-    targeted) — this is a "let them start today over" action, not a usage-history
-    edit. Unlike deactivate, no super-admin guard: resetting usage isn't unsafe the
-    way suspending a super-admin's own access would be.
-
-    `.returning()` captures the row's four token columns in the SAME delete — not a
-    separate SELECT first — so the audit trail records what was actually discarded
-    (spend reconciliation) without a second round trip or a check-then-act race. A
-    `None` result (already-zero/absent day, the idempotent no-op case) is audited
-    with no `detail` rather than a made-up all-zero one, so the trail can tell "reset
-    real spend" apart from "reset nothing"."""
+    Build row ONLY: the reset exists to let the citizen build again today, and the gate reads
+    build spend only. Idempotent (no 409): resetting an already-zero/absent day is a harmless
+    no-op. Prior days' rows are never touched — this is a "let them start today over" action,
+    not a usage-history edit. Unlike deactivate, no super-admin guard: resetting usage is not
+    unsafe the way suspending a super-admin's own access would be."""
+    # Deletes the `token_usage` BUILD row for `ist_today()` if one exists — `_used_today` already
+    # reads 0 for an absent row (services/usage/gate.py), so this is equivalent to zeroing every
+    # column and simpler than an UPDATE, and leaves no stale row whose timestamps would
+    # misleadingly predate the reset. `record_usage`'s `INSERT … ON CONFLICT` recreates the row
+    # cleanly on the user's next turn either way.
+    #
+    # A same-day `review` row changes nothing the cap measures, and deleting it would erase the
+    # attribution record that is the whole point of metering review cost. Scoping by kind also
+    # keeps `.first()` below well-defined: the `(user_id, usage_date, kind)` uniqueness allows at
+    # most ONE build row per day. There is no suspended/not-suspended STATE for the idempotent
+    # repeat to conflict with, unlike deactivate/reactivate.
+    #
+    # `.returning()` captures the row's four token columns in the SAME delete — not a separate
+    # SELECT first — so the audit trail records what was actually discarded (spend reconciliation)
+    # without a second round trip or a check-then-act race. A `None` result (already-zero/absent
+    # day, the idempotent no-op case) is audited with no `detail` rather than a made-up all-zero
+    # one, so the trail can tell "reset real spend" apart from "reset nothing".
     user = await _get_user_or_404(db, user_id)
     deleted = (
         await db.execute(
@@ -2459,26 +2405,23 @@ async def read_feedback(admin: CurrentSuperadmin, db: DbSession) -> FeedbackResp
 async def harness_counters(
     admin: CurrentSuperadmin, db: DbSession, days: int = 7
 ) -> HarnessCountersResponse:
-    """The build-harness outcomes, totalled — R32's "counter to watch" (U25).
+    """The build-harness outcomes, totalled — the "counter to watch" for reliability
+    regressions: did the verdict block a false claim, how often did we restore, and did any turn
+    fail to reach a durable copy.
 
-    WHAT IT IS FOR, in the words of the plan's success criteria: did the verdict block a false
-    claim, how often did we restore, and did any turn fail to reach a durable copy. There is no
-    metrics system in this deployment, so if these are not readable here they are not readable
-    anywhere — and an outcome nobody can count is an outcome nobody will notice regressing.
-
-    `CurrentSuperadmin`, and the gate in this package is OPT-IN PER ROUTE (see `app_counts`).
-    Silence would ship a citizen-readable endpoint leaking aggregate operational and usage data
-    across every user in the tenant.
-
-    NO `user_id` PREDICATE, like every route in this file: these are properties of the deployment,
-    not of any citizen, and the table holds no user data.
-
-    One `GROUP BY` over an indexed column on a small append-only table. `days` bounds it so the
-    query cannot grow without limit as the history does.
-
-    MOUNTED ON THE `/admin` ROUTER, not `/admin/apps`, and the distinction is real rather than
-    cosmetic: everything under `/admin/apps` is about one app's governance, and these counters are
-    about the DEPLOYMENT. They would answer the same numbers whether any app existed or not."""
+    There is no metrics system in this deployment, so if these are not readable here they are
+    not readable anywhere. One `GROUP BY` over an indexed column on a small append-only table;
+    `days` bounds it so the query cannot grow without limit as the history does."""
+    # `CurrentSuperadmin`, and the gate in this package is OPT-IN PER ROUTE (see `app_counts`).
+    # Silence would ship a citizen-readable endpoint leaking aggregate operational and usage data
+    # across every user in the tenant.
+    #
+    # NO `user_id` PREDICATE, like every route in this file: these are properties of the
+    # deployment, not of any citizen, and the table holds no user data.
+    #
+    # MOUNTED ON THE `/admin` ROUTER, not `/admin/apps`, and the distinction is real rather than
+    # cosmetic: everything under `/admin/apps` is about one app's governance, and these counters
+    # are about the DEPLOYMENT. They would answer the same numbers whether any app existed or not.
     since = datetime.now(UTC) - timedelta(days=max(1, min(days, 90)))
     rows = (
         await db.execute(

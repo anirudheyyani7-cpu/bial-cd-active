@@ -6,8 +6,8 @@ Two guarantees:
    for a password field that means leaking the plaintext (and it may be logged).
    We return only ``type``/``loc``/``msg``.
 2. Any unhandled exception returns a generic 500 with no internal detail; the real
-   error is logged server-side only (`.claude/rules/security.md`: NEVER expose
-   internal errors to the frontend).
+   error is logged server-side only. NEVER expose an internal error to the
+   frontend.
 """
 
 from __future__ import annotations
@@ -23,21 +23,14 @@ logger = structlog.get_logger()
 
 
 class AppApiError(Exception):
-    """An app-lifecycle / platform error rendered as the ported
-    ``{"error": {"message": ...}}`` body the SPA already consumes (distinct from the
-    auth endpoints' ``{"detail": ...}`` shape).
+    """An app-lifecycle/platform error rendered as ``{"error": {"message": ...}}`` (distinct from
+    the auth endpoints' ``{"detail": ...}`` shape). Carries its own HTTP status so
+    lifecycle/admin/build-session routers fail closed with a stable, non-leaking message.
 
-    Carries its own HTTP status so the lifecycle, admin, and build-session routers can
-    fail closed with a stable, non-leaking message. An optional machine-readable
-    ``code`` is surfaced under ``error.code`` so the SPA can branch on it rather than
-    string-matching the message, and an optional structured ``detail`` is surfaced
-    under ``error.detail`` for the refusals a client must RENDER rather than merely
-    branch on (R15b's waiting-for-review 409 carries the pending state, the submitted
-    version and the rejection note, so neither citizen surface needs a second call).
-    ``detail`` must be JSON-ready — plain strings/numbers/bools/None only, never an
-    un-serialisable object and never internal identifiers a citizen must not see.
-    Raised from a dependency or a route; rendered by ``app_api_error_handler``.
-    """
+    Optional ``code`` surfaces under ``error.code`` to branch without string-matching; optional
+    structured ``detail`` surfaces under ``error.detail`` for refusals a client must RENDER (e.g. a
+    409's pending state + rejection note). ``detail`` MUST be JSON-ready and never leak internal
+    IDs. Raised from a dependency or route; rendered by ``app_api_error_handler``."""
 
     def __init__(
         self,
@@ -76,7 +69,7 @@ def app_api_error_handler(request: Request, exc: Exception) -> JSONResponse:
 #
 #     Value error, name must be at most 120 characters
 #
-# The validators now write for a person (#158 §14), and the prefix is the one part they
+# The validators now write for a person, and the prefix is the one part they
 # cannot remove themselves — it is added after they raise. So it comes off HERE, at the
 # boundary that already exists to curate what leaves.
 #

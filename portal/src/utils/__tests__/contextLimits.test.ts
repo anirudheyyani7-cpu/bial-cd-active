@@ -4,7 +4,7 @@
  * The hard boundary is the server's and is tested there
  * (`backend/tests/api/v1/conversations/test_context_gate.py`). What is testable HERE is the
  * warning: that it appears at the administrator's threshold and not one token before, that it
- * respects an override — and, since #194, that it derives NOTHING.
+ * respects an override — and that it derives NOTHING.
  *
  * ★ THE RULE THESE TESTS PIN IS A DIFFERENT RULE FROM THE ONE THEY REPLACE. This file used to
  * assert the arithmetic of a declared twin of the server's estimator: four characters to the
@@ -128,7 +128,7 @@ describe('the estimator', () => {
   it('★ exports nothing that derives a token figure', () => {
     // ASSERT-ABSENCE, PAIRED WITH LIVENESS so it cannot false-green on a module that failed to
     // load. Each of these was half of a declared twin with the server's estimator, and the pair
-    // was wrong together: a document read as 1,600 tokens against a real 153,342 (#194). The
+    // was wrong together: a document read as 1,600 tokens against a real 153,342. The
     // module must not grow them back under new names either — anything that turns a transcript
     // into a number belongs to the provider now.
     for (const gone of [

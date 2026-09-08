@@ -5,7 +5,7 @@
  * `utils/__tests__/contextLimits.test.ts`'s. Three things have to be true here and each one has
  * already been got wrong somewhere in this codebase:
  *
- *   1. it is not a `disabled` (R45/R64 — the focus-loss defect this repo has recorded twice);
+ *   1. it is not a `disabled` (the focus-loss defect this repo has recorded twice);
  *   2. it does not touch what the citizen has typed;
  *   3. it is announced, not shouted.
  */
@@ -55,7 +55,7 @@ describe('the getting-long warning', () => {
   })
 
   it('★ disables NOTHING — the whole subtree stays interactive', () => {
-    // R45/R64. A warning that blurred the textarea mid-sentence would be worse than no
+    // A warning that blurred the textarea mid-sentence would be worse than no
     // warning, and this is the mechanical form of the rule.
     const { container } = draw({ contextWarning: WARNING })
     expect(container.querySelectorAll('[disabled]')).toHaveLength(0)

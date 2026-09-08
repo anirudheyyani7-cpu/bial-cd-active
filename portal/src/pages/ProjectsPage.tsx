@@ -1,34 +1,22 @@
 /**
- * `/projects` — the landing screen. Three numbers, then the citizen's tools.
+ * `/projects` — the landing screen: list/grid views, numbered pagination, a summary strip.
  *
- * #158 replaced the card grid with TWO views, list default and grid second, numbered
- * pagination in both, and a summary strip above them.
+ * Pagination is OFFSET, not keyset — `list_projects` needs a `total` for "Page 1 of 2",
+ * which the keyset envelope doesn't compute — so `page` and `pageSize` are committed
+ * state and an effect re-fetches, rather than a hook that appends forward-only.
  *
- * PAGINATION IS OFFSET NOW, and that is a deliberate exception the server documents at
- * `list_projects`: `Showing 1-8 of 12` and `Page 1 of 2` both need a `total`, which the
- * keyset envelope declines to compute. What changed here is that the page is COMMITTED
- * state — `page` and `pageSize` — and one effect fetches from it, rather than a hook that
- * appends forward-only.
+ * WHY THIS EXISTS
+ * `page`, `pageSize` and `q` live in the URL, not local state — opening a project and
+ * pressing Back, reloading, or pasting the address to a colleague all land on the same
+ * view, which matters more here than on most lists: the canvas gives a citizen no recents
+ * list, so this page IS how a project is found again. `view` and `density` stay in
+ * `localStorage` instead, on purpose — they are a person's habit rather than a place in a
+ * list, and a shared link should not reach into the reader's window and rearrange it.
  *
- * THOSE COMMITTED VALUES LIVE IN THE URL (`#208`). `page`, `pageSize` and `q` are read from
- * `useSearchParams`, so opening a project and pressing Back, reloading, and pasting the address
- * to a colleague all land on the same view — which matters here more than on most lists, because
- * the canvas deliberately gives a citizen no recents list: this page IS how a project is found
- * again. `view` and `density` stay in `localStorage` on purpose. They are a person's habit rather
- * than a place in a list, and a shared link should not reach into the reader's window and rearrange
- * it.
- *
- * TWO EMPTY STATES THAT ARE NOT THE SAME THING, carried over because they were already
- * right: zero projects and no search is a first run; zero results WITH a search is a
- * no-match, and it quotes `appliedQuery` — the query the rows answer — never `q`, the live
- * input, which runs 300ms ahead of the data and would flash "you have no projects" at
- * someone who has plenty.
- *
- * THE SKELETON TAKES THE SHAPE OF THE VIEW YOU ARE IN (§11). A card skeleton under a list
- * view flashes the wrong layout for one frame, which reads as a bug.
- *
- * A PAGE-2 FAILURE MUST NOT CLEAR THE ROWS ALREADY ON SCREEN (§11). The error is said
- * underneath them instead.
+ * Two empty states differ: zero projects (first run) vs. zero results WITH a search,
+ * which quotes `appliedQuery` — never the live `q`, which runs 300ms ahead and would
+ * flash a false "no projects" mid-type. The skeleton matches the active view, and a
+ * page-2 failure is shown below the rows already on screen, never clears them.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -71,16 +59,16 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 
 /**
- * THE ONE SENTENCE A DEAD ADDRESS SAYS ON THE WAY OUT (`#206`).
+ * THE ONE SENTENCE A DEAD ADDRESS SAYS ON THE WAY OUT.
  *
  * Exported because more than one surface has to say it BYTE FOR BYTE: `ProjectPage` sends it when
- * a project id 404s, `ChatRoute` sends it when a chat resolves to nothing, and `#207` says it
- * again in place — as a card body, on a page that stays — for an id the server cannot even parse.
+ * a project id 404s, `ChatRoute` sends it when a chat resolves to nothing, and it appears again in
+ * place — as a card body, on a page that stays — for an id the server cannot even parse.
  * A second copy of these words somewhere else is how two of those three drift apart.
  *
  * IT IS NEUTRAL, AND IT IS NOT DIFFERENTIATED PER CAUSE. A project id belonging to another
- * citizen is a deliberately non-leaking 404, identical to one that never existed (ADR-0004,
- * `owned_project_or_404` — "fail closed with a non-leaking 404"), so "you do not have access"
+ * citizen is a deliberately non-leaking 404, identical to one that never existed
+ * (`owned_project_or_404` — "fail closed with a non-leaking 404"), so "you do not have access"
  * would confirm the existence of someone else's project. One line, whatever the reason — which is
  * also why the line is a CONSTANT rather than the server's own message piped through: the moment
  * it is derived from the response, two causes can print two sentences again.
@@ -90,7 +78,7 @@ export const PROJECT_GONE_NOTICE = 'That project is no longer available.'
 type View = 'list' | 'grid'
 type Density = 'S' | 'M' | 'L'
 
-/** Remembered per person so the choice survives a reload (§ "persists across reloads").
+/** Remembered per person so the choice survives a reload.
  *  Reads are wrapped because a private window or blocked site data throws on access. */
 const VIEW_KEY = 'bial.projects.view'
 const DENSITY_KEY = 'bial.projects.density'
@@ -187,7 +175,7 @@ export default function ProjectsPage(): React.JSX.Element {
   const [view, setView] = useState<View>(() => readStored(VIEW_KEY, ['list', 'grid'] as const, 'list'))
   const [density, setDensity] = useState<Density>(() => readStored(DENSITY_KEY, ['S', 'M', 'L'] as const, 'M'))
 
-  // COMMITTED query state — WHAT WAS ASKED FOR, and it lives in the address bar (`#208`).
+  // COMMITTED query state — WHAT WAS ASKED FOR, and it lives in the address bar.
   //
   // ONE `commit` RATHER THAN THREE SETTERS, because `setSearchParams` reads the params of the
   // render it was created in: two calls in one handler would each start from that same snapshot,
@@ -231,7 +219,7 @@ export default function ProjectsPage(): React.JSX.Element {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [counts, setCounts] = useState<ProjectCounts | null>(null)
-  // TRUE ONLY WHEN THE FIRST LOAD FAILED WITH NOTHING TO FALL BACK ON (round-4 finding 12).
+  // TRUE ONLY WHEN THE FIRST LOAD FAILED WITH NOTHING TO FALL BACK ON.
   // A REFRESH failure (there IS a last-known-good `counts`) stays silent by design — the
   // comment below explains why — but that same silence, applied to a FIRST load, left the
   // three tiles skeleton-pulsing forever over a working list: no error, no retry, and
@@ -246,17 +234,17 @@ export default function ProjectsPage(): React.JSX.Element {
 
   // Out-of-order guard: a slow page that lands after a newer one must not overwrite it.
   const requestId = useRef(0)
-  // WHERE FOCUS GOES WHEN A DELETE CONFIRMATION CLOSES. Its own trigger — the row's Delete
-  // button — is gone by then: the optimistic removal takes the row out immediately, well
-  // before the request settles, so Radix's default restore-to-trigger finds a detached node
-  // and silently no-ops (round-4 finding 2). `tabIndex={-1}` on the heading below makes it a
+  // WHERE FOCUS GOES WHEN A DELETE CONFIRMATION CLOSES. Not onto its own trigger: the row's
+  // Delete button outlives the close and is then unmounted by the refetch a beat later, so
+  // Radix's default restore-to-trigger would put the keyboard on a control that disappears
+  // under it and lands back on the body. `tabIndex={-1}` on the heading below makes it a
   // programmatic focus target without adding it to the tab order.
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   // The search is debounced, but `page` resets IMMEDIATELY on a keystroke — a cursor into
   // page 3 of the previous query is meaningless against a new one.
   //
-  // SEEDED FROM THE URL RATHER THAN FROM `''` (`#208`). A cold load of `/projects?q=ramp` with an
+  // SEEDED FROM THE URL RATHER THAN FROM `''`. A cold load of `/projects?q=ramp` with an
   // empty seed asks the server for the UNFILTERED list first, paints all of it, and only 300ms
   // later asks the question the link actually carried — a flash of everybody's projects on an
   // address that named one, and a wasted round trip to produce it.
@@ -266,7 +254,7 @@ export default function ProjectsPage(): React.JSX.Element {
     return () => clearTimeout(t)
   }, [q])
 
-  // THE ARRIVAL NOTICE, READ ONCE AND THEN SCRUBBED (`#206`, ASM4).
+  // THE ARRIVAL NOTICE, READ ONCE AND THEN SCRUBBED.
   //
   // It rides ROUTER STATE, not the query string. A query survives a copy, a bookmark and a share,
   // and "that project is no longer available" pinned to a shareable `/projects?notice=…` is a
@@ -280,7 +268,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // into component state and then replacing the entry with a stateless one is what makes this a
   // one-shot. The replace cannot loop: the re-run reads a `notice` that is no longer there.
   //
-  // WHICH IS ALSO WHY IT NEVER BECOMES A QUERY PARAMETER (`#208`). The replace above carries
+  // WHICH IS ALSO WHY IT NEVER BECOMES A QUERY PARAMETER. The replace above carries
   // `location.search` through verbatim, so the page, size and query a reader arrived with survive
   // being told a project is gone — but the reverse must hold too: a `?notice=…` would be copied
   // forward by `intoParams`, which preserves the parameters it does not own, and would then
@@ -288,7 +276,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // travels on exactly one navigation and nowhere else, so it stays the channel.
   //
   // THE TEXT ARRIVES AFTER ITS REGION, which is why this is an effect and not a `useState`
-  // initialiser (ASM5). A live region inserted together with its text is missed entirely by
+  // initialiser. A live region inserted together with its text is missed entirely by
   // several reader-and-browser combinations — `TurnBanner` and `LivePreview` both record it — so
   // the region below is mounted on every render, empty, and the sentence lands inside it a tick
   // later. It is its own region rather than a second tenant of `projects-wait`: that one narrates
@@ -320,7 +308,7 @@ export default function ProjectsPage(): React.JSX.Element {
       .catch((caught: unknown) => {
         if (requestId.current !== id) return
         // The rows already on screen are LEFT INTACT. A later page failing must not blank
-        // the list the reader is using; the message goes underneath them instead (§11).
+        // the list the reader is using; the message goes underneath them instead.
         setError(caught instanceof Error ? caught : new Error('Could not load your projects.'))
         setAppliedQuery(debouncedQ)
       })
@@ -391,7 +379,7 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const handleDelete = async (project: Project, remark: string): Promise<void> => {
     setDeletingIds((ids) => new Set(ids).add(project.id))
-    // THE ROW LEAVES WHEN THE CASCADE SAYS IT LEFT, never before (U23/AE1a). It used to be
+    // THE ROW LEAVES WHEN THE CASCADE SAYS IT LEFT, never before. It used to be
     // filtered out of `items` here, one line above the request — so a citizen watched their
     // project vanish while the server was still dropping its database, and if the drop failed
     // the row reappeared under them. That is a completed delete the platform had not
@@ -423,8 +411,8 @@ export default function ProjectsPage(): React.JSX.Element {
         next.delete(project.id)
         return next
       })
-      // CLOSING THE DIALOG IS DEFERRED TO HERE, not the top of this function (round-4
-      // finding 9). It used to close synchronously before the request even started —
+      // CLOSING THE DIALOG IS DEFERRED TO HERE, not the top of this function. It used to
+      // close synchronously before the request even started —
       // batched into the SAME commit as the optimistic row removal — so the dialog's own
       // `busy` state (the spinner, Cancel disabling) was set and then immediately unmounted
       // in the same render, never actually observable. The backend does real work before
@@ -456,13 +444,13 @@ export default function ProjectsPage(): React.JSX.Element {
   // page's reads because a citizen is in one situation — waiting for their projects.
   const waiting = loading || showSkeleton || countsPending
   const showFirstPageError = error !== null && isEmpty
-  // `deleting` covers the round trip. It was written for the optimistic removal — which U23
-  // deleted, because a row that leaves before the cascade returns is a completed delete the
-  // platform has not performed — and it is kept because the window it guards did not go with
-  // it: between the request settling and the refetch landing, `items` can still be a stale
+  // `deleting` covers the round trip. It was written for the optimistic removal — deleted
+  // because a row that leaves before the cascade returns is a completed delete the platform
+  // has not performed — and it is kept because the window it guards did not go with it:
+  // between the request settling and the refetch landing, `items` can still be a stale
   // answer, and "Nothing here yet" is a claim about the ACCOUNT, not about this page.
   //
-  // `total === 0` CLOSES THE WINDOW `deleteInFlight` DOES NOT (round-4 finding 13). When the
+  // `total === 0` CLOSES THE WINDOW `deleteInFlight` DOES NOT. When the
   // delete settles, `setReloadNonce` and the `finally`'s `deletingIds` clear land in ONE
   // commit — and the refetch that `reloadNonce` triggers is an EFFECT, which runs after that
   // commit paints. `total` is the server's own last answer, so it still reads 40 in exactly
@@ -491,9 +479,8 @@ export default function ProjectsPage(): React.JSX.Element {
     return Array.from({ length: span }, (_, i) => first + i)
   }, [page, totalPages])
 
-  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. §11 requires a failed
-  // page to leave the rows already on screen intact — which it does — but the footer then
-  // narrated the page that FAILED over the rows that succeeded: 12 projects, page 2 refused,
+  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. The footer used to
+  // narrate the page that FAILED over the rows that succeeded: 12 projects, page 2 refused,
   // and the caption read `Showing 9–16 of 12`, a range past its own total, above rows 1-8.
   const firstOnPage = useMemo(
     () => (appliedPage - 1) * appliedPageSize + 1,
@@ -511,8 +498,8 @@ export default function ProjectsPage(): React.JSX.Element {
           Each project is one tool — its app, its description, and its chats.
         </p>
 
-        {/* THE PAGE'S ONE POLITE REGION — permanently mounted, empty when nothing is in flight
-            (`#210`, ASM5). The skeletons below are the only thing this page used to say while it
+        {/* THE PAGE'S ONE POLITE REGION — permanently mounted, empty when nothing is in flight.
+            The skeletons below are the only thing this page used to say while it
             loaded, and `index.css` suppresses `.animate-pulse` for a citizen who asks for less
             motion: with that block extended, three grey boxes and five grey rows sit perfectly
             still and say nothing. This is the sentence they now sit under.
@@ -527,7 +514,7 @@ export default function ProjectsPage(): React.JSX.Element {
           {waiting ? <p className="text-sm font-medium text-neutral mt-3">Loading your projects…</p> : null}
         </div>
 
-        {/* WHY THIS IS NOT THE TOAST AT THE BOTTOM OF THIS FILE (`#206`, ASM4). That channel is
+        {/* WHY THIS IS NOT THE TOAST AT THE BOTTOM OF THIS FILE. That channel is
             documented failure-only — red, `role="alert"`, an `AlertCircle`, and deliberately no
             auto-dismiss, because "something went wrong" waits for its reader. A dead bookmark is
             none of those things: nothing failed, nothing was lost, and nothing the citizen did
@@ -554,13 +541,13 @@ export default function ProjectsPage(): React.JSX.Element {
           ) : null}
         </div>
 
-        {/* Three numbers. Nothing else — no charts (§1).
+        {/* Three numbers. Nothing else — no charts.
 
-            AND THEY ANNOUNCE, because they CHANGE without saying so (R44b/AE9b). A citizen who
-            deletes a project, or publishes one, watches "In production" go from 3 to 4 with no
-            sound at all — the numbers are the page's only report of what just happened to the
-            estate. The region is `polite`, never `alert`: nothing here is a failure, and an
-            assertive channel would interrupt whatever the person was reading to say "4".
+            AND THEY ANNOUNCE, because they CHANGE without saying so. A citizen who deletes a
+            project, or publishes one, watches "In production" go from 3 to 4 with no sound at
+            all — the numbers are the page's only report of what just happened to the estate.
+            The region is `polite`, never `alert`: nothing here is a failure, and an assertive
+            channel would interrupt whatever the person was reading to say "4".
 
             MOUNTED UNCONDITIONALLY, WRAPPING BOTH ARMS. A region inserted together with its text
             is missed entirely by several reader-and-browser combinations — the rule the wait
@@ -606,9 +593,9 @@ export default function ProjectsPage(): React.JSX.Element {
         )}
         </div>
 
-        {/* ONE controls row: search, density (grid only), view, New project (§3). The
-            New project button lives HERE and nowhere else — it used to sit in the page
-            header, and leaving both would ship two of them. */}
+        {/* ONE controls row: search, density (grid only), view, New project. The
+            New project button lives HERE and nowhere else — adding it to the page
+            header too would ship two of them. */}
         <div className="flex items-center gap-3 flex-wrap mb-4">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
@@ -710,7 +697,7 @@ export default function ProjectsPage(): React.JSX.Element {
             <p className="text-sm font-semibold text-tertiary">Nothing here yet</p>
             <p className="text-xs text-neutral mt-1 mb-4">Create a project and describe what you need inside it.</p>
             {/* The SAME dialog the controls row opens — there is exactly one way to make a
-                project (§11). No composer, no chat-kind toggle, no second path. */}
+                project. No composer, no chat-kind toggle, no second path. */}
             <button
               onClick={() => setShowCreate(true)}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-primary text-white rounded-lg hover:bg-primary/90 transition"
@@ -740,13 +727,14 @@ export default function ProjectsPage(): React.JSX.Element {
           <>
             {view === 'list' ? (
               <div className="bg-white border border-bial-border rounded-2xl overflow-hidden">
-                {/* The column header the default list was missing (§4). */}
+                {/* The column header the default list was missing. */}
                 <div className="flex items-center gap-4 px-4 py-2.5 bg-bial-bg/60 border-b border-bial-border text-[10px] font-bold uppercase tracking-wider text-neutral">
                   <span className="flex-1">Application</span>
                   {/* "Details updated", NOT "Last updated": `updatedAt` moves only when the
                       project ROW is written — a rename or a description edit — and never
                       when the app is built, previewed, published or deployed. Naming it for
-                      what it tracks is the honest half of §10's Trap 1. */}
+                      what it tracks is what stops the column reading as "when the app
+                      last changed". */}
                   <span className="hidden sm:block w-28 text-right">Details updated</span>
                   <span className="w-[104px] text-right">Status</span>
                   <span className="w-7" aria-hidden />
@@ -774,14 +762,14 @@ export default function ProjectsPage(): React.JSX.Element {
             )}
 
             {/* A later page failing keeps the rows above. Say it underneath them — a control
-                that quietly does nothing reads as a frozen button (§11).
-                
-                ROUND-4 FINDING 11: this used to BE that frozen button — static text, no
-                control at all. Clicking the same page number again is a React no-op (the
-                state value is unchanged, so the fetch effect's deps do not change and
-                nothing re-runs); `reloadNonce` is the one thing in this effect's deps that
-                is guaranteed to change on every bump, regardless of which page failed, so
-                it is what a real retry has to touch. */}
+                that quietly does nothing reads as a frozen button.
+
+                This used to BE that frozen button — static text, no control at all. Clicking
+                the same page number again is a React no-op (the state value is unchanged,
+                so the fetch effect's deps do not change and nothing re-runs); `reloadNonce`
+                is the one thing in this effect's deps that is guaranteed to change on every
+                bump, regardless of which page failed, so it is what a real retry has to
+                touch. */}
             {error !== null && (
               <p role="alert" className="text-xs text-danger text-center mt-4">
                 Couldn’t load more projects.{' '}
@@ -796,7 +784,7 @@ export default function ProjectsPage(): React.JSX.Element {
             )}
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-4 text-xs text-neutral">
-              {/* THE CAPTION ANNOUNCES (R44b/AE9b). Searching, turning a page or changing the
+              {/* THE CAPTION ANNOUNCES. Searching, turning a page or changing the
                   page size leaves the rows below silently different and this line the only thing
                   that says how many there now are; a reader was told nothing at all.
 
@@ -848,9 +836,8 @@ export default function ProjectsPage(): React.JSX.Element {
                     landing page and got worse with six. */}
                 <Pagination className="mx-0 w-auto" aria-label="Projects pagination">
                   <PaginationContent className="flex-wrap justify-end">
-                    {/* §2 spells the control set literally — « ‹ 1 2 › » — and the board draws
-                        four icon buttons around the numbers. Jump-to-first/last were missing;
-                        at six pages the difference is four clicks or one. */}
+                    {/* Jump-to-first/last were missing; at six pages the difference is four
+                        clicks or one. */}
                     <PaginationItem>
                       <PaginationLink
                         aria-label="First page"
@@ -911,7 +898,7 @@ export default function ProjectsPage(): React.JSX.Element {
         />
       )}
 
-      {/* U15: this channel only ever carries a failure (a successful delete is silent — the
+      {/* This channel only ever carries a failure (a successful delete is silent — the
           row is just gone), so it is deliberately NOT wired to a dismiss timer the way
           Navbar's and AdminPage's toasts once were. A confirmation may fade on its own;
           something that went wrong waits for the reader to dismiss it, and the reader is the

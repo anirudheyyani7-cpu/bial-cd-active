@@ -1,18 +1,14 @@
-"""The waiting-count route (U13, P1) — per-status counts, superadmin-only, and cheap.
+"""The waiting-count route — per-status counts, superadmin-only, and cheap.
 
 The badge that reads this route is the only thing telling an administrator a queue has
-items in it, so three properties are pinned here rather than assumed:
-
-* it counts every status, zero-filling the empty ones (a blank badge and a zero badge
-  must never be the same pixel),
-* it is gated exactly like every other admin route (a citizen gets the standard refusal),
-* and it does NOT run the listing's app-database size probe. That last one is the whole
-  reason this route exists instead of `len(listApps('pending'))`, and it is the property
-  a future field addition would silently break — so it is asserted, not documented.
+items in it, so three properties are pinned here rather than assumed: it counts every
+status, zero-filling the empty ones (a blank badge and a zero badge must never be the
+same pixel); it is gated like every other admin route (a citizen gets the standard
+refusal); and it does NOT run the listing's app-database size probe — the whole reason
+this route exists instead of `len(listApps('pending'))` — asserted here, not documented.
 
 Plus the withdrawal race the badge's queue produces: an owner pulling their submission
-back (U8/P6) while an administrator is mid-review, which approve and reject must answer
-by NAMING the event rather than describing a column.
+back while an administrator is mid-review, answered by NAMING the event, not a column.
 """
 
 from __future__ import annotations
@@ -145,7 +141,7 @@ async def test_counts_is_not_shadowed_by_the_app_id_routes(client, db_session) -
     assert resp.status_code == 200
 
 
-# --- the rejection-note floor (P3) ---------------------------------------------
+# --- the rejection-note floor ---------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -189,7 +185,7 @@ async def test_reject_stores_the_trimmed_note(client, db_session) -> None:
     assert row.rejection_note == note.strip()
 
 
-# --- the withdrawal race (U8/P6 → U13) -----------------------------------------
+# --- the withdrawal race -----------------------------------------
 
 
 async def test_approving_a_withdrawn_submission_names_the_withdrawal(
@@ -203,11 +199,9 @@ async def test_approving_a_withdrawn_submission_names_the_withdrawal(
     app.dependency_overrides[storage_dependency] = lambda: store
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
     # The artifact is present, so a refusal here can only be about the withdrawal — never
-    # about R11's missing-bundle branch.
+    # about the missing-bundle branch.
     store.objects[submission_key(row.id, reviewed)] = b"# v2 git bundle\nfake"
 
-    # The owner withdraws while the administrator has the modal open (U8's exact shape:
-    # DRAFT, pin and lineage and declaration cleared).
     withdrawn = await client.post(f"/v1/apps/{row.id}/withdraw", headers=owner)
     assert withdrawn.status_code == 200
 

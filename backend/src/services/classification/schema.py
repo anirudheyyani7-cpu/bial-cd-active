@@ -1,28 +1,23 @@
-"""The review's structured output (U5, R3/R4/R5) — six verdicts, evidence-first.
+"""The review's structured output — six verdicts, evidence-first.
 
-FIELD ORDER IS LOAD-BEARING. Output is produced start to finish, so per question the
-schema is evidence → reason → verdict: the model cites what it found, explains it, and
-only then concludes. A verdict-first schema yields a justification written after the fact
-— the worst thing to hand a reviewer whose job is to check reasoning. The order the model
-sees is the order the fields are declared in (pydantic preserves declaration order into
-the JSON schema), and a test pins it.
+WHY THIS EXISTS: field order is load-bearing, pinned by test. Per question the schema is
+evidence → reason → verdict — the model cites what it found, explains it, only then
+concludes, in the order pydantic declares (preserved into the JSON schema). Verdict-first
+would yield a justification written after the fact, the worst thing to hand a reviewer
+whose job is checking reasoning.
 
-The six questions are keyed by `deploy/classification.CLASSIFICATION_KEYS` — the same
-keys the request schema and the persisted deployment declaration use, referenced from the
-single source rather than duplicated, so the questionnaire can be reworded without this
-module drifting. Validation demands EXACTLY the six: a response missing a question is
-rejected as incomplete (never defaulted to No — R5 says an unanswered question must be
-RETURNED as `unanswered`, handing it to the citizen), and a well-formed response is
-normalised into questionnaire order whatever order the model produced it in.
+The six questions key off `deploy/classification.CLASSIFICATION_KEYS`, the single source
+also used by the request schema and the persisted deployment declaration. Validation
+demands EXACTLY the six: a missing question is rejected as incomplete, never defaulted to
+No — it must be RETURNED as `unanswered` — and answers are normalised into questionnaire
+order.
 
-`completeness` is the truncation-vs-abstention disambiguator: a clipped or cut-short
-review and one that deliberately abstained on every question both look like six
-`unanswered` — this signal is what tells them apart, and U6 treats `partial` as a
-failure, not as six abstentions.
+`completeness` disambiguates truncation from abstention: a clipped review and one that
+abstained on every question both look like six `unanswered`; `partial` is a failure, not
+six abstentions.
 
-Evidence is INTERNAL ONLY (R4): stored for machine checking, never rendered to a citizen
-or an administrator. The `reason` is the only text a person reads, which is why the
-prompt (not a validator — the evidence fields carry the integrity load) keeps it plain.
+Evidence is INTERNAL ONLY, never rendered to a citizen or admin — `reason` is the only
+text a person reads, kept plain by the prompt (evidence fields carry the integrity load).
 """
 
 from __future__ import annotations
@@ -37,7 +32,7 @@ from src.services.deploy.classification import CLASSIFICATION_KEYS
 
 class Verdict(StrEnum):
     """One question's answer. `UNANSWERED` is a real verdict, not a gap: the review
-    answers only where it has evidence (R5), and an unanswered question is decided by
+    answers only where it has evidence, and an unanswered question is decided by
     the citizen alone."""
 
     YES = "yes"
@@ -47,16 +42,16 @@ class Verdict(StrEnum):
 
 class Completeness(StrEnum):
     """Whether the review covered everything it set out to. `PARTIAL` marks a review the
-    model itself knows is cut short — U6 stores it as a failure, never as abstention."""
+    model itself knows is cut short — it is stored as a failure, never as abstention."""
 
     COMPLETE = "complete"
     PARTIAL = "partial"
 
 
 class EvidenceRef(BaseModel):
-    """One machine-checkable location backing a verdict (R4). Deliberately NOWHERE to
+    """One machine-checkable location backing a verdict. Deliberately NOWHERE to
     carry a found value — evidence that quoted its secret would leak it into stored
-    records. U6 validates each cited path against the extracted tree; a Yes citing a
+    records. Validation checks each cited path against the extracted tree; a Yes citing a
     path that does not exist is downgraded to unanswered."""
 
     path: str = Field(
@@ -151,7 +146,7 @@ class ReviewOutput(BaseModel):
         missing = [key for key in CLASSIFICATION_KEYS if key not in keys]
         if missing:
             # Rejected as INCOMPLETE, deliberately — a missing question must never be
-            # read as No. R5's shape for "no evidence" is a RETURNED `unanswered`.
+            # read as No. The shape for "no evidence" is a RETURNED `unanswered`.
             raise ValueError(
                 f"incomplete review: missing question(s) {', '.join(missing)} — a "
                 "question you cannot answer must still be returned with verdict "

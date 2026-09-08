@@ -1,19 +1,14 @@
-"""The commit-less core of a conversation delete (KD-3), shared by the conversation
-DELETE endpoint and the project cascade-delete service (U6).
+"""The commit-less core of a conversation delete, shared by the DELETE endpoint and
+the project cascade-delete service.
 
-`delete_conversation` used to sweep object-store blobs INLINE and then delete rows
-before committing — so a commit failure left blobs destroyed while their rows rolled
-back (orphaned rows pointing at deleted blobs). This core splits the two halves:
-delete the attachment + conversation ROWS inside the caller's transaction and RETURN
-the object-store keys to sweep; the caller commits and only THEN best-effort sweeps
-the blobs. A rolled-back transaction therefore never destroys a blob a restored row
-still points at (the rollback-safety guarantee, KD-3). Two call sites (the endpoint
-and the cascade) earn this its own service home (ADR-0010).
+`delete_conversation` used to sweep object-store blobs INLINE then delete rows, so a
+commit failure left blobs destroyed while their rows rolled back. This core instead
+deletes the attachment + conversation ROWS inside the caller's transaction and RETURNS
+the object-store keys, so a rollback never destroys a blob a restored row still points
+at; the caller commits, then best-effort sweeps those keys.
 
-Attachment discovery reads the NATIVE payload (U4): binaries are externalized to
-`{kind: "bial-attachment-ref", attachment_id}` markers at the persist seam, so the
-reference scan walks the payload tree for those markers — the store's
-`ATTACHMENT_REF_KIND` is the single source of the discriminator.
+Attachment discovery reads the NATIVE payload: binaries externalize to
+`{kind: "bial-attachment-ref", attachment_id}` markers, keyed by `ATTACHMENT_REF_KIND`.
 """
 
 from __future__ import annotations
@@ -33,7 +28,7 @@ from src.services.messages.store import ATTACHMENT_REF_KIND
 
 # NOTE: a deck part's internal Files-API `pdfFileId` release is deferred with the Foundry
 # hosting-mode decision (Azure-hosted Foundry has no Files API to release against; wire it
-# here if Anthropic-hosted mode is confirmed — U13/ADR-0026).
+# here if Anthropic-hosted mode is confirmed).
 
 
 def _collect_ref_ids(node: Any, ids: set[str]) -> None:
@@ -78,7 +73,7 @@ async def gather_and_delete_conversation(
     ROWS inside the caller's transaction; return the object-store keys (attachment blobs
     plus each deck attachment's derived `{key}.pdf` sibling) to sweep AFTER the caller
     commits. Commit-less: the caller owns both the commit and the post-commit blob sweep.
-    Owner-scoped by `user_id` (ADR-0004) — attachments hang off `user_id`, not the
+    Owner-scoped by `user_id` — attachments hang off `user_id`, not the
     conversation, so the caller must pass the owning user id, not trust the row."""
     payloads = (
         (
@@ -119,13 +114,13 @@ async def gather_and_delete_conversation(
 async def gather_and_delete_conversations(
     db: AsyncSession, conversation_ids: Sequence[uuid.UUID], *, user_id: uuid.UUID
 ) -> list[str]:
-    """Batched multi-conversation variant for the project cascade (U6): the SAME
+    """Batched multi-conversation variant for the project cascade: the SAME
     gather-before-delete ordering and `user_id` owner-scoping as the singular path, but with
     one messages SELECT and one attachments SELECT across ALL the project's conversations
     instead of a per-conversation N+1. GATHERS every blob key while the rows still resolve
     them, then set-based DELETEs the attachment and conversation rows (messages cascade at the
     DB level) — all inside the caller's transaction, so the caller's post-commit sweep still
-    runs only after the rows are durably gone (KD-3 rollback safety)."""
+    runs only after the rows are durably gone (rollback safety)."""
     if not conversation_ids:
         return []
 

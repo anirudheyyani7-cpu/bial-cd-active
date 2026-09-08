@@ -1,30 +1,27 @@
-"""The native message store (U4, plan 2026-07-22-002) — append, load, repair, mark.
+"""The native message store — append, load, repair, mark.
 
 The `messages` table holds NATIVE pydantic-ai batches (one row per persisted batch). Files
-are the ONLY transcript transformation: everything else round-trips byte-faithfully between
-JSONB and `list[ModelMessage]` via `ModelMessagesTypeAdapter`. The two seams:
+are the only transcript transformation; everything else round-trips byte-faithfully between
+JSONB and `list[ModelMessage]` via `ModelMessagesTypeAdapter`.
 
-* PERSIST (`append_batch`): dump → externalize every `BinaryContent` to an attachment
-  REFERENCE marker (bytes never land in a row; Azure Foundry has no Files API, so the bytes
-  re-enter as base64 at send time) → `redact_secrets` over every string in the tree → insert
-  with a server-owned, gap-free `seq` under the two-writer retry discipline.
-* LOAD (`load_history`): rows → concatenate payloads in seq order → swap reference markers
-  back to binary dicts (rehydrated from the attachments table + object store) → validate
-  through the TypeAdapter → repair dangling `ToolCallPart`s (a crash mid-step leaves a call
-  with no result; Anthropic refuses such a replay, so a synthesized "interrupted" result is
-  stitched in).
+* PERSIST (`append_batch`): dump → externalize `BinaryContent` to an attachment reference
+  marker (bytes never land in a row; Foundry has no Files API, so bytes re-enter as base64 at
+  send time) → `redact_secrets` over every string → insert with a server-owned, gap-free
+  `seq` under the two-writer retry discipline.
+* LOAD (`load_history`): rows → concatenate in seq order → swap reference markers back to
+  binary dicts (rehydrated from attachments + object store) → validate → repair dangling
+  `ToolCallPart`s (a crash mid-step leaves a call with no result; a synthesized "interrupted"
+  result is stitched in).
 
-WHY THE MARKER SWAP MUST BE EXHAUSTIVE AND PRE-VALIDATION (pinned by test against pydantic-ai
-2.5.0): the user-content union contains `CachePoint`, whose fields all have defaults — so ANY
-unknown dict inside content validates *silently* as `CachePoint(kind='cache-point')`. A
-reference marker that survived to validation would not raise; it would quietly become a cache
-hint and the attachment would vanish. `_swap_refs` therefore walks every dict in the tree, and
-`load_history` fail-firsts if a marker key is still present after the swap.
+WHY THIS EXISTS: the marker swap must be exhaustive and pre-validation. Pinned by test
+against pydantic-ai 2.5.0 — the user-content union's `CachePoint` has all-default fields, so
+an unswapped marker validates *silently* as a cache hint instead of raising, and the
+attachment vanishes. `_swap_refs` walks every dict; `load_history` fail-firsts if a marker
+survives.
 
-Redaction here is NOT length-capped, deliberately: truncating a transcript would corrupt the
-durable record, every pattern in `core/redaction.py` is linear by construction, and every
-producer already bounds its own output (run_command caps, attachment ceilings). The ReDoS
-learning's "cap before scanning" applies to synchronous relay paths, not the persistence seam.
+Redaction here is not length-capped: truncating would corrupt the durable record, and every
+producer already bounds its own output. The ReDoS "cap before scanning" rule is for
+synchronous relay paths, not this persistence seam.
 """
 
 from __future__ import annotations
@@ -88,7 +85,7 @@ _EMPTY: Final = -1
 # The synthesized result stitched under a dangling tool call at load (see
 # `repair_dangling_tool_calls`). Plain factual prose — the model reads this as history.
 #
-# KNOWN ISSUE, DELIBERATELY ACCEPTED (#189) — READ THIS BEFORE SHIPPING CHAT HISTORY.
+# KNOWN ISSUE, DELIBERATELY ACCEPTED — READ THIS BEFORE SHIPPING CHAT HISTORY.
 # A stop lands wherever the turn happens to be, which is routinely AFTER a tool call has been
 # issued and BEFORE its result is recorded. This line is what makes that replayable at all: it
 # keeps the history wire-valid, so a stopped turn never wedges the conversation.
@@ -97,14 +94,14 @@ _EMPTY: Final = -1
 # is a guess, and on the wrong side of it the model is told a file was never written when it
 # was — so it writes it again, or reasons forward from a state that never existed.
 #
-# THE DECISION (2026-09-04): accept it while a transcript is only ever replayed by the run that
-# produced it. The window is one turn wide, the citizen is watching, and a wrong guess is
-# visible immediately. WHEN REOPENING PAST CONVERSATIONS / CHAT HISTORY GOES LIVE THAT STOPS
-# HOLDING: an old transcript gets replayed by a run that was not there, nobody is left who saw
-# what happened, and this sentence becomes the ONLY account of it. The fix at that point is to
-# land the stop on a tool-call/tool-result boundary — let the in-flight tool finish and record
-# its result, then unwind — so nothing dangles and nothing has to be guessed. The stop itself
-# is `BuildSessionManager._stop_the_held_session`.
+# THE DECISION: accept it while a transcript is only ever replayed by the run that produced it.
+# The window is one turn wide, the citizen is watching, and a wrong guess is visible immediately.
+# WHEN REOPENING PAST CONVERSATIONS / CHAT HISTORY GOES LIVE THAT STOPS HOLDING: an old
+# transcript gets replayed by a run that was not there, nobody is left who saw what happened, and
+# this sentence becomes the ONLY account of it. The fix at that point is to land the stop on a
+# tool-call/tool-result boundary — let the in-flight tool finish and record its result, then
+# unwind — so nothing dangles and nothing has to be guessed. The stop itself is
+# `BuildSessionManager._stop_the_held_session`.
 _INTERRUPTED_RESULT: Final = (
     "This tool call was interrupted before a result was recorded (the run was cut short). "
     "Treat it as not executed."
@@ -199,22 +196,14 @@ _THINKING_VERBATIM: Final = frozenset({"content", "signature"})
 
 
 def _redact_tree(node: Any) -> Any:
-    """`redact_secrets` over every string VALUE in the dumped tree (text, tool args — dict or
-    JSON-string — tool returns, error details: one uniform rule instead of a per-part allowlist
-    that drifts). Keys are structural, never redacted.
+    """`redact_secrets` over every string VALUE in the tree — one uniform rule instead of a
+    per-part allowlist. Keys are structural, never redacted.
 
-    ★ WITH ONE EXEMPTION, AND IT IS NOT A RELAXATION OF THE RULE — it is the rule applied to a
-    value that is not on its way out. The masker is shape-based and deliberately tuned to
-    OVER-redact, because a false positive costs nothing on a string headed for a screen. A
-    reasoning block is headed back to the SAME provider on the next turn, which verifies its
-    signature against its content: rewrite either and the block is rejected, and with it the
-    turn. An agent writing code mentions credential-shaped strings as ordinary commentary — an
-    environment variable name, a token assignment — so this is likely rather than theoretical.
-    Nothing is lost on the way out either, because a reasoning block is never projected, never
-    framed and never sent to the browser; the only thing that ever reads it is the provider.
-
-    EXEMPT BY PART KIND AND BY FIELD, not by "any string under a thinking part": a future field
-    on that part that IS user-facing would otherwise inherit the exemption silently."""
+    EXEMPT: a `ThinkingPart`'s `content`/`signature`, by kind AND field (never blanket — a future
+    user-facing field on that part would inherit it silently). A reasoning block replays to the
+    SAME provider, which verifies signature against content, so redacting either gets the turn
+    rejected — and nothing egresses either way: it is never projected, never framed, never sent
+    to the browser. The provider is the only thing that ever reads it."""
     if isinstance(node, str):
         return redact_secrets(node)
     if isinstance(node, list):
@@ -249,16 +238,13 @@ def _externalize_binaries(node: Any) -> Any:
 
 
 def dump_for_row(messages: Sequence[ModelMessage]) -> list[Any]:
-    """A native batch → the JSONB payload: verify binaries are attributed (live-object walk,
-    fail-first) → dump (json mode → base64 bytes, ISO datetimes) → strip instructions →
-    externalize binaries → redact. Externalize FIRST so the redactor never scans base64 blobs.
+    """A native batch → the JSONB payload: verify binaries are attributed (fail-first) → dump
+    (json mode) → strip instructions → externalize binaries → redact. Externalize FIRST so the
+    redactor never scans base64 blobs.
 
-    Instructions are stripped at THIS seam (U9/D4): pydantic-ai stamps the run's composed
-    `instructions` onto every `ModelRequest` it returns, but the D4 contract is that prompts
-    are per-run and NEVER persisted — history loads from the DB and each new run re-injects
-    its own composition, so a stored copy could only bloat rows and fossilize stale prompt
-    text. Payload-level normalization (not object mutation): the live run's in-memory
-    history keeps whatever upstream put there."""
+    Instructions are stripped HERE because prompts are per-run, never persisted — each new run
+    re-injects its own composition, so a stored copy would only bloat rows and fossilize stale
+    text. Payload-level only: the live in-memory history keeps whatever upstream put there."""
     _assert_binaries_attributed(list(messages))
     dumped = ModelMessagesTypeAdapter.dump_python(list(messages), mode="json")
     for message in dumped:
@@ -336,7 +322,7 @@ def _assert_no_marker_left(node: Any) -> None:
 def attachment_rehydrator(
     db: AsyncSession, storage: ObjectStorage, user_id: uuid.UUID
 ) -> Rehydrator:
-    """The production rehydrator: owner-scoped attachment rows (ADR-0004) → object store →
+    """The production rehydrator: owner-scoped attachment rows → object store →
     magic-byte re-check (the upload path's gate, re-asserted so a swapped blob can't ride a
     stale row) → base64. The rows are authoritative for both the key and the media type.
 
@@ -392,26 +378,14 @@ def _is_tool_answer(part: Any) -> TypeGuard[ToolReturnPart | RetryPromptPart]:
 
 
 def repair_dangling_tool_calls(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Make the loaded history wire-valid for Anthropic: every `ToolCallPart` is answered by
-    EXACTLY ONE `ToolReturnPart`/`RetryPromptPart` sitting in the request IMMEDIATELY after its
-    response. This is the ONE choke point where history is assembled, so it closes every way the
-    U11/U12 plan-options lifecycle (a resolution appended as its own later row, not inline) can
-    otherwise produce a replay Anthropic rejects — which wedges every later turn:
+    """Make history wire-valid for Anthropic: every `ToolCallPart` gets EXACTLY ONE answer,
+    immediately after it. The one choke point where history assembles, so it closes every way
+    the plan-options lifecycle (a resolution appended as its own later row) could otherwise
+    produce a replay Anthropic rejects and wedge the turn.
 
-    * NO answer anywhere → a synthesized "interrupted" result is stitched in (a crash between a
-      step's call and its result).
-    * A NON-ADJACENT answer (a `build`/`refine` return appended after intervening rows — a
-      mode-switch marker, a re-armed `build_failed` card, a later turn) → RELOCATED to sit right
-      after its call and removed from its original position, so no `tool_result` rides the wire
-      without an adjacent `tool_use`.
-    * MORE THAN ONE answer for one call (the Build-it vs turn-start refine race writing two
-      returns for the same card) → DEDUPED to a single answer.
-    * An answer whose call exists NOWHERE in the history (the write-cursor overshoot that
-      skipped the run's first `ModelResponse` — the row carrying the `tool_use`) → the ORPHAN
-      part is DROPPED, and a request left with zero parts is dropped whole. Order-aware: an
-      answer whose call exists anywhere is the relocation case above, never this one. A
-      tool-nameLESS `RetryPromptPart` rides the wire as plain user text (its auto-generated
-      `tool_call_id` matches nothing by construction), so it is never treated as an orphan."""
+    NO answer → synthesize "interrupted". NON-ADJACENT → relocate next to its call. DUPLICATE
+    → dedupe to one. ORPHAN (call missing, e.g. a write-cursor overshoot) → drop it, and the
+    request if left empty. A nameless `RetryPromptPart` rides as plain text, never an orphan."""
     call_ids: set[str] = {
         part.tool_call_id
         for message in messages
@@ -513,19 +487,14 @@ async def load_history(
     conversation_id: uuid.UUID,
     rehydrate: Rehydrator,
 ) -> list[ModelMessage]:
-    """The conversation's full native history, ready for `message_history`: every row's
-    payload in seq order, references rehydrated, validated, dangling calls repaired.
-    Owner-scoped (ADR-0004).
+    """The conversation's full native history for `message_history`: rows in seq order,
+    references rehydrated, validated, dangling calls repaired. Owner-scoped.
 
-    HIDDEN ROWS ARE INCLUDED, and the reason is not the one that used to be written here. It
-    said "the model must see where the mode changed" — there are no mode changes any more. The
-    reason it still holds is different and stronger: a hidden row can carry the `ToolReturnPart`
-    that ANSWERS a deferred call (the plan-options resolution overlay is exactly that), and
-    dropping it would hand the model a call with no return. Hiddenness is a RENDER predicate;
-    it was never a statement about what the model may see.
-
-    A row that must not reach the model therefore carries an EMPTY payload rather than relying
-    on being hidden — the durable turn-terminal row is the one that does."""
+    HIDDEN ROWS ARE INCLUDED — hiddenness is a RENDER predicate, never a statement about what
+    the model may see. A hidden row can carry the `ToolReturnPart` answering a deferred call
+    (the plan-options resolution overlay), and dropping it would hand the model a call with no
+    return. A row that must not reach the model instead carries an EMPTY payload; the durable
+    turn-terminal row is the one that does."""
     stored = (
         await db.execute(
             sa.select(Message.schema_version, Message.payload)
@@ -559,22 +528,12 @@ async def load_history(
 def _without_broken_reasoning(history: list[ModelMessage]) -> list[ModelMessage]:
     """Drop reasoning blocks that cannot be replayed, rather than replay them broken.
 
-    ★ FAIL CLOSED, AND THE FAILURE MODE IS WHY. A `ThinkingPart` is sent back to the provider
-    only when it still carries the SIGNATURE that provider issued for it; without one the
-    library takes a different branch and sends the reasoning CONTENT as ordinary assistant
-    text wrapped in `<thinking>` tags. That turns a block the citizen was never meant to see
-    into part of the model's own visible transcript for the rest of the conversation, and it
-    does it silently — which is strictly worse than the turn simply thinking afresh.
+    FAIL CLOSED: an unsigned `ThinkingPart` makes pydantic-ai leak its content as ordinary
+    `<thinking>`-wrapped assistant text instead of refusing — worse than losing the reasoning.
 
-    NOTHING SHOULD EVER REACH THIS. The redaction pass exempts the block's content and its
-    signature, and the store writes what the library serialized. It exists for the case that
-    slipped through anyway — a row written before that exemption, a payload edited by hand,
-    a provider that stopped issuing signatures — where the honest answer is to lose the
-    reasoning and keep the transcript.
-
-    Messages without reasoning are returned UNCHANGED, by identity: the ordinary conversation
-    has no thinking parts at all, and rebuilding every response would be a copy per turn for
-    nothing."""
+    Defensive only: redaction already exempts these fields, so this guards a hand-edited
+    payload or a row written before that exemption. Unaffected messages return UNCHANGED,
+    by identity."""
     kept: list[ModelMessage] = []
     for message in history:
         if not isinstance(message, ModelResponse):
@@ -596,11 +555,10 @@ async def load_rows(
     conversation_id: uuid.UUID,
     include_hidden: bool = False,
 ) -> Sequence[Message]:
-    """The conversation's rows in seq order — the projection/audit read (U6 builds on this).
+    """The conversation's rows in seq order — the projection/audit read.
     Hidden rows are excluded unless asked for: hiddenness is this SQL predicate, never a payload
-    property. (The example that used to be named here was the mode-switch marker, which is gone;
-    the build-started overlay, the plan-options resolution and the turn-terminal row are the
-    ones this predicate covers today.)"""
+    property. (The build-started overlay, the plan-options resolution and the turn-terminal row are
+    the ones this predicate covers today.)"""
     query = (
         sa.select(Message)
         .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
@@ -636,14 +594,12 @@ async def append_batch(
     meta: dict[str, Any] | None = None,
 ) -> StoredBatch:
     """Durably append one batch with a server-owned gap-free seq. OWNS its commit: every
-    caller sits at a durability seam (a turn boundary, a BRAIN step, a lifecycle event) where
-    "returned" must mean "on disk". Two-writer discipline: pick `max+1`, insert, and when a
-    concurrent writer took the slot (IntegrityError on the unique constraint) roll back and
-    re-pick — bounded, then `SeqContentionError` with nothing written. Post-commit values come
-    back via `.returning()` (never a refresh across the commit).
+    caller sits at a durability seam where "returned" must mean "on disk". Two-writer
+    discipline: pick `max+1`, insert; a concurrent writer's IntegrityError rolls back and
+    re-picks (bounded, then `SeqContentionError` with nothing written). Post-commit values
+    come back via `.returning()`, never a refresh across the commit.
 
-    `meta` is for system entries (redacted here too — same egress discipline as the payload).
-    """
+    `meta` is for system entries — redacted here too, same egress discipline as the payload."""
     payload = dump_for_row(messages)
     safe_meta = _redact_tree(meta) if meta is not None else None
     for _ in range(_SEQ_RETRIES + 1):
@@ -681,8 +637,5 @@ async def append_batch(
     )
 
 
-# THE MODE-SWITCH MARKER IS GONE, and nothing replaced it. It was a hidden `[mode changed: …]`
-# row written so the model could see where in the history its toolset changed. A chat's kind is
-# fixed at creation now (R14/R17), so there are no mode boundaries for a marker to name;
-# revision 0035 deleted every such row and the `mode_switch` entry kind went with the endpoint
-# that wrote them.
+# THE MODE-SWITCH MARKER IS GONE. A chat's kind is fixed at creation now, so there are no mode
+# boundaries for a marker to name.

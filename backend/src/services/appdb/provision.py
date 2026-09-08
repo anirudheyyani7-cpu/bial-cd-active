@@ -1,26 +1,14 @@
 """Provision a project's own PostgreSQL database + login role, idempotently and exactly once.
 
-Two phases, deliberately NOT atomic (nothing can make cluster DDL and a table row commit
-together):
-
-1. **Claim** — `INSERT ... ON CONFLICT DO NOTHING RETURNING` against the unique
-   `project_databases.project_id`. Exactly one racer gets a row back and runs phase 2; the
-   losers converge on `db_ready`. The claim commits immediately with `db_ready = false`, so
-   the winner never holds a row lock across the external sequence.
-2. **External sequence** — on the AUTOCOMMIT maintenance connection, then the terminal
-   `db_ready` marker in its own LAST commit.
-
-The order inside phase 2 is load-bearing. The wall (`REVOKE CONNECT ... FROM PUBLIC`) goes
-up immediately after the database exists, and `db_ready` is only written once every step
-has succeeded — so a crash anywhere in the middle reads as not-ready and the next ensure
-re-runs the WHOLE sequence. That is safe because every step tolerates its duplicate-object
-SQLSTATE (`42P04` duplicate_database, `42710` duplicate_object) and re-derives the same
-names from the project id (`names.py`), which is what makes "run it again" the recovery.
-
-When `APP_DB__*` is unconfigured the whole thing no-ops and returns `None`: a project
-without a database is a supported deployment (the generated app simply has no persistence),
-exactly the posture `provision_app_storage` takes when object storage is off. This
-DIVERGES from `get_storage()`, which raises — see `engine.get_maintenance_engine`.
+Two phases, deliberately NOT atomic — nothing makes cluster DDL and a table row commit together.
+The CLAIM is `INSERT ... ON CONFLICT DO NOTHING RETURNING` against the unique
+`project_databases.project_id`: one racer gets a row back and runs phase 2, the losers converge
+on `db_ready`, and the claim commits immediately so no row lock is held across the external
+sequence. Phase 2 runs on the AUTOCOMMIT maintenance connection and writes `db_ready` in its own
+LAST commit, so a crash mid-sequence reads as not-ready and the next ensure re-runs the WHOLE
+sequence — safe because every step tolerates its duplicate-object SQLSTATE and re-derives the
+same names from the project id (`names.py`). When `APP_DB__*` is unconfigured the whole thing
+no-ops and returns `None`.
 """
 
 from __future__ import annotations
@@ -52,7 +40,7 @@ from src.services.appdb.secrets import decrypt_password, encrypt_password
 
 _log = structlog.get_logger()
 
-# 32 bytes of entropy -> a 43-char url-safe token (ADR-0006: secrets, never a UUID).
+# 32 bytes of entropy -> a 43-char url-safe token; a secret, never a UUID.
 _PASSWORD_BYTES: Final = 32
 
 # The two SQLSTATEs that mean "this step already happened" — the idempotency signal.
@@ -77,14 +65,11 @@ async def ensure_project_database(
 ) -> ProjectDatabase | None:
     """Ensure `project_id` has a ready database + role; return its registry row.
 
-    Idempotent and safe to call from every arm that might need one (project create, build
-    start, a later self-heal). Returns `None` — with no row written and nothing raised —
-    when no substrate is configured.
-
-    The caller owns nothing transactional here: this function commits its own claim and its
-    own terminal marker, because both must be durable independently of whatever the caller
-    is doing. A genuine substrate error PROPAGATES (fail-first); the registry is left
-    non-terminal so the next ensure retries.
+    Idempotent and safe to call from every arm that might need one (project create, build start,
+    a later self-heal). Returns `None` — nothing written, nothing raised — when no substrate is
+    configured. The caller owns nothing transactional: this commits its own claim and its own
+    terminal marker, both of which must be durable independently of the caller. A genuine
+    substrate error PROPAGATES, leaving the registry non-terminal so the next ensure retries.
     """
     engine = get_maintenance_engine()
     if engine is None:
@@ -118,9 +103,8 @@ async def ensure_project_database(
     if row.db_ready:
         return row
 
-    # Plain scalars ACROSS the commit boundary that follows — never touch the ORM
-    # attributes after a commit for values the DDL needs
-    # (docs/solutions/design-patterns/prefer-returning-over-refresh-across-commit).
+    # Plain scalars ACROSS the commit boundary that follows: reading these off the ORM row
+    # after a commit re-loads an expired attribute in the middle of the DDL sequence.
     db_name = row.db_name
     role = row.role_name
     password = decrypt_password(row.password_encrypted)
@@ -259,16 +243,11 @@ async def _create_role(conn: AsyncConnection, *, role: str, password: str) -> No
 def _scrubbed_role_failure(step: str, exc: DBAPIError) -> AppDatabaseError:
     """Replace a role-DDL error with one that does not carry the password.
 
-    `CREATE ROLE ... PASSWORD '<literal>'` is DDL, so the password CANNOT be a bind
-    parameter — it is part of the statement text. SQLAlchemy's `StatementError.__str__`
-    appends `[SQL: <statement>]`, which makes the raised exception *itself* a credential:
-    anything that logs it (`_log.exception`, the build-session error path, a 500 handler)
-    writes the app role's password to disk. `.claude/rules/security.md`: never log a
-    credential value.
-
-    So the original never leaves this function. `from None` drops it from the traceback
-    chain entirely rather than merely detaching `__cause__`; the SQLSTATE is the diagnostic
-    that survives, and it is the one an operator actually acts on.
+    `CREATE ROLE ... PASSWORD '<literal>'` can't bind the password as a parameter, and
+    SQLAlchemy's `StatementError.__str__` appends `[SQL: <statement>]` — the exception IS
+    a credential, so the original never leaves this function. `from None` drops it from the
+    traceback chain entirely rather than merely detaching `__cause__`; the SQLSTATE is the
+    diagnostic an operator acts on.
     """
     return AppDatabaseError(
         f"{step} failed while provisioning a project database (sqlstate={_sqlstate(exc)})"
@@ -300,33 +279,13 @@ async def _create_database(conn: AsyncConnection, *, db_name: str, role: str) ->
 
 
 async def _deed_the_public_schema(*, db_name: str, role: str) -> None:
-    """Hand the app the keys to `public` in its OWN database: `ALTER SCHEMA public OWNER TO
-    <role>`, so the app role can create/alter/drop tables and run whatever migration it likes
-    in `public` deterministically (F2). Idempotent — re-running with the app role already the
-    owner is a no-op, which suits the crash-and-re-run self-heal.
-
-    Ownership, not merely `GRANT CREATE`: "whatever migration they want to run" includes
-    migrations that reassign schema ownership, which only the owner (or a superuser) can do.
-
-    A SECOND connection, INTO the new database: schemas are per-database and `ALTER SCHEMA
-    public` acts on the CURRENT database, so this cannot ride the shared maintenance connection
-    (pinned to the maintenance database). It runs BEFORE the wall, while PUBLIC still has
-    CONNECT, so maintenance connects without relying on an inherited grant.
-
-    Portable, and degrades LOUDLY rather than failing closed:
-      * Vanilla PG15+ — `public` in a `template0` database is owned by `pg_database_owner`,
-        whose implicit member is the database owner (the app role), so the ALTER just makes
-        ownership explicit: effectively a no-op.
-      * Azure Flexible Server — `public` is owned by `azure_pg_admin`, so the maintenance role
-        must be a member of it. That is a documented ONE-TIME setup, run once per server:
-
-            GRANT azure_pg_admin TO <maintenance_role>;
-
-        If it was skipped, the ALTER raises `insufficient_privilege` (SQLSTATE 42501). We then
-        COMPLETE provisioning — the app still works via a non-`public` fallback schema, and
-        per-DATABASE isolation is unaffected — but log a loud WARNING naming the missing grant.
-        Every OTHER SQLSTATE re-raises (fail-first): this is a narrow recovered catch, not a
-        swallow.
+    """`ALTER SCHEMA public OWNER TO <role>` in the app's OWN database, so the app role can
+    create, alter and drop tables there — ownership rather than `GRANT CREATE`, because a
+    migration may reassign schema ownership and only the owner can. Idempotent. A SECOND
+    connection, INTO the new database (schemas are per-database), run BEFORE the wall while
+    PUBLIC still has CONNECT. `insufficient_privilege` means the maintenance role is not a
+    member of `public`'s owner: provisioning COMPLETES on a non-`public` fallback schema and
+    logs the remedy below, and every other SQLSTATE re-raises.
     """
     quoted_schema = quote_identifier("public")
     quoted_role = quote_identifier(role)
@@ -350,12 +309,7 @@ async def _deed_the_public_schema(*, db_name: str, role: str) -> None:
 
 
 async def _raise_the_wall(conn: AsyncConnection, *, db_name: str, role: str) -> None:
-    """THE cross-app wall: only this project's role may connect to this project's database.
-
-    Structural isolation, replacing the old shared-table `WHERE app_id` predicate — an
-    agent that forgets a filter can no longer reach another app's data, because it cannot
-    open the connection at all.
-    """
+    """THE cross-app wall: only this project's role may connect to this project's database."""
     quoted_db = quote_identifier(db_name)
     await conn.execute(sa.text(f"REVOKE CONNECT ON DATABASE {quoted_db} FROM PUBLIC"))
     await conn.execute(
@@ -410,21 +364,13 @@ def control_plane_dsn(record: ProjectDatabase) -> str:
 
 
 def sandbox_dsn(record: ProjectDatabase) -> str:
-    """The same database in the **plain `postgresql://`** form, host-rewritten for the
-    sandbox — the value injected as `BIAL_DATABASE_URL`.
-
-    Two divergences from `control_plane_dsn`, both real footguns:
-
-    * **Scheme.** `postgresql+asyncpg://` is a SQLAlchemy driver selector, not a URL scheme.
-      node-postgres (and Drizzle on top of it) cannot parse it and fails at connect time
-      with an opaque error, so the generated app gets the bare scheme.
-    * **TLS parameter name.** asyncpg reads `ssl=`; libpq/node-postgres read `sslmode=`.
-      Same vocabulary of values, different key — carrying `ssl=require` through unchanged
-      would silently drop TLS on the app's connection.
-
-    The host comes from `app_db.sandbox_dsn_host` when set: the control plane's own
-    `localhost` resolves to the sandbox container's OWN localhost, exactly the class of bug
-    `SandboxConfig.blob_base_url` exists to solve.
+    """The same database in the **plain `postgresql://`** form, host-rewritten for the sandbox —
+    the value injected as `BIAL_DATABASE_URL`. Two divergences from `control_plane_dsn`, both
+    real footguns: `postgresql+asyncpg://` is a SQLAlchemy driver selector, not a URL scheme and
+    node-postgres cannot parse it; and asyncpg reads `ssl=` where libpq/node-postgres read
+    `sslmode=` — same values, different key, so carrying it through unchanged would silently
+    drop TLS. The host comes from `app_db.sandbox_dsn_host` when set: the control plane's own
+    `localhost` resolves to the sandbox container's localhost.
     """
     url = _app_url(record)
     query = {("sslmode" if key == "ssl" else key): value for key, value in url.query.items()}

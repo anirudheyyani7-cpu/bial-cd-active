@@ -1,17 +1,15 @@
-"""The server-written build outcome (003-U5), native-store edition (U4).
+"""The server-written build outcome, native-store edition.
 
-The SERVER records a finished build in its thread, because the portal is not reliably there to do
-it: builds take minutes, users close tabs, and a session is evicted `_ENDED_RETENTION_SECONDS`
-after its terminal — so a portal-only record would be missing for exactly the users a permanent
-record serves.
+The SERVER records a finished build in its thread because the portal is not reliably
+there to do it: builds take minutes, users close tabs, and a session is evicted after
+`_ENDED_RETENTION_SECONDS` — a portal-only record would be missing for exactly the
+users a permanent one serves.
 
-These test `write_build_outcome` directly against a real session. The row is a `system_event` in
-the native message store: the PAYLOAD is a synthesized assistant text (replayed to the model as
-history) and the build's structured record lives in `meta` (`sessionId` idempotency key,
-`startedSeq` boundary marker, https-parsed `previewUrl`). Seq allocation + the two-writer retry
-now live in the store's `append_batch` (covered by `tests/services/messages/`); what this suite
-pins is the outcome's OWN contract: shape, prose, idempotency, scoping.
-"""
+`write_build_outcome` writes a `system_event` row whose payload is synthesized assistant
+text (replayed to the model as history) and whose structured record lives in `meta`. Seq
+allocation and the two-writer retry now live in the store's `append_batch` (covered by
+`tests/services/messages/`); this suite pins the outcome's OWN contract: shape, prose,
+idempotency, scoping."""
 
 from __future__ import annotations
 
@@ -120,7 +118,7 @@ async def test_failed_build_says_why(db_session) -> None:
 
 
 async def test_quota_end_reads_as_a_limit_not_a_failure(db_session) -> None:
-    """A quota breach ends GRACEFULLY (C7 §8) — telling the user their app "failed" would be
+    """A quota breach ends GRACEFULLY — telling the user their app "failed" would be
     both wrong and alarming."""
     user, conv = await _thread(db_session)
 
@@ -168,8 +166,6 @@ async def test_seq_follows_the_highest_seq_not_the_row_count(db_session) -> None
 async def test_a_build_gets_exactly_one_outcome(db_session) -> None:
     user, conv = await _thread(db_session)
     assert await _write(db_session, user, conv) is True
-
-    # A re-run of the end sequence must not stack a second record for the same build.
     assert await _write(db_session, user, conv) is False
 
     assert len(await _messages(db_session, conv.id)) == 1
@@ -187,7 +183,6 @@ async def test_a_second_build_gets_its_own_outcome(db_session) -> None:
 
 
 async def test_a_foreign_conversation_is_never_written_to(db_session) -> None:
-    """Owner-scoped (ADR-0004): a build must not be able to write into someone else's thread."""
     _, conv = await _thread(db_session)
     intruder = await UserFactory.create(db_session)
 
@@ -240,7 +235,6 @@ async def test_a_deleted_thread_is_a_no_op_not_a_crash(db_session) -> None:
     ],
 )
 def test_a_graceful_end_says_how_it_ended(reason: str, expected: str) -> None:
-    # every one of these is ENDED — that is the whole problem the reason arms solve
     assert _summary(BuildSessionStatus.ENDED, reason) == expected
 
 
@@ -260,7 +254,7 @@ def test_a_failure_still_leads_with_the_failure() -> None:
 # --- the meta shape this writer OWNS ------------------------------------------
 #
 # This module is the only producer of the build-outcome record, and these pins are really about
-# its READERS: the projection (U6) and `attachments.py::_boundary`.
+# its READERS: the projection and `attachments.py::_boundary`.
 
 
 def test_meta_carries_the_structured_record() -> None:

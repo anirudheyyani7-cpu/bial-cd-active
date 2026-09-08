@@ -1,5 +1,5 @@
-"""The de-noiser + secret redactor (U3, KD-5/KD-8). Redaction is asserted on the structured-error
-egress path here; `test_progress` asserts it on the raw-log egress path."""
+"""The de-noiser + secret redactor. Redaction is asserted on the structured-error egress path
+here; `test_progress` asserts it on the raw-log egress path."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import time
 from src.api.v1.build_sessions.schemas import ErrorSource
 from src.services.orchestrator import constants, errors
 
-# A realistic tsc blob: ANSI colour codes + absolute sandbox paths + a real TS error line.
 _TSC_RAW = (
     "\x1b[96m/workspace/app/app/records/page.tsx\x1b[0m:\x1b[93m12\x1b[0m:\x1b[93m5\x1b[0m - "
     "\x1b[91merror\x1b[0m\x1b[90m TS2322\x1b[0m: Type 'string' is not assignable "
@@ -28,7 +27,7 @@ _SERVER_RAW = (
 def test_tsc_blob_becomes_a_clean_build_error() -> None:
     err = errors.from_tsc(_TSC_RAW)
     assert err.source == ErrorSource.TSC
-    assert "error TS2322" in err.title  # the first meaningful error line
+    assert "error TS2322" in err.title
     assert "\x1b[" not in err.cleaned_stack  # ANSI stripped
     assert "/workspace/app/" not in err.cleaned_stack  # absolute paths relativized
     assert "app/records/page.tsx" in err.cleaned_stack
@@ -130,8 +129,8 @@ def test_next_build_secrets_are_redacted_like_every_other_source() -> None:
 
 
 def test_credential_is_redacted_on_the_error_path() -> None:
-    # Any `bial_`-shaped token, wherever it surfaces — the shape is what the redactor keys on,
-    # not the variable name (which is why retiring one injected name changed nothing here).
+    # Any `bial_`-shaped token, wherever it surfaces — the redactor keys on the shape, not on
+    # the variable name.
     raw = "boom while loading config APP_LABEL=bial_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6\n"
     err = errors.from_server(raw)
     assert "bial_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6" not in err.cleaned_stack
@@ -191,9 +190,9 @@ def test_over_length_is_truncated() -> None:
 
 
 def test_an_over_long_title_cuts_at_a_word_boundary_with_a_marker() -> None:
-    """U4: the round-3 projector showed '…renders a blank page witho' — a bare [:200] slice
-    lands mid-word and reads as a rendering bug. The title is the ONE line the portal's retry
-    framing shows, so the cut must land between words and SAY it is a cut."""
+    """A bare [:200] slice lands mid-word and reads as a rendering bug. The title is the ONE
+    line the portal's retry framing shows, so the cut must land between words and SAY it is
+    a cut."""
     line = ("error: the page " + "renders blank " * 20).strip()  # single line, well over 200
     err = errors.from_server(line)
     assert err.title.endswith("…")
@@ -223,11 +222,10 @@ def test_empty_input_is_a_safe_fallback() -> None:
 
 
 def test_redaction_is_linear_on_an_adversarial_blob() -> None:
-    # A long run of `_` that never resolves to a masked suffix drove the OLD unbounded key
-    # quantifier into QUADRATIC backtracking — measured ~176s for a 64KB line, a multi-minute
-    # event-loop stall (app-controlled stdout is untrusted, KD-5). The bounded key keeps the scan
-    # LINEAR. On the old regex 100K chars would take ~7 minutes; the 5s ceiling (with a wide margin
-    # for a loaded CI box) fails loudly on any quadratic regression while never flaking on linear.
+    # A long run of `_` that never resolves to a masked suffix is the shape that goes quadratic
+    # the moment a key quantifier loses its bound — `core/redaction.py` carries the reasoning and
+    # the bounds. The 5s ceiling is wide enough not to flake on a loaded CI box and far under any
+    # quadratic run.
     payload = "_" * 100_000
     start = time.perf_counter()
     errors.redact_secrets(payload)
@@ -241,7 +239,7 @@ def test_declutter_caps_input_before_redaction() -> None:
 
 
 def test_broadened_credential_families_are_redacted() -> None:
-    # Families a narrow `_TOKEN/_SECRET/_KEY` filter misses (the child-env-scrub lesson).
+    # Families a narrow `_TOKEN/_SECRET/_KEY` filter misses.
     cleaned = errors.redact_secrets(
         "DB_PASSWORD=hunter2 and { API_CREDENTIAL: 'cred-xyz', AWS_ACCESS_KEY: 'AKIAEXAMPLE' }"
     )
@@ -259,10 +257,8 @@ def test_url_embedded_credentials_are_masked() -> None:
 
 
 def test_connection_string_and_sas_params_are_masked() -> None:
-    # A connection string packs many `key=value;` pairs on one line, so the assignment pass masks
-    # only the first segment — the embedded Password / AccountKey after the first `;` must not leak
-    # (the run_command egress-surface gap, R3). A raw SAS query-string has no assignment prefix at
-    # all, so its `sig=` must be masked on its own.
+    # The assignment pass reaches only the first `;` of a connection string, and a raw SAS query
+    # string has no assignment prefix at all — so the parameter pass has to mask both on its own.
     conn = (
         "SQL_CONNECTION_STRING=Server=tcp:db;Database=app;User ID=admin;"
         "Password=P@ssw0rd-Leaked-123;Encrypt=true"
@@ -413,17 +409,11 @@ _TS_CLI_NO_DIAGNOSTIC = (
 def test_a_typescript_failure_with_no_diagnostic_says_so_rather_than_titling_on_chatter() -> None:
     """Pins the NOISE half of the patch, which the marker half does not cover.
 
-    Established by mutation: with the `error TS` marker present, removing the TypeScript-phase
-    noise prefixes breaks nothing — every diagnostic-shaped failure is caught by the marker
-    first. The prefixes only earn their place on the FALLBACK path, i.e. a build that fails with
-    no recognised marker anywhere. That is reachable: a TypeScript phase can fail without
-    emitting an `error TSxxxx` line at all (a config fault, an OOM inside the checker, a crash).
-
-    ASSERTS THE POSITIVE. An earlier version of this test checked only that the title did not
-    START WITH each of six chatter strings — and passed while the title was the framework
-    banner, `▲ Next.js 16.3.0 (Turbopack)`, because a banner starts with none of them. That is
-    the assert-absence false-green: every listed string was absent and the actual regression was
-    live. Pinning `== _FALLBACK_TITLE` is what makes this test capable of going red.
+    Mutation established that the chatter prefixes only earn their place on the FALLBACK path —
+    a TypeScript phase that fails with no `error TSxxxx` line at all (a config fault, an OOM
+    inside the checker, a crash). ASSERTS THE POSITIVE: an earlier version checked only that the
+    title did not START WITH each of six chatter strings, and passed while the title was the
+    framework banner. Pinning `== _FALLBACK_TITLE` is what makes this able to go red.
     """
     err = errors.from_next_build(_TS_CLI_NO_DIAGNOSTIC)
 

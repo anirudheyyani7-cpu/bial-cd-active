@@ -2,52 +2,18 @@
  * THE RUNTIME — the single junction between the stream reader, the reload projection and every
  * rendered element.
  *
- * `useExternalStoreRuntime`, deliberately, and not `useLocalRuntime` or the AI-SDK runtime: those
- * two OWN the message array and mint ids. The reverted migration's lesson stands — the library is
- * a render model, and the hydrated server transcript is the truth for ordering, identity and
- * history. Everything this hook passes is read-only from the library's point of view.
+ * `useExternalStoreRuntime`, deliberately, not `useLocalRuntime` or the AI-SDK runtime: those own
+ * the message array and mint ids, while here the hydrated server transcript is the truth for
+ * ordering, identity and history — everything this hook passes stays read-only to the library.
  *
- * ══ EVERY CAPABILITY IS OFF BY OMISSION, EXCEPT TWO ══
- *
- * A capability in this library is not a setting you switch off. It is DERIVED from which callbacks
- * and adapters you hand over, which means the way to keep one off is to pass nothing — and the way
- * one wakes up by accident is somebody adding a callback to fix an unrelated problem. Verified
- * derivations, read out of the installed 0.15.17:
- *
- *   switchToBranch, delete        ← `setMessages`      (ONE prop, TWO capabilities)
- *   edit, reload, refetchThread   ← onEdit / onReload / onRefetchThread
- *   cancel                        ← onCancel                          ← WE PASS THIS
- *   speech, dictation, voice,
- *   attachments, feedback         ← adapters.*      ← WE PASS `attachments` (plan 002, U5)
- *   queue                         ← queue
- *   unstable_copy                 ← unstable_capabilities.copy (default true)
- *
- * `cancel` is the one capability this surface WANTS: registering `onCancel` is what puts R55's
- * relocated stop on the runtime. `unstable_copy` is passed explicitly even though `true` is already
- * the default, so the intent is legible and a future change of default shows up in a diff rather
- * than in production.
- *
- * THE WRITTEN LIST HAS TWO `true` ENTRIES. Anyone writing the exact-equality test from a shorter
- * sentence — "everything off except copy" — gets a red suite, and the tempting fix is to drop
- * `onCancel`, which silently deletes the stop path. `EXPECTED_CAPABILITIES` below is the list, the
- * test compares against it with `toEqual`, and this paragraph is why.
- *
- * ══ THE THIRD LIBRARY OPINION: `canSend` / `isSendDisabled` (R51a) ══
- *
- * R51a names three things the library forms a view about — whether a turn is running, whether a
- * message can be sent, whether an attachment is allowed. `isRunning` is answered HERE, by passing
- * it as a first-class field. Attachments are answered by an adapter that IS ours, so the library
- * decides only whether a chip may be drawn. `canSend` is answered by NOT USING THE LIBRARY'S SEND
- * BUTTON AT ALL — and, since U5, by not using its send PATH either: `composer.send()` empties the
- * text before it awaits anything and restores it only when the attachment tasks throw, which is
- * the message-destroying defect of 2026-09-01 in the library's own code.
- *
- * That last one is not stylistic. `createActionButton` renders `<button disabled={props.disabled ||
- * !callback}>`, and `useComposerSend` returns no callback while `isRunning && !capabilities.queue`
- * — and `queue` is never registered. So every library Send button renders a HARD `disabled` for the
- * whole of every turn, which is exactly the focus-dropping bug R45 and R64 forbid. `isSendDisabled`
- * stays unwired because it gates a code path nothing executes — and that stays true only while
- * the composer's Send is ours.
+ * WHY THIS EXISTS: in this library a capability is DERIVED from which callbacks/adapters you
+ * hand over, not a setting you switch — so the way one wakes up by accident is someone adding a
+ * callback to fix an unrelated problem. Only three are on, deliberately: `cancel` (via
+ * `onCancel`, the relocated stop), `unstable_copy` (explicit though already the default, so a
+ * future default change shows in a diff), and `attachments` (our own adapter — see its own
+ * comment below, and `attachmentAdapter.ts`). `EXPECTED_CAPABILITIES` pins all fourteen keys and
+ * a test compares it with `toEqual`; a red suite there tempts the fix of dropping `onCancel`,
+ * which SILENTLY DELETES THE STOP PATH — do not take that fix.
  */
 import { useMemo } from 'react'
 import {
@@ -61,25 +27,25 @@ import type { ChatMessage } from '../../../utils/messageTypes'
 import { assertUniqueIds, convertMessage } from './convertMessage'
 
 /**
- * THE CAPABILITY LIST, written down (R51a).
+ * THE CAPABILITY LIST, written down.
  *
- * Fourteen keys, matching `RuntimeCapabilities` exactly. THREE are `true` since plan 002's U5. A
- * test compares `runtime.thread.getState().capabilities` against this with `toEqual` — exact
- * equality, never `toMatchObject`, because `toMatchObject` passes when a capability we never
- * listed wakes up, which is the entire failure this guard exists to catch.
+ * Fourteen keys, matching `RuntimeCapabilities` exactly, and THREE of them are `true`. A test
+ * compares `runtime.thread.getState().capabilities` against this with `toEqual` — exact equality,
+ * never `toMatchObject`, because `toMatchObject` passes when a capability we never listed wakes
+ * up, which is the entire failure this guard exists to catch.
  */
 export const EXPECTED_CAPABILITIES = {
   // ── the three we want ──
-  /** R55. Registered by passing `onCancel`; dropping it deletes the stop path. */
+  /** Registered by passing `onCancel`; dropping it deletes the stop path. */
   cancel: true,
   /** Explicit though it is the default, so a change of default is visible in a diff. */
   unstable_copy: true,
   /**
-   * ON SINCE PLAN 002's U5, and it had to be. The library's add-attachment control, its chip
-   * list and its dropzone are ALL gated on this capability — with it off they render nothing, so
-   * there is no way to adopt the library's box and keep it off. The adapter behind it wraps THIS
-   * project's own pipeline: the library renders a chip, it does not decide which content is
-   * re-sent, which binaries are inlined, the cache-breakpoint ceiling, or how fences are escaped.
+   * ON, AND IT HAD TO BE. The library's add-attachment control, its chip list and its dropzone
+   * are ALL gated on this capability — with it off they render nothing, so there is no way to
+   * adopt the library's box and keep it off. The adapter behind it wraps THIS project's own
+   * pipeline: the library renders a chip, it does not decide which content is re-sent, which
+   * binaries are inlined, the cache-breakpoint ceiling, or how fences are escaped.
    * See `attachmentAdapter.ts`, which also records why the library's `send` is not on our path.
    */
   attachments: true,
@@ -114,7 +80,7 @@ export interface ChatRuntimeOptions {
   isRunning: boolean
   /** Send. The library never owns this path — it hands us the composed message and stops. */
   onNew: (message: AppendMessage) => Promise<void>
-  /** R55's relocated stop. Passing it is what registers `cancel`. */
+  /** The relocated stop. Passing it is what registers `cancel`. */
   onCancel: () => Promise<void>
   /** The attachment adapter over this project's own pipeline. Passing it registers `attachments`. */
   attachments: AttachmentAdapter
@@ -153,14 +119,15 @@ export function useChatRuntime({
     // onEdit          — `edit`. No message editing on this surface.
     // onReload        — `reload`. No regenerate.
     // onRefetchThread — `refetchThread`.
-    // queue           — `queue`. Its absence is ALSO why the library's Send is unusable; see the
-    //                   docblock. Adding it would make that button work and would be the wrong fix.
+    // queue           — `queue`. Never registered: there is no queued send here, and the Send
+    //                   this surface renders is `ComposerBox`'s own, not the library's.
     // adapters        — `speech`, `dictation`, `voice` and `feedback` stay absent. `attachments`
     //                   is now PASSED, and the reason it is safe to pass is that the adapter is
     //                   ours: the library renders a chip, it does not decide which content is
     //                   re-sent, which binaries are inlined, the cache-breakpoint ceiling, or how
-    //                   fences are escaped (R51).
-    // isSendDisabled  — see the docblock. It gates a code path nothing here executes.
+    //                   fences are escaped.
+    // isSendDisabled  — unwired: it gates the library's own Send, and Send here is ours, so
+    //                   nothing executes the path it guards.
     // unstable_enableToolInvocations — would run tool callbacks TWICE on top of our own step
     //                   dispatch. Its default is already `false`; naming it here is documentation,
     //                   not configuration.

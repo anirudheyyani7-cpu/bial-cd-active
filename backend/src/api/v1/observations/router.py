@@ -1,55 +1,48 @@
-"""The browser's one narrow way to write down something only it could have seen (R104, R105, R106).
+"""The browser's one narrow way to write down something only it could have seen.
 
-TWO OF THE FOUR QUESTIONS ARE NOT ANSWERABLE ON THIS SIDE. How long it takes a citizen to first
-LOOK at their own app, and how often a project is opened without any chat being opened, are facts
-about a screen. The server never learns either one, so the browser has to say — and this is the
-whole of what it is allowed to say.
+WHY THIS EXISTS
 
-WHAT BOUNDS A NUMBER THE SERVER CANNOT CHECK. Four things, and the trade one of them makes is
-stated rather than papered over:
+TWO OF THE FOUR QUESTIONS ARE NOT ANSWERABLE ON THIS SIDE. How long it takes a citizen to
+first LOOK at their own app, and how often a project is opened without any chat being
+opened, are facts about a screen. The server never learns either one, so the browser has to
+say — and this is the whole of what it is allowed to say.
 
-  1. A SERVER-SIDE NAME ALLOWLIST. Not "the browser is asked not to invent counters" — the name
-     does not exist on this side of the call. `_CEILING_BY_NAME` is the vocabulary, and a
-     `HarnessCounter` member that is not browser-observable (a start counter, say) is refused
-     exactly as a nonsense string is.
-  2. A CEILING PER NAME, which REFUSES rather than clamps — the same discipline the message
-     bound follows (`api/v1/conversations/_shared.py`, a field constraint that rejects and never
-     trims). A clamped duration silently reads as exactly the ceiling and would quietly flatter
-     the mean, which is a worse outcome than losing the row.
-  3. AUTHENTICATION AND CSRF. `RequireCsrf` is opt-in per route in this codebase and is worth
-     opting into here: a forged write pollutes the only measurement the platform has.
-  4. A PER-USER RATE LIMIT, on the `api/v1/feedback` pattern.
+WHAT BOUNDS A NUMBER THE SERVER CANNOT CHECK: a server-side name allowlist
+(`_CEILING_BY_NAME` is the vocabulary, and a `HarnessCounter` member that is not
+browser-observable is refused exactly as a nonsense string is); a per-name ceiling that
+REFUSES rather than clamps, because a clamped duration reads as exactly the ceiling and
+would quietly flatter the mean; authentication and CSRF (opt-in per route in this codebase,
+never global), since a forged write pollutes the only measurement; and a per-user rate limit.
 
-THE TRADE, NAMED. The identity bounds who may write and is then DISCARDED — no row this route
-writes carries a user id, exactly like every other row in `harness_counts`, which has never been
-user-scoped. The consequence is real: a poisoned or duplicated number cannot be excluded
-retrospectively, because there is nothing to exclude it BY. The defence is the per-user limit in
-the moment, not a per-user filter afterwards, and keeping the table un-scoped is worth more than
-that filter would be. This is an observability endpoint inside a single-tenant enterprise
-deployment; it must not become a way to profile a citizen.
+THE TRADE, NAMED. The identity bounds who may write and is then DISCARDED — no row this
+route writes carries a user id, like every other row in `harness_counts`. So a poisoned or
+duplicated number cannot be excluded retrospectively: there is nothing to exclude it BY.
+The defence is the per-user limit in the moment, not a per-user filter afterwards. This is
+observability inside a single-tenant enterprise deployment; it must not become a way to
+profile a citizen.
 
-AND THE BOUND THIS ROUTE DOES NOT ENFORCE, said plainly rather than left to be discovered. Each
-name is bounded ALONE. Nothing here relates one to another, so `project_opened_chat` can be
-written with no `project_opened` behind it and R105's ratio can come out above 1. The invariant
-that keeps it at or below 1 lives in the BROWSER (`portal/src/utils/observe.ts` only marks a chat
-open for a project already marked open in this page load), which means it holds for the portal and
-not for a hand-made request. Enforcing it here would need a server-issued visit token — a session
-model this plan deliberately does not build. So the reading rule, which belongs beside the number:
-`1 - (project_opened_chat / project_opened)` outside [0, 1] is not a surprising result, it is
-poisoned or lossy data, and should be read as such rather than reported.
+NO READ. The counters are read behind the superadmin gate at `GET /v1/admin/harness-counters`.
+This route has no sibling."""
 
-The rule that follows and is binding elsewhere: any user-facing "roughly how long" estimate is
-sourced from the SERVER-measured `app_cold_start_ms`, never from the browser-measured duration
-this route accepts.
-
-NO READ. There is nothing a browser should learn from a measurement it just made, and the counters
-are read where they have always been read — `GET /v1/admin/harness-counters`, behind the superadmin
-gate. This route has no sibling.
-
-WHY `/v1/observations` AND NOT `/v1/harness-counters`. The latter matches the storage vocabulary
-and collides in a reader's mind with the superadmin read at `/v1/admin/harness-counters`, which is
-a different audience behind a different gate.
-"""
+# THE BOUND THIS ROUTE DOES NOT ENFORCE, said plainly rather than left to be discovered:
+# each name is bounded ALONE. Nothing here relates one to another, so `project_opened_chat`
+# can be written with no `project_opened` behind it and the chat-open ratio
+# (`project_opened_chat / project_opened`) can come out above 1. The invariant that keeps it at
+# or below 1 lives in the BROWSER (`portal/src/utils/observe.ts` only marks a chat open for a
+# project already marked open in this page load), which means it holds for the portal and not
+# for a hand-made request.
+# Enforcing it here would need a server-issued visit token — a session model this service
+# deliberately does not build. So the reading rule, which belongs beside the number:
+# `1 - (project_opened_chat / project_opened)` outside [0, 1] is not a surprising result, it
+# is poisoned or lossy data, and should be read as such rather than reported.
+#
+# The rule that follows and is binding elsewhere: any user-facing "roughly how long" estimate
+# is sourced from the SERVER-measured `app_cold_start_ms`, never from the browser-measured
+# duration this route accepts.
+#
+# WHY `/v1/observations` AND NOT `/v1/harness-counters`: the latter matches the storage
+# vocabulary and collides in a reader's mind with the superadmin read at
+# `/v1/admin/harness-counters`, which is a different audience behind a different gate.
 
 from __future__ import annotations
 
@@ -69,8 +62,6 @@ from src.services.ratelimit import rate_limit
 
 router = APIRouter(prefix="/observations", tags=["observations"])
 
-# The raw-parse route takes a JSON body FastAPI never sees (no Pydantic param), so its request
-# shape is documented explicitly from the model — without enabling the 422 path.
 _REQUEST_BODY_DOC = raw_body_doc(ObservationRequest)
 
 # The longest a first view of an app can honestly take, in milliseconds.
@@ -79,20 +70,22 @@ _REQUEST_BODY_DOC = raw_body_doc(ObservationRequest)
 # journey is a cold restore (whose readiness wait alone budgets `_COLD_READY_BUDGET_SECONDS`,
 # 120 s, on top of an unbounded ACA create) plus the frame's own load cap (`FRAME_LOAD_CAP_MS`,
 # 20 s). The interval then adds one HUMAN step — choosing which chat to open — so a ceiling near
-# the machine figure would refuse exactly the slow journeys R104 exists to see. Ten minutes is the
-# line: past it, this is a tab that was backgrounded, a laptop that slept, or a lie, and refusing
-# is cheaper and more honest than a second client-side mechanism trying to detect the same thing.
+# the machine figure would refuse exactly the slow journeys this measurement exists to see. Ten
+# minutes is the line: past it, this is a tab that was backgrounded, a laptop that slept, or a
+# lie, and refusing is cheaper and more honest than a second client-side mechanism trying to
+# detect the same thing.
 # It is a poison bound, NOT a plausibility bound — a value under it is not thereby trustworthy.
 MAX_OBSERVED_MS: Final = 10 * 60 * 1000
 
 # THE ALLOWLIST, and it is a mapping rather than a set because the ceiling is per name.
 #
 # AN OCCURRENCE COUNTER'S CEILING IS 1, because an occurrence IS one. A browser reporting
-# `project_opened` with a value of 40 is not reporting an occurrence, it is inflating R105's
-# denominator — and one comparison refuses that without a second code path for "this name is an
-# occurrence". A ceiling of 1 is also what makes a MISSING value legible: it means "one of these
-# happened", which is the whole payload an occurrence has. For a DURATION the same omission means
-# nothing at all, and is refused rather than defaulted — see `_bounded_value`.
+# `project_opened` with a value of 40 is not reporting an occurrence, it is inflating the
+# chat-open ratio's denominator — and one comparison refuses that without a second code path
+# for "this name is an occurrence". A ceiling of 1 is also what makes a MISSING value legible: it
+# means "one of these happened", which is the whole payload an occurrence has. For a DURATION
+# the same omission means nothing at all, and is refused rather than defaulted — see
+# `_bounded_value`.
 _CEILING_BY_NAME: Final[dict[str, int]] = {
     HarnessCounter.PROJECT_TO_APP_VISIBLE_MS.value: MAX_OBSERVED_MS,
     HarnessCounter.PROJECT_OPENED.value: 1,

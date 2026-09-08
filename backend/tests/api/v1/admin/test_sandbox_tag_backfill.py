@@ -1,20 +1,13 @@
-"""POST /v1/admin/apps/backfill-sandbox-tags — C10 identity for containers that predate it (U8).
+"""POST /v1/admin/apps/backfill-sandbox-tags — a durable identity tag for containers that predate
+it.
 
-Everything provisioned from U8 onward is stamped at create. This endpoint is the other half:
-the fleet that already exists, which today carries nothing at all and is therefore un-judgeable
-the moment Redis is lost. Running it is a release prerequisite — the destroy flag stays off until
-the fleet reports zero untagged sandboxes.
+Covers the half of the fleet that was never stamped at create; the destroy flag stays off until
+this reports zero untagged sandboxes, which makes running it a release prerequisite.
 
 THE LOAD-BEARING TEST IN THIS FILE is `test_a_container_matching_no_app_row_gets_no_owner`, with
-its mutation-check sibling `test_a_guessed_owner_would_wrongly_become_destroy_eligible`. A sandbox
-name keeps only 28 of its app_id's 32 hex characters, so it is not invertible; recovering an owner
-means matching FORWARD against the app table, and failing to match means stamping no owner at all.
-Filling in a plausible one is the single change that turns "report this to a human" into "delete
-somebody's unsaved work", and it is the thing the escalate-never-destroy architecture exists to
-prevent.
-
-Shaped after its three siblings (`test_sandbox_reconcile.py`, `test_storage_reconcile.py`,
-`test_database_reconcile.py`): the gate, the wire body, the audit row, the failure surface.
+its mutation-check sibling `test_a_guessed_owner_would_wrongly_become_destroy_eligible`. An owner
+is recovered by matching names FORWARD against the app table; failing to match stamps no owner at
+all, and filling in a plausible one turns "report this to a human" into "delete unsaved work".
 """
 
 from __future__ import annotations
@@ -69,10 +62,9 @@ class _Fleet:
     exactly what a future substrate must satisfy, and inheriting the real ABC would stop
     exercising it.
 
-    `stamp_tags` MERGES into the recorded state — the contract `FleetTagger` states, which the
-    real client keeps by reading before it writes (ARM itself replaces the map) — so the tests
-    below observe the tags a container would actually end up carrying rather than the argument
-    they were called with."""
+    `stamp_tags` MERGES into the recorded state, as the real client does by reading before it
+    writes (ARM itself replaces the map) — so tests below see the tags a container would
+    actually end up carrying, not the argument they were called with."""
 
     def __init__(
         self,
@@ -156,17 +148,13 @@ async def test_an_owned_container_gets_the_whole_identity(client, app, db_sessio
 async def test_a_backfilled_age_is_marked_synthetic_and_starts_now(
     client, app, db_session
 ) -> None:
-    """R2, at its sharpest. The stamped age is `now` — NOT Azure's `systemData.createdAt`, which
-    is the field R2 exists to distrust — so a backfilled container reads as brand new and must
-    serve its full tier clock. Erring toward waiting is the whole point: believing a nineteen-day
-    Azure timestamp would hand that ghost an instant death sentence on untrustworthy evidence."""
+    """The stamped age is `now`, with a `backfilled_at` marker beside it saying the age is
+    synthetic, so a backfilled container reads as brand new and serves its full tier clock."""
     admin = await _admin(db_session)
     owner = await UserFactory.create(db_session, email="builder@rvaiglobal.com")
     row = await AppRegistryFactory.create(db_session, user_id=owner.id)
     await db_session.commit()
     name = app_name_for(row.id)
-    # The fake reports what ARM would: a container created long ago, with no tags. The stamped
-    # age must ignore it entirely.
     fleet = _Fleet({name: {}})
     _wire(app, fleet)
 
@@ -232,9 +220,8 @@ async def test_a_guessed_owner_would_wrongly_become_destroy_eligible(
 
 
 async def test_an_already_tagged_container_is_left_alone(client, app, db_session) -> None:
-    """Re-stamping would overwrite a real `bial-created-at` with `now` on every run, resetting the
-    age clock of the whole fleet each time an operator pressed the button — reclamation that
-    reclaims nothing, forever, with every test still green."""
+    """A container already carrying `bial-kind` is counted and left untouched, so a real age
+    survives every later run of the pass."""
     admin = await _admin(db_session)
     owner = await UserFactory.create(db_session, email="builder@rvaiglobal.com")
     row = await AppRegistryFactory.create(db_session, user_id=owner.id)
@@ -291,7 +278,7 @@ async def test_the_unowned_population_is_still_reported_on_the_second_pass(
     what "the fleet is clean, flip the destroy flag" looks like, and it reads identically for a
     fully-identified fleet and for one made entirely of containers nobody has adjudicated. The
     consequence is safe (they are escalate-only, nothing destroys them) but the operator has lost
-    the count C10 §3 says matters most, at the moment they are deciding.
+    the count that matters most, at the moment they are deciding.
 
     Mutation-check: count `unowned` only where this pass stamped it, and this goes red on the
     second pass while every other assertion in the file stays green."""
@@ -352,8 +339,7 @@ async def test_the_buckets_account_for_every_container(client, app, db_session) 
 
 
 async def test_one_refused_patch_does_not_abort_the_pass(client, app, db_session) -> None:
-    # The operation is idempotent, so the next run retries the failure. Aborting on the first
-    # would leave the fleet part-stamped with no report of what remains.
+    # The refused container is counted and the sweep carries on to the next one.
     admin = await _admin(db_session)
     owner = await UserFactory.create(db_session, email="builder@rvaiglobal.com")
     row = await AppRegistryFactory.create(db_session, user_id=owner.id)
@@ -374,8 +360,8 @@ async def test_one_refused_patch_does_not_abort_the_pass(client, app, db_session
 
 async def test_the_audit_row_carries_counts_but_no_names(client, app, db_session) -> None:
     """A sandbox name embeds 28 hex characters of its app's uuid, so a name list in the audit
-    trail is a durable inventory of who was running what (`.claude/rules/security.md`). Unlike
-    `reconcile-sandboxes` there is no operator action left to take on the names, so they do not
+    trail is a durable inventory of who was running what. Unlike `reconcile-sandboxes` there
+    is no operator action left to take on the names, so they do not
     travel in the response either — failures go to the logs."""
     admin = await _admin(db_session)
     ghost = app_name_for(uuid.uuid7())
@@ -405,8 +391,7 @@ async def test_the_audit_row_carries_counts_but_no_names(client, app, db_session
 
 
 async def test_a_failed_enumeration_is_503_not_a_partial_answer(client, app, db_session) -> None:
-    # "Nothing left to stamp" from a half-listed fleet is the exact false green the destroy flag
-    # is gated on. Refuse rather than under-report.
+    # A half-listed fleet must not answer "nothing left to stamp" — refuse, don't under-report.
     admin = await _admin(db_session)
     _wire(app, _Fleet({}, list_error=SandboxError("arm blip")))
 

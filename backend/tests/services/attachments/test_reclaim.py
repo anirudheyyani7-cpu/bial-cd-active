@@ -1,4 +1,4 @@
-"""`reclaim_orphaned_attachments` — the never-sent-upload sweep (R10 / U9).
+"""`reclaim_orphaned_attachments` — the never-sent-upload sweep.
 
 The eligibility rule is the crux: a row is orphaned iff (a) NO sent message references its
 token AND (b) it is older than the 48h window. NULL `conversation_id` is legacy, never a
@@ -61,7 +61,7 @@ async def _add_attachment(
 
 
 async def _file_message(db, *, user_id: uuid.UUID, attachment_id: str) -> None:
-    """A sent message that references `attachment_id` via a native ref marker (U4 shape)."""
+    """A sent message that references `attachment_id` via a native ref marker."""
     from pydantic_ai import BinaryContent
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
@@ -111,7 +111,6 @@ async def test_legacy_unreferenced_orphan_is_reclaimed(db_session) -> None:
 
 
 async def test_legacy_referenced_row_survives(db_session) -> None:
-    # conversation_id NULL, 30 days old, its token present in a sent message → NOT eligible.
     # Pins that a NULL link is not a deletion proxy: the reference scan wins.
     storage = FakeStorage()
     user = await UserFactory.create(db_session)
@@ -128,8 +127,7 @@ async def test_legacy_referenced_row_survives(db_session) -> None:
 
 
 async def test_linked_referenced_row_survives(db_session) -> None:
-    # Non-NULL conversation_id, 30 days old, referenced by a sent message → the reference scan
-    # wins over age for linked rows too.
+    # The reference scan wins over age for linked rows too.
     storage = FakeStorage()
     user = await UserFactory.create(db_session)
     conv = await ConversationFactory.create(db_session, user.id)
@@ -225,16 +223,12 @@ async def test_cross_user_isolation(db_session) -> None:
     result = await reclaim_orphaned_attachments(db_session, storage, user_id=user_a.id, now=_NOW)
     assert result.reclaimed == 1
     assert key_a not in storage.objects
-    # B's orphan is untouched by a sweep scoped to A.
     assert key_b in storage.objects
     row_b = await db_session.scalar(select(Attachment).where(Attachment.attachment_id == "att_b"))
     assert row_b is not None
 
 
 async def test_token_collision_does_not_shield_other_users_orphan(db_session) -> None:
-    # User A and user B each own an attachment with the SAME client-minted token. B's sent
-    # message references that token; A's copy is never sent. Because BOTH halves of the scan
-    # are user-scoped, B's message does NOT shield A's orphan (and B's own copy still survives).
     storage = FakeStorage()
     user_a = await UserFactory.create(db_session)
     user_b = await UserFactory.create(db_session)
@@ -246,12 +240,10 @@ async def test_token_collision_does_not_shield_other_users_orphan(db_session) ->
     )
     await _file_message(db_session, user_id=user_b.id, attachment_id="att_shared")
 
-    # A's never-sent orphan IS reclaimed despite the colliding token in B's transcript.
     result_a = await reclaim_orphaned_attachments(db_session, storage, user_id=user_a.id, now=_NOW)
     assert result_a.reclaimed == 1
     assert key_a not in storage.objects
 
-    # B's copy is referenced by B's own message → survives.
     result_b = await reclaim_orphaned_attachments(db_session, storage, user_id=user_b.id, now=_NOW)
     assert result_b.reclaimed == 0
     assert key_b in storage.objects
@@ -271,15 +263,14 @@ async def test_second_run_is_a_noop(db_session) -> None:
 
 
 def test_window_is_the_err_long_48h() -> None:
-    # The err-long posture (KD-7): 48h, a large multiple of any upload-then-send interval.
+    # The err-long posture: 48h, a large multiple of any upload-then-send interval.
     assert NEVER_SENT_RECLAIM_WINDOW == datetime.timedelta(hours=48)
 
 
 def test_reference_resolver_is_shared_with_the_cascade() -> None:
-    # Drift guard: the reclaimer resolves sent references + derives blob keys through the SAME
-    # helpers as the conversation cascade, so a `parts` shape the cascade honours is honoured
-    # here too and the two can never diverge. Assert on the function's own resolution namespace
-    # (`__globals__`) — that is exactly what `reclaim_orphaned_attachments` will call.
+    # Drift guard: the reclaimer must resolve references and blob keys through the SAME helpers
+    # as the conversation cascade. Asserted on `__globals__` — the function's own resolution
+    # namespace — because that is exactly what it will call.
     from src.services.conversations.delete import (
         _blob_keys_for,
         _referenced_attachment_ids,

@@ -1,16 +1,13 @@
 /**
- * The unified-chat thread behaviors (U11/U13) that only the PAGE can prove:
- *
- *  - a send is a chat turn; the plan streams as PROSE and the card renders beside it —
- *    no fence anywhere, and nothing builds until the card is clicked;
+ * The unified-chat thread behaviors that only the PAGE can prove:
+ *  - a send is a chat turn; the plan streams as PROSE beside the card — nothing builds until
+ *    the card is clicked;
  *  - a text-only reply (a clarifying question) renders with NO card;
- *  - a restored thread re-renders each card from its STORED state (pending → armed,
- *    refine/build → settled, older-than-newest → expired) — no local state to resync;
- *  - a used card cannot re-fire — Build it is now a HANDOFF, so "cannot re-fire" is proven
- *    by the press ending in a navigation to a brand-new build chat, not by a settled local state;
- *  - U19 deleted the in-composer mode switcher along with the `mode` it displayed (U1 collapsed
- *    ConversationMode into the fixed-at-creation ChatKind) — this file's own guard for that is
- *    below, under "the U13 header".
+ *  - a restored thread re-renders each card from its STORED state, no local state to resync;
+ *  - a used card cannot re-fire: Build it is now a HANDOFF, proven by navigation to a
+ *    brand-new build chat, not by a settled local state;
+ *  - the in-composer mode switcher is gone now that ChatKind is fixed at creation — see
+ *    "the header" below for that guard.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react'
@@ -22,11 +19,10 @@ import {
 } from './_builderSession.jsx'
 import { ApiError } from '../../utils/apiError'
 
-// The id `handleBuildIt` mints for every Build-it press in this file (U12: the id is CLIENT
-// minted via `uuidv7`, then echoed back by the server as `BuildFromPlanOutcome.chatId` — the
-// mock below mirrors that echo). One fixed id is enough here because no single test in this
-// file presses Build it twice — a second, distinguishable mint only matters for the cross-tab
-// lock suite (ConversationSurface-buildlock.test.jsx), which needs to tell several handoffs apart.
+// The id `handleBuildIt` mints for every Build-it press in this file (client-minted via
+// `uuidv7`, echoed back as `BuildFromPlanOutcome.chatId`). One fixed id is enough here because
+// no test in this file presses Build it twice — see `ConversationSurface-buildlock.test.jsx`
+// for the cross-tab suite that needs several handoffs told apart.
 const MINTED_BUILD_CHAT_ID = 'minted-build-chat-1'
 
 const h = vi.hoisted(() => ({
@@ -85,8 +81,7 @@ async function send(text = 'a visitor app') {
 }
 
 /** A stored plan-options projection message (what a reload hydrates). `PlanOptionsItem` is
- *  `{ type, seq, toolCallId, state }` only now (turnStreamApi.ts) — `mode` and `reason` are
- *  both gone (the per-thread mode setting, and the failure-named re-arm respectively). */
+ *  `{ type, seq, toolCallId, state }` only now — `mode` and `reason` are both gone. */
 const storedCard = (seq, toolCallId, state) => ({
   id: `srv_${seq}_p`,
   role: 'assistant',
@@ -104,9 +99,8 @@ beforeEach(() => {
   h.buildUserParts.mockImplementation(async (text) => [{ type: 'text', text }])
   h.uuidv7.mockReturnValue(MINTED_BUILD_CHAT_ID)
   primeTurn(h)
-  // U12: buildFromPlan hands off to a NEW chat and echoes the caller's minted id back as
-  // `chatId` — the shared harness's `primeTurn` still answers the pre-handoff shape (a bare
-  // `turnId`, no `chatId`), so every test in this file needs the real contract's shape.
+  // `buildFromPlan` hands off to a NEW chat and echoes the caller's minted id back as `chatId` —
+  // the shared harness's `primeTurn` still answers the pre-handoff shape, so tests need this.
   h.buildFromPlan.mockResolvedValue({ outcome: 'started', chatId: MINTED_BUILD_CHAT_ID, turnId: 'bt-1' })
 })
 afterEach(() => cleanup())
@@ -116,15 +110,13 @@ describe('the routing rule — a send is a chat turn, never a build', () => {
     renderThread()
     await send('a visitor app')
 
-    // The plan text is a normal assistant bubble (no fence, no hidden markup)…
     expect(await screen.findByText(new RegExp(BRIEF.slice(0, 30)))).toBeTruthy()
-    // …with the actionable card.
     const build = await screen.findByRole('button', { name: /^Build this plan$/ })
     expect(screen.getByRole('button', { name: /keep planning/i })).toBeTruthy()
     expect(h.buildFromPlan).not.toHaveBeenCalled()
 
     fireEvent.click(build)
-    // Three positional args now (U12): the third is the CLIENT-MINTED id of the brand-new build
+    // Three positional args now: the third is the CLIENT-MINTED id of the brand-new build
     // chat this press hands off to.
     await waitFor(() =>
       expect(h.buildFromPlan).toHaveBeenCalledWith('thread-1', PLAN_CARD_ID, MINTED_BUILD_CHAT_ID),
@@ -155,11 +147,9 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     })
     renderThread()
 
-    // FLIPPED (Plan D U16/U17). Two stored offers used to render as two cards in the transcript,
-    // the older one drawn "expired" and informational. There is ONE control now and it lives on
-    // the composer, so the newest offer is the only one on screen — which is a stronger form of
-    // the same rule ("only the newest is actionable"): an expired card is a dead button a reader
-    // can still see and try, and this is none.
+    // FLIPPED: two stored offers used to render as two cards, the older one "expired". There is
+    // ONE control now, on the composer, so the newest offer is the only one on screen — a
+    // stronger form of "only the newest is actionable": there is no dead button to still try.
     const cards = await screen.findAllByTestId('offer-strip')
     expect(cards).toHaveLength(1)
     expect(screen.queryByText(/newer plan supersedes/i)).toBeNull()
@@ -182,11 +172,9 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     })
     renderThread()
 
-    // FLIPPED (D2, Plan D U16). Settled cards used to render settled COPY and lose their buttons.
-    // A spent strip stays and stays PRESSABLE now — pressing it again is an ordinary request that
-    // creates another Build chat — so what marks it is `data-spent`, not the removal of the
-    // control. That is the deliberate change: "only one offer is live" is about which one blocks
-    // the composer, never about which one a citizen is allowed to press.
+    // FLIPPED: settled cards used to lose their buttons. A spent strip stays PRESSABLE now —
+    // marked by `data-spent`, not by removing the control — because "only one offer is live" is
+    // about which one blocks the composer, never about which one a citizen may press.
     const strip = await screen.findByTestId('offer-strip')
     expect(strip.getAttribute('data-spent')).toBe('true')
     expect(within(strip).getByRole('button', { name: /^Build this plan$/ })).toBeTruthy()
@@ -198,20 +186,13 @@ describe('a restored thread re-renders every card from its STORED state', () => 
   })
 
   it('an inertness guard: a stored build_failed record never re-arms with the failure named — the state and its re-arm copy are both gone', async () => {
-    // AN INERTNESS GUARD, not a deleted test (L8). This used to prove a failed Build-it press
-    // left the card in a special `build_failed` state that showed the failure ("another build
-    // is already running") and let the citizen retry from the SAME card. Neither half of that
-    // survives U12: `build_failed` and its `reason` field are gone from `PlanOptionsItem`
-    // (turnStreamApi.ts), because Build-it now fails inside the one handoff call that would
-    // have produced this outcome — there is nothing left to persist. The deleted card's own
-    // docblock said why: "a press that fails records nothing — the card was never spent, and
-    // there is nothing to un-spend. A failure is said once, in the error line below the buttons,
-    // by the caller that actually saw it."
+    // AN INERTNESS GUARD, not a deleted test (L8): `build_failed` and its `reason` field are gone
+    // from `PlanOptionsItem` — Build-it now fails inside the one handoff call that would have
+    // produced this outcome, so there is nothing left to persist.
     //
     // What's left to pin, from a row a pre-migration project might still carry: `build_failed` is
-    // not one of the offer's recognised states, so the strip renders SPENT — it still draws (this
-    // is the liveness half of the guard; a crash would leave nothing to query) but it offers no
-    // re-arm, which is what this test used to require.
+    // not a recognised state, so the strip renders SPENT — it still draws (the liveness half of
+    // the guard) but offers no re-arm.
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
       messages: [storedCard(1, 'opt-f', 'build_failed')],
@@ -225,11 +206,9 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     expect(screen.queryByText(/another build is already running/i)).toBeNull()
     // …and so is the shell copy the card used to carry around its buttons.
     expect(screen.queryByText(/ready to build this plan/i)).toBeNull()
-    // NOTHING IS EVER `disabled` HERE (R45/R64), which is the assertion that had to change rather
-    // than the behaviour it guards. The old card rendered a real `disabled` for an unrecognised
-    // state; a real `disabled` on a focused control blurs it to `document.body`, and this surface
-    // does not ship one anywhere. An unrecognised stored state simply is not `pending`, so the
-    // strip renders SPENT — pressable, and not blocking the composer.
+    // NOTHING IS EVER `disabled` HERE, which is the assertion that had to change, not the
+    // behaviour it guards: a real `disabled` on a focused control blurs it to `document.body`,
+    // and an unrecognised stored state simply renders SPENT — pressable, not blocking the composer.
     expect(card.getAttribute('data-spent')).toBe('true')
     expect(card.querySelector('[disabled]')).toBeNull()
   })
@@ -237,17 +216,10 @@ describe('a restored thread re-renders every card from its STORED state', () => 
 
 describe('a used card cannot re-fire', () => {
   it('after Build it succeeds it hands off to a NEW build chat — no second transition from the same card', async () => {
-    // WHAT THIS USED TO PROVE: Build-it flipped THIS conversation into Write and streamed the
-    // build here, so "no second transition" meant the card settled to its stored `build` state
-    // and its buttons vanished while everything else about the chat stayed put.
-    //
-    // U12 changes what "no second transition" is EVIDENCE OF. There is no in-place settle to
-    // observe any more — the press ends by LEAVING this chat for a brand-new one seeded with the
-    // plan (handleBuildIt's own docblock: "the only place [the build's] narrative can honestly be
-    // watched is there"). So the card itself is gone from the screen not because it settled, but
-    // because the whole thread it lived on is. What's left to pin is the one-shot nature of the
-    // button: exactly one handoff call, carrying the id `handleBuildIt` minted, and the page
-    // actually following it.
+    // "No second transition" no longer means the card settling in place — Build-it now LEAVES
+    // this chat for a brand-new one seeded with the plan, so the card is gone because the whole
+    // thread is. What's left to pin: exactly one handoff call, carrying the id `handleBuildIt`
+    // minted, and the page actually following it.
     h.getBuild.mockImplementation(async (id) =>
       id === MINTED_BUILD_CHAT_ID
         ? {
@@ -273,7 +245,7 @@ describe('a used card cannot re-fire', () => {
   })
 })
 
-describe('the reload half of the build narrative (U15)', () => {
+describe('the reload half of the build narrative', () => {
   it('renders stored friendly steps and the in-progress truth line from the projection', async () => {
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
@@ -288,25 +260,20 @@ describe('the reload half of the build narrative (U15)', () => {
         { id: 'srv_2_g', role: 'assistant', seq: 2, parts: [{ type: 'build_in_progress', sessionId: 'gone-1' }] },
       ],
     })
-    // The premise, made REAL rather than assumed: the page now reattaches to any session the
-    // transcript says was running, so "gone-1" has to actually be gone. A 404 is the ordinary
-    // way that happens (server restart, or the ended-session retention lapsing).
+    // The page now reattaches to any session the transcript says was running, so "gone-1" has to
+    // actually be gone — a 404 is the ordinary way that happens.
     h.getStatus.mockRejectedValue(new ApiError('Build session not found.', 404))
     const { container } = renderThread()
 
-    // The stored step renders through the SAME activity group the live path uses (AE43) — one
+    // The stored step renders through the SAME activity group the live path uses — one
     // converter, one renderer, so a build read back looks like the build watched.
     fireEvent.click(await screen.findByTestId('activity-group-trigger'))
     const step = await screen.findByText('Updated app/page.tsx')
     expect(step.closest('[data-state]')?.getAttribute('data-state')).toBe('ok')
     expect(h.getStatus).toHaveBeenCalledWith('gone-1') // it DID try to rejoin
     // Nothing live re-tells this build, so the durable truth line renders instead of a dead
-    // spinner — and no toast, because a vanished session is expected, not an error.
-    //
-    // IT IS PROSE IN THE TRANSCRIPT NOW, not a `data-kind` row. `build_in_progress` maps to no
-    // rendered part, so the surface turns an unsuperseded anchor into the sentence itself — the
-    // alternative was the row vanishing entirely and a citizen finding a transcript that simply
-    // stops with no account of the build they started.
+    // spinner. `build_in_progress` maps to no rendered part, so the surface turns the anchor into
+    // prose itself, rather than the transcript simply stopping with no account of the build.
     await waitFor(() =>
       expect(container.textContent).toMatch(
         /a build was running here/i,
@@ -329,10 +296,8 @@ describe('the reload half of the build narrative (U15)', () => {
     })
     renderThread()
 
-    // RE-POINTED AT THE ACTIVITY GROUP, and the claim is unchanged: a real chat message
-    // interrupts the run, so this is TWO groups rather than one merged one. It is the assertion
-    // that keeps the merge honest — a rule that swept every stored step row into one group would
-    // put "Step five" above prose that was written before it.
+    // RE-POINTED AT THE ACTIVITY GROUP: a real chat message still interrupts the run into TWO
+    // groups rather than one — the rule that keeps a merge from putting "Step five" above earlier prose.
     const groups = await screen.findAllByTestId('activity-group')
     expect(groups).toHaveLength(2)
 
@@ -349,37 +314,29 @@ describe('the reload half of the build narrative (U15)', () => {
   })
 })
 
-describe('the U13 header', () => {
+describe('the header ignores a legacy mode field and mounts no mode control', () => {
   it('an inertness guard: no mode control mounts, and a legacy `mode` field on the header is never read', async () => {
-    // AN INERTNESS GUARD, not a deleted test (L8). This used to prove the in-composer switcher
-    // (F5/U6) showed the server-saved `mode` as its trigger label ("Mode: Ask"). U1 collapsed the
-    // three-valued ConversationMode into a ChatKind fixed at creation, and U19 deleted
-    // `ModeSwitcher` with it (see ModeSwitcher.test.tsx for the tree-wide "nothing imports or
-    // mounts it" guard). There is no per-thread setting left to display or switch.
+    // AN INERTNESS GUARD, not a deleted test (L8): the in-composer switcher and its `mode` label
+    // are gone with `ModeSwitcher` (see ModeSwitcher.test.tsx for the tree-wide guard) — there is
+    // no per-thread setting left to display or switch. What THIS page's render can still pin: a
+    // header payload carrying a leftover `mode` key is simply ignored, never read into a control.
     //
-    // What THIS page's own render can still pin: a header payload that happens to carry a
-    // leftover `mode` key (a pre-migration record, or a stale server response) is simply
-    // ignored — never read into any control — rather than the page tripping over an unexpected
-    // field.
-    // KEPT DELIBERATELY when the sweep dropped `mode` from this file's other eight fixtures:
-    // here the retired key IS the subject, not residue. Removing it would leave this test's
-    // name intact and its assertion vacuous.
+    // KEPT DELIBERATELY: this fixture's `mode: 'ask'` is the one place that key is still the
+    // subject, not residue — removing it would leave this test's assertion vacuous.
     h.getBuild.mockResolvedValue({ id: 'thread-1', mode: 'ask', messages: [] })
     renderThread()
 
     // Liveness: the composer actually mounted (a crash would leave nothing here to query).
     await screen.findByPlaceholderText(/ask for another change/i)
-    // No mode control of any name mounted.
     expect(screen.queryByRole('button', { name: /Mode:/i })).toBeNull()
     expect(screen.queryByText(/Mode:/i)).toBeNull()
   })
 })
 
-describe('R8 live clause — a reload MID-TURN re-attaches to the running reply', () => {
+describe('a reload MID-TURN re-attaches to the running reply', () => {
   it('re-subscribes to the running turn and lands its text in the transcript', async () => {
     // `getBuild` already returned `activeTurn` and nothing consumed it: the reload showed a
-    // transcript frozen at the user's message while the server kept generating, and the next
-    // send 409'd against a turn this tab had forgotten.
+    // frozen transcript while the server kept generating, and the next send 409'd against it.
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
       activeTurn: { turnId: 't-live', lastSeq: 4 },
@@ -394,9 +351,8 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
     )
     renderThread()
 
-    // The snapshot's own block plus the tail that CONTINUES it — the whole reply, not just what
-    // arrived after, and not two paragraphs where the model wrote one. `newBlock: false` is what
-    // says the delta belongs to the block the snapshot delivered.
+    // The snapshot's own block plus the tail that CONTINUES it — the whole reply, not two
+    // paragraphs where the model wrote one. `newBlock: false` says the delta belongs to it.
     expect(await screen.findByText(/It tracks visitor passes\./)).toBeTruthy()
     const [args] = h.readTurnStream.mock.calls[0]
     expect(args.conversationId).toBe('thread-1')
@@ -408,23 +364,20 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
 
   it('tells the re-attached turn ONCE, prose included — and still does after it ENDS', async () => {
     // The reload hydrates the turn's persisted rows AND re-tells the same turn into a fresh
-    // streaming message. Prose written beside a tool call is stored now — the projection stopped
-    // dropping it — so the stored copy and the re-told copy are both on screen unless the
-    // in-flight suppression covers text as well as steps. The citizen read every sentence twice.
+    // streaming message; prose beside a tool call is stored now, so the stored copy and the
+    // re-told copy are both on screen unless in-flight suppression covers text too.
     //
-    // ★ THE TURN IS RUN TO ITS TERMINAL HERE, and that is the whole point of the fixture. The
-    // suppression used to be derived from "a turn is streaming in this chat", so it switched off
-    // at `turn_ended` while the re-told message stayed — and the second copy came back a few
-    // minutes later, permanently. Asserting mid-stream could never see that.
+    // ★ THE TURN IS RUN TO ITS TERMINAL HERE — the point of the fixture: the old suppression
+    // switched off at `turn_ended` while the re-told message stayed, so the second copy came
+    // back permanently. Asserting mid-stream could never catch that.
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
       activeTurn: { turnId: 't-live', lastSeq: 3 },
       messages: [
         { id: 'srv_1_u_0', role: 'user', seq: 1, parts: [{ type: 'text', text: 'add a page' }] },
-        // ★ THE EQUAL CASE, and the only row in this fixture that exercises it. The boundary IS
-        // the user row's seq, so every other stored row of the turn sits STRICTLY above it and
-        // `>` and `>=` cannot be told apart by them. A stored agent row sharing that seq is the
-        // one row the difference decides, and it belongs to the turn just as much as the rest.
+        // ★ THE EQUAL CASE: the boundary IS the user row's seq, so every other stored row sits
+        // STRICTLY above it, and `>` vs `>=` cannot be told apart by them. A stored agent row
+        // sharing that seq is the one row the difference decides.
         { id: 'srv_1_a_0', role: 'assistant', seq: 1, parts: [{ type: 'text', text: 'Reading the page first.' }] },
         { id: 'srv_2_a_0', role: 'assistant', seq: 2, parts: [{ type: 'text', text: 'Let me look at the page.' }] },
       ],
@@ -443,10 +396,9 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
           working: false,
           items: [],
         },
-        // The tail exists ONLY in the re-telling, so waiting for it is what makes the count
-        // below deterministic: it cannot be on screen until the whole stream has been read and
-        // the turn has settled. `findAllByText` alone resolves on the FIRST match — the stored
-        // copy — which is why this assertion used to pass or fail depending on what else ran.
+        // The tail exists ONLY in the re-telling, so waiting for it makes the count below
+        // deterministic — `findAllByText` alone resolves on the FIRST (stored) match, which is
+        // why this assertion used to pass or fail depending on what else ran.
         { type: 'text_delta', seq: 4, text: ' Adding it now.', newBlock: false },
         { type: 'turn_ended', seq: 5, turnId: 't-live', status: 'completed' },
       ]),
@@ -457,23 +409,20 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
     // Once, not twice — and `getAllByText` rather than `getByText` so the assertion is about the
     // COUNT: `getByText` throws on multiple matches, which reads as a broken query.
     expect(screen.getAllByText(/Let me look at the page\./)).toHaveLength(1)
-    // ★ INCLUDING THE ROW AT EXACTLY THE BOUNDARY. The re-telling carries this sentence too, so
-    // the stored copy sitting AT the boundary seq is a second copy like any other — and a
-    // boundary drawn as `>` rather than `>=` would leave it on screen beside its own re-telling.
-    // Nothing else in this fixture can fail that way.
+    // ★ INCLUDING THE ROW AT EXACTLY THE BOUNDARY: the re-telling carries this sentence too, so
+    // the stored copy AT the boundary seq is a second copy like any other — a boundary drawn as
+    // `>` rather than `>=` would leave it on screen beside its own re-telling.
     expect(screen.getAllByText(/Reading the page first\./)).toHaveLength(1)
-    // ★ AND THE CITIZEN'S OWN MESSAGE SURVIVED IT. The stored user row is `srv_` plus one text
-    // part, sitting at exactly the seq the boundary is drawn from, so the suppression deleted it
-    // — the reply arrived with nothing above it saying what had been asked. Nothing re-tells a
-    // prompt, so this is the assertion that tells de-duplication apart from loss.
+    // ★ AND THE CITIZEN'S OWN MESSAGE SURVIVED IT: the stored user row sits at exactly the
+    // boundary seq, so the suppression could have deleted it — nothing re-tells a prompt, so
+    // this is the assertion that tells de-duplication apart from loss.
     expect(screen.getByText('add a page')).toBeTruthy()
   })
 
   it('draws the working status BELOW prose already on screen, not above it', async () => {
-    // A build thinks again between tool calls — adaptive thinking is on — so `working` goes true
-    // again after the citizen has already read a paragraph. The status row used to be pinned to
-    // index 0 of the streaming message, which pushed everything they had read down the screen
-    // until the burst ended. Asserted on ORDER, because presence passes either way.
+    // A build thinks again between tool calls (adaptive thinking), so `working` goes true again
+    // after a paragraph is already on screen. The status row used to be pinned to index 0,
+    // pushing read text down the screen. Asserted on ORDER, because presence passes either way.
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
       activeTurn: { turnId: 't-live', lastSeq: 0 },
@@ -496,20 +445,16 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
   })
 
   it('stops saying the agent is working when the stream dies without a terminal', async () => {
-    // Pull the network during a reasoning burst and the reader gives up without a `turn_ended`
-    // frame — the one arm that ever cleared the status. `endGenerating` runs, the composer
-    // re-opens, the banner says the reply stalled — and "Working on your app" stayed on the
-    // transcript above it, describing a turn nothing was watching any more. Nothing re-reads the
-    // transcript afterwards, so it said so until the citizen reloaded the page, and they could
-    // send a new message underneath a status line still claiming the last one was in progress.
+    // A dropped connection during a reasoning burst leaves the reader without a `turn_ended`
+    // frame — the one arm that ever cleared the status. Nothing re-reads the transcript
+    // afterward, so a stale "Working on your app" would sit above the next message sent.
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
       activeTurn: { turnId: 't-live', lastSeq: 1 },
       messages: [{ id: 'srv_1_u_0', role: 'user', seq: 1, parts: [{ type: 'text', text: 'add a page' }] }],
     })
-    // HELD OPEN, then dropped — not scripted and resolved. The turn has to be genuinely mid-burst
-    // when the connection dies, because the flag is only stale if it was set while the reader was
-    // alive; a stream that ends before the assertions could never tell the two apart.
+    // HELD OPEN, then dropped: the turn must be genuinely mid-burst when the connection dies,
+    // since the flag is only stale if set while the reader was alive.
     let dropTheConnection
     h.readTurnStream.mockImplementation(async ({ onFrame }) => {
       onFrame({ type: 'snapshot', seq: 2, turnId: 't-live', turnStatus: 'running', parts: [{ type: 'text', text: 'Let me look at the page.' }], working: false, items: [] })
@@ -526,10 +471,8 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
     await screen.findByTestId('working-status')
     await act(async () => dropTheConnection())
 
-    // ASSERTED ON THE SETTLED SHAPE, synchronously after that flush. The banner is written on the
-    // very exit that now clears the status, so having it on screen is the proof that everything
-    // the reader's ending scheduled has already been committed — including the repaint that would
-    // have drawn the stale status row.
+    // ASSERTED ON THE SETTLED SHAPE, synchronously after the flush: the banner is written on the
+    // exit that clears the status, so its presence proves the stale-status repaint already landed.
     expect(screen.getByText(/The reply stalled\. Reload to catch up\./)).toBeTruthy()
     expect(screen.queryByTestId('working-status')).toBeNull()
     // LIVENESS, because an empty transcript would also have no status row: what the turn DID say
@@ -542,7 +485,7 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
     renderThread()
 
     // Liveness: the composer mounted — this used to wait on the now-retired mode pill, which
-    // served the same "hydration settled" role; see the U13-header guard above for why it's gone.
+    // served the same "hydration settled" role; see the header guard above for why it's gone.
     await screen.findByPlaceholderText(/ask for another change/i)
     await waitForGateOpen()
     expect(h.readTurnStream).not.toHaveBeenCalled()

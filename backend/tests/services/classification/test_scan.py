@@ -1,4 +1,4 @@
-"""The model-free credential sweep (U6): the read-tools jail applied to the scan's own
+"""The model-free credential sweep: the read-tools jail applied to the scan's own
 walk, per-file truncation surfacing as an INCOMPLETE sweep, and prompt-ready hits that
 structurally cannot carry a value."""
 
@@ -46,7 +46,7 @@ async def test_a_clean_tree_scans_clean_and_complete(tmp_path: Path) -> None:
 
 
 async def test_a_real_lockfile_with_a_credential_line_produces_no_hit(tmp_path: Path) -> None:
-    # The scan walks under the SAME exclusions as the read tools (U1's file-level set
+    # The scan walks under the SAME exclusions as the read tools (file-level set
     # included) — it does not go through the model's tools, so without this the
     # lockfile would sit in its path. A REAL lockfile is one beside the manifest it locks,
     # at the root or in a monorepo package alike.

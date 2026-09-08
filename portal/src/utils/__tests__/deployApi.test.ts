@@ -1,13 +1,13 @@
 /**
  * The deploy client's PARSE CONTRACT — the half `DeployControl.test.tsx` structurally cannot
- * cover, because it mocks the module and hands the component a ready-made `DeploymentView`,
- * so `toDeploymentView` never runs there.
+ * cover, since it mocks the module and hands the component a ready-made `DeploymentView`, so
+ * `toDeploymentView` never runs there.
  *
- * `unpublishedAt` is a field that matters: it is the second axis separating a live app from
- * one an administrator took down, so a parser that drops it renders a green "Live" badge
- * over a dead address — the exact bug the review blocked on. It is no longer read by any
- * predicate here (`isLive` is retired); the server folds it into `publishState`, and this
- * suite pins both that the field survives the parse and that no helper derives from it.
+ * `unpublishedAt` is the second axis separating a live app from one an administrator took
+ * down; a parser that drops it renders a green "Live" badge over a dead address — the exact
+ * bug the review blocked on. `isLive` is retired and the server now folds it into
+ * `publishState`, so this suite pins both that the field survives the parse and that no
+ * helper derives from it.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { getDeployment, startDeploy } from '../deployApi'
@@ -39,8 +39,7 @@ const BODY = {
   startedAt: '2026-08-12T09:00:00Z',
   finishedAt: '2026-08-12T09:05:00Z',
   // TOTAL — every response shape carries one, so a fixture without it is not a shape the
-  // server can produce. `live_current` because this fixture IS a succeeded deploy serving
-  // an address with nothing newer saved.
+  // server can produce; `live_current` because this fixture IS a succeeded deploy serving.
   publishState: 'live_current',
 }
 
@@ -59,10 +58,8 @@ describe('getDeployment parses the takedown axis', () => {
   })
 
   it('a takedown and a live deploy are told apart by the SERVER now, not by a predicate', async () => {
-    // What `isLive` used to answer, answered where it belongs. The consequence is the same
-    // one it was written for — the portal must not offer a clickable link to a container
-    // that no longer exists — but the decision is the server's, and the two responses
-    // differ in the field rather than in what the browser computes from them.
+    // What `isLive` used to answer, answered where it belongs: the two responses differ in
+    // the field itself, not in what the browser computes from them.
     const takenDown = await getDeployment(
       'p1',
       deps(
@@ -132,15 +129,13 @@ describe('getDeployment parses the APPROVAL state riding on the same response', 
   })
 
   it('answers an unknown approval LINEAGE with null — never with self-publish', async () => {
-    // An unrecognised lineage must not be READ as self_publish, because that is the one
-    // value authorising the citizen to publish an approved version themselves (P5). Null
-    // is the conservative answer: every consumer branches on `=== 'self_publish'`, so
-    // "no claim" withholds the affordance rather than granting it.
+    // An unrecognised lineage must not be READ as self_publish — the one value authorising
+    // the citizen to publish an approved version themselves — so null is the conservative
+    // answer: every consumer branches on `=== 'self_publish'`, and "no claim" withholds the
+    // affordance rather than granting it.
     //
-    // It deliberately does NOT throw. Throwing propagated through the deploy hook's
-    // loadError and blanked the citizen's entire Publish card over a field the gate
-    // re-decides server-side anyway — a strictly worse failure than declining to claim,
-    // and the opposite of the policy the admin client applies to the same wire value.
+    // It deliberately does NOT throw: that used to blank the whole Publish card over a field
+    // the gate re-decides server-side anyway — strictly worse than declining to claim.
     const view = await getDeployment(
       'p1',
       deps(vi.fn(async () => ok({ ...BODY, approval: { ...APPROVAL, approvalRoute: 'vibes' } }))),
@@ -193,7 +188,7 @@ describe('getDeployment parses the APPROVAL state riding on the same response', 
 })
 
 /**
- * THE ONE FIELD THE PUBLISH SURFACE BRANCHES ON (R38). Every case here is about the
+ * THE ONE FIELD THE PUBLISH SURFACE BRANCHES ON. Every case here is about the
  * boundary refusing to invent a state: the surface IS this field, so there is no
  * conservative reading of an unrecognised value that is not itself a claim.
  */
@@ -213,11 +208,9 @@ describe('getDeployment parses the one publish state, and refuses to guess it', 
   })
 
   it('parses the PLAIN live value, and it equals neither of the other two', async () => {
-    // The ordinary state of a published app with nothing newer saved — reachable because
-    // the server's read makes the comparison (R-1 amended). Asserting the inequalities is
-    // the point: a parser that collapsed any of these three into another would render one
-    // state's sentence over another's, and "nothing of yours is waiting" is the exact
-    // false reassurance this feature has shipped four times.
+    // Asserting the inequalities is the point: a parser that collapsed any of these three
+    // into another would render one state's sentence over another's — "nothing of yours is
+    // waiting" is the exact false reassurance this feature has shipped four times.
     const view = await parse({ publishState: 'live_current' })
 
     expect(view.publishState).toBe('live_current')
@@ -275,9 +268,9 @@ describe('getDeployment parses the one publish state, and refuses to guess it', 
   })
 
   /**
-   * U16 / R37a — WHY the saved pair is absent, which the pair itself cannot say. Only
-   * `never_saved` removes the rail's row, so it is the one value an unrecognised string must
-   * never be read as.
+   * WHY the saved pair is absent, which the pair itself cannot say. Only `never_saved`
+   * removes the rail's row, so it is the one value an unrecognised string must never be
+   * read as.
    */
   it('★ parses each reason the saved pair can be absent', async () => {
     for (const state of ['saved', 'never_saved', 'store_unconfigured', 'storage_error'] as const) {
@@ -322,7 +315,7 @@ describe('startDeploy has two success shapes, discriminated by outcome', () => {
   })
 
   it('parses the 200 ROUTED shape, which carries no deploymentId at all', async () => {
-    // The pre-U9 parser required `deploymentId` and would have thrown "we could not read"
+    // The previous parser required `deploymentId` and would have thrown "we could not read"
     // on the routed body — turning the outcome the citizen asked for into a parse error.
     // Mutation receipt: delete the `outcome === 'routed_for_review'` branch in
     // `toDeployOutcome` and this goes red on a thrown ApiError.
@@ -374,14 +367,11 @@ describe('startDeploy has two success shapes, discriminated by outcome', () => {
 
 /**
  * INERTNESS, not coverage. `isLive`, `isRoutedForReview` and `stepLabel` were retired
- * together because they were three halves of one mistake — the browser re-deciding, from
- * parts, something the server had already decided. What they answered is now one field.
- *
- * The guarantee they carried is not lost, it MOVED: a drift-routed pipeline row reading as
- * "in review" rather than "didn't start" is the server's `failure_code` check, pinned in
- * `backend/tests/api/v1/deploy/test_publish_state.py`; the informational rendering of it is
- * pinned in `PublishStatusChip.test.tsx`. What is asserted here is only that no helper of
- * that shape grows back in this module.
+ * together — three halves of one mistake, the browser re-deciding from parts what the
+ * server had already decided. The guarantee they carried MOVED, not vanished: the
+ * `failure_code` check is pinned in `backend/tests/api/v1/deploy/test_publish_state.py`,
+ * its rendering in `PublishStatusChip.test.tsx`. This only asserts nothing of that shape
+ * grows back in this module.
  */
 describe('the module derives nothing, and must not start again', () => {
   it('exports no predicate over a deployment field', async () => {
@@ -393,10 +383,9 @@ describe('the module derives nothing, and must not start again', () => {
   })
 
   it('translates no pipeline phase token into citizen words', async () => {
-    // `stepLabel` turned `claimed`/`packing`/`provisioning`/`starting` into "Getting
-    // ready"/"Packaging your app"/"Setting up the server"/"Starting it up". That whole
-    // vocabulary is DELETED rather than restyled — while a publish runs the chip says
-    // "Starting up" and stops there.
+    // `stepLabel` turned `claimed`/`packing`/`provisioning`/`starting` into the four phrases
+    // below. That whole vocabulary is DELETED rather than restyled — while a publish runs
+    // the chip just says "Starting up".
     const mod: Record<string, unknown> = await vi.importActual('../deployApi')
 
     expect(Object.keys(mod)).not.toContain('stepLabel')

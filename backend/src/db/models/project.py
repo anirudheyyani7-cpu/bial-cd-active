@@ -1,23 +1,24 @@
-"""The `projects` table — the parent container for a user's work (R1, R2; ADR-0004).
+"""The `projects` table — the parent container for a user's work.
 
+WHY THIS EXISTS
 A project is the durable home a citizen developer builds a single tool inside: it
 links the user's three work surfaces — the codebase (its one `app_registry` row,
-R22/one-app-per-project), the chats, and the plan-kind chats (both the
+one-app-per-project), the chats, and the plan-kind chats (both the
 `conversations` table, distinguished by `ChatKind`). Everything Phase-2
 attaches to (per-app DB isolation, deploy target, governance record) hangs off the
 project, so it is the keystone that lands before versioning.
 
-Ownership is the single-tenant boundary (`OwnedByUserMixin` → `user_id`, ADR-0004):
+Ownership is the single-tenant boundary (`OwnedByUserMixin` → `user_id`):
 every query over a project is scoped by the owning `user_id`, and a project and its
 children must share that `user_id` (a user cannot file work under another user's
 project). There is NO `org_id` — the user IS the isolation boundary.
 
 `description` is optional (NULL = no description) and doubles as shared grounding
-injected into every chat in the project (R16, U8). It is length-bounded and
-normalized (empty/whitespace → NULL) at the Pydantic write boundary (U4/U7), NOT the
+injected into every chat in the project. It is length-bounded and
+normalized (empty/whitespace → NULL) at the Pydantic write boundary, NOT the
 column — because it is injected into every project chat turn, an unbounded value is
-an uncapped per-turn token cost (KD-8, R20). The cap constant lives here so the
-write boundary (U4/U7) and the injection point (U8) share one source of truth.
+an uncapped per-turn token cost. The cap constant lives here so the
+write boundary and the injection point share one source of truth.
 """
 
 from __future__ import annotations
@@ -30,9 +31,9 @@ from src.db.base import Base
 from src.db.mixins import OwnedByUserMixin, TimestampMixin, UUIDv7PrimaryKeyMixin
 
 # Bounded so a name can index/display sanely. This is now the sole app/project display
-# name — the admin registry sources each app's name from its owning project (#48).
+# name — the admin registry sources each app's name from its owning project.
 MAX_PROJECT_NAME = 120
-# The title cap a PERSON meets (#158 §14). The column stays VARCHAR(120) and rows written
+# The title cap a PERSON meets. The column stays VARCHAR(120) and rows written
 # before this shipped keep their names — the cap applies on create and rename, never
 # retroactively, and the list clamps a long stored name visually instead of truncating it.
 # Words, not characters: a title is a name, and "about 6 to 8 words" is something a citizen
@@ -40,11 +41,11 @@ MAX_PROJECT_NAME = 120
 # `portal/src/utils/words.ts` mirrors it exactly, because a title that passes in the browser
 # must not be refused by the API.
 MAX_PROJECT_NAME_WORDS = 8
-# The description is injected into EVERY project chat turn (R16/U8), so it is capped:
-# an unbounded description is an uncapped per-turn token cost (KD-8). Enforced at the
-# Pydantic write boundary (U4/U7); this constant is the shared source of truth.
+# The description is injected into EVERY project chat turn, so it is capped:
+# an unbounded description is an uncapped per-turn token cost. Enforced at the
+# Pydantic write boundary; this constant is the shared source of truth.
 MAX_PROJECT_DESCRIPTION = 2000
-# The marketplace's search text configuration (#145, migration 0034), named ONCE here —
+# The marketplace's search text configuration (migration 0034), named ONCE here —
 # where the generated column it must match lives — and imported by the marketplace router
 # rather than redeclared. A query parsed under a different configuration than the one the
 # generated column was built with stems differently and silently under-matches; that
@@ -60,7 +61,7 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
         # migration 0034, and a model that does not know about it is not merely untidy:
         # `alembic revision --autogenerate` against a fully-migrated database emits a
         # `drop_index` for it, so the next person to autogenerate anything silently picks
-        # up a DROP of the marketplace's search index (#147 round 3, reproduced).
+        # up a DROP of the marketplace's search index.
         # `deployment.py` already declares its indexes this way.
         sa.Index(
             "ix_projects_description_tsv",
@@ -70,11 +71,11 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     )
 
     name: Mapped[str] = mapped_column(sa.String(MAX_PROJECT_NAME), nullable=False)
-    # Optional shared chat context (R15/R16). NULL = no description; the write
+    # Optional shared chat context. NULL = no description; the write
     # boundary normalizes empty/whitespace to NULL so there is no undefined
-    # empty-string third state (KD-8). Length is capped at the boundary, not here.
+    # empty-string third state. Length is capped at the boundary, not here.
     description: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
-    # The marketplace's search index (#145, migration 0034). DERIVED from `description` by
+    # The marketplace's search index (migration 0034). DERIVED from `description` by
     # Postgres, never written from here — declared `Computed(persisted=True)` so SQLAlchemy
     # excludes it from INSERT/UPDATE rather than letting the database reject the write.
     # Mapped at all (instead of raw SQL in the query) so the marketplace's `@@` match and
@@ -82,7 +83,7 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     #
     # `coalesce(description, '')` mirrors the migration exactly: a NULL description yields
     # an empty tsvector, which matches nothing — which is how an app with no description
-    # stays out of search while remaining in the unfiltered catalog (#145, accepted).
+    # stays out of search while remaining in the unfiltered catalog.
     #
     # `deferred=True`: this column is otherwise mapped, non-deferred, and `Project` is
     # loaded as a full entity on the chat hot path (`conversations/turns.py`,
@@ -96,13 +97,12 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     # migrate first, THEN deploy; roll back in the reverse order (previous image first,
     # then downgrade).
     #
-    # What actually breaks, measured against a downgraded database rather than assumed
-    # (#147 round 3 corrected an earlier, wronger version of this note): a Project SELECT
-    # SUCCEEDS, because `deferred=True` above keeps this column out of the SELECT list —
-    # so the chat hot paths are NOT affected. A Project INSERT FAILS with `UndefinedColumn`,
-    # because SQLAlchemy postfetches `Computed`/server-default columns via RETURNING
-    # regardless of deferral. The blast radius is therefore `POST /v1/projects` — NEW
-    # PROJECT CREATION — not "every chat turn". Narrower than it first looked, and worth
+    # What actually breaks, measured against a downgraded database rather than assumed: a
+    # Project SELECT SUCCEEDS, because `deferred=True` above keeps this column out of the
+    # SELECT list — so the chat hot paths are NOT affected. A Project INSERT FAILS with
+    # `UndefinedColumn`, because SQLAlchemy postfetches `Computed`/server-default columns via
+    # RETURNING regardless of deferral. The blast radius is therefore `POST /v1/projects` —
+    # NEW PROJECT CREATION — not "every chat turn". Narrower than it first looked, and worth
     # being exact about, since this is the sentence a deploy runbook acts on.
     description_tsv: Mapped[str | None] = mapped_column(
         TSVECTOR,

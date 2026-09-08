@@ -1,4 +1,4 @@
-"""U1 — the C2 client's `/_sup/*` supervisor HTTP layer + accessor.
+"""The C2 client's `/_sup/*` supervisor HTTP layer + accessor.
 
 An `httpx.MockTransport` stands in for the C1 supervisor: no live container, every
 wire shape asserted against `sandbox/supervisor/app.py`.
@@ -85,7 +85,7 @@ async def test_exec_returns_result_and_nonzero_exit_is_not_an_error() -> None:
     await client.aclose()
 
 
-async def test_files_str_replace_serializes_to_flat_c1_body() -> None:
+async def test_files_str_replace_serializes_to_a_flat_body() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -138,16 +138,14 @@ async def test_dev_start_returns_pid_and_is_idempotent_on_409() -> None:
         (["pid", 4321], "not even an object"),
     ],
 )
-async def test_a_malformed_dev_start_body_stays_inside_the_c2_taxonomy(
+async def test_a_malformed_dev_start_body_raises_sandbox_error_not_a_vendor_exception(
     body: object, shape: str
 ) -> None:
-    """★ A 200 whose body is not the `{"pid": N}` shape must be a `SandboxError`, never a raw
-    `KeyError`/`TypeError`/`ValueError`. TWO callers guard this call with `except SandboxError`
-    and treat it as best-effort — the Write turn's boot-at-attach and relaunch's attach arm — so
-    a vendor-shaped exception escaping here skips BOTH guards and kills a turn whose workspace
-    had already been reported ready. Mirrors
-    `test_a_malformed_supervisor_reply_does_not_fail_the_provision_either`, which is the same
-    lesson learned the expensive way one seam over.
+    """★ A 200 whose body is not `{"pid": N}` must raise `SandboxError`, never a raw
+    `KeyError`/`TypeError`/`ValueError` — two callers (Write turn's boot-at-attach, relaunch's
+    attach arm) guard only `except SandboxError`, so a vendor exception here skips both and
+    kills a turn whose workspace had already been reported ready. Same lesson as
+    `test_a_malformed_supervisor_reply_does_not_fail_the_provision_either`, one seam over.
 
     Mutation check: delete the `except (KeyError, TypeError, ValueError)` arm in `dev_start` and
     each case raises its own vendor exception instead of `SandboxError`."""
@@ -253,7 +251,7 @@ async def test_get_sandbox_unconfigured_raises() -> None:
 
 async def test_aclose_sandbox_is_a_noop_when_never_opened() -> None:
     client_module.reset_sandbox_for_tests()
-    await client_module.aclose_sandbox_singleton()  # no raise
+    await client_module.aclose_sandbox_singleton()
 
 
 async def test_reset_sandbox_for_tests_drops_the_singleton() -> None:
@@ -269,21 +267,13 @@ async def test_reset_sandbox_for_tests_drops_the_singleton() -> None:
 
 
 async def test_a_fresh_provision_leaves_the_workspace_a_git_repo() -> None:
-    """★ The golden template ships NO `.git`, and Docker's `COPY template/ ./` would not carry
-    one across even if it did. Only the RESTORE path created a repo (it does `git init` + fetch
-    + checkout), so a first build ran against a plain directory — and everything downstream
-    assumes a repo:
+    """★ The golden template ships no `.git`, and only the RESTORE path used to create one — so
+    a first build ran against a plain directory even though downstream assumes a repo: the
+    agent's per-slice commits (W1), the save-state check's `git rev-parse`/`git status`, and
+    `write_snapshot`'s own `git init` fallback (which rescues the save but collapses per-slice
+    history into one commit).
 
-    * the agent is told to commit each coherent slice of its work (W1). Every one of those
-      commits failed with "not a git repository", on the build where that history is most
-      useful, and the commit-reminder counter never reset so it was nagged about it for the
-      rest of the run.
-    * the save-state check reads `git rev-parse HEAD` and `git status --porcelain`.
-    * `write_snapshot`'s own `git init` fallback rescued the SAVE, but collapsed the entire
-      first build into one commit — the per-slice history was simply gone.
-
-    Mutation-check: drop the `_make_it_a_repo` call from `provision_new` and this goes red.
-    """
+    Mutation-check: drop the `_make_it_a_repo` call from `provision_new` and this goes red."""
     commands: list[list[str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -313,7 +303,6 @@ async def test_the_repo_init_never_fails_a_container_that_otherwise_came_up() ->
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="supervisor is having a day")
 
-    # No raise — the caller gets its container.
     await client_module._make_it_a_repo(_client(handler), _handle())
 
 
@@ -328,13 +317,13 @@ async def test_a_malformed_supervisor_reply_does_not_fail_the_provision_either()
     await client_module._make_it_a_repo(_client(handler), _handle())
 
 
-# --- U3: the first-route warm request ----------------------------------------
+# --- the first-route warm request ----------------------------------------
 
 
 async def test_a_warm_request_that_times_out_is_swallowed() -> None:
-    """★ THE R6 GUARD, written first. A hung warm request holding the preview frame for the
-    whole turn is strictly WORSE than the blank card this unit exists to remove — the citizen
-    would wait longer and see less. Nothing escapes, and the caller gets `None`."""
+    """★ THE HUNG-WARM-REQUEST GUARD, written first. A hung warm request holding the preview
+    frame for the whole turn is strictly WORSE than the blank card this unit exists to remove —
+    the citizen would wait longer and see less. Nothing escapes, and the caller gets `None`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("the route is still compiling", request=request)
@@ -375,7 +364,7 @@ async def test_the_warm_request_goes_in_the_front_door() -> None:
 
 
 async def test_a_compile_error_comes_back_as_a_status_not_an_exception() -> None:
-    """A 500 is the SIGNAL, not a failure: it is what makes U4's `⨯` land in the dev log where
+    """A 500 is the SIGNAL, not a failure: it is what makes the `⨯` land in the dev log where
     self-heal reads it. Raising here would turn the most useful outcome into the one that
     suppresses the preview."""
 
@@ -456,15 +445,11 @@ async def test_the_warm_request_does_not_follow_the_apps_redirect() -> None:
 async def test_the_warm_request_gives_up_on_an_app_that_simply_never_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE ONLY BOUND THERE IS. `AcaSandboxClient` builds its `httpx.AsyncClient` with
-    `timeout=None` on purpose (every other op passes its own per-call budget), so httpx
-    contributes NOTHING here — `asyncio.timeout` is the entire ceiling on this call, and every
-    other warm-request test either raises synchronously from the handler or returns instantly.
-    Delete the `asyncio.timeout` line and all of them stay green while a stalled app hangs
-    `preview_ready`, relaunch and every self-heal iteration behind it.
-
-    An app that never answers is not exotic: the response comes from unreviewed, agent-authored
-    code, and "hangs on the root route" is precisely the failure U4 exists to make visible.
+    """★ THE ONLY BOUND THERE IS. `AcaSandboxClient` builds its client with `timeout=None` on
+    purpose, so httpx contributes nothing here — `asyncio.timeout` is the entire ceiling, and
+    every other warm-request test raises or returns instantly, so none of them would catch its
+    deletion. An app that never answers is not exotic: the response is unreviewed, agent-authored
+    code, and hanging is precisely the failure this call exists to make visible.
 
     Mutation check: drop `asyncio.timeout(_WARM_TIMEOUT_SECONDS)` from the `async with` tuple and
     this test hangs until the 10s handler sleep, then fails on the elapsed bound."""
@@ -506,7 +491,7 @@ async def test_the_warm_request_never_reads_the_apps_body() -> None:
     )
 
 
-# --- R17/R18: the compile-state transport ----------------------------------------------------
+# --- the compile-state transport ----------------------------------------------------
 #
 # The contract this section pins is one sentence: NO failure of this call may produce a
 # confidently-clean reading, and no failure may reach the caller as an exception.
@@ -627,11 +612,9 @@ async def test_the_default_client_declines_with_unknown_rather_than_clean() -> N
 
 # --- what the app is actually serving ---------------------------------------------------------
 #
-# `what_is_it_serving` is the SERVING half of the build's health verdict and it had no direct
-# coverage at all: its only exercise was through hand-written fakes elsewhere. It is also the
-# probe with the most to lose from a base path, because its answer is fed to self-heal as
-# evidence — a framework 404 read as "what the app serves" becomes "make sure `app/page.tsx`
-# exists", and the model burns metered tokens repairing a file that was never wrong.
+# `what_is_it_serving` feeds self-heal's evidence of the build's health, and is the probe with
+# the most to lose from a base path: a framework 404 read as "what the app serves" becomes
+# "make sure `app/page.tsx` exists", burning metered tokens repairing a file that was never wrong.
 
 
 def _streamed(status: int, body: str) -> httpx.Response:

@@ -1,36 +1,25 @@
 /**
- * U22 (R16/R17) — THE POLL ENDS ON A SETTLED ANSWER, AND NOTHING PINS "GONE".
+ * WHY THIS EXISTS: a restored container REUSES THE SAME PREVIEW URL, byte for byte. The poll
+ * effect used to key on `[projectId, framedPreviewUrl]` alone, so nothing would ever re-run it,
+ * and "Your workspace is asleep" would sit on screen over a running app until the user reloaded
+ * the page. The 45-second tick used to self-correct within one cadence; this unit removed that
+ * corrective, so the replacement invalidation triggers are asserted here explicitly.
  *
- * Two halves, and the second is the one with the teeth.
+ * The poll stops once the server has said `asleep` / `slot_taken` / `never_built` — a settled
+ * fact, so re-asking learns nothing. `unknown` does NOT stop it: it decided nothing, and
+ * stopping on it would pin "we could not check" for the life of the tab.
  *
- * The first is trivial: once the server has said `asleep` / `slot_taken` / `never_built`, the
- * 45-second timer can only ever hear the same sentence again, so it stops. `unknown` is
- * pointedly NOT one of those — it decided nothing, and a poll that stopped on it would pin
- * "we could not check" for the life of the tab.
+ * The naive replacement ("re-ask when the user sends a new prompt") is tested BECAUSE IT IS NOT
+ * SUFFICIENT: it fires mid-provision, hears `alive=false` truthfully, and stops again,
+ * permanently. The workspace lifecycle, not the prompt, is the invalidation signal.
  *
- * The second is the reason this file exists. The moment the timer stops re-asking, a verdict
- * is only as true as the last thing that invalidated it — and a RESTORED CONTAINER REUSES THE
- * SAME PREVIEW URL, byte for byte. The poll effect used to key on `[projectId,
- * framedPreviewUrl]` alone, so nothing would ever have re-run it, and "Your workspace is
- * asleep" would sit on screen over a running app until the user reloaded the page. Today the
- * 45-second tick self-corrects within one tick; this unit removes that corrective, so the
- * replacement is explicit and is asserted here.
+ * Also pinned here: the precedence between the poll's `restorable` and the `projectHasSavedBuild`
+ * prop, which shipped with no test at all.
  *
- * The naive replacement ("re-ask when the user sends a new prompt") is tested BECAUSE IT IS
- * NOT SUFFICIENT: it fires mid-provision, hears `alive=false` — truthfully, the container is
- * not up yet — and stops again, permanently. The workspace lifecycle, not the prompt, is the
- * invalidation signal.
- *
- * Also pinned here, on the same surface: the precedence between the poll's `restorable` and
- * the `projectHasSavedBuild` prop, which shipped in U17 with no test at all.
- *
- * CHAT-KIND MIGRATION (sfw-002). This page now renders ONLY a `build` chat, fixed at creation —
- * every composer send already holds the write toolset (BuilderPage.tsx's routing-rule docblock),
- * so there is no more plan-card confirm to drive a build through here. `handleBuildIt`'s card
- * still exists, but pressing it now creates a SECOND, different chat and navigates there — its
- * turn never touches this page, so it cannot be what `framedBuild` drives. An ordinary `send()`
- * is the trigger instead: the plain `readTurnStream` call it makes IS the open socket every
- * frame in this file is pushed into.
+ * CHAT-KIND MIGRATION (sfw-002): this page now renders ONLY a `build` chat, fixed at creation, so
+ * there is no plan-card confirm left to drive a build through here — an ordinary `send()` is the
+ * trigger instead, and its `readTurnStream` call is the open socket every frame in this file is
+ * pushed into.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
@@ -81,7 +70,7 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   ...(await orig<typeof import('../../utils/buildSessionApi')>()),
   fetchPreviewState: (...a: unknown[]) => h.fetchPreviewState(...a),
   fetchSaveState: (...a: unknown[]) => h.fetchSaveState(...a),
-  // THE START CONTROL CALLS THE MODULE, NOT THE INJECTED CLIENT (Plan F, U3). `relaunchPreview`
+  // THE START CONTROL CALLS THE MODULE, NOT THE INJECTED CLIENT. `relaunchPreview`
   // reached the build-session hook through `deps.client` before, so mocking the client bag was
   // enough; the one start control the product has now imports the function directly, because it
   // is rendered by the app pane and the pane is a sibling of the surface that owns the client.
@@ -95,19 +84,12 @@ function deps() {
 }
 
 /**
- * Script an ordinary send's own turn stream as an OPEN socket a test can push frames into by
- * hand. Not `_builderSession.jsx`'s `scriptBuildTurn` — that helper still branches on whether
- * `readTurnStream` was called WITH a `turnId`, which was how the old Build-it watch (subscribing
- * to a turn already known to be a build) told itself apart from an ordinary send (subscribing
- * with none, and getting back a streamed plan). That distinction is gone: `fireRelayTurn` never
- * passes a `turnId`, and never asks the chat's kind either — every send on this BUILD-chat page
- * opens the one plain subscription, and that IS the build.
- *
- * The opening snapshot mirrors what every real subscribe gets FIRST
- * (`backend/src/api/v1/conversations/turns.py`'s own docstring: "emit the first frame BEFORE any
- * model byte — the snapshot serves that role"), carrying the `turnId` this page reads into
- * `liveTurnIdRef` — the fact several of this file's assertions (Stop, the compile-probe gate)
- * depend on being true the moment a turn opens, not only once it ends.
+ * Scripts an ordinary send's own turn stream as an OPEN socket a test can push frames into by
+ * hand — not `_builderSession.jsx`'s `scriptBuildTurn`: `fireRelayTurn` never passes a `turnId`,
+ * so every send on this BUILD-chat page opens one plain subscription, and that IS the build.
+ * The opening snapshot mirrors what every real subscribe gets FIRST (`turns.py`: "emit the first
+ * frame BEFORE any model byte"), carrying the `turnId` this page reads into `liveTurnIdRef` the
+ * moment a turn opens — several assertions here (Stop, the compile-probe gate) depend on that.
  */
 function scriptTurn(opening: unknown[] = [
   { type: 'snapshot', seq: 1, turnId: 't1', turnStatus: 'running', items: [], parts: [], working: false },
@@ -154,44 +136,30 @@ const answer = (state: PreviewLifeState, restorable: boolean | null = null): Pre
 const probeCount = () => h.fetchPreviewState.mock.calls.length
 
 /**
- * HOW MANY READS SINCE A MARK — and these scenarios are all delta claims, not absolute ones.
- *
- * "Six cadences and not one more request" is about what the TIMER does after the answer settles;
- * how many reads it took to get there is a different question. It used to be exactly one, because
- * the poll returned early until a frame was on screen. Plan F's U4 widened that — the read's answer
- * now decides whether the pane offers the one control that starts the app, and a chat reloaded onto
- * an ended build has a status and no URL, so gating on the URL meant it could never learn its
- * workspace was asleep and never offered the way back.
- *
- * Asking earlier costs more reads across a build's first frame. That is a real change and it is
- * accepted: the read is cheap by contract (one cache read, no container call), and the terminal
- * rule these tests exist to pin still stops the timer exactly where it always did. Written as a
- * delta so the property survives the next legitimate change to how early the asking begins.
+ * Counts reads SINCE A MARK — these scenarios are delta claims, not absolute ones. How many
+ * reads it took to reach a settled answer changed when the read's answer started deciding
+ * whether the pane offers its one start control; that cost is accepted since the read is cheap
+ * by contract (one cache read, no container call). Delta, not a fixed count, so this survives
+ * the next legitimate change to how early the asking begins — only the terminal cadence matters.
  */
 function readsSince(mark: number): number {
   return probeCount() - mark
 }
 /**
- * THE "NOTHING IS SERVING" SURFACE, RE-POINTED (Plan F, U4).
- *
- * This used to be `LivePreview`'s own `preview-unavailable-card`, carrying a `data-preview-state`
- * attribute. That card is unreachable now: `AppPane` decides whether to frame at all, and for the
- * three states that DEFINITELY mean nothing is serving it renders its own sentence instead of
- * mounting the host. Same fact, one layer up.
- *
- * The state name is read off `data-workspace-state` rather than from the copy, deliberately — the
- * client has changed this screen's wording twice and may again, and the property these scenarios
- * pin is WHICH state the poll arrived at, not how it is phrased.
+ * "Nothing is serving", re-pointed: this used to be `LivePreview`'s own `preview-unavailable-card`;
+ * `AppPane` now decides whether to frame at all and renders its own sentence for the three states
+ * that mean nothing is serving. Read off `data-workspace-state` rather than the copy, deliberately
+ * — the client has changed this screen's wording twice, and what these scenarios pin is WHICH
+ * state the poll arrived at, not how it is phrased.
  */
 const goneCard = () => screen.queryByTestId('app-pane-empty')
 
 /**
- * WHICH state the pane arrived at. This replaces two copy assertions — "Nothing is lost" and "no
- * saved build yet" — that were reading `hasSavedBuild`'s tri-state resolution off `LivePreview`'s
- * own card. The resolution is unchanged and is still the subject; what carries it is now the map's
- * arm: a restorable workspace reaches `not-running` ("Your app is saved."), and one the server
- * confirmed it cannot restore falls to the same arm as a project with nothing built, because a
- * start control there is a button whose only outcome is a 404.
+ * WHICH state the pane arrived at. Replaces two copy assertions ("Nothing is lost" / "no saved
+ * build yet") that read `hasSavedBuild`'s tri-state resolution off `LivePreview`'s own card; the
+ * resolution is unchanged, only carried by the map's arm now — a restorable workspace reaches
+ * `not-running`, and one the server confirms it cannot restore falls to the same arm as nothing
+ * built, since a start control there is a button whose only outcome is a 404.
  */
 const paneState = () => goneCard()?.getAttribute('data-workspace-state') ?? null
 
@@ -254,16 +222,15 @@ afterEach(() => {
   cleanup()
 })
 
-describe('BuilderPage — the preview poll stops on a terminal answer (R16)', () => {
+describe('BuilderPage — the preview poll stops on a terminal answer', () => {
   it('stops asking once the workspace is settled asleep', async () => {
     h.fetchPreviewState.mockResolvedValue(answer('asleep', true))
     await framedBuild()
 
-    // The question is settled…
     expect(goneCard()?.getAttribute('data-workspace-state')).toBe(WORKSPACE_STATE_FOR.asleep)
     const settled = probeCount()
 
-    // …and six cadences — four and a half minutes of a tab left open — add not one more request.
+    // six cadences ≈ 4.5 minutes with the tab left open
     await tick(6)
     expect(readsSince(settled)).toBe(0)
   })
@@ -302,7 +269,7 @@ describe('BuilderPage — the preview poll stops on a terminal answer (R16)', ()
     expect(framedUrl()).toBe(PREVIEW_URL)
   })
 
-  // R3/U4 (Plan F) — RE-POINTED, NOT AN INERTNESS GUARD. This test's real subject is the POLL's
+  // RE-POINTED, NOT AN INERTNESS GUARD. This test's real subject is the POLL's
   // stopping rule, not the button: it pins that a settled-but-undecided `restorable: null` keeps
   // the timer running, and that it stops the moment the store gives a DEFINITE answer. That
   // precedence is exactly as testable without the button as with it — `hasSavedBuild`'s tri-state
@@ -332,7 +299,7 @@ describe('BuilderPage — the preview poll stops on a terminal answer (R16)', ()
 
     // ...and the moment the store answers, the poll settles — pinned by the copy flipping to the
     // confirmed-true reassurance ("Nothing is lost"), since the button that used to carry the
-    // same claim is gone (R3: it moved to `StartAppControl`, which is not reachable from this
+    // same claim is gone (it moved to `StartAppControl`, which is not reachable from this
     // still-framed pane state — see the session report for that finding).
     h.fetchPreviewState.mockResolvedValue(answer('asleep', true))
     await tick(1)
@@ -343,7 +310,7 @@ describe('BuilderPage — the preview poll stops on a terminal answer (R16)', ()
   })
 })
 
-describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
+describe('BuilderPage — stopping the poll must not pin "gone"', () => {
   it('re-arms on the workspace coming back, even though the restored preview URL is IDENTICAL', async () => {
     const turn = await framedBuild()
     expect(framedUrl()).toBe(PREVIEW_URL)
@@ -383,7 +350,7 @@ describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
     await framedBuild()
     const settled = probeCount()
 
-    // THE VEHICLE, RENAMED (Plan F, U4). This scenario drives a relaunch to invalidate the poll's
+    // THE VEHICLE, RENAMED. This scenario drives a relaunch to invalidate the poll's
     // verdict; the control that does it moved from `LivePreview`'s reclaimed card to the app
     // pane's own no-frame surface, and the client settled on `Launch Application` — "preview" is
     // the developer's word for the thing, and the person's word is their app.
@@ -469,17 +436,14 @@ describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
     // in this file green, because the mocked probe resolves in the same microtask flush — so the
     // window it closes is invisible unless a test holds the answer open on purpose. That window
     // is a full network round trip with the reclaimed card painted over an app that is coming
-    // back up, which is R17's symptom narrowed rather than removed.
+    // back up, which is the same stale-verdict symptom, narrowed rather than removed.
     h.fetchPreviewState.mockResolvedValue(answer('asleep', true))
     await framedBuild()
     expect(goneCard()).not.toBeNull()
 
     // The next probe never answers. Any drop of the card from here is the invalidation itself.
     h.fetchPreviewState.mockReturnValue(new Promise<PreviewState>(() => {}))
-    // THE VEHICLE, RENAMED (Plan F, U4). This scenario drives a relaunch to invalidate the poll's
-    // verdict; the control that does it moved from `LivePreview`'s reclaimed card to the app
-    // pane's own no-frame surface, and the client settled on `Launch Application` — "preview" is
-    // the developer's word for the thing, and the person's word is their app.
+    // "Launch Application" — the vehicle, renamed (see the earlier test in this describe block).
     const bringItBack = screen.getByRole('button', { name: /launch application/i })
     await act(async () => { fireEvent.click(bringItBack) })
 
@@ -498,7 +462,7 @@ describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
     )
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /launch application/i })) })
 
-    // THE WAIT IS LABELLED, NOT CONTRADICTED — and after Plan F it is labelled by the ONE computed
+    // THE WAIT IS LABELLED, NOT CONTRADICTED — now it is labelled by the ONE computed
     // state rather than by a full-bleed "Restoring your app…" cover of `LivePreview`'s own.
     //
     // WHAT THIS CAUGHT, and it is why the assertion moved rather than being deleted: for a while
@@ -527,8 +491,8 @@ describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
   })
 })
 
-describe('BuilderPage — `restorable` vs the `projectHasSavedBuild` prop (U17, previously untested)', () => {
-  // The intended order, from U17's plan section: this session's own Save first (it can only
+describe('BuilderPage — `restorable` vs the `projectHasSavedBuild` prop', () => {
+  // The intended order: this session's own Save first (it can only
   // move the answer toward "yes"), then the POLL — the freshest server answer, and the only
   // one that counts the platform's turn-boundary recovery copy — then the prop, which was read
   // once when the route resolved and is never refetched. `??`, never `||`, because the poll's
@@ -536,9 +500,9 @@ describe('BuilderPage — `restorable` vs the `projectHasSavedBuild` prop (U17, 
   // the server does not spend the round trip) must fall through to the older-but-real reading
   // instead of retracting a claim the server once made confidently.
 
-  // U4 (Plan F) — RE-POINTED, NOT AN INERTNESS GUARD. The precedence under test (poll overrides a
+  // RE-POINTED, NOT AN INERTNESS GUARD. The precedence under test (poll overrides a
   // stale cold-load prop) is a claim about the CARD'S COPY, which `hasSavedBuild` still drives
-  // identically to before — only the button that used to accompany the same claim is gone (R3).
+  // identically to before — only the button that used to accompany the same claim is gone.
   it('the poll can OFFER a restore the cold-load prop denied — the recovery copy the prop never saw', async () => {
     h.fetchPreviewState.mockResolvedValue(answer('asleep', true))
     await framedBuild(false)

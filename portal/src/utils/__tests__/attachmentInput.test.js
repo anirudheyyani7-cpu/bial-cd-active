@@ -62,7 +62,6 @@ describe('validateAttachmentFiles', () => {
   it('rejects a text file over the 256 KB per-file limit (binary 4 MB cap unchanged)', () => {
     const res = validateAttachmentFiles([file('big.csv', 'text/csv', MAX_TEXT_FILE_SIZE + 1)], 0)
     expect(res.error).toMatch(/256 KB/)
-    // A 4 MB PDF is still accepted under the binary cap.
     expect(validateAttachmentFiles([file('spec.pdf', 'application/pdf', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
   })
 
@@ -115,8 +114,8 @@ describe('resolveMediaType', () => {
   })
 })
 
-// `officeFormat` and the two deck suites are GONE, along with the media types they described
-// (R46). Their inertness is asserted in `attachmentInput-deck-disabled.test.js`, which stopped
+// `officeFormat` and the two deck suites are GONE, along with the media types they described.
+// Their inertness is asserted in `attachmentInput-deck-disabled.test.js`, which stopped
 // mocking the flag when the flag stopped existing — a removal's tests become guards, not gaps.
 
 describe('ACCEPT_ATTR', () => {
@@ -139,7 +138,6 @@ describe('validateConversationAttachmentCap', () => {
   it('rejects when an incoming batch would cross the cap', () => {
     const res = validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION, 1)
     expect(res.error).toMatch(new RegExp(`limit of ${MAX_ATTACHMENTS_PER_CONVERSATION} attachments`))
-    // a batch that crosses the boundary is rejected wholesale
     expect(validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION - 1, 3).error).toBeTruthy()
   })
 
@@ -200,9 +198,9 @@ describe('fileToBase64', () => {
   })
 })
 
-// THE SHIPPED DEFAULT block is gone with the flag it pinned (R46).
+// THE SHIPPED DEFAULT block is gone with the flag it pinned.
 //
-// It existed because #157 B2 turned the deck feature off and nothing went red: both deck spec
+// It existed because a past change turned the deck feature off and nothing went red: both deck spec
 // files mocked `config/features`, so between them they covered two hypothetical worlds and
 // neither said which one we shipped. There is no flag to pin now — presentations, spreadsheets and
 // documents are refused outright — and the inertness guard that replaces this lives in

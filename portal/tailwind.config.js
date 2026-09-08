@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // 'class' strategy for shadcn/ui (U13 prep). No behavior change today: the portal has
+  // 'class' strategy for shadcn/ui. No behavior change today: the portal has
   // zero `dark:` usages, so nothing activates until an element opts in with class="dark".
   darkMode: ['class'],
   // Streamdown's dist ships its own Tailwind utility classes (code-block controls,
@@ -9,26 +9,22 @@ export default {
   theme: {
     extend: {
       /**
-       * THE STACKING THRESHOLD, AS THE BOARD NUMBERS IT (plan 002, U7).
-       *
-       * `ResizeBounds` is explicit: the handle is "ignored below 1100px of window — there is not
-       * enough room for two useful columns, so the app pane stacks under the conversation and the
-       * handle disappears rather than becoming a control that cannot help."
-       *
-       * Its own screen rather than Tailwind's `lg` (1024px), because the number is a design
-       * decision with a stated reason and borrowing a framework default would make it look like
-       * one. Named `wide` rather than `xl` so it cannot be mistaken for a position in the stock
-       * ramp — it sits between `lg` and `xl` and belongs to one layout.
+       * THE STACKING THRESHOLD, per `ResizeBounds`: the handle is "ignored below 1100px of
+       * window — there is not enough room for two useful columns, so the app pane stacks under
+       * the conversation and the handle disappears rather than becoming a control that cannot
+       * help." Its own screen rather than Tailwind's `lg` (1024px) — a design decision, not a
+       * framework default — and named `wide` rather than `xl` so it cannot be mistaken for a
+       * position in the stock ramp.
        */
       /**
-       * …AND THE NARROW HALF OF THE SAME LINE (plan 001, U17).
+       * …AND THE NARROW HALF OF THE SAME LINE.
        *
        * `narrow` is the exact complement of `wide`: everything below the stacking threshold, which
        * is where the columns are already stacked and where the pointer is a finger. It is the only
        * place the toolbar's 44×44 touch floors apply — above it every control keeps the size the
        * canvas drew it at. The two are disjoint by construction, so no element is ever in both.
        *
-       * WHAT "THE DECLARED MINIMUM SUPPORTED WIDTH IS 360px" ACTUALLY MEANS (R38). 360px is the
+       * WHAT "THE DECLARED MINIMUM SUPPORTED WIDTH IS 360px" ACTUALLY MEANS. 360px is the
        * floor the product supports: it matches the rail's own existing minimum and the narrow edge
        * of current phones. It means every control is REACHABLE at 360px — the workspace toolbar
        * scrolls sideways there rather than clipping, exactly as `/projects`, `/marketplace` and
@@ -45,7 +41,7 @@ export default {
         narrow: { max: '1099.98px' },
       },
       colors: {
-        // shadcn/ui token names (U13 prep) — ADDITIVE ONLY. Every pre-existing name
+        // shadcn/ui token names — ADDITIVE ONLY. Every pre-existing name
         // (primary/secondary/accent/…) keeps its literal hex DEFAULT so the 70+ existing
         // bg-primary/bg-accent/… call sites resolve byte-identically; shadcn components
         // pick the SAME brand values up through the new `*-foreground`/token names, whose
@@ -126,15 +122,12 @@ export default {
         warning: '#EAB308',
         danger: '#EF4444',
         /**
-         * THE UX CANVAS'S OWN PALETTE — the roles the brand ramp has no name for. Every value
-         * below is a hex read off `docs/ux-canvas/boards/*.dc.html`; nothing here is invented,
-         * and nothing here is a second name for a colour the brand ramp already owns (the
-         * canvas's ink #1A2B34 is `primary-900`, its hairline #E2E8F0 is `bial-border`, its
-         * muted text #6B7280 is `neutral`, its teal #0D7377 is `primary`).
-         *
-         * They live as tokens rather than as `bg-[#B45309]` literals because the status panel
-         * and the chip beside a chat title have to agree state by state, and nine hard-coded
-         * pairs in two files is exactly how they would stop agreeing.
+         * THE UX CANVAS'S OWN PALETTE — roles the brand ramp has no name for. Every value below
+         * is a hex read directly off the canvas board designs, none invented and none a second
+         * name for a colour the ramp already owns (ink #1A2B34 = `primary-900`, hairline #E2E8F0
+         * = `bial-border`, muted text #6B7280 = `neutral`, teal #0D7377 = `primary`). Tokens, not
+         * `bg-[#B45309]` literals, because the status panel and a chat-title chip have to agree
+         * state by state — nine hard-coded pairs in two files is how they'd stop agreeing.
          */
         canvas: {
           label: '#9CA3AF',        // the small-caps section and row labels
@@ -213,10 +206,10 @@ export default {
       },
       animation: {
         /**
-         * THE APP PANE LEAVING AND RETURNING (plan 002, U6). `T2Sliding` is a whole board about
-         * this one movement — "the app card is sliding out to the right and fading as it goes" —
-         * and its annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing
-         * about the app is stopped or reloaded — it is only taken off the screen."
+         * THE APP PANE LEAVING AND RETURNING. `T2Sliding` is a whole board about this one
+         * movement — "the app card is sliding out to the right and fading as it goes" — and its
+         * annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing about
+         * the app is stopped or reloaded — it is only taken off the screen."
          *
          * A KEYFRAME PAIR, NOT A MOTION RUNTIME. The pane is one element whose visibility the
          * shell already toggles, so two keyframes are the whole mechanism and nothing imperative
@@ -226,12 +219,11 @@ export default {
          * REDUCED MOTION — WHAT IS ACTUALLY TRUE. Both keyframe animations are suppressed by the
          * `@media (prefers-reduced-motion: reduce)` block in `index.css`, which ALSO suppresses
          * `.animate-spin`, `.animate-pulse` and `.animate-bounce`. That block and
-         * `usePrefersReducedMotion()` in `src/components/chat/ToolActivityLine.tsx` — three
-         * consumers: `ToolActivityLine`, `OfferStrip`, `StopTurnControl` — are the portal's only
-         * two mechanisms; there is no third. This paragraph used to say `index.css` was "where
-         * every other one in this build is suppressed too" while three dozen spinners ignored the
-         * preference entirely: that false sentence IS `#210`, which is why it is now pinned by
-         * `src/__tests__/reducedMotion.test.ts`.
+         * `usePrefersReducedMotion()` — defined in `src/components/chat/ToolActivityLine.tsx`,
+         * used there and by `OfferStrip` and `StopTurnControl` — are the portal's only two
+         * mechanisms; there is no third, and `src/__tests__/reducedMotion.test.ts` pins that fact
+         * so it cannot again be claimed universal while dozens of other spinners quietly ignore
+         * the preference.
          */
         'pane-leave': 'pane-leave 0.24s ease-in forwards',
         'pane-return': 'pane-return 0.24s ease-out',

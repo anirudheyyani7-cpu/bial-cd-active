@@ -1,10 +1,8 @@
 /**
  * `relativeTime` — the boundaries, which nothing pinned.
  *
- * It had tests when it lived in `chatHistory`; they went with the re-export #175 retired, and
- * the function kept rendering the projects list's "Details updated" column untested
- * (round-4 review). Each case below sits ON a threshold rather than safely inside one, since
- * a `<` that should be `<=` only ever shows up at the edge.
+ * Each case below sits ON a threshold rather than safely inside one, since a `<` that should be
+ * `<=` only ever shows up at the edge.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { relativeTime } from '../relativeTime'
@@ -39,9 +37,8 @@ describe('relativeTime', () => {
   })
 
   it('never shows a negative age for a clock that is slightly ahead', () => {
-    // Server and browser clocks disagree by seconds routinely, and `updatedAt` is stamped by
-    // the server. "-1m ago" is the shape that leaks, so the sub-minute branch has to swallow
-    // it rather than arithmetic running below zero.
+    // Server and browser clocks disagree by seconds routinely; "-1m ago" is the shape that
+    // leaks if the sub-minute branch doesn't swallow it.
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     expect(relativeTime(new Date(NOW + 30 * SECOND).toISOString())).toBe('just now')

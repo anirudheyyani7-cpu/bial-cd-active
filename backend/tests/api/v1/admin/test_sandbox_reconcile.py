@@ -1,4 +1,4 @@
-"""POST /v1/admin/apps/reconcile-sandboxes — the Azure-side fleet reconcile (#83 follow-up).
+"""POST /v1/admin/apps/reconcile-sandboxes — the Azure-side fleet reconcile.
 
 The mechanics of the diff are pinned service-side in
 `tests/services/build_sessions/test_inventory.py`; this file pins the ROUTE: who may call it,
@@ -7,8 +7,8 @@ what the wire body looks like, what reaches the audit trail, and which failures 
 It exists because the first cut had none — the endpoint shipped with unit coverage of
 `take_sandbox_inventory` and nothing that ever issued the request, so the gate, the envelope
 and the audit row were correct only by inspection. Its two siblings
-(`test_storage_reconcile.py`, `test_database_reconcile.py`) each carry this set, and
-`.claude/rules/testing.md` asks for RBAC to be tested explicitly rather than reasoned about.
+(`test_storage_reconcile.py`, `test_database_reconcile.py`) each carry this set, because
+RBAC needs to be tested explicitly rather than reasoned about.
 """
 
 from __future__ import annotations
@@ -120,8 +120,8 @@ async def test_the_orphan_is_named_in_the_response(client, app, db_session, fake
 async def test_a_registry_entry_whose_container_is_gone(
     client, app, db_session, fake_redis
 ) -> None:
-    # The opposite gap and far less urgent — the next `reconcile_user` clears it — but it is
-    # still a true statement about drift, so it is reported rather than swallowed.
+    # The opposite gap, far less urgent (the next `reconcile_user` clears it), but still true
+    # drift, so it is reported rather than swallowed.
     admin = await _admin(db_session)
     ghost = app_name_for(uuid.uuid7())
     _wire(app, _Fleet([]))
@@ -140,9 +140,8 @@ async def test_a_clean_fleet_reports_nothing(client, app, db_session, fake_redis
     await _register(fake_redis, user_id, name)
 
     body = (await client.post(_RECONCILE, headers=admin)).json()
-    # R20 (U11): the fleet numbers cannot say whether the WORKER is alive — every alarm the
-    # reclamation pass raises is emitted by the pass, so a dead scheduler looks like a quiet
-    # fleet. `reclamationStale` is true here because no pass has ever run in this test.
+    # A dead reclamation scheduler looks like a quiet fleet; `reclamationStale` is true here
+    # because no pass has ever run in this test.
     assert body == {
         "live": 1,
         "registered": 1,
@@ -159,10 +158,9 @@ async def test_a_clean_fleet_reports_nothing(client, app, db_session, fake_redis
 async def test_the_audit_row_carries_counts_but_no_names(
     client, app, db_session, fake_redis
 ) -> None:
-    """A sandbox name embeds its app's uuid, so a name list in the audit trail is a durable
-    inventory of who was running what. The response carries names because the operator must act
-    on them; the audit row carries counts only — the same split `reconcile-storage` makes for
-    blob keys (`.claude/rules/security.md`)."""
+    """The response carries names because the operator must act on them; the audit row carries
+    counts only, the same split `reconcile-storage` makes for blob keys. The rule is on
+    `append_audit`."""
     admin = await _admin(db_session)
     orphan_name = app_name_for(uuid.uuid7())
     _wire(app, _Fleet([orphan_name]))
@@ -173,7 +171,6 @@ async def test_the_audit_row_carries_counts_but_no_names(
     assert row.resource_type == "sandbox"
     assert row.detail is not None
     assert row.detail == {"live": 1, "registered": 0, "unregistered": 1, "registeredMissing": 0}
-    # Counts only — the name must appear nowhere in the row.
     assert orphan_name not in str(row.detail)
 
 
@@ -213,10 +210,10 @@ async def test_a_client_that_cannot_enumerate_is_503_not_500(
 
 
 async def test_no_redis_is_the_declared_503_not_a_500(client, app, db_session) -> None:
-    """BLOCKER 1 REGRESSION (#83 review). `build_coordination_or_503` SKIPS its body on an
-    unconfigured Redis and resumes after it, so a route whose `return` lives inside the block
-    falls off the end and returns None against a non-optional response model — FastAPI's
-    response validation then raises, and the route that documents a 503 answered 500.
+    """`build_coordination_or_503` SKIPS its body on an unconfigured Redis and resumes after it,
+    so a route whose `return` lives inside the block falls off the end and returns None against
+    a non-optional response model — FastAPI's response validation then raises, and the route
+    that documents a 503 answered 500.
 
     Deliberately takes no `fake_redis` fixture: with the singleton unset, `get_redis()` raises
     `RedisNotConfiguredError` exactly as it would on a deployment with no Redis configured.

@@ -1,26 +1,19 @@
 """The `project_databases` table — one row per project that has (or is getting) its own
-PostgreSQL database and login role (ADR-0028).
+PostgreSQL database and login role.
 
-A dedicated table, not columns on `projects`, for three reasons: **absence is clean** (no
-row at all means "never provisioned", so nothing has to distinguish NULL-because-new from
-NULL-because-failed); the row doubles as the **concurrency claim** (`INSERT ... ON CONFLICT
-DO NOTHING RETURNING` over the unique `project_id` elects exactly one racer to run the
-external DDL sequence); and the encrypted role password lives away from the row every
-project listing selects.
+A dedicated table, not columns on `projects`: absence is clean (no row = never provisioned); the
+row doubles as the CONCURRENCY CLAIM (`INSERT ... ON CONFLICT DO NOTHING RETURNING` on
+`project_id` elects one racer for the external DDL); the encrypted password stays off the row
+every listing selects.
 
-`db_ready` is the single TERMINAL marker and is committed LAST, after every external step
-has succeeded. That ordering is the whole correctness argument: a crash between `CREATE
-DATABASE` and `REVOKE CONNECT ... FROM PUBLIC` leaves the cross-app wall DOWN, so the row
-must read as not-ready and the next ensure must re-run the entire (idempotent) sequence.
-A marker that flipped early would claim a wall that does not exist.
+`db_ready` is the TERMINAL marker, committed LAST after every external step succeeds — a crash
+mid-sequence must read as not-ready so the next ensure re-runs it whole; flipped early it would
+claim a wall that does not exist. `db_name`/`role_name` are STORED, not derived, so teardown
+outlives a derivation change.
 
-`db_name` / `role_name` are STORED, not merely derived from `project_id`, so teardown and
-the orphan reconciler keep working against rows minted under an older derivation.
-
-No `OwnedByUserMixin`: the `projects` row is the ownership anchor and already carries
-`user_id` (ADR-0004), so every user-facing query reaches this table through a join on
-`projects` — the `user_id` predicate lives there and is never dropped here.
-No `relationship()` — the repo uses explicit selects/joins everywhere.
+WHY THIS EXISTS. No `OwnedByUserMixin` here: `projects` is the ownership anchor, so every
+user-facing query reaches this table through a join — the `user_id` predicate lives there and is
+never dropped here.
 """
 
 from __future__ import annotations

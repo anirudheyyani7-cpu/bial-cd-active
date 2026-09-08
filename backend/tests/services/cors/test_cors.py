@@ -1,7 +1,6 @@
-"""The app's one CORS layer (U4, R23) — credentialed CORS for FRONTEND_URL only,
-`Origin: null` NEVER reflected on any path. The null-reflecting, credential-free
-data-route branch died with the shared data plane (U6); the former data path is
-kept here as a regression guard that it stays dead."""
+"""The app's one CORS layer — credentialed CORS for FRONTEND_URL only, `Origin: null`
+NEVER reflected on any path. The former data path is kept here as a regression guard
+that it stays dead."""
 
 from __future__ import annotations
 

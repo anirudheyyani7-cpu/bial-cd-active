@@ -66,8 +66,6 @@ def test_error_responses_builds_fastapi_mapping() -> None:
         (401, DetailBody, "Not authenticated"),
         (404, ErrorEnvelope, "App not found"),
     )
-    # int keys, each value carries the model it documents — and one call mixes
-    # detail- and envelope-shaped codes.
     assert set(mapping) == {401, 404}
     assert mapping[401] == {"model": DetailBody, "description": "Not authenticated"}
     assert mapping[404]["model"] is ErrorEnvelope
@@ -88,9 +86,9 @@ def test_error_responses_rejects_duplicate_status() -> None:
 
 
 def test_openapi_headerout_description_has_no_dead_flag_reference() -> None:
-    # HeaderOut is documented-only; its docstring must NOT claim a
-    # `response_model_exclude_none` flag drives the omit-when-unset shape (that flag
-    # is not involved — `_header_dict` produces the shape). Negative substring guard.
+    # HeaderOut is documented-only; its docstring must not claim a
+    # `response_model_exclude_none` flag drives the omit-when-unset shape — `_header_dict`
+    # produces that shape, not the flag.
     schema = create_app().openapi()
     description = schema["components"]["schemas"]["HeaderOut"].get("description", "")
     assert "response_model_exclude_none" not in description
@@ -106,8 +104,8 @@ def test_v1_router_500_default_propagates_to_every_route() -> None:
 
 
 def test_v1_router_suspension_403_default_propagates() -> None:
-    # `current_user` 403s a suspended account on every authenticated route (deps.py,
-    # R11); the router-level AUTH_403_SUSPENDED default documents it. A route with
+    # `current_user` 403s a suspended account on every authenticated route (deps.py);
+    # the router-level AUTH_403_SUSPENDED default documents it. A route with
     # its own 403 (admin's superadmin gate) keeps its declaration.
     schema = create_app().openapi()
     projects = schema["paths"]["/v1/projects"]["get"]["responses"]

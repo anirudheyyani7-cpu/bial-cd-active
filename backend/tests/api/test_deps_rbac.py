@@ -2,7 +2,7 @@
 
 Overrides `current_user` (no live session cookie needed) and `superadmin_allowlist`
 (no global Settings mutation), then asserts the gate returns 200 for an allowlisted
-user and a plain 403 otherwise — the plan's U1 verification.
+user and a plain 403 otherwise.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ def _build_app(user: User, allowlist: frozenset[str]) -> FastAPI:
     async def _admin_only(admin: CurrentSuperadmin) -> dict[str, str]:
         return {"email": admin.email}
 
-    # Short-circuit the cookie/DB auth chain and the Settings read.
     app.dependency_overrides[current_user] = lambda: user
     app.dependency_overrides[superadmin_allowlist] = lambda: allowlist
     return app
@@ -51,7 +50,6 @@ async def test_citizen_is_forbidden() -> None:
 
 
 async def test_gate_is_case_insensitive() -> None:
-    # A mixed-case IdP email still passes against a lowercased allowlist.
     user = UserFactory.build(email="Admin@BIAL.com")
     resp = await _get_admin_only(_build_app(user, frozenset({"admin@bial.com"})))
     assert resp.status_code == 200

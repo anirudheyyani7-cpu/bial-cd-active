@@ -1,34 +1,14 @@
 /**
- * "Another project is open" — the #83 choice.
+ * "Another project is open" — the dialog that asks before another project's workspace is
+ * released; the one-workspace rule and the refusal that raises this are `reclaim.py`'s.
  *
- * A user gets one running workspace at a time. Opening a second project needs the first to
- * give up its container, and the container is where unsaved work lives. This used to happen
- * silently inside the incoming request: the other project was torn down, its unsaved work went
- * with it, and nobody was told. `manager.py`'s `finish_turn_sandbox` states the bargain the
- * platform actually keeps — "a user who loses work must have been told, twice" — and both
- * tellings fire on LEAVING the app, which switching projects is not. This dialog is that
- * missing telling.
- *
- * It is a CHOICE, not an error, and the copy says so: no red, no alert glyph, no apology. The
- * constraint is ordinary (one thing open at a time, like an app on a phone) and the remedy is
- * one click. Saving first is offered because the platform can do it on the user's behalf — the
- * work is one call away from durable — but it stays THEIR call, which is the whole point of
- * KTD-5e. Nothing here saves automatically.
- *
- * `dirty === null` is UNKNOWN, not clean: the server either reached the workspace and could
- * not ask it, or could not reach it at all. The copy hedges ("may have unsaved changes")
- * rather than promising, because telling someone their work is safe when nobody checked is
- * the one wrong answer available here.
- *
- * FOCUS IS PART OF THE CONTRACT, not a nicety. This is a modal that appears unprompted, in
- * front of work the user is mid-way through, and offers an irreversible choice — so it has to
- * take focus (or a keyboard user never learns it exists), hold it (or Tab wanders onto the
- * page behind and they act on a control the overlay is hiding), and give it back on close.
- * The trap has to survive the busy window specifically: all three buttons disable during a
- * save, focus falls to `<body>`, and the keydown handler stops firing — which is how #86
- * shipped a dialog whose trap silently disarmed at the one moment it mattered. See
- * `ProjectDescriptionEditor`, whose implementation this follows deliberately rather than
- * inventing a second one.
+ * It is a CHOICE, not an error: no red, no alert glyph, no apology. Saving first is offered
+ * because the platform can do it on the citizen's behalf, but it stays THEIR call — nothing
+ * here saves automatically. `dirty === null` is UNKNOWN, not clean, so the copy hedges ("may
+ * have unsaved changes") rather than calling work safe that nobody checked. Focus is part of
+ * the contract: this appears unprompted over work in progress, so it takes focus, holds it and
+ * gives it back, and the trap survives the busy window where all three buttons disable, focus
+ * falls to `<body>` and the keydown handler stops firing, as `ProjectDescriptionEditor` does.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { FolderOpen, Hammer, Loader2 } from 'lucide-react'
@@ -37,16 +17,12 @@ import type { HandoverStep, ReclaimBlocked } from '../../utils/buildSessionApi'
 interface Props {
   blocked: ReclaimBlocked
   /**
-   * THE PROJECT BEING STARTED — issue #161's framing half, and the reason this prop exists.
+   * THE PROJECT BEING STARTED, and the reason this prop exists: the question a citizen asks is
+   * "can I build THIS one?", so the dialog answers that one first and the incumbent is the
+   * obstacle rather than the subject. The refusal carries only the incumbent, so this name has
+   * to be handed in by whoever made the call that was refused.
    *
-   * Observed on a BIAL desk with the client watching: the modal opened with *"'Car pool apps' is
-   * still open"* — the app the citizen was NOT working on. The question they are actually asking
-   * is "can I build THIS one?", so the dialog has to answer that one first; the incumbent is the
-   * obstacle, not the subject. The refusal itself carries only the incumbent, so the name of the
-   * project being started has to be handed in by whoever made the call that was refused.
-   *
-   * `null` when the caller genuinely does not know it — a surface with no project resolved yet.
-   * The copy then falls back to naming only the incumbent, which is what it always did.
+   * `null` when the caller does not know it; the copy then names only the incumbent.
    */
   startingProjectName?: string | null
   /** Save the other project, then release it. Rejects if the save fails — the dialog stays
@@ -63,7 +39,7 @@ interface Props {
   onSwitchAnyway: () => Promise<void>
   onCancel: () => void
   /**
-   * WHICH STEP THE HAND-OVER HAS REACHED, or `null` before it starts (plan 002, U9).
+   * WHICH STEP THE HAND-OVER HAS REACHED, or `null` before it starts.
    *
    * Owned by the caller rather than by this dialog, because the caller is what performs the
    * sequence — and the sequence outlives the press: it stops the other project, waits for that to
@@ -74,40 +50,12 @@ interface Props {
 }
 
 /**
- * FOUR SITUATIONS NOW, NOT TWO, AND THE NEW ONE ARRIVES BECAUSE THE SERVER CHANGED.
- *
- * An idle project holds a workspace with a settled tree and the question is whether to save it. A
- * BUILDING project has an agent writing into it: there is no settled tree to describe, the server
- * refuses both Save and Release until the build stops, and what a person gives up by proceeding is
- * work in progress rather than work already done.
- *
- * The idle case then splits three ways on the tri-state, and the third arm is new. The old code
- * collapsed it — `dirty === true ? 'has unsaved changes' : 'may have unsaved changes'` — which was
- * CORRECT while a clean incumbent could never reach this dialog, because the server reclaimed it
- * silently. R94 removed that, so `dirty === false` now arrives, and the old ternary would tell a
- * person their confirmed-clean project "may have unsaved changes". The three arms:
- *
- *   true  → "has unsaved changes", with Save offered
- *   false → a clean stop: NO unsaved-work claim, and NO Save button for work that does not exist
- *   null  → "may have unsaved changes" (R62 — the platform says when it could not check)
- *
- * ═══ TWO THINGS THE COPY MUST NOT DO, BOTH FROM LIVE OBSERVATION ═══
- *
- * ISSUE #161, FRAMING. Lead with the app they are STARTING, not the one they are leaving. The
- * observed modal opened with the name of the app the citizen was not working on, and the question
- * they were asking was about the other one.
- *
- * ISSUE #161, AMBIGUITY. "Switch without saving" beside a build was found genuinely ambiguous by a
- * non-technical audience: it does not say whether the unsaved work being dropped belongs to the app
- * they are starting or the one being stopped. The button and the sentence above it NAME the project
- * whose changes are lost. This audience could not reason it out from context, and the issue records
- * that they did not.
- *
- * ═══ R95 — WHAT IS TRUE, SAID PLAINLY ═══
- *
- * The other project is STOPPED, not moved. Its saved work is untouched, and starting it again later
- * rebuilds it from its own saved state. NOTHING TRAVELS BETWEEN PROJECTS, and no sentence here may
- * imply that anything does — including softeners like "move your work over" or "bring it with you".
+ * FOUR SITUATIONS, NOT TWO. A BUILDING project has an agent writing: no settled tree, both
+ * Save and Release refused until it stops, and work-in-progress is given up. The idle case
+ * splits three ways on the tri-state — `true` offers Save ("has unsaved changes"), `false`
+ * is a clean stop with no Save button, `null` says "may have". Every arm leads with the app
+ * being STARTED (not the one being left) and NAMES the project whose changes are lost — the
+ * other project is STOPPED, not moved, and no sentence here may imply otherwise.
  */
 function copyFor(
   blocked: ReclaimBlocked,
@@ -119,17 +67,12 @@ function copyFor(
   save: string | null
   discard: string
   /**
-   * WHAT IS HAPPENING IN THERE RIGHT NOW, said BEFORE the citizen chooses (plan 002, U9).
+   * WHAT IS HAPPENING IN THERE RIGHT NOW, said BEFORE the citizen chooses. A separate sentence
+   * rather than a fourth arm, because `agentWorking` is orthogonal to all three: a workspace can
+   * be clean AND busy, and the clean arm's reassurance stays true while an assistant is answering
+   * a question in it.
    *
-   * `agentWorking` is the wide fact — an agent mid-turn of ANY kind — and it is a separate
-   * sentence rather than a fourth arm of the map above, because it is orthogonal to all three:
-   * a workspace can be clean AND busy, and the clean arm's "everything saved stays exactly as it
-   * is" is still true while an assistant is answering a question in it. Folding the two together
-   * would have meant either withholding the clean reassurance or withholding the warning.
-   *
-   * `null` on the `building` arm, deliberately: that copy already says the build is running and
-   * has to stop, and a second sentence saying the same thing in different words is how a dialog
-   * starts sounding uncertain about its own facts.
+   * `null` on the `building` arm: that copy already says the build is running and has to stop.
    */
   working: string | null
 } {
@@ -179,18 +122,11 @@ function copyFor(
 }
 
 /**
- * WHAT THE DIALOG SAYS WHILE IT WORKS (plan 002, U9) — because these take real time.
- *
- * It is a STATUS SURFACE, not just a question: it asks, then stays up and narrates. A spinner on
- * a button for the thirty seconds a stop-then-start actually takes is indistinguishable from a
- * dialog that has hung, and this one is standing in front of a message the citizen has typed.
- *
- * Plain language throughout, and nothing that names a mechanism: "closing", "saving", "starting"
- * are things a person can picture happening to their app.
- *
- * IT ENDS AT "Starting your app…", deliberately. There was a fifth line here for the chat opening;
- * the navigate that opens it unmounts the surface publishing this dialog, so that line could never
- * be read — see `HandoverStep`. The destination narrates its own arrival.
+ * WHAT THE DIALOG SAYS WHILE IT WORKS, because these take real time — a STATUS SURFACE, not
+ * just a question: a spinner alone for the thirty seconds a stop-then-start takes reads as a
+ * hung dialog standing in front of a message the citizen has typed. Plain language, no
+ * mechanism named. Ends at "Starting your app…": the navigate that opens the chat unmounts
+ * this surface, so a fifth line could never be read — the chat narrates its own arrival.
  */
 const STEP_SAYS: Record<HandoverStep, string> = {
   stopping: 'Closing the other app…',

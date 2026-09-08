@@ -1,7 +1,8 @@
 /**
- * THE ONE WORKSPACE STATE (Plan F, U2) — what the platform reports, turned into what a person
+ * THE ONE WORKSPACE STATE — what the platform reports, turned into what a person
  * reads and what they may press.
  *
+ * WHY THIS EXISTS
  * WHAT THESE TESTS CAN AND CANNOT PROVE, said up front because the distinction is the unit's
  * whole point. They prove the CLIENT's vocabulary: that no arm of this map reaches a destructive
  * verb, that a sentence says what the register requires, that a withheld attribution renders no
@@ -9,9 +10,9 @@
  * is server behaviour, asserted in `backend/tests/api/v1/build_sessions/`, and a client test
  * saying "this made no restore call" would pass in exactly the state that loses work.
  *
- * The copy assertions are deliberately literal. R-16 was a client call on exact wording, and a
- * test that matched loosely would let the sentence drift back to the negation it was chosen to
- * replace.
+ * The copy assertions are deliberately literal: the exact wording was the client's own call, and
+ * a test that matched loosely would let the sentence drift back to the negation it was chosen
+ * to replace.
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -51,7 +52,7 @@ function resolve(over: Partial<WorkspaceInputs> = {}) {
 /**
  * Everything a surface would put on screen for this value, as one string.
  *
- * ALL FOUR SLOTS, not just the two the map had before `#196`. A sweep that read only the headline,
+ * ALL FOUR SLOTS, not just the two the map used to have. A sweep that read only the headline,
  * the detail and the first action would have gone on passing while the take-back's label and the
  * stopped-holder note said whatever they liked — which is exactly the class of miss the register
  * assertions below exist to catch.
@@ -67,16 +68,16 @@ const rendered = (over: Partial<WorkspaceInputs> = {}) => {
   ].join(' ')
 }
 
-/** A workspace held by a named project — the arm `#196` gives a second control to. */
+/** A workspace held by a named project — the arm with a second control. */
 const heldBy = (name = 'Car pool apps', id = 'proj-9') =>
   reading({ state: 'slot_taken', occupyingProjectName: name, occupyingProjectId: id })
 
 describe('the register — what the pane may and may not say', () => {
-  it('AE1: a saved, not-running project says "Your app is saved." and offers exactly one start', () => {
+  it('a saved, not-running project says "Your app is saved." and offers exactly one start', () => {
     const state = resolve({ preview: reading({ state: 'asleep', restorable: true }) })
 
     expect(state.name).toBe('not-running')
-    // VERBATIM. R-16 was a client call on this exact sentence — full stop after "saved", and no
+    // VERBATIM: the client's own call on this exact sentence — full stop after "saved", and no
     // negation of any kind after it.
     expect(state.headline).toBe('Your app is saved.')
     expect(state.action).toEqual({ kind: 'start', label: 'Launch Application' })
@@ -88,11 +89,12 @@ describe('the register — what the pane may and may not say', () => {
     // as an internal state name and on the wire; it is never a thing a person reads.
     //
     // ★ ONE FIELD IS OUT OF SCOPE, AND IT IS A NARROWING OF THE SUBJECT RATHER THAN OF THE RULE.
-    // R-16 forbids the pane describing THIS app by what it is not — "saved", never "stopped". The
-    // `note` `#196` adds is never about this app: its subject is always ANOTHER project, and D2
-    // requires in as many words that any ending which stopped the holder says so. Using a softer
-    // verb there would also be a second word for the thing the citizen just pressed a button
-    // labelled "Stop" to do. The next block pins that carve-out so it cannot quietly widen.
+    // The rule forbids the pane describing THIS app by what it is not — "saved", never "stopped".
+    // The `note` field is never about this app: its subject is always ANOTHER project, and the
+    // take-back's own contract requires in as many words that any ending which stopped the holder
+    // says so. Using a softer verb there would also be a second word for the thing the citizen
+    // just pressed a button labelled "Stop" to do. The next block pins that carve-out so it
+    // cannot quietly widen.
     const forbidden = [/not running/i, /\bstopped\b/i, /unavailable/i, /preview/i]
     const everyState: Partial<WorkspaceInputs>[] = [
       { preview: reading({ state: 'asleep', restorable: true }) },
@@ -153,7 +155,7 @@ describe('the register — what the pane may and may not say', () => {
     expect(`${stopped.headline} ${stopped.detail ?? ''}`).not.toMatch(/\bstopped\b/i)
   })
 
-  it('AE2: nothing built invites a description and offers NO action', () => {
+  it('nothing built invites a description and offers NO action', () => {
     const state = resolve({ preview: reading({ state: 'never_built', restorable: false }) })
 
     expect(state.name).toBe('never-built')
@@ -162,9 +164,10 @@ describe('the register — what the pane may and may not say', () => {
     expect(state.headline).toMatch(/describe what you want to build/i)
   })
 
-  it('AE36: the starting sentence carries no digits and no duration word', () => {
-    // R4a taken literally. Nobody has measured a cold start, so no sentence may name one — the
-    // canvas's "about thirty seconds" and the register's "about half a minute" are both dropped.
+  it('the starting sentence carries no digits and no duration word', () => {
+    // The no-duration-claim rule taken literally. Nobody has measured a cold start, so no
+    // sentence may name one — the canvas's "about thirty seconds" and the register's "about
+    // half a minute" are both dropped.
     const text = rendered({ preview: reading({ state: 'starting' }) })
 
     expect(text).not.toMatch(/\d/)
@@ -176,7 +179,7 @@ describe('the register — what the pane may and may not say', () => {
 })
 
 describe('the hand-over states — two arms, and neither is an error', () => {
-  it('AE31: with a name and an id, it names that project and offers the way to it', () => {
+  it('with a name and an id, it names that project and offers the way to it', () => {
     const state = resolve({
       preview: reading({
         state: 'slot_taken',
@@ -194,7 +197,7 @@ describe('the hand-over states — two arms, and neither is an error', () => {
     })
   })
 
-  it('AE31: with the attribution withheld, it names none, quotes nothing and offers no action', () => {
+  it('with the attribution withheld, it names none, quotes nothing and offers no action', () => {
     // A first-class wire state, not a bug to paper over: the server declines to attribute a
     // container it cannot map to a project this person owns. The failure this is written against
     // is a sentence with an empty pair of quotes in it.
@@ -216,7 +219,7 @@ describe('the hand-over states — two arms, and neither is an error', () => {
     expect(idOnly.action).toBeNull()
   })
 
-  it('a held slot outranks a start outcome — the remedy, never a retry (R4b)', () => {
+  it('a held slot outranks a start outcome — the remedy, never a retry', () => {
     // A retry against an occupied slot can only fail the same way again.
     const state = resolve({
       preview: reading({
@@ -231,9 +234,9 @@ describe('the hand-over states — two arms, and neither is an error', () => {
   })
 })
 
-describe('★ taking the workspace back (#196) — the second control, and D2`s five endings', () => {
+describe('★ taking the workspace back — the second control, and its five endings', () => {
   it('★ the held arm offers TWO controls, and the first is untouched', () => {
-    // The owner`s decision on #196: `Open “<holder>”` stays exactly as it is. The take-back is an
+    // The owner`s decision: `Open “<holder>”` stays exactly as it is. The take-back is an
     // ALTERNATIVE to it, not a replacement — a citizen who wants to go and finish what they were
     // doing over there still has the one-click way to.
     const state = resolve({ preview: heldBy() })
@@ -311,7 +314,7 @@ describe('★ taking the workspace back (#196) — the second control, and D2`s 
 
   it('★ and never reuses ending 1`s "nothing has changed" where it would be false', () => {
     // The holder is DOWN on both of these. A sentence promising nothing moved is the one thing
-    // this arm must not say — D2 names it explicitly.
+    // this arm must not say.
     for (const reason of ['Could not save your work', 'Could not close the other workspace']) {
       const text = rendered({
         preview: heldBy('Roster', 'p-9'),
@@ -322,9 +325,9 @@ describe('★ taking the workspace back (#196) — the second control, and D2`s 
   })
 
   it('★ ENDING 2 — the slot was freed and the start failed: the failed-to-start sentence, plus the holder', () => {
-    // D2 supersedes the acceptance example here. "Returns to the held-by-another state" is
-    // unreachable: the release succeeded, so the holder is gone and the reading is no longer
-    // `slot_taken`. What is left is an ordinary failed start — with one extra thing to say.
+    // The acceptance example "Returns to the held-by-another state" is unreachable here: the
+    // release succeeded, so the holder is gone and the reading is no longer `slot_taken`. What is
+    // left is an ordinary failed start — with one extra thing to say.
     const state = resolve({
       preview: reading({ state: 'asleep', restorable: true }),
       startOutcome: { kind: 'take-back-failed', reason: 'the image could not be pulled', stoppedHolder: 'Roster' },
@@ -348,7 +351,7 @@ describe('★ taking the workspace back (#196) — the second control, and D2`s 
     expect(state.detail).toBe('the image could not be pulled')
   })
 
-  it('★ every OTHER start outcome is still outranked by a held slot (R4b)', () => {
+  it('★ every OTHER start outcome is still outranked by a held slot', () => {
     // The precedence is unchanged for the three endings that describe an ordinary start. Only the
     // take-back ending crosses it, because it describes a press made FROM this arm.
     for (const startOutcome of [
@@ -396,8 +399,8 @@ describe('★ taking the workspace back (#196) — the second control, and D2`s 
   })
 })
 
-describe('R4b — a start that did not end in a running app says which way it ended', () => {
-  it('AE3: an unreadable state answers "we could not check" and offers the retry member', () => {
+describe('a start that did not end in a running app says which way it ended', () => {
+  it('an unreadable state answers "we could not check" and offers the retry member', () => {
     const state = resolve({ preview: reading({ state: 'unknown' }) })
 
     expect(state.name).toBe('could-not-read')

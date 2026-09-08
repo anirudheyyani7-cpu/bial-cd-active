@@ -25,7 +25,6 @@ def test_json_dump_uses_camel_aliases() -> None:
 
 
 def test_accepts_snake_case_field_names_on_input() -> None:
-    # populate_by_name: construction by the Python field name still validates.
     model = _Sample(resets_at="midnight", used_tokens=5)
     assert model.resets_at == "midnight"
     assert model.used_tokens == 5
@@ -38,7 +37,6 @@ def test_accepts_camel_case_aliases_on_input() -> None:
 
 
 def test_single_word_fields_are_camel_noop() -> None:
-    # `to_camel` is a no-op on single-word fields — the wire key is unchanged.
     class _OneWord(CamelModel):
         status: str
 

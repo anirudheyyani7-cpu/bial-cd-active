@@ -17,7 +17,7 @@ from tests.subprocess_env import child_env
 
 # A minimal valid AUTH__* block. `auth` is a required sub-model now, so every
 # Settings constructed here needs one (a partial block fails its inner required
-# fields — fail-first-python.md). session_secret is >= 32 chars (the validator).
+# fields). session_secret is >= 32 chars (the validator).
 _AUTH: dict[str, object] = {
     "tenant_id": "11111111-1111-1111-1111-111111111111",
     "client_id": "22222222-2222-2222-2222-222222222222",
@@ -33,9 +33,8 @@ _BASE_ENV: dict[str, object] = {
     "ENVIRONMENT": "development",
     "DATABASE_URL": "postgresql+asyncpg://u:p@localhost/test",
     "auth": _AUTH,
-    # superadmin_emails is required (no default) — every Settings built here needs it.
+    # superadmin_emails and SUPPORT_CONTACT_EMAIL are both required, no default.
     "superadmin_emails": ["admin@bial.com"],
-    # So is the at-limit support contact (U24), for the same reason.
     "SUPPORT_CONTACT_EMAIL": "help@bial.com",
 }
 
@@ -69,7 +68,7 @@ _SANDBOX: dict[str, object] = {
     "image_ref": "bialgenaicr01.azurecr.io/citizen-dev-sandbox:latest",
 }
 
-# Minimal valid APP_DB__* block (per-project databases, ADR-0028) — the fourth
+# Minimal valid APP_DB__* block (per-project databases) — the fourth
 # optional-integration prod gate. Both inner fields are required, no-default: the
 # maintenance DSN points at a NEUTRAL maintenance database, and the key is a real
 # urlsafe-base64 32-byte Fernet key (Fernet validates it at construction, so a made-up
@@ -107,42 +106,32 @@ def test_valid_settings_construct() -> None:
     s = _settings()
     assert s.ENVIRONMENT == "development"
     assert s.is_production is False
-    # Optional knobs carry their defaults.
     assert s.FRONTEND_URL == "http://localhost:5173"
 
 
 def test_is_production_true_in_production() -> None:
-    # Production requires storage + redis + sandbox (the prod gates), so supply all.
     assert _prod_settings().is_production is True
 
 
 def test_production_requires_object_store() -> None:
-    # Prod gate (fail-first-python.md): storage is optional in dev/test but the
-    # single sanctioned optional-integration prod gate requires it in production.
-    # redis/sandbox are supplied so the STORAGE gate is the one that fires.
     with pytest.raises(ValidationError):
         _prod_settings(object_store=None)
 
 
 def test_production_requires_redis() -> None:
-    # Same optional-with-prod-gate shape as storage: redis is optional in dev/test
-    # but required in production (it coordinates the sandbox lock/heartbeat/registry).
     with pytest.raises(ValidationError, match="redis must be configured in production"):
         _prod_settings(redis=None)
 
 
 def test_production_requires_sandbox() -> None:
-    # The per-user sandbox runtime is optional in dev/test but required in production
-    # (no build loop without it).
     with pytest.raises(ValidationError, match="sandbox must be configured in production"):
         _prod_settings(sandbox=None)
 
 
 def test_production_requires_app_db() -> None:
-    # Per-project databases ARE the generated apps' isolation boundary in production
-    # (ADR-0028): booting prod without a maintenance credential would create projects
-    # that silently never get a database. Same optional-with-prod-gate shape as the
-    # three above; the others are supplied so the APP_DB gate is the one that fires.
+    # Per-project databases ARE the generated apps' isolation boundary in production:
+    # booting prod without a maintenance credential would create projects that
+    # silently never get a database.
     with pytest.raises(ValidationError, match="per-project databases must be configured"):
         _prod_settings(app_db=None)
 
@@ -160,7 +149,6 @@ def test_app_db_optional_outside_production() -> None:
 def test_app_db_block_validates_when_present() -> None:
     s = _settings(app_db=_APP_DB)
     assert s.app_db is not None
-    # Knobs carry their defined defaults.
     assert s.app_db.sandbox_dsn_host is None
     assert s.app_db.statement_timeout_ms == 30_000
     assert s.app_db.idle_in_transaction_timeout_ms == 60_000
@@ -200,8 +188,6 @@ def test_app_db_gate_message_never_leaks_the_maintenance_dsn() -> None:
 
 
 def test_redis_and_sandbox_optional_in_development() -> None:
-    # The whole point of D2: dev/test boot with NO REDIS__*/SANDBOX__* env — the
-    # existing auth/chat/runner suite must not need new configuration.
     s = _settings()
     assert s.redis is None
     assert s.sandbox is None
@@ -217,15 +203,13 @@ def test_production_boots_with_redis_and_sandbox() -> None:
 def test_the_sweep_ships_on_and_the_new_reclamation_ships_off() -> None:
     """A PORT MUST NOT CHANGE BEHAVIOUR, and the defaults are where that is decided.
 
-    `sweep_all` predates ADR-0029 entirely: it ran as an unflagged `while True` in the API
-    lifespan, wherever a sandbox was configured. Moving it onto the scheduler was supposed to
-    change WHERE it runs; gating it on `reclaim_enabled` — which ships off, deliberately, in
-    every environment — changed WHETHER it runs, so upgrading to this release would silently
-    stop all reaping while every check read green. The one loud symptom would have been the
-    Azure bill.
+    `sweep_all` predates the fleet-reclamation redesign: it ran as an unflagged `while True` in
+    the API lifespan wherever a sandbox was configured. The redesign moved it to the scheduler
+    and gated it on `reclaim_enabled` — off by default — so an upgrade with reaping silently
+    stopped would leave every check green, with the Azure bill as the only symptom.
 
-    Mutation-check: flip `sweep_enabled` to default `False`, or point `sandbox_reap` back at
-    `reclaim_enabled`, and this goes red."""
+    Mutation-check: flip `sweep_enabled` to `False`, or point `sandbox_reap` at
+    `reclaim_enabled`."""
     s = _prod_settings()
     assert s.sandbox is not None
     assert s.sandbox.sweep_enabled is True, "the pre-existing sweep must survive the upgrade"
@@ -237,13 +221,10 @@ def test_the_drain_offers_no_switch_because_it_has_no_caller() -> None:
     """A FLAG THAT DOES NOTHING IS WORSE THAN A MISSING FEATURE.
 
     `drain.py` is written and tested, but nothing in `src/` reads a drain setting — `is_drained`
-    takes `enabled`/`after_hours` as explicit arguments and no caller passes them. Declaring
-    `SANDBOX__DRAIN_ENABLED` anyway put a switch in front of an operator that would have been
-    believed during an incident and changed nothing.
-
-    `extra="forbid"` turns the absence into a loud one: setting it now fails at startup rather
-    than being silently absorbed. Nothing in this repo sets it, so nothing breaks — and when the
-    drain gets a caller the flags come back alongside it.
+    takes `enabled`/`after_hours` as explicit arguments, with no caller passing them. Declaring
+    `SANDBOX__DRAIN_ENABLED` anyway would mislead an operator relying on it mid-incident, so
+    `extra="forbid"` turns the absence into a loud one: setting it now fails at startup instead
+    of being silently absorbed. When the drain gets a caller, the flags come back alongside it.
 
     Mutation-check: re-add `drain_enabled` to `SandboxConfig` and this goes red."""
     with pytest.raises(ValidationError):
@@ -251,7 +232,6 @@ def test_the_drain_offers_no_switch_because_it_has_no_caller() -> None:
 
 
 def test_redis_rejects_unknown_nested_key() -> None:
-    # extra="forbid": a mistyped REDIS__* key fails at startup (no silent absorption).
     with pytest.raises(ValidationError):
         _settings(redis={**_REDIS, "bogus": "x"})
 
@@ -276,20 +256,18 @@ def test_sandbox_requires_acr_credentials() -> None:
 
 
 def test_sandbox_acr_password_is_masked() -> None:
-    # SecretStr on the ACR pull password — repr must not leak the admin credential.
     s = _prod_settings()
     assert s.sandbox is not None
     assert "acr-admin-secret" not in repr(s.sandbox)
 
 
 def test_redis_url_is_masked() -> None:
-    # SecretStr on the DSN — repr must not leak the URL (it may embed a password).
     s = _prod_settings()
     assert s.redis is not None
     assert "cache.example.redis.cache.windows.net" not in repr(s.redis)
 
 
-# --- Redis TLS production gate (KD-4) ----------------------------------------
+# --- Redis TLS production gate ----------------------------------------
 
 
 def test_plaintext_redis_is_fine_outside_production() -> None:
@@ -328,7 +306,6 @@ def test_production_accepts_tls_redis_url() -> None:
 
 
 def test_object_store_optional_in_development() -> None:
-    # The same missing block is fine in development — it boots without storage.
     assert _settings().object_store is None
 
 
@@ -345,7 +322,6 @@ def test_database_url_is_required() -> None:
 
 
 def test_invalid_environment_literal_rejected() -> None:
-    # The closed Literal rejects anything outside the three known environments.
     with pytest.raises(ValidationError):
         _settings(ENVIRONMENT="prod")
 
@@ -357,7 +333,7 @@ def test_unknown_key_forbidden() -> None:
         _settings(TOTALLY_BOGUS="x")
 
 
-# --- Daily token limit (R13/R30) ---------------------------------------------
+# --- Daily token limit -------------------------------------------------------
 
 
 def test_daily_token_limit_default() -> None:
@@ -371,12 +347,10 @@ def test_daily_token_limit_rejects_nonpositive() -> None:
         _settings(DAILY_TOKEN_LIMIT=0)
 
 
-# --- Entra ID auth config (R21) ----------------------------------------------
+# --- Entra ID auth config -----------------------------------------------------
 
 
 def test_auth_is_required() -> None:
-    # `auth` is an always-on required sub-model — no default. A missing AUTH__*
-    # block fails at Settings() construction in every environment.
     assert Settings.model_fields["auth"].is_required()
 
 
@@ -416,7 +390,6 @@ def test_auth_optional_ttls_default() -> None:
 
 
 def test_auth_unknown_key_forbidden() -> None:
-    # extra="forbid" on the nested model too: a mistyped AUTH__* key fails fast.
     with pytest.raises(ValidationError):
         _settings(auth={**_AUTH, "totally_bogus": "x"})
 
@@ -450,16 +423,14 @@ def test_auth_server_metadata_url_derived_from_tenant() -> None:
     )
 
 
-# --- Super-admin allowlist (R7) ----------------------------------------------
+# --- Super-admin allowlist ----------------------------------------------------
 
 
 def test_superadmin_emails_required() -> None:
-    # No default (fail-first): a missing SUPERADMIN_EMAILS fails at construction.
     assert Settings.model_fields["superadmin_emails"].is_required()
 
 
 def test_superadmin_emails_normalized_from_list() -> None:
-    # Surrounding whitespace + mixed case normalize to a lowercased frozenset.
     s = _settings(superadmin_emails=[" Admin@BIAL.com ", "SUPER@bial.com"])
     assert s.superadmin_emails == frozenset({"admin@bial.com", "super@bial.com"})
 
@@ -485,7 +456,7 @@ def test_superadmin_emails_reject_empty_allowlist(blank: object) -> None:
         _settings(superadmin_emails=blank)
 
 
-# --- FRONTEND_URL production gate (feeds the sandbox frame-ancestors CSP, C8) --
+# --- FRONTEND_URL production gate (feeds the sandbox frame-ancestors CSP) ----
 
 
 def test_frontend_url_localhost_default_rejected_in_production() -> None:
@@ -515,8 +486,6 @@ def test_frontend_url_default_fine_outside_production() -> None:
 def test_cookie_secure_false_in_production_raises() -> None:
     # An explicit override would drop `Secure` AND the `__Host-`/`__Secure-` prefixes, so the
     # session cookie would ride plain http. Refuse to boot rather than run degraded.
-    # redis/sandbox supplied so the COOKIE gate is the one that fires, not an
-    # incidental storage/redis/sandbox gate.
     with pytest.raises(ValidationError):
         _prod_settings(auth={**_AUTH, "cookie_secure": False})
 
@@ -540,7 +509,6 @@ def test_cookie_secure_false_outside_production_boots(environment: str) -> None:
 
 
 def test_foundry_optional_defaults_none() -> None:
-    # Genuinely-optional: dev/test boot without a Foundry block.
     assert _settings().foundry is None
 
 
@@ -561,7 +529,6 @@ def test_foundry_block_validates_when_present() -> None:
 
 
 def test_foundry_api_key_required_in_key_mode() -> None:
-    # api_key mode without a key fails the cross-field validator (fail-first).
     with pytest.raises(ValidationError):
         _settings(foundry={"resource": "r", "deployment": "d", "auth_mode": "api_key"})
 
@@ -579,7 +546,6 @@ def test_foundry_inner_fields_required() -> None:
 
 
 def test_foundry_unknown_key_forbidden() -> None:
-    # extra="forbid" on the nested model: a mistyped FOUNDRY__* key fails fast.
     with pytest.raises(ValidationError):
         _settings(foundry={"resource": "r", "deployment": "d", "totally_bogus": "x"})
 
@@ -587,11 +553,10 @@ def test_foundry_unknown_key_forbidden() -> None:
 def test_foundry_secret_masked() -> None:
     s = _settings(foundry={"resource": "r", "deployment": "d", "api_key": "super-secret-key"})
     assert s.foundry is not None
-    # SecretStr masks in repr (never leaks into logs / ValidationError).
     assert "super-secret-key" not in repr(s.foundry)
 
 
-# --- Postgres auth mode (Azure Entra vs password; ADR-0027) ------------------
+# --- Postgres auth mode (Azure Entra vs password) ----------------------------
 
 
 def test_db_auth_mode_defaults_to_password() -> None:
@@ -604,7 +569,6 @@ def test_db_auth_mode_accepts_entra() -> None:
 
 
 def test_db_auth_mode_rejects_unknown_literal() -> None:
-    # Closed Literal: a typo can't silently degrade DB auth to some undefined mode.
     with pytest.raises(ValidationError):
         _settings(DB_AUTH_MODE="managed_identity")
 
@@ -619,7 +583,7 @@ def test_db_entra_client_id_accepts_value() -> None:
     assert _settings(DB_ENTRA_CLIENT_ID=mi).DB_ENTRA_CLIENT_ID == mi
 
 
-# --- Sample env files (R4: an operator with only the samples can boot) --------
+# --- Sample env files (an operator with only the samples can boot) -----------
 
 # `backend/` — tests/ lives directly under it.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -648,7 +612,7 @@ def _boot_from(sample: str, probe: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.parametrize("sample", _SAMPLE_ENV_FILES)
 def test_sample_env_file_boots_a_valid_settings(sample: str) -> None:
-    # R4: a fresh checkout with ONLY the checked-in templates must boot. A missing
+    # A fresh checkout with ONLY the checked-in templates must boot. A missing
     # required key, a REDIS__* line naming a knob RedisConfig does not declare
     # (extra="forbid"), or any other drift fails this at import time.
     done = _boot_from(sample, "settings.ENVIRONMENT")
@@ -659,7 +623,7 @@ def test_sample_env_file_boots_a_valid_settings(sample: str) -> None:
 def test_dev_sample_env_file_configures_redis() -> None:
     # .env.example must ship a LIVE REDIS__URL: unset boots the API but leaves every
     # build-session call raising RedisNotConfiguredError — the "operator followed the
-    # sample and the build path is silently dead" outcome R4 kills.
+    # sample and the build path is silently dead" outcome this test guards against.
     # (.env.test.example deliberately keeps it commented: the unset path is the
     # baseline tests/test_lifespan.py asserts, so the two samples differ on purpose.)
     done = _boot_from(".env.example", "settings.redis and settings.redis.url.get_secret_value()")

@@ -1,4 +1,4 @@
-"""`attach_entra_token` wires managed-identity auth onto an async engine (ADR-0027).
+"""`attach_entra_token` wires managed-identity auth onto an async engine.
 
 No live Azure or Postgres: azure-identity's credential is faked and the registered
 `do_connect` listener is invoked directly, asserting it injects a fresh Entra token
@@ -59,8 +59,6 @@ def test_attach_entra_token_injects_token_and_verify_full_tls(
     for fn in listeners:
         fn(engine.sync_engine.dialect, None, [], cparams)
 
-    # The fresh Entra token becomes asyncpg's password, fetched with the verified
-    # ossrdbms scope; TLS is verify-full (server cert + hostname checked).
     assert cparams["password"] == "fake-entra-token-xyz"
     assert _FakeCredential.last_scopes == (_OSSRDBMS_SCOPE,)
     ssl_ctx = cparams["ssl"]

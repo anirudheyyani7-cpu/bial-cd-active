@@ -1,5 +1,5 @@
-"""The #46 generation-time detector (plan U1): the pure heuristic over a fake workspace tree,
-and the sandbox-walking wrapper (tar-over-exec transport, best-effort failure modes)."""
+"""The generation-time detector: the pure heuristic over a fake workspace tree, and the
+sandbox-walking wrapper (tar-over-exec transport, best-effort failure modes)."""
 
 from __future__ import annotations
 
@@ -70,14 +70,15 @@ export default function Page() {
 """
 
 
-def test_after_write_without_a_claim_is_the_documented_u11_gap() -> None:
-    """U11 ACCEPTED BOUNDARY (not a bug): the hoisted AFTER A WRITE prompt rule requires EVERY app
+def test_a_write_with_no_refetch_and_no_liveness_claim_is_not_flagged() -> None:
+    """ACCEPTED BOUNDARY (not a bug): the hoisted AFTER A WRITE prompt rule requires EVERY app
     to refetch after a mutation so the user sees their own change. This detector cannot enforce
     that — it is claim-gated by `_CLAIM_RE` and returns early when no UI file makes a
     live/shared/real-time claim. So an app that performs a write, wires NO refetch, and makes NO
     such claim VIOLATES the prompt rule yet is deliberately silent here. Measuring "the user saw
-    their own write" needs a JS-executing probe the C2 SandboxClient can't run — deferred to issue
-    #49. This test pins the silence so the gap stays documented, not forgotten."""
+    their own write" needs a probe that EXECUTES the page's JS, which nothing behind the
+    `SandboxClient` does. This test pins the silence so the gap stays documented, not
+    forgotten."""
     files = {"app/page.tsx": _PAGE_WRITE_NO_CLAIM, "lib/data.ts": "export const x = 1"}
     assert liveness_overpromises(files) == []
 

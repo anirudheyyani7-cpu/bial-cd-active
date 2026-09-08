@@ -1,4 +1,4 @@
-"""Git-bundle header validation + commit-SHA parse (APPROVAL D4, R3/R4/R5).
+"""Git-bundle header validation + commit-SHA parse.
 
 A v2 git bundle opens with a plaintext header before the binary packfile:
 
@@ -8,23 +8,18 @@ A v2 git bundle opens with a plaintext header before the binary packfile:
     <blank line>
     <binary packfile>
 
-`parse_bundle_head_sha` is submit's R3 validity gate AND its R4 SHA source: the
-sandbox is long gone by submit time and `write_snapshot` records no SHA, so the
-header is the only provenance the control plane has. The header is
-ATTACKER-WRITABLE (it came from a sandbox the citizen's AI drove), so the token
-is validated to exactly 40 lowercase hex chars before it is returned — never
-truncated to fit a `String(40)` column, never logged unsanitized — and only a
-bounded prefix of the blob is examined, so a pathological multi-GB "header" can
-never make the parser scan the whole object. The stored object is the RAW bundle
-(R5); base64 is a supervisor-transport artifact, and a base64-encoded bundle
-fails the magic check here rather than being silently accepted.
+WHY THIS EXISTS — `parse_bundle_head_sha` is submit's only SHA provenance (the sandbox is gone by
+submit time; `write_snapshot` records no SHA), and the header is ATTACKER-WRITABLE. The token is
+validated to exactly 40 lowercase hex chars, never logged unsanitized, and only a bounded prefix
+is scanned so a pathological "header" can't force a full-object scan. Stored bytes are the RAW
+bundle; a base64-encoded one fails the magic check here.
 """
 
 from __future__ import annotations
 
 import re
 
-# The content type submit writes submission bundles with (raw bundle bytes, R5).
+# The content type submit writes submission bundles with (raw bundle bytes).
 BUNDLE_CONTENT_TYPE = "application/x-git-bundle"
 
 _MAGIC = b"# v2 git bundle\n"
@@ -44,7 +39,7 @@ class BundleValidationError(Exception):
 def parse_bundle_head_sha(data: bytes) -> str:
     """Validate the v2 bundle header and return its HEAD commit SHA (40 lowercase
     hex chars). Raises `BundleValidationError` on anything malformed — never
-    returns None (fail-first.md): a truncated magic, a v3/SHA-256 bundle, a
+    returns None: a truncated magic, a v3/SHA-256 bundle, a
     base64-transport shape, a header with no `HEAD` ref (refs may appear in any
     order; prerequisites are skipped), or a ref token that is not exactly 40
     lowercase hex chars. Only the first `_MAX_HEADER_BYTES` are examined."""

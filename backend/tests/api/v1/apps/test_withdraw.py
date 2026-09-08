@@ -1,11 +1,9 @@
-"""Withdrawal — the owner's way OUT of the queue (U8: P6, R15b's counterpart).
+"""Withdrawal — the owner's way OUT of the queue.
 
-A pending submission can be withdrawn but not overwritten: re-submitting over an
-item an administrator may be reading is forbidden (the submit service refuses it),
-and withdrawal is what replaced that escape hatch — pending→draft, the pin, the
-declaration and the lineage cleared, the queue item REMOVED rather than replaced.
-Owner-scoped like every `/apps/*` route: a cross-user withdraw is the non-leaking
-404, never a 403.
+Pending→draft with the pin, the declaration and the lineage cleared: the queue item is
+REMOVED, never replaced. Overwriting a pending item instead is refused by
+`services/approvals/submit`. Owner-scoped like every `/apps/*` route: a cross-user
+withdraw is the non-leaking 404, never a 403.
 
 Pending state is seeded through the REAL writer (`services/approvals/submit`)
 wherever the flow matters, so these tests walk the exact submit→withdraw cycle a
@@ -62,7 +60,7 @@ async def _auth_user(db: AsyncSession, *, with_csrf: bool = True, **overrides: o
 
 async def _submitted_app(db, user, store: FakeStorage):
     """An app taken to PENDING through the real submit service — the publish gate's
-    call, minus the gate (U9)."""
+    call, minus the gate."""
     app_row = await AppRegistryFactory.create(db, user_id=user.id)
     store.objects[snapshot_key(app_row.id)] = _BUNDLE
     receipt = await submit_app_for_review(
@@ -99,7 +97,7 @@ async def test_withdraw_returns_a_pending_submission_to_draft_and_clears_the_pin
     assert row.declaration is None
     assert row.approval_route is None
     # The immutable submission BLOB survives — submissions are retained and ids
-    # never reused (R2); withdrawal removes the queue item, not the artifact.
+    # never reused; withdrawal removes the queue item, not the artifact.
     assert submission_key(app_row.id, receipt.submission_id) in fake_storage.objects
 
 
@@ -126,7 +124,6 @@ async def test_withdraw_is_audited_app_scoped_with_the_departing_submission(
     )
     assert len(rows) == 1
     assert rows[0].actor_id == user.id
-    # The trail names the exact submission that left the queue.
     assert rows[0].detail == {
         "submissionId": str(receipt.submission_id),
         "commitSha": receipt.commit_sha,
@@ -136,8 +133,6 @@ async def test_withdraw_is_audited_app_scoped_with_the_departing_submission(
 async def test_withdraw_removes_the_item_from_the_admin_queue(
     client, db_session, fake_storage
 ) -> None:
-    # "Removes rather than replaces": the admin pending queue simply no longer
-    # lists it — an administrator mid-review sees it disappear, never mutate.
     user, headers = await _auth_user(db_session)
     app_row, _receipt = await _submitted_app(db_session, user, fake_storage)
     _, admin_headers = await _auth_user(db_session, email="admin@bial.com")
@@ -158,8 +153,9 @@ async def test_withdraw_then_approve_conflicts_the_existing_guard_holds(
 ) -> None:
     # The approve-versus-withdrawal race needs NO new machinery: an approval naming
     # a submission id the row no longer carries updates zero rows and conflicts —
-    # the same D5 guard that answers the approve-versus-resubmit race. (What the
-    # administrator READS in that moment is U13's; this pins that nothing lands.)
+    # the same guard that answers the approve-versus-resubmit race. (What the
+    # administrator reads in that moment is out of scope here; this pins only that
+    # nothing lands.)
     user, headers = await _auth_user(db_session)
     app_row, receipt = await _submitted_app(db_session, user, fake_storage)
     _, admin_headers = await _auth_user(db_session, email="admin@bial.com")
@@ -222,8 +218,6 @@ async def test_withdraw_keeps_the_approved_pin_of_an_earlier_approval(client, db
 
 
 async def test_withdraw_of_another_users_app_is_a_non_leaking_404(client, db_session) -> None:
-    # 404, NOT 403 (ADR-0004): a cross-user id is indistinguishable from a missing
-    # one, and nothing about the app — including that it exists — leaks.
     owner, _ = await _auth_user(db_session, email="wdowner@rvaiglobal.com")
     app_row = await AppRegistryFactory.create(
         db_session,

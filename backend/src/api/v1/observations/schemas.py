@@ -1,15 +1,13 @@
 """The `POST /observations` body.
 
-DOCUMENTATION-ONLY, exactly like `FeedbackRequest`: the route parses the raw JSON itself so that
-every refusal it RAISES renders the SAME data-plane envelope (`{"error": {"message", "code"}}`) —
-its own 400s, the CSRF 403, and the limiter 429. A route whose body errors arrive as FastAPI's
-`422 {"detail": [...]}` while its gate errors arrive as the envelope makes a caller parse two
-shapes to learn one thing.
+DOCUMENTATION-ONLY, exactly like `FeedbackRequest`: the route parses the raw JSON itself so every
+refusal it RAISES renders the SAME data-plane envelope (`{"error": {"message", "code"}}`) — its
+400s, the CSRF 403, and the limiter 429 — rather than mixing in FastAPI's `422 {"detail": [...]}`
+shape for body errors.
 
-The 401 is the exception and is deliberately NOT reshaped: `current_user` raises a bare
-`HTTPException`, so an unauthenticated call gets `{"detail": ...}` here exactly as it does on
-every other authenticated route in this API. Consistency across the API beats consistency within
-one route for the one refusal that means "you are not signed in".
+The 401 is the deliberate exception: `current_user` raises a bare `HTTPException`, so an
+unauthenticated call gets `{"detail": ...}` exactly as every other authenticated route does.
+Consistency across the API beats consistency within one route for "you are not signed in".
 """
 
 from __future__ import annotations

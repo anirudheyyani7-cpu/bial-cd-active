@@ -1,13 +1,12 @@
-"""Project description generation from the app's code (U7, KD-5).
+"""Project description generation from the app's code.
 
-Reuses the existing Claude/agent path (Foundry-only, R11 of the migration doc) as a normal
-one-shot model call. Its spend is METERED against the citizen but does not come out of their
-daily allowance — see `generate_project_description` for why, and for the precedent it
-follows. A fresh project (no code) has nothing to generate from — the caller rejects that
-BEFORE calling here. When a description already exists, it is fed in alongside the code so
-generation *revises* rather than discards it (R19). The code fed to the model is bounded to a
-fixed character budget (a single app's snapshot can exceed it), and the result is length-capped
-(KD-8).
+Reuses the existing Claude/agent path (Foundry-only) as a normal one-shot model call. Its spend
+is METERED against the citizen but does not come out of their daily allowance — see
+`generate_project_description` for why, and for the precedent it follows. A fresh project (no
+code) has nothing to generate from — the caller rejects that BEFORE calling here. When a
+description already exists, it is fed in alongside the code so generation *revises* rather than
+discards it. The code fed to the model is bounded to a fixed character budget (a single app's
+snapshot can exceed it), and the result is length-capped.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from src.db.models.token_usage import TokenUsageKind
 from src.services.agent.agent import ChatDeps, chat_agent
 from src.services.usage.gate import record_usage
 
-# Bound the code fed to the model so a large snapshot can't blow the window (KD-5).
+# Bound the code fed to the model so a large snapshot can't blow the window.
 #
 # AN ABSOLUTE NUMBER, NOT A DERIVATION, AND THAT IS THE FIX. This used to be
 # `MODEL_CONTEXT_WINDOW * 3` — 200,000 tokens times a ~3-chars-per-token heuristic. The window
@@ -46,7 +45,7 @@ _DESCRIBE_SYSTEM = (
 
 
 def extract_source(current_code: dict[str, Any] | None) -> str:
-    """Pull the working source out of a `{current: {source, ...}}` code snapshot (KD-9);
+    """Pull the working source out of a `{current: {source, ...}}` code snapshot;
     empty string when absent or malformed (the caller treats empty as 'nothing to generate')."""
     if not isinstance(current_code, dict):
         return ""
@@ -61,7 +60,7 @@ def bound_source(source: str, budget: int) -> str:
     """Bound code fed to the model to `budget` chars, appending a truncation marker when cut.
 
     IT HAS ONE CALLER NOW. The second was the retired relay's builder code seed, which is what
-    made this a shared truncate-with-marker rather than four lines inline — so by ADR-0010 the
+    made this a shared truncate-with-marker rather than four lines inline — so the
     seam no longer earns its keep, and inlining it is a live option rather than a regression.
     Left standing here because collapsing it is a code change and this pass is a comment sweep;
     what is not acceptable is the docstring going on naming a caller that does not exist."""
@@ -96,13 +95,12 @@ async def generate_project_description(
     source: str,
     current_description: str | None,
 ) -> str | None:
-    """Generate (or revise) a project description from its app code (KD-5). Meters the turn
+    """Generate (or revise) a project description from its app code. Meters the turn
     via `record_usage`; the CALLER owns the daily-limit check + the commit. Returns the
     length-capped description, or None for a blank generation — the empty string is never
-    persisted, the same empty→NULL normalization every other description write path applies
-    (KD-8).
+    persisted, the same empty→NULL normalization every other description write path applies.
 
-    ★ METERED AGAINST THE CITIZEN, NOT BILLED TO THEM (R14). The spend is recorded under
+    ★ METERED AGAINST THE CITIZEN, NOT BILLED TO THEM. The spend is recorded under
     `review` — the kind the daily gate's `_used_today` does not read — for the same reason the
     pre-publish classification review is (`services/classification/service.py`, the precedent
     this mirrors): the person did not ask for these tokens. They pressed a button that says

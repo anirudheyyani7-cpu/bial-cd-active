@@ -1,20 +1,15 @@
 /**
  * Structural invariants over the portal edge config (`portal/nginx.conf`).
  *
- * WHY A JS TEST OVER A CONFIG FILE. nginx.conf has no runtime surface this suite can import, and
- * the CI job that gates every PR has Node and no nginx binary. The BEHAVIOURAL half — that the
- * generated config parses, that a WebSocket upgrade is answered 101, that an unknown key is a 404
- * naming no upstream — lives in `portal/tests/test_nginx_apps_routing.py`, which stands a real
- * nginx up in Docker. Nothing here duplicates that. What is left over is a set of facts about the
- * config's SHAPE whose violations are silent: nginx serves happily, `nginx -t` stays green, and
- * the damage shows up as "the app renders the portal" or "the preview is blank" weeks later.
+ * A JS test over a config file because nginx.conf has no runtime surface to import and CI has no
+ * nginx binary — the BEHAVIOURAL half (parses, WebSocket upgrades answer 101, an unknown key
+ * 404s) lives in `portal/tests/test_nginx_apps_routing.py` against a real nginx. What's left is
+ * the config's SHAPE, whose violations are silent: `nginx -t` stays green and the damage shows up
+ * weeks later as "the preview is blank".
  *
- * Same pattern as `jsx-deploy-retirement.test.ts`: read the real file, assert the invariant,
- * anchor on `process.cwd()` because `import.meta.url` is a jsdom http URL under this config.
- *
- * The assertions parse the file into blocks rather than grepping it, so reformatting, rewrapping a
- * comment or moving a directive within its block does NOT fail the suite — only a change to what
- * the config MEANS does.
+ * Reads the real file, anchored on `process.cwd()` (matches `jsx-deploy-retirement.test.ts`).
+ * Assertions parse into blocks rather than grep, so reformatting or moving a directive does NOT
+ * fail the suite — only a change to what it MEANS does.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -23,11 +18,9 @@ import path from 'node:path'
 const RAW_CONF = readFileSync(path.resolve(process.cwd(), 'nginx.conf'), 'utf8')
 const VITE_CONFIG = readFileSync(path.resolve(process.cwd(), 'vite.config.js'), 'utf8')
 
-// ------------------------------------------------------------------------------------------
 // A very small nginx reader. Quote-aware on purpose: the apps site's 404 page is an inline HTML
 // string full of CSS braces (`body{margin:0}`), so naive brace counting walks straight off the
 // end of the apps block and reports one server where there are two.
-// ------------------------------------------------------------------------------------------
 
 /** Comment text replaced by nothing, newlines kept. Prose is not configuration: the header
  *  comment alone mentions `Content-Security-Policy` and `location /`, and counting those as
@@ -129,10 +122,9 @@ const HEX28 = '0123456789abcdef0123456789ab'
 
 describe('nginx.conf — the two sites are told apart, and the portal is still the default', () => {
   it('declares exactly two server blocks, portal first, apps second, on the same listen address', () => {
-    // ORDERING IS THE INVARIANT, and it is invisible in the file. `server_name _` matches no real
-    // Host; the portal works only because nginx serves an unmatched Host from the FIRST block on
-    // the listen address. Put the apps block above and every portal request with an unexpected
-    // Host is served the apps site — the portal goes dark with `nginx -t` green.
+    // ORDERING IS THE INVARIANT, and it is invisible in the file: `server_name _` matches no real
+    // Host, so nginx serves an unmatched Host from the FIRST block on the listen address. Apps
+    // above portal means every unexpected-Host request goes to apps — with `nginx -t` green.
     expect(SERVERS).toHaveLength(2)
     expect(directiveValue(serverLevel(PORTAL), 'server_name')).toBe('_')
     expect(directiveValue(serverLevel(APPS), 'server_name')).toBe('${APPS_HOSTNAME}')
@@ -193,9 +185,8 @@ describe('nginx.conf — the apps site routes /a/<key>/ by composing the upstrea
 
   it('carries NO URI part on any proxy_pass — a stray slash collapses every request to /', () => {
     // Inside a regex location nginx cannot know which part of the URI the location matched, so a
-    // URI on a variable `proxy_pass` REPLACES the request path outright. The keyed arm and the
-    // keyless arm sit one character apart on this, with a total routing collapse on the wrong
-    // side — which is the same failure the BACKEND_URL boot guard exists to prevent.
+    // URI on a variable `proxy_pass` REPLACES the request path outright — a total routing collapse,
+    // the same failure the BACKEND_URL boot guard exists to prevent.
     const passes = [...APPS.body.matchAll(/proxy_pass[ \t]+([^;]+);/g)].map((m) => m[1]!.trim())
     expect(passes.length).toBeGreaterThan(0)
     for (const pass of passes) expect(pass).toBe('https://$app_host')
@@ -203,9 +194,8 @@ describe('nginx.conf — the apps site routes /a/<key>/ by composing the upstrea
 
   it('re-declares proxy_http_version 1.1 and its OWN resolver — neither is inherited', () => {
     // nginx inherits http -> server -> location and NEVER between sibling server blocks, and both
-    // omissions pass `nginx -t`: without the version the block answers a WebSocket upgrade as an
-    // ordinary request (live reload dies quietly), without its own resolver every variable
-    // proxy_pass 502s at request time. Asserted at SERVER level, not merely "somewhere in here".
+    // omissions pass `nginx -t`: without the version, WebSocket upgrades answer as ordinary
+    // requests (live reload dies quietly); without its own resolver, proxy_pass 502s at request time.
     const level = serverLevel(APPS)
     expect(directiveValue(level, 'proxy_http_version')).toBe('1.1')
     expect(directiveValue(level, 'resolver')).toBe('${DNS_RESOLVER} valid=30s ipv6=off')
@@ -244,19 +234,15 @@ describe('nginx.conf — the framing policy names the apps host without revoking
 
   it('declares the SAME policy everywhere it declares one', () => {
     // A location-level add_header REPLACES every inherited one, so a declaration that drifts does
-    // not warn — that one route just serves a weaker policy. Counted dynamically and compared as
-    // a set, so this keeps holding at four declarations, or at six.
+    // not warn — that route just serves a weaker policy. Compared as a set, holding at any count.
     expect(declared.length).toBeGreaterThanOrEqual(3)
     expect(new Set(declared).size).toBe(1)
   })
 
   it('permits the apps hostname and NOT the retired Container Apps wildcard', () => {
-    // The wildcard was kept only while the portal was still handing the browser a
-    // `*.${APPS_DOMAIN}` preview URL. That address has moved, so the wildcard now permits an
-    // origin nothing produces — and re-adding it to "support direct ACA previews" would be
-    // permitting an origin that does not resolve from a BIAL desk at all, which is the entire
-    // reason this design exists. ${APPS_DOMAIN} is still a required input; its job is composing
-    // the router's upstream, not this header.
+    // The wildcard was kept only while the portal handed the browser a `*.${APPS_DOMAIN}` preview
+    // URL; that address has moved, so re-adding it would permit an origin that never resolves from
+    // a BIAL desk. `${APPS_DOMAIN}` still composes the router's upstream, just not this header.
     const policy = declared[0]!
     expect(policy).toContain('https://${APPS_HOSTNAME}')
     expect(policy).not.toContain('${APPS_DOMAIN}')
@@ -268,12 +254,9 @@ describe('nginx.conf — the framing policy names the apps host without revoking
   })
 
   it('declares it once per header-overriding portal location, plus once at server level', () => {
-    // THE FUTURE-PROOF FORM, and the reason this is not `toBe(3)`. Both halves have to fail on a
-    // fourth declaration that was not kept in step: a new value fails the byte-identity test
-    // above, and a new header-overriding location that FORGOT its policy fails this count — which
-    // is the actually-dangerous version, because the route it weakens is the one nobody looks at.
-    // It also fails if the apps site starts adding security headers, which it must not: the app's
-    // own frame-ancestors is the single authority on who may frame an app.
+    // NOT `toBe(3)`, deliberately: a new declaration that drifts in value fails the byte-identity
+    // test above, while a new header-overriding location that FORGOT its policy fails only this
+    // count. Also fails if the apps site starts adding security headers, which it must not.
     const overriding = blocksOf(PORTAL.body, LOCATION).filter((l) => /add_header/.test(l.body))
     expect(overriding.length).toBeGreaterThan(0)
     for (const loc of overriding) expect(loc.body).toMatch(/Content-Security-Policy/)
@@ -283,11 +266,9 @@ describe('nginx.conf — the framing policy names the apps host without revoking
 })
 
 describe('vite.config.js — the dev server states the same framing policy as the edge', () => {
-  // THE FOURTH COPY, in a different file and with no envsubst variable to follow, which is why it
-  // gets left behind: when the edge learns a new framed origin and this does not, `npm run dev`
-  // refuses to frame the preview with no nginx involved and no server-side trace — just a console
-  // message. Pinned to the edge's SHAPE rather than its text, because the two legitimately spell
-  // the same origins differently (`${APPS_HOSTNAME}` is a literal BIAL name on this side).
+  // THE FOURTH COPY, in a different file with no envsubst variable to follow — when the edge
+  // learns a new framed origin and this file doesn't, `npm run dev` silently refuses to frame the
+  // preview with no server-side trace. Pinned to the edge's SHAPE, since the two spell origins differently.
   const devPolicy = VITE_CONFIG.match(/'Content-Security-Policy':\s*\n?\s*"([^"]*)"/)?.[1]
   const edgePolicy = CODE.match(/add_header[ \t]+Content-Security-Policy[ \t]+"([^"]*)"/)?.[1]
 

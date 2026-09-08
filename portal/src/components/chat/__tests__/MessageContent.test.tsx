@@ -1,16 +1,11 @@
 /**
- * MessageContent renders assistant text via Streamdown (react-markdown's replacement, A2) —
+ * MessageContent renders assistant text via Streamdown (react-markdown's replacement) —
  * now hosted by the one conversation surface. Covers markdown rendering, the link-safety /
  * img-blocking XSS defenses, isStreaming, and (below) Streamdown-specific coverage upstream
  * didn't need: code-block/Shiki chrome, and react-markdown's removal from package.json.
  *
- * AMENDMENT TO THE PARITY CHECKLIST, STATED RATHER THAN MADE QUIETLY. Plan 004 names two of the
- * 21 cases as exposed to open decisions and forbids editing either without saying so: `:98`
- * (`isStreaming`) and the `compact` case that used to sit below it. `compact` sized the two-page
- * era's narrow rail and had no caller once one surface absorbed both pages, so the prop and its
- * case went together — 21 cases became 20, 44 assertions became 43. `isStreaming` did NOT go: its
- * decision is still parked under plan 004's *Deferred to Implementation*, to be settled with a
- * measurement on a long reply rather than from principle.
+ * `isStreaming`'s exact rendering behaviour is a deliberately open decision — to be settled
+ * with a measurement on a long reply rather than from principle. Do not firm it up without one.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -115,12 +110,9 @@ describe('MessageContent — markdown rendering', () => {
     expect(container.querySelector('script')).toBeNull()
   })
 
-  // The "raw HTML is escaped" framing above is react-markdown's old model. Streamdown's
-  // actual default pipeline (rehype-raw → rehype-sanitize → rehype-harden, no custom
-  // rehypePlugins passed here) parses raw HTML into real elements and then allowlist-filters
-  // them — a materially different guarantee. A test asserting only `querySelector('script')
-  // === null` cannot tell the two models apart (script is stripped by both); this pins the
-  // one behaviour that DOES discriminate: an allowlisted tag survives as a real element.
+  // Streamdown's pipeline parses raw HTML into real elements and allowlist-filters them, unlike
+  // the "raw HTML is escaped" framing above — `querySelector('script') === null` can't tell the
+  // two models apart, since script is stripped by both. This pins the behaviour that does.
   it('an allowlisted raw HTML tag renders as a real element, a disallowed one does not', () => {
     const { container } = render(
       <MessageContent parts={textPart('<details><summary>s</summary>body</details><iframe src="https://evil.example"></iframe>')} />,
@@ -139,10 +131,9 @@ describe('MessageContent — markdown rendering', () => {
     expect(container.querySelector('source')).toBeNull()
   })
 
-  // mode="static" is the actual fix for the settled-text corruption bug: Streamdown's default
-  // mode="streaming" + parseIncompleteMarkdown=true keeps "repairing" text forever, not just
-  // while a message is arriving — corrupting ordinary settled content this platform renders
-  // routinely. These pin the exact cases that were silently altered before the fix, verbatim.
+  // mode="static" fixes settled-text corruption: Streamdown's default mode="streaming" +
+  // parseIncompleteMarkdown=true keeps "repairing" text forever, not just while it arrives.
+  // These pin the exact cases that were silently altered before the fix, verbatim.
   describe('settled (non-streaming) text renders verbatim — mode="static" stops the repair', () => {
     it('does not touch "**" inside ordinary prose (2**8, not 28)', () => {
       const { container } = render(<MessageContent parts={textPart('Use 2**8 to get 256')} />)
@@ -171,11 +162,8 @@ describe('MessageContent — markdown rendering', () => {
     const text = ['```js', 'const x = 1', '```'].join('\n')
     const { container } = render(<MessageContent parts={textPart(text)} />)
     expect(screen.getByText(/const x = 1/)).toBeTruthy()
-    // A bare react-markdown passthrough would just be <pre><code> — no Streamdown chrome
-    // (language header, copy/download buttons) at all. This is chrome only: no syntax
-    // highlighter is installed (`@streamdown/code`/Shiki are opt-in plugin packages, not
-    // pulled in by the raw `streamdown` package this component imports), so there is no
-    // token-level highlighting here — just the language label and the control buttons.
+    // Chrome only, no highlighting: `@streamdown/code`/Shiki are opt-in plugin packages the raw
+    // `streamdown` import here doesn't pull in — just the language label and control buttons.
     const block = container.querySelector('[data-streamdown="code-block"]')
     expect(block).toBeTruthy()
     expect(block?.getAttribute('data-language')).toBe('js')

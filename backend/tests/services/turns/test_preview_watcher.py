@@ -1,11 +1,11 @@
-"""U1 consumer pin — the turns engine's `_watch_preview` believes `ready` before `running`.
+"""Consumer pin — the turns engine's `_watch_preview` believes `ready` before `running`.
 
 `/dev/status.ready` now means "something is serving the dev port" (observed truth), which
 mints a state that never existed before: `running=False, ready=True` — the supervisor's own
 child is dead, but a server the agent relaunched itself answers the port. The watcher already
 reads that as "serving" because its control flow consults `ready` first; these tests PIN that
 ordering so a future reorder (consulting `running` first) goes red instead of silently
-resurrecting the round-3 never-frames/false-reconnect bug.
+resurrecting the never-frames/false-reconnect bug.
 
 The file also pins the watcher's LIFETIME: every mode that attaches the live container starts
 one, so every mode's terminal must stop it — not just Write's own loop.
@@ -107,8 +107,9 @@ async def test_a_framed_preview_survives_a_dead_child_that_still_serves(
 
 class _SlowRenderSandbox(FakeSandboxClient):
     """The healthy-but-slow shape: `running=False` for the container's whole life (a dev server
-    the agent started itself through the open-sandbox surface, which is the state the U6 probe
-    exists to see) and `ready` False only while the root route is still rendering."""
+    the agent started itself through the open-sandbox surface, which is the state
+    `_dev_is_serving()` exists to see) and `ready` False only while the root route is still
+    rendering."""
 
     def __init__(self, *, negative_polls: int) -> None:
         super().__init__()
@@ -124,15 +125,14 @@ async def test_a_slow_render_does_not_read_as_a_dev_process_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ THE FLAP. `/dev/status` answers from a bounded wait on an in-flight probe (2s) while a
-    real cold root render against a per-project Postgres takes longer, and a negative is never
-    cached — so a healthy app answers not-ready for as long as it is rendering. Paired with
-    `running: false` — the NORMAL state for a dev server the agent started itself — a single
-    such poll used to read as a crash edge, and the citizen's iframe was re-mounted under them
+    real cold root render takes longer, and a negative is never cached — so a healthy app
+    answers not-ready while rendering, and paired with `running: false` (the NORMAL state for
+    a self-started dev server) used to read as a crash edge: the citizen's iframe re-mounted
     every few seconds over an app that was merely slow.
 
-    TWO negatives, written as a literal rather than derived from the constant: a test that says
-    `CRASH_EDGE_CONSECUTIVE_POLLS - 1` moves with whatever the constant becomes and can never go
-    red. Mutation check: set the constant to 1 or 2 and this fails."""
+    TWO negatives, written as a literal rather than derived from the constant — a test that says
+    `CRASH_EDGE_CONSECUTIVE_POLLS - 1` can never go red. Mutation check: set the constant to 1
+    or 2 and this fails."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     client = _SlowRenderSandbox(negative_polls=2)
     state = _framed_state(client)
@@ -240,14 +240,15 @@ async def test_an_ask_turn_stops_the_watcher_it_started(
         _mid_reply.clear()
 
 
-# ─── U3: the first route is compiled BEFORE the iframe is told to mount ───────────────────
+# ─── The first route is compiled BEFORE the iframe is told to mount ───────────────────────
 
 
 class _WarmOrderSandbox(FakeSandboxClient):
     """Records what the frame ring looked like AT THE MOMENT the warm request was made.
 
-    Asserting that both the warm and the frame happened proves nothing about U3 — the whole
-    unit is that one precedes the other. This is the only shape that can go red on a reorder."""
+    Asserting that both the warm and the frame happened proves nothing about the ordering
+    guarantee — the whole unit is that one precedes the other. This is the only shape that can
+    go red on a reorder."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -277,7 +278,7 @@ def _unframed_state(client: FakeSandboxClient) -> _TurnState:
 async def test_the_first_route_is_warmed_before_the_preview_is_framed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ R3. The iframe must never mount onto a route Turbopack has not compiled. Warming at
+    """★ The iframe must never mount onto a route Turbopack has not compiled. Warming at
     the emit chokepoint — rather than where readiness is DISCOVERED — is what makes this hold
     against the watcher's independent 1s poll."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
@@ -295,7 +296,7 @@ async def test_the_first_route_is_warmed_before_the_preview_is_framed(
 async def test_a_failing_warm_request_still_frames_the_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ R6. A 500 at the root is a compile error — a real one, which U4 exists to catch. The
+    """★ A 500 at the root is a compile error — a real one, which this test exists to catch. The
     frame must go out anyway: a broken app has to LOOK broken, not stay pending forever."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     client = _WarmOrderSandbox()
@@ -326,8 +327,8 @@ class _WarmThatHangs(FakeSandboxClient):
 async def test_a_cancel_inside_the_warm_request_still_frames_the_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE ONE-SHOT GUARD IS SPENT BEFORE THE AWAIT. U3 inserted a cancellable, up-to-8s warm
-    request between `claim_preview_frame()` — which fires exactly once per turn — and the emit.
+    """★ THE ONE-SHOT GUARD IS SPENT BEFORE THE AWAIT. A cancellable, up-to-8s warm request sits
+    between `claim_preview_frame()` — which fires exactly once per turn — and the emit.
     Cancel in that window and the frame is marked claimed and never sent: no later poll re-claims
     it, so the citizen loses the preview for the WHOLE turn while the app sits there serving.
 

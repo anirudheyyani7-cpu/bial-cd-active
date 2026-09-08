@@ -1,47 +1,35 @@
 /**
- * Shared, MOCK-FREE harness for the BuilderPage build-session suites (U5→U13). It only exports
- * plain fixtures + a render helper; each test file declares its OWN vi.hoisted mocks + vi.mock
- * (those are hoisted per-file), then feeds the C3 mock client + a FakeEventSource into BuilderPage
- * via the `buildSessionDeps` prop — the "inject the mock via the deps bag" idiom (KTD-6). The REAL
- * useBuildSession hook + LivePreview + ActivityFeed + SessionControls run, so the tests assert the
- * rendered DOM, not a stubbed marker.
+ * Mock-free harness for the BuilderPage build-session suites: exports fixtures and a render
+ * helper only.
  *
- * U13 CHANGED THE TRANSPORT AND THE TRIGGER. A composer send is a TURN (POST /turns + the frame
- * stream); the plan streams as text and `present_plan_options` renders the card; a build starts
- * only through the atomic Build-it transition. So a suite that wants a build must (a) mock
- * `../../utils/turnStreamApi` onto its `h` bag (startTurn / readTurnStream / buildFromPlan /
- * resolvePlanOptions / stopTurn), (b) prime it with `primeTurn(h)`, and (c) drive
- * `sendAndConfirm()`. `turnStreaming` scripts the frame feed; `planReply()` is the standard
- * text-plus-card turn.
+ * WHY THIS EXISTS
  *
- * U5 CHANGED WHAT BUILD-IT STARTS. It is no longer a C3 build SESSION — it is a WRITE TURN on the
- * same conversation, so `buildFromPlan` hands back a `turnId` (never a `sessionId`) and the page
- * subscribes to it with the very same `readTurnStream` an ordinary send uses. A build therefore
- * narrates itself through `workspace` / `step` / `preview` / `diagnostic` / `quota` / `turn_ended`
- * TURN FRAMES, not C7 envelopes: `scriptBuildTurn()` below is how a suite drives one, and the
- * FakeEventSource is now only for the LEGACY session path (the reload-mid-build reattach).
+ * Each test file declares its own vi.mock and injects the mock client plus FakeEventSource via
+ * the `buildSessionDeps` prop; the real useBuildSession/LivePreview/ActivityFeed/SessionControls
+ * hooks run, so tests assert real rendered DOM.
  *
- * Not a `*.test.*` file → the runner never collects it.
+ * A composer send is a TURN (POST /turns + the frame stream); the plan streams as text and
+ * `present_plan_options` renders the card; a build starts only through the atomic Build-it
+ * transition — mock `turnStreamApi`, prime with `primeTurn(h)`, and drive `sendAndConfirm()`.
+ *
+ * Build-it is a WRITE TURN now, not a build SESSION: `buildFromPlan` returns a `turnId`, never
+ * a `sessionId`, and the page subscribes with the same `readTurnStream` an ordinary send uses.
+ * `scriptBuildTurn()` drives one via workspace/step/preview/diagnostic/quota/turn_ended frames.
+ * `FakeEventSource` now serves only the LEGACY session path (the reload-mid-build reattach).
+ *
+ * Not a `*.test.*` file — the runner never collects it.
  */
 import { act, fireEvent, screen, render, waitFor } from '@testing-library/react'
 import { expect } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ConversationSurface from '../../components/chat/ConversationSurface'
-// THE REAL SHELL, not a stub, and both helpers below mount the page THROUGH it as a layout route.
-// After the extraction the surface is an outlet child rather than a root: it renders no page frame
-// and no navbar, and — from U4 — no pane of its own. A harness that kept mounting it bare would
-// leave every preview assertion in fifteen suites asserting against something the product does not
-// render, which is the failure mode a stub cannot show you.
+// THE REAL SHELL, not a stub — both render helpers below mount the page THROUGH it, so preview
+// assertions have a pane to render into.
 import WorkspaceShell from '../../components/workspace/WorkspaceShell'
 
 /**
- * Nest routes under the REAL workspace shell, for the suites that build their own route tables.
- *
- * The surface is an outlet child now: it renders no page frame, no navbar and — from U4 — no pane
- * of its own, publishing what to frame upward instead. A table that mounts it bare therefore has
- * no pane at all, so every assertion about the preview silently asserts against something the
- * product does not render. This is one line at each such table rather than a stub, because a stub
- * is exactly what would hide the mistake.
+ * Nest routes under the REAL workspace shell — mounting the surface bare loses its pane, so
+ * preview assertions would silently assert against nothing.
  *
  * Usage: `<Routes>{inWorkspace(<Route path="/chat/:chatId" element={…} />)}<Route … /></Routes>`
  */
@@ -55,22 +43,19 @@ export { FakeEventSource } from '../../utils/buildSessionMock'
 
 export const PREVIEW_URL = 'https://app-xyz.example.azurecontainerapps.io/'
 
-// C3 response builders (camelCase). `over` lets a test tweak one field.
-// `startResp` is GONE with the `start` it answered: the client wrapper had no caller once the
-// build moved inside the turn's own transaction, so nothing on this harness can post one.
+// Build-session response builders (camelCase). `over` lets a test tweak one field. `startResp`
+// is GONE with the `start` it answered — nothing on this harness can post one any more.
 export const statusResp = (over = {}) => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'provisioning', previewUrl: null, lastSeq: null, createdAt: 'c', updatedAt: 'u', ...over })
 export const ENDED_RESP = { sessionId: 's1', status: 'ended' }
 
 /** Assemble a BuildSessionClient from a per-file `h` bag of vi.fn()s.
  *
- *  THREE MEMBERS NOW. `acquireLock` / `releaseLock` went in U28 with the keep-alive loop that was
- *  their only caller; `start` went the same way, because the build lives inside the turn's own
- *  transaction and nothing provisions a C3 session from the browser; and `forceEnd` went in U33
- *  with the route it spoke to — its one control was the block banner's button, deleted with the
- *  banner, so no surface had been able to reach the kill switch for two units.
- *
- *  `utils/__tests__/buildSessionApi.test.ts` pins this member set against the real client, so a
- *  bag that drifts out of step with it is caught rather than silently mocking nothing. */
+ *  THREE MEMBERS NOW: `acquireLock`/`releaseLock` went with the keep-alive loop that was their
+ *  only caller; `start` went the same way, because the build lives inside the turn's own
+ *  transaction and nothing provisions a session from the browser; and `forceEnd` went with the
+ *  route it spoke to — its one control was the block banner's button, deleted with the banner, so
+ *  no surface can reach the kill switch any more. Pinned against the real client in
+ *  `utils/__tests__/buildSessionApi.test.ts`. */
 export function makeClient(h) {
   return {
     relaunchPreview: h.relaunchPreview,
@@ -85,14 +70,14 @@ export function primeClient(h) {
   h.getStatus.mockResolvedValue(statusResp())
 }
 
-// ─── U13: the turn half (streamed plan + the options card) ───────────────────
+// ─── The turn half (streamed plan + the options card) ───────────────────
 
 /** The plan text the scripted turn streams — the card's Build-it executes it server-side. */
 export const BRIEF = 'Build an application for BIAL that tracks visitor passes.'
 
 export const PLAN_CARD_ID = 'opt-1'
 
-// Turn-stream frame builders (camelCase — the U10 wire).
+// Turn-stream frame builders (camelCase — the wire format).
 export const T_DELTA = (text, seq = 1) => ({ type: 'text_delta', seq, text })
 export const T_CARD = (toolCallId = PLAN_CARD_ID, seq = 2) => ({
   type: 'plan_options',
@@ -118,7 +103,7 @@ export const turnStreaming = (frames, outcome = 'completed') =>
     return outcome
   }
 
-// ─── U5: the BUILD half — a Write turn, narrated by TURN FRAMES ───────────────
+// ─── The BUILD half — a Write turn, narrated by TURN FRAMES ───────────────
 
 /** The turn a Build-it starts. `sessionId` is gone from the transition's answer entirely. */
 export const BUILD_TURN_ID = 'bt-1'
@@ -156,17 +141,11 @@ export const T_BUILD_END = (over = {}) => ({
 
 /**
  * A `readTurnStream` implementation that can hold a socket OPEN, so a test can push frames into a
- * running turn by hand and assert on it mid-flight. Close it with `end()`.
+ * running turn by hand and assert mid-flight. Close it with `end()`.
  *
- * TWO SUBSCRIBE SHAPES, AND WHICH ONE IS "THE BUILD" HAS CHANGED. A send subscribes with NO
- * `turnId` — it is joining the turn its own POST just started, so the id is the server's to know
- * — and a RE-ATTACH subscribes WITH one, because it is joining a turn it did not start. The
- * Build-it press used to be a third shape: it started a build in THIS chat and watched it with an
- * id. It is a handoff now, so that shape is gone, and on a build chat the plain send IS the build.
- *
- * By default the no-`turnId` branch replays `plan` and completes, which is what a suite driving a
- * PLAN chat's reply wants. Pass `hold: true` when the send is the build being asserted on, and the
- * same socket is held open instead — one helper, both shapes, rather than a local copy per suite.
+ * TWO SUBSCRIBE SHAPES: a send subscribes with no `turnId` (joining the turn its own POST just
+ * started) and replays `plan` by default; a re-attach subscribes WITH one. Pass `hold: true` when
+ * the send IS the build being asserted on, to hold that socket open instead.
  */
 export function scriptBuildTurn({ plan = planReply(), opening = [T_WORKSPACE()], hold = false } = {}) {
   const live = { emit: null, close: null }
@@ -196,9 +175,8 @@ export function scriptBuildTurn({ plan = planReply(), opening = [T_WORKSPACE()],
 export function primeTurn(h, frames = planReply()) {
   h.startTurn.mockResolvedValue({ turnId: 't1' })
   h.readTurnStream.mockImplementation(turnStreaming(frames))
-  // THE HANDOFF'S ANSWER: `chatId` is the chat it CREATED and the one the press navigates to, so
-  // it is the field the caller actually acts on. `sessionId`, `appId`, `reason` and the
-  // `build_failed` / `already_built` / `stale_plan` outcomes are all gone from the contract.
+  // THE HANDOFF'S ANSWER: `chatId` is the chat it CREATED and navigates to. `sessionId`/`appId`/
+  // `reason` and the old `build_failed`/`already_built`/`stale_plan` outcomes are gone.
   h.buildFromPlan.mockResolvedValue({
     outcome: 'started',
     chatId: BUILD_CHAT_ID,
@@ -211,12 +189,9 @@ export function primeTurn(h, frames = planReply()) {
 export const composer = () => screen.getByPlaceholderText(/ask for another change/i)
 
 /**
- * Wait out the composer gate's OPENING state (G1).
- *
- * Send stays unavailable until the adopt round-trip has answered "is a build still running in this
- * chat?" — opening it over a possibly-live build is the bug the gate exists to prevent, and a real
- * user cannot outrun that round-trip either. Deliberately waits for the CHECKING copy only, not
- * for the note to vanish: several tests send while a build IS running, to assert the refusal.
+ * Wait out the composer gate's OPENING state (G1): send stays unavailable until the adopt
+ * round-trip answers whether a build is still running in this chat. Waits for the CHECKING copy
+ * only, not for it to vanish — several tests send while a build IS running, to assert the refusal.
  */
 export const waitForGateOpen = () =>
   waitFor(() => expect(screen.queryByText(/checking whether a build/i)).toBeNull())
@@ -228,67 +203,28 @@ export async function send(text = 'a visitor app') {
   fireEvent.keyDown(composer(), { key: 'Enter' })
 }
 
-// ─── Plan F, U3/U4: THE ONE START CONTROL, and the vehicle for pressing it from a fresh chat ──
+// ─── THE ONE START CONTROL, and the vehicle for pressing it from a fresh chat ──
 //
-// `RelaunchAffordance` — four "Relaunch preview" / "Bring it back" buttons scattered through
-// `LivePreview`'s placeholder arms — is gone (Plan F, U4). R3's one control is
-// `StartAppControl.tsx`, rendered by `AppPane`'s `NoFrame` from the one computed workspace state,
-// and it speaks one vocabulary regardless of which arm handed it the action: `action.kind ===
-// 'start'` labels it "Launch Application", `'retry'` labels it "Try again", and BOTH presses call
-// the exact identical `start()` — the label is cosmetic, never behavioural (`StartAppControl.tsx`).
-// A suite that needs to press the one true control, whichever label the map is currently showing,
-// uses this rather than hard-coding one string — hard-coding one is exactly what broke every one
-// of these suites when the map's default answer (`could-not-read`, before any poll has landed)
-// turned out to say "Try again", not "Launch Application".
+// `StartAppControl.tsx` speaks one vocabulary regardless of which arm handed it the action:
+// `action.kind === 'start'` labels it "Launch Application", `'retry'` labels it "Try again", and
+// both presses call the identical `start()` — the label is cosmetic. Use this helper rather than
+// hard-coding one string: hard-coding broke every one of these suites when the map's default
+// answer (`could-not-read`) turned out to say "Try again", not "Launch Application".
 export const findStartAppControl = () =>
   screen.findByRole('button', { name: /^(Launch Application|Try again)$/ })
 
 /**
- * Stamp `sessionProjectRef` — the ONE thing `StartAppControl`'s own click path needs and never
- * itself provides — WITHOUT the reattach handing the resolver an address of its own.
- *
- * ═══ WHY THIS IS THE VEHICLE, NOT A CLICK ═══
- *
- * `StartAppControl`'s successful press hands its URL to `report.onStarted` ->
- * `setStartedPreviewUrl` in `ConversationSurface.tsx`, which feeds `previewAddress.ts`'s
- * `relaunchedUrl` arm — but that arm (like the session arm below it) is gated by
- * `sessionBelongsToOpenProject`, wired to `sessionProjectMatches` = `sessionProjectRef.current ===
- * projectId`. NOTHING in `StartAppControl`'s own click path ever stamps that ref: only a session
- * REATTACH (`attachToLiveSession`, for a `build_in_progress` anchor) does, now that the surface's
- * `handleRelaunch` — which stamped it too, and could never fire — has been deleted
- * (`ConversationSurface.tsx`). A fresh chat that has never reattached to
- * anything therefore has `sessionProjectMatches === false` forever, and pressing the one true
- * start control silently changes nothing on screen — confirmed empirically while diagnosing this
- * suite, and reported as a real product bug rather than papered over here.
- *
- * ═══ WHY PENDING, NOT RESOLVED ═══
- *
- * `attachToLiveSession` stamps the ref SYNCHRONOUSLY, before its `getStatus` round trip even
- * starts (`ConversationSurface.tsx`, ordered before `session.reattach(sessionId)`) — so the stamp
- * lands whether or not that round trip ever settles. A round trip that DOES settle hands the
- * session hook a real `status`, and a `status` alone — with no URL at all — is enough to keep
- * `AppPane` showing `AppPaneHost`'s own now-buttonless terminal card instead of `NoFrame` (the
- * OTHER finding this investigation turned up: see `ConversationSurface-session.test.jsx`'s "come back
- * later" suite). Leaving the round trip pending sidesteps that trap entirely: the ref is stamped,
- * nothing else about "the session" is ever true, and `NoFrame`/`StartAppControl` is reachable the
- * moment the map has anything to say.
- *
- * ═══ THE ONE COST, AND HOW TO PAY IT ═══
- *
- * With the reattach pending forever the composer gate never opens (`gateCheck` only resolves
- * inside the reattach's own `.then`/`.catch`). A caller that needs to send afterward calls the
- * returned `settle()` once the relaunch has framed what it needed — the stamp survives a
- * SUCCESSFUL settle (only a 404, or any other rejection, reverts it), so the gate opens for an
- * ordinary send while the ref stays exactly where the click left it.
+ * Stamps `sessionProjectRef` directly (no real reattach) — only a REATTACH stamps that ref, never
+ * the control's own click path (confirmed empirically; filed as a real product bug, not papered
+ * over here). Left PENDING on purpose: the ref stamps synchronously before `getStatus` resolves,
+ * so a call that never settles still reaches `NoFrame`/`StartAppControl`; the composer gate stays
+ * shut until the caller resolves the returned `settle()`.
  */
 export function primeStandbyReattach(h, { chatId = 'chat-A', projectId = 'p1', sessionId = 'standby-1' } = {}) {
   let resolveStatus
-  // KEYED BY ID, not a blanket `mockResolvedValue` — a caller that later moves the SAME page
-  // instance to a sibling chat (flat routing keeps it mounted) triggers that chat's own adopt
-  // effect, and a blanket answer would hand IT this same anchor too: a second `getStatus` call
-  // overwrites `resolveStatus` above to point at the NEW pending promise, so `settle()` would stop
-  // reaching the original one and the sibling's OWN composer gate would hang open forever. Every
-  // other chat id gets no anchor at all, which is the ordinary "nothing was mid-build here" case.
+  // KEYED BY ID, not a blanket `mockResolvedValue` — moving the SAME page instance to a sibling
+  // chat triggers that chat's own adopt effect, and a blanket answer would overwrite
+  // `resolveStatus`, so `settle()` would stop reaching the original session.
   h.getBuild.mockImplementation(async (id) =>
     id === chatId
       ? {
@@ -316,14 +252,9 @@ export function primeStandbyReattach(h, { chatId = 'chat-A', projectId = 'p1', s
 /**
  * The full PRESS path: send a turn, wait for the plan-options card, click Build it.
  *
- * WHAT THIS IS FOR HAS NARROWED. It used to be how a test reached a build at all — the plan
- * streamed, the card presented, the click flipped this thread into Write and streamed the build
- * here. The click is a HANDOFF now: it creates a second chat, starts the turn there and
- * navigates, so nothing after it streams into the chat the button was in.
- *
- * So use this when the press ITSELF is the subject (that `buildFromPlan` is called, with the
- * minted id, and where it lands). For a test that needs a build STREAMING on this page, send
- * ordinarily — this page renders a build chat, and every send on one is a build turn.
+ * The click is a HANDOFF, not a stream into this chat: it creates a second chat, starts the turn
+ * there, and navigates. Use this when the press ITSELF is the subject; for a build STREAMING on
+ * this page, send ordinarily — every send on a build chat is a build turn.
  */
 export async function sendAndConfirm(text = 'a visitor app') {
   await send(text)
@@ -333,10 +264,8 @@ export async function sendAndConfirm(text = 'a visitor app') {
 }
 
 /**
- * Annotated because TypeScript suites use this harness too (`*.test.tsx`), and without it TS
- * infers each option's type from its DEFAULT — so `hasSavedBuild` came out as the literal
- * `null` and a suite that passed `false` (a legitimate, load-bearing value: "the server
- * confirmed there is no saved build") failed to typecheck.
+ * Annotated because TS suites use this harness too — without it, `hasSavedBuild` infers as
+ * literal `null` and a legitimate `false` fails to typecheck.
  *
  * @param {{
  *   deps?: object,
@@ -359,21 +288,18 @@ export function renderBuilder({ deps, projectId = 'p1', hasSavedBuild = null, in
   )
 }
 
-// ─── Plan A / U1: fixtures for the PREVIEW ADDRESS and its two scoping predicates ─────────────
+// ─── Fixtures for the PREVIEW ADDRESS and its two scoping predicates ─────────────
 //
-// The address has three sources and two predicates, and a predicate is only OBSERVABLE when the
-// chat or the project on screen differs from the one the signal was attributed to. `renderBuilder`
-// cannot express that: it mounts one identity and never moves. These two fixtures supply the
-// missing halves — a transcript that attributes a SESSION to whatever project is on screen, and a
-// render helper that can move the SAME BuilderPage instance to a sibling chat or another project.
+// A predicate is only OBSERVABLE when the chat/project on screen differs from the one a signal
+// was attributed to — these two fixtures supply an anchor attributed to whatever project is on
+// screen, and a render helper that can move the SAME instance to a sibling chat or project.
 
 /**
  * A transcript whose newest assistant part anchors a build with no recorded outcome.
  *
  * This is all a reattach needs (`reattachToLiveBuild`): the page reads the session id off the
- * anchor, stamps `sessionChatRef`/`sessionProjectRef` with the identities it is CURRENTLY mounted
- * at, and calls `getStatus`. Pair it with a `getStatus` that answers with a `previewUrl` and the
- * session arm of the address is live, attributed to the project that was on screen.
+ * anchor and stamps `sessionChatRef`/`sessionProjectRef` with the identities it is CURRENTLY
+ * mounted at, then calls `getStatus`. Pair it with a `getStatus` answering a `previewUrl`.
  */
 export const withLiveBuildAnchor = (sessionId = 'live-7', over = {}) => ({
   id: 'build-X',
@@ -387,13 +313,9 @@ export const withLiveBuildAnchor = (sessionId = 'live-7', over = {}) => ({
 
 /**
  * Render BuilderPage at an EXPLICIT chat/project identity, and hand back a `moveTo` that changes
- * it without remounting.
- *
- * Flat routing means one BuilderPage instance survives every chat and project move — only its
- * props change — so `moveTo` is what the product actually does, not a test shortcut. The router
- * entry is deliberately constant and the identities arrive as PROPS (`chatId` wins over
- * `useParams`): a MemoryRouter reads `initialEntries` once at mount, so re-rendering with a new
- * one would change nothing and the test would silently assert against the original identity.
+ * it without remounting — flat routing means one instance survives every chat/project move.
+ * Identities arrive as PROPS deliberately: MemoryRouter reads `initialEntries` once at mount, so
+ * a naive re-render would silently assert against the original identity.
  *
  * @param {{
  *   chatId?: string,

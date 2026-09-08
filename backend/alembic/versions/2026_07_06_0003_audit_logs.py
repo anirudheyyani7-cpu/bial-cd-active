@@ -4,13 +4,11 @@ Revision ID: 0003_audit_logs
 Revises: 0002_auth_tables
 Create Date: 2026-07-06
 
-Append-only accountability (R9, ADR-0005): WHO did WHAT to WHICH resource, never
-the record contents. `actor_id` is a NULLABLE FK with ON DELETE SET NULL so the
-trail outlives a deleted actor (distinct from OwnedByUserMixin's NOT-NULL CASCADE).
-`action` is an open `String`, not a native enum — the gated-action vocabulary grows
-per domain, so a new action must not need an `ALTER TYPE`. Hand-finalized from an
-autogenerate starting point (ADR-0013). No enums this revision, so no DROP TYPE.
-"""
+Append-only accountability: WHO did WHAT to WHICH resource, never the record contents.
+`actor_id` is a NULLABLE FK with ON DELETE SET NULL so the trail outlives a deleted actor
+(distinct from OwnedByUserMixin's NOT-NULL CASCADE). `action` is an open `String`, not a
+native enum — the gated-action vocabulary grows per domain, so a new action must not need
+an `ALTER TYPE`. No enums this revision, so no DROP TYPE."""
 
 from __future__ import annotations
 

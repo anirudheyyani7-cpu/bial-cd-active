@@ -73,7 +73,7 @@ function isAppStatus(value: unknown): value is AppStatus {
 }
 
 /**
- * Which lineage the current submission entered through (R17a/P5). `null` is a real
+ * Which lineage the current submission entered through. `null` is a real
  * value — never submitted, or a row that predates the publish flow — and the screen
  * keys the runbook affordances off it, so an unrecognised string must land as `null`
  * (the conservative reading: show the runbook controls, which the server refuses anyway)
@@ -84,13 +84,13 @@ function asApprovalRoute(value: unknown): ApprovalRoute | null {
 }
 
 /**
- * The submitted data-classification declaration (R15), exactly as the publish gate wrote
+ * The submitted data-classification declaration, exactly as the publish gate wrote
  * it. Left as `unknown` on purpose: the questionnaire is expected to be reworded, the
- * document is stored data rather than a wire schema, and U10's drift block is landing in
+ * document is stored data rather than a wire schema, and the drift block is landing in
  * it in parallel — so the SCREEN narrows the parts it renders, defensively, and an
  * unrecognised addition renders as nothing instead of failing the whole admin queue.
  * `null` means no declaration at all: a runbook-lineage row, or one queued before this
- * feature shipped. Never contains evidence locations (OD-B).
+ * feature shipped. Never contains evidence locations.
  */
 export type SubmittedDeclaration = Record<string, unknown>
 
@@ -120,9 +120,9 @@ export interface RegistryApp {
   deployedAt: string | null
   deployedUrl: string | null
   redeployNeeded: boolean
-  /** `runbook` | `self_publish` | null — the review screen's runbook-affordance switch (R17a). */
+  /** `runbook` | `self_publish` | null — the review screen's runbook-affordance switch. */
   approvalRoute: ApprovalRoute | null
-  /** What the publish flow attached at submit (R15), or null when nothing did. */
+  /** What the publish flow attached at submit, or null when nothing did. */
   declaration: SubmittedDeclaration | null
   databaseBytes: number | null
   rejectionNote: string | null
@@ -135,7 +135,7 @@ export interface RegistryApp {
  *
  * An app with no `appId` is not an app — every action on the row targets that id, so a
  * coerced `''` would produce controls that POST to `/api/admin/apps//approve`. Fail at
- * the boundary (`.claude/rules/fail-first.md`). Every other field has a defined absent
+ * the boundary. Every other field has a defined absent
  * meaning and takes it: a missing lineage IS null, a missing declaration IS null, an
  * unreadable status falls back to `draft`, which shows no approve/reject controls at all
  * — the fail-closed direction for a row we could not read.
@@ -181,11 +181,11 @@ export async function listApps(status?: string, deps: AuthFetchDeps = {}): Promi
   return Array.isArray(apps) ? apps.map(toRegistryApp) : []
 }
 
-/** How many apps sit in each registry status — the waiting-count badge's source (P1). */
+/** How many apps sit in each registry status — the waiting-count badge's source. */
 export type AppStatusCounts = Record<AppStatus, number>
 
 /**
- * The per-status counts (P1). A dedicated route, NOT a `listApps(...).length`: the
+ * The per-status counts. A dedicated route, NOT a `listApps(...).length`: the
  * listing projects up to 200 rows and probes the app-database cluster for its size
  * column, so polling it for one number would pay both costs and pay more of the first as
  * the queue grows. Superadmin-only server-side — callers must not request it for anyone
@@ -203,7 +203,7 @@ export async function fetchAppStatusCounts(deps: AuthFetchDeps = {}): Promise<Ap
   }
 }
 
-/** Approve a pending app, pinning EXACTLY the reviewed submission (D5): the server
+/** Approve a pending app, pinning EXACTLY the reviewed submission: the server
  * refuses (409) when the app was re-submitted since the admin reviewed it. */
 export async function approveApp(appId: string, submissionId: string, deps: AuthFetchDeps = {}): Promise<unknown> {
   return readBody(
@@ -213,7 +213,7 @@ export async function approveApp(appId: string, submissionId: string, deps: Auth
 }
 
 /** Record that the go-live runbook was run for the approved submission, optionally
- * recording WHERE the app now lives (R5) — the URL the owner's Live link points at.
+ * recording WHERE the app now lives — the URL the owner's Live link points at.
  * Omitting `deployedUrl` keeps whatever address is already recorded (the server treats
  * an absent field as "leave it alone"), which is the routine re-deploy case. The https
  * check lives server-side: a bad URL comes back as a 422 whose message the caller shows. */
@@ -228,7 +228,7 @@ export async function markDeployed(appId: string, deployedUrl?: string, deps: Au
   )
 }
 
-/** Reject a pending app. The note is REQUIRED since U13 (P3) — a rejection is the only
+/** Reject a pending app. The note is REQUIRED — a rejection is the only
  *  thing that travels back to the developer, and an empty one reached them as a bare red
  *  badge. Length is enforced server-side (422 below 20 characters or above 1000); the UI
  *  disables the action rather than letting an admin discover the floor by hitting it. */
@@ -236,7 +236,7 @@ export async function rejectApp(appId: string, note: string, deps: AuthFetchDeps
   return readBody(await authFetch(`/api/admin/apps/${encodeURIComponent(appId)}/reject`, jsonOpts('POST', { note }), deps), 'Failed to reject')
 }
 
-/** Patch the loginRequired gate (audited server-side). The app name is project-sourced (#48). */
+/** Patch the loginRequired gate (audited server-side). The app name is project-sourced. */
 export async function patchApp(appId: string, patch: Record<string, unknown>, deps: AuthFetchDeps = {}): Promise<unknown> {
   return readBody(await authFetch(`/api/admin/apps/${encodeURIComponent(appId)}`, jsonOpts('PATCH', patch), deps), 'Failed to update app')
 }
@@ -251,11 +251,10 @@ export async function enableApp(appId: string, deps: AuthFetchDeps = {}): Promis
   return readBody(await authFetch(`/api/admin/apps/${encodeURIComponent(appId)}/enable`, jsonOpts('POST'), deps), 'Failed to enable')
 }
 
-/** Hard-delete an app (audited; blobs swept, registry row and app database removed). */
 /**
  * Hard-delete an app, with the administrator's justification.
  *
- * THE REASON IS REQUIRED BY THE ROUTE (U23, R5) — 5-50 words, validated server-side — because
+ * THE REASON IS REQUIRED BY THE ROUTE — 5-50 words, validated server-side — because
  * an administrator destroying somebody else's work with no undo and no export should have to
  * say why, and the `window.confirm` this used to go through could not collect it. It rides the
  * `app:delete` audit row, which is written before destruction and has no foreign key to the

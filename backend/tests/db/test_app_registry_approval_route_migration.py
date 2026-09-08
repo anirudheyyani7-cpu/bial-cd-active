@@ -1,17 +1,16 @@
-"""`app_registry.approval_route` + `declaration` against the REAL migrated schema (U4).
+"""`app_registry.approval_route` + `declaration` against the REAL migrated schema.
 
 The test DB carries both columns from `alembic upgrade head` (revision
-0030_approval_route_and_declaration), so the shape assertions exercise the actual
-DDL — a native two-label enum and a nullable JSONB — inside the rolled-back
-per-test transaction. `test_suspended_at_migration.py` pins the chain's exact head
-at 0030 and `tests/test_alembic_single_head.py` guards the head count.
+0030_approval_route_and_declaration), so the shape assertions exercise the actual DDL — a
+native two-label enum and a nullable JSONB — inside the rolled-back per-test transaction.
+`test_suspended_at_migration.py` pins the chain's exact head at 0030 and
+`tests/test_alembic_single_head.py` guards the head count.
 
-DELIBERATELY NO downgrade/upgrade round-trip (the U4 execution note): every
-round-trip on `app_registry` permanently burns pg_attribute slots on the shared
-test database, and seven destructive-lane tests already do it. The backfill is
-tested instead by importing the migration module and executing EXACTLY the
-statement `upgrade()` runs (`BACKFILL_RUNBOOK_LINEAGE`) over ORM-seeded rows —
-the fresh-upgrade DDL path is what built this database in the first place.
+DELIBERATELY NO downgrade/upgrade round-trip: every round-trip on `app_registry` permanently
+burns pg_attribute slots on the shared test database, and seven destructive-lane tests already
+do it. The backfill is tested instead by importing the migration module and executing EXACTLY
+the statement `upgrade()` runs (`BACKFILL_RUNBOOK_LINEAGE`) over ORM-seeded rows — the
+fresh-upgrade DDL path is what built this database in the first place.
 """
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ async def test_columns_land_nullable_with_the_declared_types(db_session) -> None
     ).all()
     by_name = {row.column_name: row for row in rows}
     assert set(by_name) == {"approval_route", "declaration"}
-    # The lineage is the NATIVE enum (ADR-0008), not a varchar with a check.
+    # The lineage is the NATIVE enum, not a varchar with a check.
     assert by_name["approval_route"].data_type == "USER-DEFINED"
     assert by_name["approval_route"].udt_name == "approval_route"
     assert by_name["approval_route"].is_nullable == "YES"  # NULL = no lineage yet
@@ -114,7 +113,7 @@ async def test_lineage_and_declaration_round_trip_through_the_orm(db_session) ->
     assert fetched.declaration == payload  # JSONB survives byte-for-byte in meaning
 
 
-# --- the P5 backfill: the exact statement upgrade() runs --------------------------
+# --- the backfill: the exact statement upgrade() runs --------------------------
 
 
 async def _seed(db_session, **overrides) -> AppRegistry:
@@ -127,9 +126,8 @@ async def test_backfill_marks_the_old_guard_and_only_the_old_guard(db_session) -
     statement runs once in the migration, so the test runs it once too and asserts
     every bucket, rather than proving each bucket against a statement the others
     never shared a pass with."""
-    # A pre-feature approval, whatever the status now shows: a re-submitted-then-
-    # rejected app KEEPS its approved pin (reject deliberately does not clear it),
-    # and that pin is an approval granted for the out-of-band code review (P5).
+    # A pre-feature approval: a re-submitted-then-rejected app KEEPS its approved pin
+    # (reject deliberately does not clear it) — that pin was for the out-of-band review.
     pin = uuid.uuid4()
     pinned_rejected = await _seed(
         db_session,
@@ -137,16 +135,15 @@ async def test_backfill_marks_the_old_guard_and_only_the_old_guard(db_session) -
         approved_submission_id=pin,
         approved_commit_sha=_SHA,
     )
-    # The half that is easy to miss: a queue item outstanding at release. Left NULL,
-    # the admin's approval would not satisfy the gate and the citizen would need a
-    # SECOND approval — marked runbook, approve refuses with re-submit copy instead.
+    # Easy to miss: a queue item outstanding at release. Left NULL, the admin's approval
+    # wouldn't satisfy the gate and the citizen would need a SECOND approval.
     outstanding_pending = await _seed(
         db_session,
         status=AppStatus.PENDING,
         source_submission_id=uuid.uuid4(),
         source_commit_sha=_SHA,
     )
-    # The D13 legacy remainder: a DISABLED row 0018 spared with a NULL pin was still
+    # The legacy remainder: a DISABLED row 0018 spared with a NULL pin was still
     # approved once (disabled is only reachable FROM approved) — status catches it.
     legacy_disabled = await _seed(db_session, status=AppStatus.DISABLED)
     # Never approved, nothing outstanding → NO lineage; its first trip through the

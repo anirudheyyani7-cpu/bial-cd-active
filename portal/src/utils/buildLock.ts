@@ -1,38 +1,22 @@
 /**
- * One build at a time, per project — as far as a browser can enforce it.
+ * One build at a time, per project, as far as a browser can enforce it. A project's
+ * `current_code` is last-write-wins across sessions; the backend has no lock (a real fix is
+ * server-side). This closes the realistic window — two tabs of one browser — and leaves the
+ * cross-device case documented and accepted. Planning chats are never blocked; only builds
+ * write code.
  *
- * A project's `app_registry.current_code` is last-write-wins across sessions: two builder
- * chats streaming into the same project silently destroy each other's code. The backend has
- * no lock (a Redis lock or an optimistic-concurrency version on `current_code` is the real
- * fix, and is a backend change). This closes the realistic window — two tabs of one browser
- * — and leaves the cross-device case documented and accepted.
+ * WHY THIS EXISTS
+ * DEMOTED TO ADVISORY. The AUTHORITATIVE one-build-per-user barrier lives server-side: the
+ * build-session routes answer `409 build_session_already_active`, reaching two live surfaces
+ * (`relaunchPreview`'s `BuildSessionAlreadyActiveError`, and `turnStreamApi.ts`'s carried
+ * code). This module keeps only the FAST LOCAL UX role — `blockedBy` is the instant cross-tab
+ * pre-check `ConversationSurface.tsx` calls before the network round trip. `acquire`/`release`
+ * are advisory mirrors only: a stale or lost local claim never blocks the real server start.
  *
- * Planning chats are never blocked. Only builds write code.
- *
- * WHY A FACTORY, NOT A MODULE SINGLETON. A module-level claim map would let two managers in
- * one document see each other's claims WITHOUT a channel round-trip, so a two-instance test
- * would prove only the same-tab path and leave the cross-tab path — the one this module exists
- * for — entirely unexercised. With a factory, every manager owns its own
- * channel and the wire is the ONLY way claims travel: the same code path in one tab or six.
- * It also lets a test construct two managers over two real BroadcastChannels and drive the
- * message path directly.
- *
- * A crashed tab must not wedge the project forever, so a claim is renewed by a heartbeat and
- * expires without one. A lock that never clears is worse than no lock.
- *
- * DEMOTED TO ADVISORY (Phase-2, ORIG-§3-g / KTD-7). The AUTHORITATIVE one-build-per-user
- * barrier lives server-side, and still does: the C3 routes answer `409 build_session_already_active`
- * carrying the existing sessionId. WHAT CHANGED IS WHO RENDERS IT. This used to say "the cockpit
- * renders the block + force-end UI from that"; there is no such UI any more — the banner and its
- * Force-end button went with the browser's `start` client, and the 409 now reaches two live
- * surfaces instead, each answering in its own sentence: `relaunchPreview` throws
- * `BuildSessionAlreadyActiveError` (`buildSessionApi.ts`) and the turn stream carries the same
- * code (`turnStreamApi.ts`). This module keeps only the FAST LOCAL UX role — `blockedBy` is the
- * instant cross-tab "another chat is building" pre-check (`ConversationSurface.tsx` calls it
- * before the network round-trip). `acquire`/`release` are advisory
- * mirrors: a stale or lost local claim never blocks the authoritative C3 start, and the server's
- * 409 is the real gate. This mirrors the daily-vs-context seam — the client mirror is advisory,
- * the server is the enforcement boundary ([[per-user-limits-daily-vs-context-propagation-2026-07-09]]).
+ * A FACTORY, not a module singleton, so two managers in one test see each other's claims only
+ * through the wire (never an in-process shortcut) — the same code path in one tab or six. A
+ * crashed tab must not wedge the project forever, so a claim is renewed by heartbeat and
+ * expires without one.
  */
 
 import { isRecord } from './apiError'
@@ -52,9 +36,9 @@ interface ClaimMessage {
 
 export interface BuildLock {
   /**
-   * Advisory claim (KTD-7). Announces this conversation's build to other tabs and returns null,
-   * or the claim that blocks it. NOT the enforcement boundary — C3 `start`'s 409 is authoritative;
-   * a stale/lost claim here never blocks the real start.
+   * Advisory claim. Announces this conversation's build to other tabs and returns null,
+   * or the claim that blocks it. NOT the enforcement boundary — the server `start`'s 409 is
+   * authoritative; a stale/lost claim here never blocks the real start.
    */
   acquire(projectId: string, conversationId: string): BuildClaim | null
   /** Advisory release of this conversation's claim, if it holds one (the server owns the real lock). */

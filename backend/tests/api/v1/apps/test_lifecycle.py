@@ -1,22 +1,9 @@
-"""App lifecycle — the owner-scoped status read (APPROVAL U4, R18/R4; re-shaped by U8).
+"""App lifecycle — the owner-scoped `status` read.
 
-The citizen submit ROUTE this file grew up around is RETIRED (U8, ASM18): the publish
-flow is now the only way into the admin queue. Its behavioural tests moved with the
-body they proved — `tests/services/approvals/test_submit.py` exercises the extracted
-service — and the route-is-gone guards live at
-`tests/api/v1/apps/test_submit_retired.py` (the same flip this file already carries
-for `POST /apps/provision` and `GET /apps/{id}/source`, removed in U6). Withdrawal,
-the route that replaced the re-submit refresh, is proved at
-`tests/api/v1/apps/test_withdraw.py`.
-
-What remains here is the `status` read: owner-scoped via the session cookie, a
-cross-user or absent app is the same non-leaking 404 everywhere (ADR-0004), and
-pending state is seeded through the REAL writer — the submit service — so the
-projection is tested against rows shaped exactly as production shapes them.
-
-The app ROW is minted by `resolve_app_for_project` (the build session's path) — the
-standalone `POST /apps/provision` endpoint was removed in U6, so `_provision_app`
-below calls that service directly."""
+Pending state is seeded through the real writer, `services.approvals.submit`, so the
+projection is tested against rows shaped exactly as production shapes them. The app
+row is minted by `resolve_app_for_project`, which `_provision_app` below calls
+directly."""
 
 from __future__ import annotations
 
@@ -38,7 +25,7 @@ from tests.fakes import FakeStorage
 _TTL = settings.auth.access_ttl_seconds
 
 _SHA = "ab" * 20  # 40 lowercase hex chars
-# The exact artifact shape `write_snapshot` ships: a raw v2 bundle (R5).
+# The exact artifact shape `write_snapshot` ships: a raw v2 bundle.
 _BUNDLE = b"# v2 git bundle\n" + _SHA.encode() + b" HEAD\n\nPACK-fake-bytes"
 
 
@@ -61,8 +48,8 @@ async def _provision_app(db_session, user) -> str:
 
 
 async def _submit_via_service(db_session, user, app_id: str):
-    """Take the app to PENDING through the one remaining writer (U8's service) —
-    the same call the publish gate makes. Commits, like the gate does."""
+    """Take the app to PENDING through the approvals submit service — the same call
+    the publish gate makes. Commits, like the gate does."""
     store = FakeStorage()
     store.objects[snapshot_key(uuid.UUID(app_id))] = _BUNDLE
     app_row = await db_session.get(AppRegistry, uuid.UUID(app_id))
@@ -92,13 +79,12 @@ async def test_status_surfaces_submission_metadata(client, db_session) -> None:
 
 
 async def test_status_surfaces_the_deployed_url_and_marker(client, db_session) -> None:
-    """ "Your app is live" (R5), owner side: once an admin records the deploy, the
-    owner's status read carries `deployedAt` + `deployedUrl` — the SubmitControl's
-    Live link. Read-only: the citizen route never writes these, it projects them."""
+    """Owner side of the deploy marker: once an admin records the deploy, the owner's
+    status read carries `deployedAt` + `deployedUrl`. The citizen route never writes
+    them, it projects them."""
     user, headers = await _auth_user(db_session, email="liveowner@rvaiglobal.com")
     app_id = await _provision_app(db_session, user)
 
-    # Before any deploy the marker is simply absent — no Live link, no timestamp.
     fresh_read = await client.get(f"/v1/apps/{app_id}/status", headers=headers)
     assert fresh_read.json()["deployedAt"] is None
     assert fresh_read.json()["deployedUrl"] is None
@@ -119,8 +105,6 @@ async def test_status_surfaces_the_deployed_url_and_marker(client, db_session) -
 
 
 async def test_deployed_url_does_not_leak_across_users(client, db_session) -> None:
-    # The Live link is owner-scoped like every other field on this read (ADR-0004):
-    # a stranger gets the non-leaking 404, never a peek at where the app lives.
     owner, _owner_headers = await _auth_user(db_session, email="liveowner2@rvaiglobal.com")
     app_id = await _provision_app(db_session, owner)
     await db_session.execute(
@@ -140,14 +124,10 @@ async def test_status_read_is_owner_scoped(client, db_session) -> None:
     owner, owner_headers = await _auth_user(db_session, email="owner@rvaiglobal.com")
     app_id = await _provision_app(db_session, owner)
 
-    # The owner reads status fine.
     ok = await client.get(f"/v1/apps/{app_id}/status", headers=owner_headers)
     assert ok.status_code == 200
     assert ok.json()["status"] == "draft"
 
-    # A different user gets the same non-leaking 404 every `/apps/*` route returns —
-    # indistinguishable from an app that simply doesn't exist (the `200 {status:null}`
-    # shim is gone).
     _, other_headers = await _auth_user(db_session, email="other@rvaiglobal.com")
     denied = await client.get(f"/v1/apps/{app_id}/status", headers=other_headers)
     assert denied.status_code == 404
@@ -170,11 +150,6 @@ def test_lifecycle_routes_document_error_codes_in_openapi() -> None:
     paths = create_app().openapi()["paths"]
     # `.500` is inherited from the v1-router default; the rest are declared per route.
     assert {"401", "404", "500"} <= set(paths["/v1/apps/{app_id}/status"]["get"]["responses"])
-    # The retired endpoints are gone from the schema entirely — a request to one is a
-    # 404 from the router, never a 500 from a half-removed handler. provision/source
-    # went in U6; submit went in U8 (its dedicated guard suite is
-    # `test_submit_retired.py` — this line keeps the whole retirement ledger in one
-    # place beside the routes that remain).
     assert "/v1/apps/provision" not in paths
     assert "/v1/apps/{app_id}/source" not in paths
     assert "/v1/apps/{app_id}/submit" not in paths

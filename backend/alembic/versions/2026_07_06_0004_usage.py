@@ -4,11 +4,11 @@ Revision ID: 0004_usage
 Revises: 0003_audit_logs
 Create Date: 2026-07-06
 
-The server-authoritative daily-token ledger (R13/R30). `token_usage` holds one row per
+The server-authoritative daily-token ledger. `token_usage` holds one row per
 (user, IST day) with the four token classes split for observability; the unique
 (user_id, usage_date) is the atomic-upsert conflict target. `user_limits` holds sparse
 per-user overrides (NULL column = use the global default). Hand-finalized from an
-autogenerate starting point (ADR-0013). No enums this revision, so no DROP TYPE.
+autogenerate starting point. No enums this revision, so no DROP TYPE.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def upgrade() -> None:
     op.create_table(
         "token_usage",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004).
+        # OwnedByUserMixin — the single-tenant ownership boundary.
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("usage_date", sa.Date(), nullable=False),
         sa.Column("input_tokens", sa.BigInteger(), server_default=sa.text("0"), nullable=False),

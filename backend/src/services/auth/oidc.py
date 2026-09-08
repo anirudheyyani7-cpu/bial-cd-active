@@ -1,21 +1,14 @@
 """Entra ID OIDC client + fail-closed identity validator.
 
-`build_oauth()` registers the single `entra` provider against the TENANT-SPECIFIC
-discovery document (`{tenant_id}/v2.0`, never `common`/`organizations` — a
-templated issuer defeats the exact `iss` match, R17), with PKCE (`S256`) and the
-`openid profile email` scopes. `get_oauth()` is the injectable seam (KD-9): the
-endpoints depend on it, and tests override it (or pre-seed `.entra.server_metadata`)
-so no live tenant or forged JWKS is needed.
+`build_oauth()` registers `entra` against the TENANT-SPECIFIC discovery document
+(`{tenant_id}/v2.0`, never `common`/`organizations` — a templated issuer defeats the exact
+`iss` match), PKCE (`S256`), `openid profile email`. `get_oauth()` is the seam tests override.
 
-`validate_entra_token` is the fail-closed gate (KD-3). Authlib's
-`authorize_access_token` does NOT raise when the token response lacks an
-`id_token` — it returns a dict with no `userinfo` and performs ZERO OIDC
-validation. `userinfo` is populated only AFTER Authlib fully validates the
-signature / `iss` / `aud` / `exp` / `nonce`, so its presence is the proof of
-validation. We then hard-assert `oid` + `sub` present and `tid == tenant_id`, and
-derive a non-null email (the `email` claim is optional even with the `email`
-scope; `preferred_username` is the reliable fallback for work accounts) — else
-`AuthError`. Any failure denies: no session, no user row (AE1, AE4).
+`validate_entra_token` is the fail-closed gate: Authlib's `authorize_access_token` does NOT
+raise when the response lacks an `id_token` — it returns a dict with no `userinfo` and ZERO
+validation performed; `userinfo` appears only AFTER signature/`iss`/`aud`/`exp`/`nonce` are
+validated, so its presence IS the proof. We hard-assert `oid`/`sub`/`tid == tenant_id` and a
+non-null email (`preferred_username` fallback) — else `AuthError`: no session, no user row.
 """
 
 from __future__ import annotations
@@ -94,17 +87,16 @@ def build_oauth() -> OAuth:
 def get_oauth() -> OAuth:
     """Process-wide OAuth registry — the seam the endpoints depend on. Tests
     override this dependency (or pre-seed the returned registry's
-    `.entra.server_metadata`) to run the flow without a live tenant (KD-9)."""
+    `.entra.server_metadata`) to run the flow without a live tenant."""
     return build_oauth()
 
 
 def validate_entra_token(token: Mapping[str, Any]) -> EntraIdentity:
-    """Fail-closed identity extraction from a validated token response (KD-3).
+    """Fail-closed identity extraction from a validated token response.
 
     Raises `AuthError` on missing `userinfo` (unvalidated token), missing
     `oid`/`sub`, a foreign `tid`, or a missing email+UPN. Never returns on doubt."""
     userinfo = token.get("userinfo")
-    # `userinfo` present AND a mapping == Authlib fully validated the id_token.
     if not isinstance(userinfo, Mapping) or not userinfo:
         raise AuthError(
             "callback token carries no validated userinfo", reason=REASON_INVALID_CALLBACK
@@ -116,7 +108,7 @@ def validate_entra_token(token: Mapping[str, Any]) -> EntraIdentity:
         raise AuthError("callback identity missing oid/sub", reason=REASON_INVALID_CALLBACK)
 
     # Hard tenant boundary — a foreign tenant or personal account is rejected
-    # fail-closed (AE1, R13).
+    # fail-closed.
     if userinfo.get("tid") != settings.auth.tenant_id:
         raise AuthError("callback tenant does not match", reason=REASON_WRONG_TENANT)
 
@@ -131,7 +123,7 @@ def validate_entra_token(token: Mapping[str, Any]) -> EntraIdentity:
         )
 
     # Capture the UPN unconditionally (separate from email) as the deterministic
-    # join key for the deferred POC->Postgres migration (KD-3).
+    # join key for the deferred POC->Postgres migration.
     upn = userinfo.get("preferred_username")
     display_name = userinfo.get("name")
     return EntraIdentity(

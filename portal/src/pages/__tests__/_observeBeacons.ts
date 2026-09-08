@@ -1,5 +1,5 @@
 /**
- * Reading the observation beacons a render actually sent (U4).
+ * Reading the observation beacons a render actually sent.
  *
  * The page suites that cover the marks run the REAL `utils/observe` module — its
  * once-per-project-id-per-page-load guard IS what they are about, and a mocked module would

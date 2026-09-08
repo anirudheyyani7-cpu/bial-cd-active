@@ -1,4 +1,4 @@
-"""U8 — server-side snapshot extraction for Ask/Plan reads.
+"""Server-side snapshot extraction for Ask/Plan reads.
 
 Round-trips a REAL git bundle (built in-test, the same `git bundle create <f> HEAD` shape
 `build_sessions/snapshot.py` writes) through `extract_snapshot`: storage fetch → header
@@ -107,7 +107,7 @@ async def test_extracts_the_bundle_to_a_sha_keyed_dir(
 async def test_committed_symlink_extracts_as_an_inert_file_not_a_link(
     tmp_path: Path, app_id: uuid.UUID, storage: FakeStorage
 ) -> None:
-    # Layer 1 of the P0 jail-escape fix: `core.symlinks=false` at clone time means a symlink
+    # Layer 1 of the jail-escape fix: `core.symlinks=false` at clone time means a symlink
     # committed into the untrusted bundle checks out as a REGULAR file holding its target text,
     # so no read command can follow it out of the extraction dir.
     secret = tmp_path / "outside" / "secret.txt"
@@ -166,24 +166,14 @@ async def test_a_corrupt_stored_bundle_raises_never_reads_as_absent(
 async def test_a_missing_git_binary_raises_the_error_the_callers_actually_catch(
     tmp_path: Path, app_id: uuid.UUID, storage: FakeStorage
 ) -> None:
-    """A git-less image must fail as `SnapshotExtractionError`, not as `FileNotFoundError`.
+    """A git-less image must fail as `SnapshotExtractionError`, not `FileNotFoundError` — a
+    real production defect: `backend/Dockerfile` builds on `python:3.14-slim`, which ships no
+    git, and `_git_env` pins the subprocess PATH.
 
-    This is the shape of a REAL production defect, not a hypothetical: `backend/Dockerfile`
-    builds on `python:3.14-slim`, which ships no git at all (no `/usr/bin/git`, no
-    `/usr/lib/git-core`) — while `_git_env` pins the subprocess PATH to
-    `/usr/local/bin:/usr/bin:/bin`.
-
-    The failure mode is nastier than a non-zero exit. `create_subprocess_exec` resolves the
-    binary against the PASSED env's PATH and raises `FileNotFoundError` BEFORE any process
-    exists, so it never reaches the `returncode != 0` branch that raises
-    `SnapshotExtractionError` — which means it sails straight past
-    `deploy/service.py:229`'s `except SnapshotExtractionError`, the one handler written to
-    turn this into a clean citizen-facing message. Publish dies on an unhandled exception
-    instead.
-
-    So this test pins the CONTRACT rather than the symptom: however git goes missing, the
-    callers' own error type is what comes out.
-    """
+    `create_subprocess_exec` resolves against that PATH and raises `FileNotFoundError` BEFORE
+    any process exists, bypassing the `returncode != 0` branch and `deploy/service.py`'s
+    `except SnapshotExtractionError` handler — publish would die unhandled instead. This pins
+    the CONTRACT: however git goes missing, the callers' own error type is what comes out."""
     data, _ = _make_bundle(tmp_path)
     storage.objects[snapshot_key(app_id)] = data
     # An empty PATH dir reproduces the git-less image exactly — same resolution failure,

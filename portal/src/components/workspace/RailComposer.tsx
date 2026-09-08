@@ -1,43 +1,13 @@
 /**
  * START A CHAT — the rail's composer, its kind picker, and the mint-and-navigate protocol.
  *
- * ═══ THE SAME BOX AS THE CHAT'S, AND WHY THAT NEEDED A RUNTIME HERE ═══
- *
- * The boards draw ONE composer, on both screens: a bordered box with the attachment control and
- * the send control inside it. Two independently hand-rolled boxes is how the two drifted apart —
- * one had a wide gold "Start Chat" button and a separate "Upload File" pill, the other a gold
- * square beside the input — so the box is shared.
- *
- * IT IS `Composer`, NOT `ComposerBox`, AND THAT DISTINCTION IS THE WHOLE FIX. Sharing only the
- * inner box let the two surfaces drift again in every way the box does not own: this screen had
- * no character cap, no counter and no draft, because all three live in `Composer`. A citizen
- * could paste 45,000 characters here with Send still lit — the server refuses at 64,000 — and
- * lose a half-written description by stepping to another screen and back. This screen carries the
- * LONGEST message anyone writes, the one describing the whole app, so it was the worst place to
- * be missing them. Mount the whole composer, not its box; anything the chat's composer learns,
- * this one learns with it.
- *
- * That box is built on the library's composer primitives, and every one of them resolves against
- * `useAui()`. This surface had NO runtime mounted at all, so one is mounted here: a composer-only
- * runtime with an empty transcript, whose whole purpose is to hold the text and the staged files
- * the box reads. Nothing streams into it and nothing renders from it.
- *
- * `onNew` IS DELIBERATELY UNREACHABLE. `useExternalStoreRuntime` requires it, and it is reached
- * only through the library's own `composer.send()` — which this project never calls, because it
- * empties the text before it awaits anything and restores it only when the ATTACHMENT tasks throw
- * (`ComposerBox`'s docblock has the full account). Registering a working `onNew` here would create
- * a second way to start a chat that bypasses the guardrail below, so it refuses instead.
- *
- * ═══ WHAT THIS FILE SETTLES, AND WHAT IT KEEPS ═══
- *
- * The protocol below — mint a v7 id, navigate to a flat chat address, carry the draft in router
- * state — is this file's. So is the kind picker: a citizen has to be able to choose a Plan chat or
- * a Build chat BEFORE the first message, because a chat's kind is fixed at creation and never
- * mutates.
- *
- * THE TWO OPTIONS' WORDS COME FROM ONE PLACE AND ARE NOT RE-WRITTEN HERE. `utils/chatKind.ts` reads
- * the kind catalogue off the bootstrap profile — the same catalogue the server's toolset registry
- * sits beside — so what a kind is CALLED and what it DOES have exactly one author.
+ * IT MOUNTS `Composer`, NOT `ComposerBox`: sharing only the inner box left this screen with no
+ * character cap, no counter and no draft, and it carries the longest message anyone writes. The
+ * box resolves against `useAui()`, so a composer-only runtime is mounted here — empty transcript,
+ * nothing streaming in, nothing rendering from it — purely to hold the text and the staged files.
+ * `onNew` is deliberately unreachable, because a working one would be a second way to start a
+ * chat that bypasses the guardrail below. The kind picker is this file's: a chat's kind is fixed
+ * at creation, and what each kind is CALLED and what it DOES come from `utils/chatKind.ts`.
  */
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -122,7 +92,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   const railRef = useRef<HTMLDivElement>(null)
 
   /**
-   * CLOSING THE GUARDRAIL PUTS THE CARET BACK IN THE MESSAGE (R43, #187).
+   * CLOSING THE GUARDRAIL PUTS THE CARET BACK IN THE MESSAGE.
    *
    * This dialog is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
    * captures the element that had focus and nothing restores it. Dismissing it dropped focus on
@@ -146,28 +116,11 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   }, [])
 
   /**
-   * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT (plan 002, U9) — and the whole of why this is not a
-   * two-line navigate any more.
-   *
-   * IT USED TO NAVIGATE FIRST. The browser jumped to the new chat address, the chat mounted, its
-   * send hit the server, and only THEN did the refusal arrive — so a citizen who had been building
-   * in another project for two minutes was interrupted by a question about a chat that had already
-   * opened in front of them. The backend's own ordering was always right: every refusal on the
-   * send path is side-effect-free before anything is persisted. It was the browser that jumped
-   * ahead of it.
-   *
-   * So the order is inverted. Nothing starts, and no address changes, before the citizen has
-   * answered:
-   *
-   *   1. ask for the workspace — the preflight, and also the start this project needs anyway
-   *   2. if it is held, the dialog opens naming BOTH projects, and this rejects so the composer
-   *      keeps the typed message and its staged files
-   *   3. on transfer the shell's dialog drains the other project, waits for a genuinely clean
-   *      stop, releases it, and then re-runs this whole function — including the navigate
-   *   4. the chat is created only once the container is ready, carrying the held message
-   *
-   * THE MESSAGE IS HELD IN THE COMPOSER THROUGHOUT, which is what makes cancelling free: nothing
-   * has been stopped, nothing released, and the text is exactly where it was.
+   * ASKS FOR THE WORKSPACE BEFORE IT NAVIGATES, which is why this is not a two-line navigate.
+   * Nothing starts and no address changes until the citizen has answered: the start doubles as
+   * the preflight, a held workspace opens the dialog and rejects here, a transfer re-runs this
+   * whole function including the navigate, and the chat is minted only once the container is
+   * ready. The typed message stays in the composer throughout, which makes cancelling free.
    */
   const startChat = useCallback(
     async ({ text, attachments }: ComposerSubmission) => {
@@ -186,7 +139,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
 
       const open = () => {
         // THROUGH THE SHARED `uuidv7`, never an inline `crypto.randomUUID()`. That mints a v4, and
-        // this id becomes the conversation's PRIMARY KEY, which ADR-0006 wants sortable.
+        // this id becomes the conversation's PRIMARY KEY, which needs to be sortable.
         //
         // THE KIND TRAVELS AS A QUERY PARAM, THE DRAFT AS ROUTER STATE, and the split is
         // deliberate. Router state dies on reload and never travels in a shared link, so a
@@ -231,7 +184,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
             // repeating it in weaker words is noise over the top of it.
             throw new SendRefusal('the workspace is held by another project', { silent: true })
           }
-          // NOTHING SAVED TO BRING BACK IS NOT A FAILED SEND (review #1). Asking for the workspace
+          // NOTHING SAVED TO BRING BACK IS NOT A FAILED SEND. Asking for the workspace
           // is how this surface poses the one-workspace question, but a project that has never been
           // built has nothing to restore: the server's snapshot gate answers 404 by design — there
           // is no blank-template arm — and the first message is the very thing that provisions one,
@@ -247,8 +200,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
           //
           // THE QUESTION IS STILL ASKED FIRST, which is why this is a mapping and not a skipped
           // preflight. The server refuses a held workspace ABOVE the snapshot gate, so a brand-new
-          // project's first message still meets the dialog before any address changes — and issue
-          // #161's own reproduction is a submit in a project with nothing built yet.
+          // project's first message still meets the dialog before any address changes.
           if (err instanceof ApiError && err.status === 404 && err.code === 'no_saved_build') {
             open()
             return
@@ -321,8 +273,8 @@ function RailComposerBody({ projectId }: RailComposerProps) {
         // project, not a conversation. It is also the DRAFT's key, which is what makes a
         // half-written first message survive a trip to another screen and back.
         conversationId={projectId}
-        // THE HINT FOLLOWS THE KIND, from the catalogue — never a comparison here. R72 forbids
-        // branching on a chat's kind in this directory, and the words belong beside the other
+        // THE HINT FOLLOWS THE KIND, from the catalogue — never a comparison here. Branching on
+        // a chat's kind is forbidden in this directory, and the words belong beside the other
         // per-kind wording rather than being re-written at the one place that renders them.
         placeholder={picked.composerPlaceholder}
         onSubmit={startChat}

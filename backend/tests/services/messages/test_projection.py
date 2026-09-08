@@ -1,8 +1,8 @@
-"""U6 — the one history→display derivation (`services/messages/projection.py`).
+"""The one history→display derivation (`services/messages/projection.py`).
 
 Rows are written through the REAL producers/store (`append_batch`, `write_build_outcome`) in the
-exact shapes U5 pinned (`test_transcript_steps.py` / `test_producers.py`), so these tests break
-when the producer contract drifts — which is the point. The golden build test doubles as U10's
+exact shapes pinned by `test_producers.py`, so these tests break
+when the producer contract drifts — which is the point. The golden build test doubles as the
 parity fixture: the live stream must render THIS list for THIS transcript.
 
 The one exception is `build_started`: its production writer is DELETED with the build-start path,
@@ -73,7 +73,7 @@ async def _thread(db_session):
 
 
 async def _step(db_session, user, conversation, session_id, messages) -> None:
-    """One BRAIN step row, exactly as the U5 harness persists it."""
+    """One build-step row, exactly as the harness persists it."""
     await append_batch(
         db_session,
         user_id=user.id,
@@ -91,12 +91,12 @@ async def _rows(db_session, user, conversation):
     )
 
 
-# --- the golden build (U10's parity fixture) ----------------------------------
+# --- the golden build (the parity fixture) -------------------------------------
 
 
 async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
-    """A full build session → the exact friendly item list. U10's catch-up snapshot must
-    reproduce THIS list for THIS transcript (live == reload, R8)."""
+    """A full build session → the exact friendly item list. The catch-up snapshot must
+    reproduce THIS list for THIS transcript (live == reload)."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
 
@@ -177,7 +177,7 @@ async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
 
     golden = [
         ("user_text", "build me a visitor log"),
-        # F3/U3: friendly AREA, never the raw path; friendly command copy, never the argv.
+        # friendly AREA, never the raw path; friendly command copy, never the argv.
         ("step", "Building your app's main page"),
         ("step", "Setting up the tools your app needs"),
         ("assistant_text", "All done — the visitor log is live."),
@@ -195,8 +195,8 @@ async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
 
     # The closed session anchors nothing; a step carries a friendly label and a state, and
     # that is the whole of what it carries — the expander material it used to ship beside them
-    # is gone from the wire (U14; the field-set guard at the bottom of this file is where that
-    # is pinned).
+    # is gone from the wire (the field-set guard at the bottom of this file is where that is
+    # pinned).
     assert not any(isinstance(item, BuildInProgressItem) for item in items)
     steps = [item for item in items if isinstance(item, StepItem)]
     assert [step.state for step in steps] == ["ok", "ok"]
@@ -265,19 +265,12 @@ def _rendered(item: StepItem) -> str:
 
 
 async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_session) -> None:
-    """★ U5 (plan 2026-09-02-001) — THIS TEST USED TO PIN THE OPPOSITE FLAG.
-
-    `hidden` meant "a read" for as long as reads were the only class it marked, and what that
-    bought was a build whose activity opened on a write with no account of what the agent had
-    looked at to get there. Looking at the app before changing it is work a citizen recognises,
-    so the whole read class is drawn — the structured read tools and the read-only shell
-    binaries alike. What `hidden` still marks is plumbing, and only plumbing: a write to a
-    configuration file, and a housekeeping shell command.
-
-    BECOMING VISIBLE RAISES THE STAKES ON THE SECOND HALF OF THIS TEST rather than lowering
-    them. A `grep` over the citizen's own app returns the citizen's own data, and it used to
-    ride a step the feed did not draw; it now rides one the feed does. The only thing keeping
-    that output off the screen is its absence from the item, which is where it belongs."""
+    """`hidden` marks plumbing only: a write to a configuration file, and a housekeeping shell
+    command. The whole read class is drawn, because marking every read hidden bought a build
+    whose activity opened on a write with no account of what the agent had looked at to get
+    there. That RAISES the stakes on the second half — a `grep` over the citizen's own app
+    returns the citizen's own data, and the only thing keeping it off the screen is its absence
+    from the item."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     await _step(
@@ -322,7 +315,7 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
     items = project_rows(await _rows(db_session, user, conversation))
     steps = [item for item in items if isinstance(item, StepItem)]
     assert [step.hidden for step in steps] == [False, False]
-    # U16 — THIS ASSERTION USED TO PIN THE LEAK. It read `== "Read app/page.tsx"`, which made
+    # THIS ASSERTION USED TO PIN THE LEAK. It read `== "Read app/page.tsx"`, which made
     # the raw path the EXPECTED output of a helper whose two neighbours exist to guarantee the
     # opposite. Flipped, not deleted: the absence is asserted, and paired with the liveness half
     # (a real friendly area still renders) so a read arm that started returning "" would not
@@ -330,24 +323,20 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
     assert "app/page.tsx" not in steps[0].label
     assert steps[0].label == "Looking at your app's main page"
     assert steps[1].label == "Inspected the app's files"
-    # AND NEITHER STEP CARRIES WHAT THE READ RETURNED. This used to assert the opposite —
-    # `steps[1].detail.result == "app/db.ts:3: visitors"` — which is grep output over the
-    # citizen's own data, shipped on every reload. `grep -rn` over an app is exactly the call
-    # whose result is worth the least to a reader and the most to anyone else, and the step it
-    # rode is now one the citizen can see.
+    # AND NEITHER STEP CARRIES WHAT THE READ RETURNED. A raw result like
+    # `"app/db.ts:3: visitors"` is grep output over the citizen's own data, and this step is
+    # one the citizen can see — `grep -rn` over an app is exactly the call whose result is
+    # worth the least to a reader and the most to anyone else.
     assert "visitors" not in _rendered(steps[1])
     assert "app/db.ts" not in _rendered(steps[1])
 
 
 async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db_session) -> None:
-    """★ U5's headline scenario, on the reload path. Three reads and a write are four things the
-    agent did, and the citizen sees four rows — where the same turn used to show one, the three
-    reads that explain it filtered out of the feed by their flag.
+    """Three reads and a write are four things the agent did, and the citizen sees four rows.
 
     THE FLAGS ARE THE CLAIM, not the item count: the projection always emitted four items, and a
     feed that draws only the visible ones is what turned that into a single row. So the flags are
     asserted as a list, in order, beside the labels that make each row worth drawing.
-
     Mutation-check: make `_step_label`'s read arm return `hidden=True` again and this goes red on
     the three reads while the write's own flag does not move."""
     user, _, conversation = await _thread(db_session)
@@ -403,16 +392,15 @@ async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db
 
 
 async def test_a_configuration_write_and_a_housekeeping_command_stay_hidden(db_session) -> None:
-    """The other half of U5, and the reason it is a NARROWING rather than a deletion.
+    """The other half of `test_reads_are_visible_steps_that_say_only_what_they_touched`,
+    and the reason it is a NARROWING rather than a deletion.
 
-    A write to `package.json` and a `mkdir` are plumbing between the steps that matter: drawing
-    them prints a generic building line into the feed that tells the citizen nothing about their
-    app. Both still render as ITEMS — the flag says "do not draw this", not "forget this
-    happened" — so the audit read and the step's own state survive.
+    A write to `package.json` and a `mkdir` are plumbing between the steps that matter. Both
+    still render as ITEMS — the flag says "do not draw this", not "forget this happened" — so the
+    audit read and the step's own state survive.
 
     The read beside them is the liveness half and the discriminator at once: a projection that
-    flagged everything hidden would satisfy the two assertions this test is named for, and the
-    visible read is what stops it."""
+    flagged everything hidden would satisfy the two assertions this test is named for."""
     user, _, conversation = await _thread(db_session)
     await _step(
         db_session,
@@ -458,15 +446,12 @@ async def test_a_configuration_write_and_a_housekeeping_command_stay_hidden(db_s
 
 
 async def test_a_housekeeping_command_that_failed_is_never_hidden(db_session) -> None:
-    """★ U5's rule that nothing is hidden when something went wrong, whatever class it belongs to.
+    """★ The rule that nothing is hidden when something went wrong, whatever class it belongs to.
 
     A group opens itself saying one thing went wrong and then counts the rows the citizen can
-    see; a hidden failure makes that count name a row nobody can find. Housekeeping is exactly
-    the case — plumbing while it works, and the whole story the moment it does not.
-
-    The identical command that SUCCEEDED sits beside it, so this pins the conditional rather
-    than a projection that simply stopped hiding housekeeping altogether.
-
+    see; a hidden failure makes that count name a row nobody can find. The identical command that
+    SUCCEEDED sits beside it, so this pins the conditional rather than a projection that simply
+    stopped hiding housekeeping altogether.
     Mutation-check: drop the `and state != "failed"` conjunct where the step item is built and
     the failed row comes back hidden while its successful twin does not move."""
     user, _, conversation = await _thread(db_session)
@@ -614,8 +599,7 @@ async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None
     items = project_rows(rows)
     # The (closed) started row renders nothing; only the outcome banner shows.
     assert [item.type for item in items] == ["banner"]
-    # …but the audit read still has it. Two rows, one of them hidden — three and two before
-    # the mode-switch marker was retired along with the switch that wrote it.
+    # …but the audit read still has it: two rows, one of them hidden.
     assert len(rows) == 2
     hidden = [row for row in rows if row.visibility is MessageVisibility.HIDDEN]
     assert len(hidden) == 1
@@ -625,7 +609,7 @@ async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None
 
 
 async def test_unclosed_build_started_projects_an_in_progress_anchor(db_session) -> None:
-    """Crash/mid-build reload (R8): a started-but-never-closed session must anchor a truthful
+    """A crash or a mid-build reload: a started-but-never-closed session must anchor a truthful
     'a build was running here' item — not vanish."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
@@ -715,7 +699,7 @@ async def test_retry_refusal_projects_a_failed_step(db_session) -> None:
     items = project_rows(await _rows(db_session, user, conversation))
     steps = [item for item in items if isinstance(item, StepItem)]
     assert len(steps) == 1
-    # FAILED, AND THAT IS ALL IT SAYS. The refusal text ("blocked …") used to ride the step's
+    # FAILED, AND THAT IS ALL IT SAYS. The refusal text ("blocked …") never rides the step's
     # detail block; a retry-prompt body is the harness talking to the model about why a call was
     # refused, which is neither the citizen's business nor safe to assume it is sanitised.
     assert steps[0].state == "failed"
@@ -723,20 +707,15 @@ async def test_retry_refusal_projects_a_failed_step(db_session) -> None:
 
 
 async def test_plan_options_states_have_no_third_member(db_session) -> None:
-    """U8 — `build_failed` is retired without a caller, so a resolution recorded before its
+    """`build_failed` is retired without a caller, so a resolution recorded before its
     retirement must not read back as a still-actionable third state. `_plan_options_state`'s
     catch-all reads ANYTHING it does not recognise — including a stray `build_failed:<reason>`
-    overlay from before the retired recorder — as `refine`: the build behind it never
-    happened, and the card is spent, so offering a button with nothing behind it would be
-    worse than reading it as resolved.
+    overlay — as `refine`: the build behind it never happened, and the card is spent. The fixture
+    is deliberately the PRE-MIGRATION shape, a prose message ahead of an empty-argument tool
+    call.
 
-    The fixture is deliberately the PRE-MIGRATION shape: a prose message ahead of an
-    empty-argument tool call, which is what every card presented before U5 looks like on
-    disk (`test_the_plan_renders_from_the_offers_own_stored_call_args` below covers the new
-    shape, where the plan rides the argument itself).
-
-    Mutation-check: revert `_plan_options_state`'s catch-all to return `"build_failed"` and
-    this goes red on opt-2's state without any other test in this file moving."""
+    Mutation-check: revert the catch-all to `"build_failed"` and this goes red on opt-2's state,
+    without any other test in this file moving."""
     user, _, conversation = await _thread(db_session)
     await append_batch(
         db_session,
@@ -809,7 +788,7 @@ async def test_plan_options_states_have_no_third_member(db_session) -> None:
 
 
 async def test_the_plan_renders_from_the_offers_own_stored_call_args(db_session) -> None:
-    """U5 — the offer's stored `args` is the single authoritative copy of the plan. The
+    """The offer's stored `args` is the single authoritative copy of the plan. The
     projection reads it out and renders it as an ordinary assistant message immediately
     ahead of the card, so live and reload show the same text from the same single copy
     rather than two writers agreeing to say the same thing.
@@ -851,7 +830,7 @@ async def test_the_plan_renders_from_the_offers_own_stored_call_args(db_session)
 
 
 async def test_a_call_with_no_plan_renders_no_text_and_still_renders_its_card(db_session) -> None:
-    """Every card presented before U5's migration is exactly this shape: the tool call
+    """Every card presented before the plan-args migration is exactly this shape: the tool call
     carries no argument at all. It must not render a phantom text item, and it must not lose
     its card either — revision 0035 resolved these rows rather than deleting them."""
     user, _, conversation = await _thread(db_session)
@@ -876,12 +855,11 @@ async def test_a_call_with_no_plan_renders_no_text_and_still_renders_its_card(db
     assert len(cards) == 1 and cards[0].tool_call_id == "opt-1" and cards[0].state == "pending"
 
 
-# --- F3/U3: the friendly classifier (one source of truth, live == reload) -------
+# --- the friendly classifier (one source of truth, live == reload) -------------
 
 
 def test_classify_command_maps_the_pinned_commands() -> None:
-    """The pinned command copy: install / data-setup / data-ready / checks — friendly, never
-    the raw argv. This is the SAME translator the live emitter (`tools.py`) calls."""
+    """This is the SAME translator the live emitter (`tools.py`) calls."""
     assert classify_command(["npm", "install", "zod"]) == (
         "Setting up the tools your app needs",
         False,
@@ -903,16 +881,8 @@ def test_classify_command_maps_the_pinned_commands() -> None:
 
 
 def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
-    """U5, at the shell half of the classifier. This asserted `hidden is True` for BOTH groups
-    until the flag stopped meaning "a read" and started meaning "plumbing": an inspection is
-    work the citizen recognises, and hiding the whole class left a build's activity opening on a
-    write with nothing to explain it.
-
-    Housekeeping keeps the flag, which is why the flag is kept at all — `mkdir`, `mv` and
-    `touch` draw a generic line that says nothing about the app.
-
-    The LABEL is asserted beside the flag on both groups so a classifier that returned an empty
-    string could not satisfy the flags alone."""
+    """The LABEL is asserted beside the hidden flag on both groups, so a classifier that
+    returned an empty string could not satisfy the flags alone."""
     for read_only in (["ls", "-la"], ["grep", "-rn", "x", "app/"], ["cat", "app/page.tsx"]):
         label, hidden = classify_command(read_only)
         assert hidden is False
@@ -926,16 +896,12 @@ def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
 def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_entry() -> None:
     """★ THE NARROWED SET, pinned once at the entry BOTH feeds call.
 
-    `classify_tool_call` is what the live emitter classifies a tool call through and what the
-    reload projection classifies it through; a per-tool `hidden` that disagreed between them
-    would show a citizen a step live that vanished on reload, or the reverse. So the whole
-    visible set is asserted here rather than one member at a time in whichever feed's test
-    happened to notice — every inspection is drawn, and the two plumbing classes are not.
-
-    The flag alone is asserted for the visible members and the LABEL table is deliberately left
-    open, matching the field-set guard at the bottom of this file: a tool registered tomorrow is
-    classified in the same construction, and a guard that pinned its wording too would go red
-    for a reason that has nothing to do with what is drawn."""
+    A per-tool `hidden` that disagreed between the live emitter and the reload projection would
+    show a citizen a step live that vanished on reload, or the reverse. So the whole visible set
+    is asserted here rather than one member at a time — every inspection is drawn, and the two
+    plumbing classes are not. The LABEL table is deliberately left open, matching the field-set
+    guard at the bottom of this file: a tool registered tomorrow is classified in the same
+    construction."""
     for tool, args in (
         ("read_file", '{"path": "app/page.tsx"}'),
         ("list_files", '{"path": "app"}'),
@@ -951,24 +917,15 @@ def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_ent
 
 
 def test_a_read_binary_asked_to_write_is_never_drawn_as_an_inspection() -> None:
-    """★ U5's read class is decided by argv[0], and two of its members write on a flag.
+    """★ The read class is decided by argv[0], and two of its members write on a flag.
 
-    `sed -i` rewrites a file in place and `find -delete` removes what it matched — both routine
-    agent edits in an open sandbox, and both would otherwise draw "Inspected the app's files"
-    over a command that changed the citizen's app, with the write appearing nowhere else in the
-    activity group. While the class was hidden the mislabel cost nothing; drawing the class made
-    it a false statement on screen.
-
-    THE FALLBACK IS THE ANSWER, not a new write label: "Working on your app" is true of every
-    one of these, and the classifier's own rule is that anything it cannot name confidently
-    fails closed to it rather than guessing.
-
-    THE SPELLINGS ARE THE TEST. `-i.bak` carries its suffix on the flag and `-ni` bundles it
-    with another short option, so a classifier matching the literal `-i` would pass the first
-    case and mislabel the other two.
-
-    Mutation check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` again and
-    every writing case below goes red while the reading cases stay green."""
+    `sed -i` rewrites a file in place and `find -delete` removes what it matched, so both would
+    otherwise draw "Inspected the app's files" over a command that changed the citizen's app.
+    THE FALLBACK IS THE ANSWER, not a new write label: anything the classifier cannot name
+    confidently fails closed to "Working on your app". THE SPELLINGS ARE THE TEST — `-i.bak`
+    carries its suffix on the flag and `-ni` bundles it with another short option. Mutation
+    check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` and every writing case
+    below goes red while the reading cases stay green."""
     for writing in (
         ["sed", "-i", "s/a/b/", "app/page.tsx"],
         ["sed", "-i.bak", "s/a/b/", "app/page.tsx"],
@@ -1011,7 +968,6 @@ def test_classify_command_fails_closed_on_the_long_tail() -> None:
 
 
 def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
-    """The friendly-area file map: an app AREA, never the filename. Config is hidden noise."""
     assert _friendly_area("app/page.tsx") == ("your app's main page", False)
     assert _friendly_area("app/layout.tsx") == ("your app's overall look", False)
     assert _friendly_area("app/dashboard/page.tsx") == ("the dashboard page", False)
@@ -1025,11 +981,9 @@ def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
     )
     assert _friendly_area("app/globals.css") == ("your app's styling", False)
     assert _friendly_area("db/schema.ts") == ("where your app stores information", False)
-    # Config / settings are hidden noise.
     assert _friendly_area("package.json")[1] is True
     assert _friendly_area("drizzle.config.ts")[1] is True
     assert _friendly_area("tsconfig.json")[1] is True
-    # Anything unrecognized → the generic area, NEVER the raw path.
     area, hidden = _friendly_area("lib/weird/thing.ts")
     assert area == "a part of your app"
     assert hidden is False
@@ -1037,7 +991,6 @@ def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
 
 
 def test_classify_file_step_carries_the_verb_and_area() -> None:
-    """write_file reads as *Building*, the edits as *Updating* — friendly area, never a path."""
     assert classify_file_step("write_file", "app/page.tsx") == (
         "Building your app's main page",
         False,
@@ -1046,14 +999,13 @@ def test_classify_file_step_carries_the_verb_and_area() -> None:
         "Updating how your app saves and loads information",
         False,
     )
-    # A config write is hidden regardless of the verb.
     assert classify_file_step("write_file", "package.json")[1] is True
 
 
-# --- AE13: the complete set of messages a citizen sees -----------------------------------
+# --- the complete set of messages a citizen sees -----------------------------------------
 
 
-# THE SHARED VOCABULARY GUARD, written once (U16) — U15 and U18 assert against this same list.
+# THE SHARED VOCABULARY GUARD, written once — other surfaces assert against this same list.
 #
 # Four categories, from the acceptance criterion: a file path, a command, a library name, a
 # framework term. Substring matching on a lowercased haystack, which over-matches on purpose: a
@@ -1105,29 +1057,23 @@ _DEVELOPER_VOCABULARY: tuple[str, ...] = (
 def assert_speaks_product_language(text: str, *, where: str) -> None:
     """No file path, command, library name, or framework term in a string a citizen reads.
 
-    Exported by name so U15 and U18 can assert their own surfaces against the SAME list rather
+    Exported by name so other surfaces can assert against the SAME list rather
     than each growing a private near-copy that drifts."""
     lowered = text.lower()
     hits = [word for word in _DEVELOPER_VOCABULARY if word in lowered]
     assert not hits, f"{where} leaks developer vocabulary {hits}: {text!r}"
 
 
-async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to_a_developer(
+async def test_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to_a_developer(
     db_session,
 ) -> None:
-    """AE13 — asserted over the COMPLETE rendered set, not only the agent's narration.
+    """Asserted over the COMPLETE rendered set, not only the agent's narration.
 
-    The narration was never the whole story: the platform's own error rendering was the most
-    developer-looking thing on the screen, and it sat below a feed whose read steps printed raw
-    paths. So this walks a full build — a read, a write, an install, a failed typecheck, the
-    agent's closing line, the outcome banner — and then walks the platform's error copy for
-    EVERY error class, and holds one rule over all of it.
-
-    The user's OWN words are excluded, and that is not a loophole: a citizen may perfectly well
-    type "make it look like the React docs", and echoing their prompt back is not the platform
-    speaking developer.
-
-    LIVENESS IS ASSERTED FIRST. A projection that returned nothing at all would satisfy every
+    This walks a full build — a read, a write, an install, a failed typecheck, the agent's
+    closing line, the outcome banner — and then walks the platform's error copy for EVERY error
+    class, and holds one rule over all of it. The user's OWN words are excluded, and that is not
+    a loophole: echoing a prompt back is not the platform speaking developer.
+    LIVENESS IS ASSERTED FIRST: a projection that returned nothing at all would satisfy every
     absence below, so the rendered set is required to be non-trivial before it is scanned."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
@@ -1249,7 +1195,8 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
 
     # LIVENESS: the build genuinely rendered, so the absences below mean something.
     labels = [item.label for item in items if isinstance(item, StepItem)]
-    assert len(labels) == 6  # every tool call produced a row, and after U5 every one is drawn
+    assert len(labels) == 6  # every tool call produced a row, and after the hidden-flag
+    # change every one is drawn
     assert "Building how your app saves and loads information" in labels
     assert "Looking at your app's main page" in labels
     assert any(isinstance(item, BannerItem) for item in items)
@@ -1269,7 +1216,7 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
 
 
 def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_sentence() -> None:
-    """The committed fallback is spelled in TWO codebases — `BuildProgress.tsx` renders it when
+    """The committed fallback is spelled in TWO codebases — the portal renders it when
     a frame carries no pair, and the server sends it for a class its table does not know. If the
     two drift, a citizen reads a different sentence depending on which side happened to supply
     it, and nothing anywhere would notice.
@@ -1284,13 +1231,13 @@ def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_senten
     )
 
 
-# --- U1 (plan 2026-09-02-001): the agent's prose reaches the citizen, in order ---------------
+# --- The agent's prose reaches the citizen, in order ------------------------------------------
 #
-# The live browser run of 2026-08-24 is still the fixture underneath these. A build that hit a
-# compile error made the model narrate its own debugging into the citizen's chat — ~1900 words
-# naming Drizzle, HMR, `globalThis`, React Server Components, and the platform's own word
-# "harness" — and the answer was a render-time drop of every text part that shared a response
-# with a tool call. It bought that quiet by throwing away the explanation between the receipts,
+# A build that hits a compile error can make the model narrate its own debugging into the
+# citizen's chat at length — naming implementation details like Drizzle, HMR, `globalThis`, React
+# Server Components, and the platform's own word "harness" (the fixtures below are lifted from a
+# real over-narrating run). A render-time drop of every text part that shares a response with a
+# tool call is not the fix: it buys quiet by throwing away the explanation between the receipts,
 # leaving a run of step labels with nothing joining them, which is the opposite of the voice this
 # product has.
 #
@@ -1303,9 +1250,8 @@ def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_senten
 # The plain-language guarantee did not move here to compensate. What the PLATFORM says is still
 # held to the product's register by `assert_speaks_product_language` above, and the platform's
 # own emitters are the only ones that can promise it: a step label carries no argv and a tool
-# result is never transmitted. The model's own words are the model's, and a run that talks like
-# the 2026-08-24 one is now a prompt problem and a model problem, not something the renderer
-# hides on the way out.
+# result is never transmitted. The model's own words are the model's, and an over-narrating run
+# is a prompt problem and a model problem, not something the renderer hides on the way out.
 
 
 async def test_build_prose_beside_a_tool_call_renders_ahead_of_that_step(db_session) -> None:
@@ -1314,8 +1260,9 @@ async def test_build_prose_beside_a_tool_call_renders_ahead_of_that_step(db_sess
     what happened and the prose beside it says why, and a citizen reading the why UNDER the what
     is reading the turn in an order nobody wrote.
 
-    Mutation-check: skip a text part whose response also holds a tool call (the rule this file
-    used to pin) and this goes red on the missing paragraph while the step still renders."""
+    Mutation-check: skip a text part whose response also holds a tool call — the one thing this
+    projection must never do — and this goes red on the missing paragraph while the step still
+    renders."""
     user, _project, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     prose = (
@@ -1369,9 +1316,8 @@ async def test_build_text_with_no_tool_call_survives(db_session) -> None:
     never calls `declare_done` — this prose IS the answer, and losing it would leave them
     staring at nothing.
 
-    It used to be the one shape the drop deliberately spared, keyed on "no tool call beside
-    it"; now it is simply the ordinary case, and it is kept because the shape is worth pinning
-    on its own — a regression here loses the whole of an Ask turn's reply."""
+    It is kept because the shape is worth pinning on its own: a regression here loses the whole
+    of an Ask turn's reply."""
     user, _project, conversation = await _thread(db_session)
     await _step(
         db_session,
@@ -1389,22 +1335,14 @@ async def test_build_text_with_no_tool_call_survives(db_session) -> None:
 async def test_a_plan_chat_renders_prose_beside_a_tool_call_exactly_as_a_build_chat_does(
     db_session,
 ) -> None:
-    """★ AE43 / R74 / N2 — one rule, and it still does not ask which kind of chat this is.
+    """★ One rule, and it still does not ask which kind of chat this is.
 
-    THIS TEST USED TO ASSERT THE PROSE WAS DROPPED, on the grounds that a plan travels in the
-    offer tool's argument and a mid-work word travels through `tell_the_user`, so anything left
-    over was the model narrating its way to a call. Those two routes still exist and are still
-    the right home for a plan and for a spoken update — but they stopped being the ONLY way a
-    word reaches the citizen, and the paragraph a planner writes on its way to reading a file is
-    the explanation, not noise. It renders at the position it was written, exactly as the same
-    shape does in a Build chat: what N2 forbids is one response meaning two different things
-    depending on which chat it sat in, and that is as true of rendering it as it was of
-    dropping it.
-
-    `entry_kind=TURN`, not STEP, because that is the only shape the product can actually
-    produce: every production writer of a STEP row stamps the Build kind (the BRAIN build loop
-    owns that kind), and a Plan turn persists as TURN. Mirrors
-    `test_plan_options_states_have_no_third_member` above."""
+    THIS TEST USED TO ASSERT THE PROSE WAS DROPPED, on the grounds that a plan travels in the offer
+    tool's argument and a mid-work word travels through `tell_the_user`. Those routes are still the
+    right home for each, but they stopped being the ONLY way a word reaches the citizen. What that
+    rule forbids is one response meaning two different things depending on the chat it sat in.
+    `entry_kind=TURN`, not STEP, because that is the only shape the product can produce: every
+    production writer of a STEP row stamps the Build kind, and a Plan turn persists as TURN."""
     user, _project, conversation = await _thread(db_session)
     await append_batch(
         db_session,
@@ -1439,7 +1377,7 @@ async def test_a_plan_chat_renders_prose_beside_a_tool_call_exactly_as_a_build_c
     assert step_item.tool == "read_file"
 
 
-# --- Decision 3: the change reaches BACKWARDS over rows already on disk ---------------------
+# --- The change reaches BACKWARDS over rows already on disk ---------------------------------
 #
 # The suppression was a RENDER-TIME filter — persistence never dropped a word — so deleting it
 # gives the prose back in rows that were written while the rule was in force. A `schema_version`
@@ -1504,32 +1442,18 @@ async def test_a_row_written_before_this_change_renders_its_prose_too(db_session
     assert text_item.text == "Here is what your visitor log will do."
 
 
-# --- U14/R36: redaction at the seam, asserted as a SHAPE ------------------------------------
+# --- redaction at the seam, asserted as a SHAPE --------------------------------------------
 
 
 def test_no_browser_facing_shape_carries_tool_arguments_results_or_a_stack() -> None:
-    """★ AE34, and this is where U14's guarantee actually lives.
+    """★ This is where the redaction guarantee actually lives.
 
-    THE MECHANISM IS THE ABSENCE OF A FIELD, not a promise at a draw site. A step used to carry
-    `detail.args` and `detail.result` — the raw arguments and the raw return of every tool call,
-    redacted, clipped to four thousand characters, shipped on every frame and every reload item
-    INCLUDING hidden steps — and the browser parsed them and rendered them nowhere. A
-    `DiagnosticFrame` used to carry `title` and `cleaned_stack` beside the citizen's sentence,
-    under a docstring that called them "safe to transmit; NOT a product surface"; the sentence
-    "safe to render verbatim" that preceded it is what put a stack trace under a file-path title
-    in somebody's chat. A client that does not render a field is not a guarantee — it is a
-    client, and the next one is a different client.
-
-    THIS GUARD PINS THE FIELD SET AND DELIBERATELY LEAVES THE LABEL TABLE OPEN. Plan C registers
-    further tools that are classified in this same construction, and a guard that pinned the
-    labels too would go red in C's branch for a reason that has nothing to do with redaction —
-    at which point the fix under time pressure is to loosen it. So: the fields are closed, the
-    vocabulary is not.
-
-    The catch-up snapshot's ordered `parts` are NOT in scope and must not be: they are the
-    citizen's own prose and the steps it was written between, and they are what lets a tab
-    reconnecting mid-turn see what it missed, in the order it happened.
-    """
+    THE MECHANISM IS THE ABSENCE OF A FIELD, not a promise at a draw site. A client that does not
+    render a field is not a guarantee — it is a client, and the next one is a different client.
+    THIS GUARD PINS THE FIELD SET AND DELIBERATELY LEAVES THE LABEL TABLE OPEN: further tools are
+    classified in the same construction, and pinning their labels would go red for a reason that
+    has nothing to do with redaction. The catch-up snapshot's ordered `parts` are NOT in scope —
+    they are the citizen's own prose and the steps it was written between."""
     assert set(StepItem.model_fields) == {"type", "seq", "tool", "label", "state", "hidden"}
     assert set(PlanOptionsItem.model_fields) == {"type", "seq", "tool_call_id", "state"}
     assert set(DiagnosticFrame.model_fields) == {
@@ -1556,7 +1480,7 @@ async def test_a_tool_result_the_platform_wrote_to_itself_reaches_no_rendered_fi
 
     The marker is put in the two places a leak would come from — the tool call's ARGUMENTS and
     its RETURN — and then looked for across the ENTIRE serialised projection, every item and
-    every field, not in the one place it used to live."""
+    every field, not just one."""
     secret = "PLATFORM-ONLY-a7f3c1"
     user, _, conversation = await _thread(db_session)
     await append_batch(
@@ -1604,7 +1528,7 @@ async def test_a_tool_result_the_platform_wrote_to_itself_reaches_no_rendered_fi
     assert "app/page.tsx" not in whole
 
 
-# --- U20: the durable turn terminal, read back --------------------------------------------
+# --- the durable turn terminal, read back --------------------------------------------------
 
 
 async def _terminal_row(
@@ -1633,7 +1557,7 @@ async def _terminal_row(
 async def test_a_finished_turn_is_readable_as_finished_without_the_live_stream(
     db_session,
 ) -> None:
-    """★ U20's happy path, and the reason the row exists at all.
+    """★ The turn terminal's happy path, and the reason the row exists at all.
 
     A transcript rebuilt from rows alone — a reload, a second tab, a process that restarted —
     has no `TurnEndedFrame` to read: that frame was delivered once, to whoever was subscribed.
@@ -1668,7 +1592,7 @@ async def test_a_finished_turn_is_readable_as_finished_without_the_live_stream(
 
 
 async def test_a_plan_chats_turn_gets_the_same_terminal_as_a_builds(db_session) -> None:
-    """R72's reload half, asserted SEPARATELY rather than parameterised, because the failure
+    """The reload half, asserted SEPARATELY rather than parameterised, because the failure
     this guards against is one kind quietly getting the weaker path — and a parameterised test
     that someone later narrows to one kind reads as still covering both."""
     user, _, conversation = await _thread(db_session)
@@ -1710,12 +1634,9 @@ async def test_the_terminal_reads_through_the_banners_own_vocabulary(db_session)
 
     THE QUOTA CASE IS COARSER THAN THE LIVE FRAME, and that is stated here rather than papered
     over. A turn that runs out of budget ends `failed` with `reason="quota_exceeded"`, and
-    `_banner_kind` reads status before reason — so it answers `failed`, where the live
-    `TurnEndedFrame` carries both halves and a client can tell the two apart. The finer answer
-    is not lost: it is in the row's `meta["reason"]`, which is where the mapping read it from.
-    Sharpening this would mean reordering `_banner_kind`, which is also the build banner's
-    mapping and is pinned by that surface's own tests — a second vocabulary for one fact is the
-    thing this reuse exists to avoid, and it is the worse trade."""
+    `_banner_kind` reads status before reason, so it answers `failed`. The finer answer is not
+    lost: it is in the row's `meta["reason"]`. Sharpening it would mean reordering the build
+    banner's own mapping, and a second vocabulary for one fact is the worse trade."""
     for status, reason, expected in (
         ("stopped", "stopped_by_user", "stopped"),
         ("failed", "quota_exceeded", "failed"),
@@ -1736,18 +1657,15 @@ async def test_the_terminal_reads_through_the_banners_own_vocabulary(db_session)
 async def test_a_stopped_turn_carries_the_reason_it_stored_and_not_only_the_terminal(
     db_session,
 ) -> None:
-    """★ #186. The row has always stored the reason; the item used to keep it.
+    """★ The row has always stored the reason; the item used to keep it.
 
-    `_write_turn_terminal` writes `meta["reason"] = state.end_reason` on every arm, so the fact
-    was durable the whole time — but `TurnTerminalItem` exposed `terminal` alone, which handed a
-    reloading client STRICTLY LESS than the live `TurnEndedFrame` gives a subscribed one. That
-    asymmetry is the bug: a client that must choose a sentence chooses it from the reason, so a
-    reload could only ever print the generic line for the terminal, over an ending that had a
-    name recorded beside it.
-
-    ASSERTED AS A PAIR, deliberately. `terminal` alone was already green before this change and
-    would stay green if `reason` were dropped again tomorrow; only reading both off one item
-    fails when the finer half goes missing."""
+    `_write_turn_terminal` writes `meta["reason"] = state.end_reason` on every arm, so the fact was
+    durable the whole time — but `TurnTerminalItem` exposed `terminal` alone, handing a reloading
+    client STRICTLY LESS than the live `TurnEndedFrame` gives a subscribed one: a client choosing a
+    sentence from the reason could only print the generic line on reload, over an ending that had a
+    name recorded beside it. ASSERTED AS A PAIR: `terminal` alone was already green before this
+    change and would stay green if `reason` were dropped again tomorrow; only reading both off one
+    item fails when the finer half goes missing."""
     user, _, conversation = await _thread(db_session)
     await _terminal_row(db_session, user, conversation, status="stopped", reason="stopped_by_user")
 
@@ -1761,16 +1679,14 @@ async def test_a_stopped_turn_carries_the_reason_it_stored_and_not_only_the_term
 async def test_the_reason_survives_the_terminals_own_coarseness(db_session) -> None:
     """The case that proves the reason is worth carrying rather than deriving.
 
-    `_banner_kind` reads status before reason, so every named graceful end that finishes
-    `failed` — a spent daily limit, an exhausted self-heal budget, a workspace put back from the
-    last saved copy — arrives with the SAME terminal as a genuine crash. `terminal` therefore
-    cannot distinguish "you used up your day" from "something broke", and a client with only
-    `terminal` has no honest option but the generic failure sentence.
-
-    Sharpening `_banner_kind` is the wrong fix and stays rejected (see
-    `test_the_terminal_reads_through_the_banners_own_vocabulary`: it is the build banner's
-    mapping too, and a second vocabulary for one fact is the worse trade). Carrying the reason
-    beside it is the right one — the finer answer was never lost, only withheld."""
+    `_banner_kind` reads status before reason, so every named graceful end that finishes `failed` —
+    a spent daily limit, an exhausted self-heal budget, a workspace restored from its last save —
+    arrives with the SAME terminal as a genuine crash, leaving a client that holds only `terminal`
+    unable to tell "you used up your day" from "something broke" and no option but the generic
+    failure sentence. Sharpening `_banner_kind` stays rejected: it is the build banner's mapping
+    too (see `test_the_terminal_reads_through_the_banners_own_vocabulary`), and a second vocabulary
+    for one fact is the worse trade. The finer answer was never lost, only withheld — so it rides.
+    """
     for reason in ("quota_exceeded", "self_heal_budget_exhausted", "workspace_restored"):
         user, _, conversation = await _thread(db_session)
         await _terminal_row(db_session, user, conversation, status="failed", reason=reason)
@@ -1918,7 +1834,7 @@ async def test_the_terminal_row_is_invisible_to_the_model(db_session) -> None:
     assert [type(m).__name__ for m in history] == ["ModelRequest", "ModelResponse"]
 
 
-# --- U6 (plan 2026-09-02-001): the renderer's own ceilings are gone -------------------------
+# --- The renderer's own ceilings are gone ----------------------------------------------------
 #
 # Two numbers used to be enforced twice: once in the tool body, which teaches the model where a
 # bound is, and once HERE, which decided what a transcript was allowed to draw. The second copy
@@ -1937,7 +1853,7 @@ async def test_the_terminal_row_is_invisible_to_the_model(db_session) -> None:
 
 
 async def test_a_voice_update_far_past_the_old_ceiling_renders_whole(db_session) -> None:
-    """★ R5 — a spoken update the old character ceiling would have swallowed reaches the citizen
+    """★ A spoken update the old character ceiling would have swallowed reaches the citizen
     byte for byte.
 
     Mutation-check: put any `len(text) > N` arm back into `update_from_args` and this goes red on
@@ -1982,17 +1898,14 @@ async def test_a_voice_update_far_past_the_old_ceiling_renders_whole(db_session)
 
 
 async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) -> None:
-    """★ R6 — how many pieces belong in a first round is a judgement about the citizen's request,
-    which is the thing the agent is for. A ceiling here refused proposals the agent had made
-    well and, worse, drew nothing for a call the tool body had already refused: the citizen was
-    shown no proposal at all rather than one they could argue with.
+    """★ How many pieces belong in a first round is a judgement about the citizen's request,
+    which is the thing the agent is for. A ceiling here refused proposals the agent had made well
+    and drew nothing for a call the tool body had already refused.
 
     Six pieces, half again the retired bound, and every one of them is named — along with all
     nine the agent said it had picked up, because a proposal that narrows without listing
-    everything back reads as a refusal (which is why the lead sentence exists).
-
-    Mutation-check: put a `len(first) > N` arm back into `_slice_argument` and this goes red on
-    an empty projection."""
+    everything back reads as a refusal. Mutation-check: put a `len(first) > N` arm back into
+    `_slice_argument` and this goes red on an empty projection."""
     user, _, conversation = await _thread(db_session)
     found = [
         "a visitor sign-in form",

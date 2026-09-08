@@ -1,9 +1,9 @@
-"""U6 — GET /v1/conversations/{id} returns the display projection + the `activeTurn` seam.
+"""GET /v1/conversations/{id} returns the display projection + the `activeTurn` seam.
 
 The projection derivation itself is proven in `tests/services/messages/test_projection.py`;
-this file proves the READ: one request rebuilds the chat (header + items), the U10 seam is
-present-and-null, and the read is owner-scoped. The populated-while-running `activeTurn`
-test lands with U10's turn engine (no registry exists yet to populate it).
+this file proves the READ: one request rebuilds the chat (header + items), the `activeTurn`
+seam is present-and-null, and the read is owner-scoped. The populated-while-running `activeTurn`
+test lands with the turn engine (no registry exists yet to populate it).
 """
 
 from __future__ import annotations
@@ -76,11 +76,11 @@ async def test_get_returns_header_projection_and_null_active_turn(client, db_ses
     body = resp.json()
 
     assert body["conversation"]["_id"] == str(conversation.id)
-    # What the chat IS, chosen at creation and never changed (R14/R16). There is no second
+    # What the chat IS, chosen at creation and never changed. There is no second
     # field beside it: `mode` came off the header with the concept.
     assert body["conversation"]["kind"] == "build"
     assert "mode" not in body["conversation"]
-    assert body["activeTurn"] is None  # the U10 seam: present, and null until the engine lands
+    assert body["activeTurn"] is None  # the seam: present, and null until the engine lands
 
     projection = body["projection"]
     assert [item["type"] for item in projection] == ["user_text", "assistant_text", "banner"]
@@ -88,9 +88,9 @@ async def test_get_returns_header_projection_and_null_active_turn(client, db_ses
     assert projection[1]["text"] == "It tracks visitors."
     assert projection[2]["banner"] == "completed"
     assert projection[2]["previewUrl"] == PREVIEW  # camelCase on the wire
-    # `seq` still identifies the row. The per-item kind stamp is GONE from the wire rather than
-    # renamed: nothing ever rendered it, no requirement asks for a per-message kind (R16 is
-    # about CHATS being listed, and the header carries that), and every item type carried one.
+    # `seq` still identifies the row. The per-item `kind` stamp is GONE from the wire, not
+    # renamed: nothing ever rendered it, and kind classification concerns CHATS being listed —
+    # which the header already carries — not individual items.
     assert all("seq" in item for item in projection)
     assert all("mode" not in item and "kind" not in item for item in projection)
 
@@ -105,9 +105,9 @@ async def test_empty_conversation_projects_an_empty_list(client, db_session) -> 
 
 
 async def test_the_read_carries_how_full_the_chat_is(client, db_session) -> None:
-    """★ THE COLD READ'S HALF OF THE METER (#194, R8a). The browser's "this chat is getting long"
-    line is fed by this field, so a reopened chat that is already past the threshold says so on
-    first paint instead of staying silent until the citizen has sent one more message into it.
+    """★ THE COLD READ'S HALF OF THE METER. The browser's "this chat is getting long" line is
+    fed by this field, so a reopened chat that is already past the threshold says so on first
+    paint instead of staying silent until the citizen has sent one more message into it.
 
     It is the RAW prompt count the provider reported — cache-inclusive, never a cost-weighted
     spend — and it is the same number `enforce_context_limit` refuses on. The transcript above it

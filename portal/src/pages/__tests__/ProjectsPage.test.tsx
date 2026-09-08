@@ -1,13 +1,6 @@
 /**
  * ProjectsPage (`/projects`) — the landing screen: three numbers, then list or grid.
  *
- * #158 replaced the card grid with two views, numbered pagination and a summary strip, so
- * this file was rewritten rather than patched. What it used to assert — a "Load more"
- * button, the first-run CTA that named creating a project, the card grid as the ONLY
- * layout — describes a page
- * that no longer exists, and §16.3 names that describe block as dead code to remove rather
- * than leave failing beside the new work.
- *
  * The data layer is mocked at the module boundary; the page's own paging state runs for
  * real, because that is what is being exercised. A LocationProbe outside the Routes reports
  * the current path so navigation is observable without a real project-home page, and it
@@ -54,7 +47,7 @@ function LocationProbe(): React.JSX.Element {
   return (
     <>
       <div data-testid="location">{loc.pathname}</div>
-      {/* #208 put page, size and query in the address bar, so the address bar is now an
+      {/* Page, size and query live in the address bar, so the address bar is now an
           assertable output of this page rather than scenery. */}
       <div data-testid="location-search">{loc.search}</div>
     </>
@@ -111,7 +104,7 @@ function renderPage(entry: Entry = '/projects') {
 }
 
 /**
- * A LIST THAT ANSWERS THE PAGE IT WAS ACTUALLY ASKED FOR (round-4 finding 10, restated).
+ * A LIST THAT ANSWERS THE PAGE IT WAS ACTUALLY ASKED FOR.
  *
  * A static `mockResolvedValue` always answers `page: 1`, which pins `appliedPage` at 1 whatever
  * was clicked — and every assertion about restoring page 3 would then pass against a page 3 that
@@ -170,15 +163,13 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-// --- what changes without saying so (R44b/AE9b) ----------------------------------
+// --- what changes without saying so ----------------------------------
 
 describe('★ the two things on this page that change silently now announce', () => {
-  // The page already had two working regions — the wait sentence and the dead-bookmark notice —
-  // which is why the sweep that filed #187 counting `[aria-live]` elements was literally right
-  // and practically wrong. What it named and what was genuinely uncovered are these two: the
-  // numbers, and the range caption. A citizen who deletes a project watches "In production" go
-  // from 3 to 4 in silence, and a search rewrites the rows underneath with nothing said about
-  // how many there now are.
+  // The page already had two working regions — the wait sentence and the dead-bookmark notice.
+  // What stayed genuinely uncovered are these two: the numbers, and the range caption. A citizen
+  // who deletes a project watches "In production" go from 3 to 4 in silence, and a search
+  // rewrites the rows underneath with nothing said about how many there now are.
 
   it('announces the three numbers, and the region is mounted before they arrive', async () => {
     let resolve: (c: typeof COUNTS) => void = () => {}
@@ -263,8 +254,6 @@ describe('the dashboard strip', () => {
   })
 })
 
-// --- the two views -------------------------------------------------------------
-
 describe('list and grid', () => {
   it('defaults to LIST, with the column header the grid does not have', async () => {
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Visitor Log')]))
@@ -273,7 +262,7 @@ describe('list and grid', () => {
     expect(await screen.findByText('Visitor Log')).toBeTruthy()
     expect(screen.getByText('Application')).toBeTruthy()
     // "Details updated", never "Last updated": `updatedAt` moves on a rename or a
-    // description edit and never on a build, publish or deploy (§10 Trap 1).
+    // description edit and never on a build, publish or deploy.
     expect(screen.getByText('Details updated')).toBeTruthy()
     expect(screen.queryByText('Last updated')).toBeNull()
   })
@@ -303,8 +292,6 @@ describe('list and grid', () => {
   })
 })
 
-// --- the row -------------------------------------------------------------------
-
 describe('a row', () => {
   it('shows the status the DEPLOYMENT supports, not the lifecycle', async () => {
     h.listProjects.mockResolvedValue(
@@ -322,7 +309,7 @@ describe('a row', () => {
     expect(screen.getByText('Nothing built yet')).toBeTruthy()
   })
 
-  it('keeps Delete OUT of the open button (invariant F-10)', async () => {
+  it('keeps Delete OUT of the open button', async () => {
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Visitor Log')]))
     renderPage()
     await screen.findByText('Visitor Log')
@@ -352,8 +339,6 @@ describe('a row', () => {
     expect(await screen.findByText('No description yet')).toBeTruthy()
   })
 })
-
-// --- pagination ----------------------------------------------------------------
 
 describe('numbered pagination', () => {
   it('reports the window and the total, and asks the server for page 2', async () => {
@@ -397,15 +382,13 @@ describe('numbered pagination', () => {
   })
 })
 
-// --- every state ---------------------------------------------------------------
-
 describe('the states', () => {
   it('first run offers exactly ONE way to make a project', async () => {
     renderPage()
 
     const empty = await screen.findByTestId('projects-empty')
     expect(within(empty).getByText('Nothing here yet')).toBeTruthy()
-    // No composer, no chat-kind toggle, no second "name it yourself" path (§11).
+    // No composer, no chat-kind toggle, no second "name it yourself" path.
     expect(within(empty).getAllByRole('button')).toHaveLength(1)
   })
 
@@ -435,7 +418,7 @@ describe('the states', () => {
   })
 
   it('a LATER page failure keeps the rows already on screen', async () => {
-    // §11's rule: never blank the list the reader is using.
+    // The rule under test: never blank the list the reader is using.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 12, totalPages: 2 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -449,7 +432,7 @@ describe('the states', () => {
   })
 
   it('a later page failure can actually be RETRIED', async () => {
-    // Round-4 finding 11: the message underneath the rows was static text with no control.
+    // The message underneath the rows was static text with no control.
     // Clicking the same page number again is a React no-op — the state value is unchanged,
     // so the fetch effect's deps do not change and nothing re-runs — which left the failure
     // unrecoverable without a reload. `reloadNonce` is the dep that always changes.
@@ -461,7 +444,6 @@ describe('the states', () => {
     fireEvent.click(screen.getByRole('button', { name: '2' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Couldn’t load more/))
 
-    // The recovery the old version had no way to reach.
     h.listProjects.mockResolvedValue(page([mkProject('p2', 'Beta')], { total: 12, totalPages: 2, page: 2 }))
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
 
@@ -470,7 +452,7 @@ describe('the states', () => {
   })
 
   it('a FIRST-LOAD counts failure offers a retry instead of pulsing forever', async () => {
-    // Round-4 finding 12: the catch was made a total no-op, which is right for a REFRESH
+    // The catch was made a total no-op, which is right for a REFRESH
     // (keep the last known-good numbers) and wrong for a first load — `counts` stayed null,
     // all three tiles skeleton-pulsed over a working list, and nothing but a delete could
     // ever bump `reloadNonce` to ask again.
@@ -506,15 +488,13 @@ describe('the states', () => {
   })
 })
 
-// --- create and delete ---------------------------------------------------------
-
 describe('create and delete', () => {
   it('has exactly ONE New project button', async () => {
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')]))
     renderPage()
     await screen.findByText('Alpha')
 
-    // The trap §16 names first: adding it to the controls row without deleting the page
+    // The trap: adding it to the controls row without deleting the page
     // header's one ships two.
     expect(screen.getAllByRole('button', { name: /New project/i })).toHaveLength(1)
   })
@@ -526,7 +506,7 @@ describe('create and delete', () => {
     await screen.findByText('Alpha')
 
     fireEvent.click(screen.getByLabelText('Delete Alpha'))
-    // The dialog gates on a 5-50 word reason (#158 §13.1), which the page forwards to the
+    // The dialog gates on a 5-50 word reason, which the page forwards to the
     // API. Its own bounds are asserted in ProjectDeleteDialog.test.tsx; here it just has to
     // be valid so the delete runs.
     fireEvent.change(await screen.findByLabelText(/why are you deleting/i), {
@@ -539,8 +519,7 @@ describe('create and delete', () => {
   })
 
   it('a delete failure does not auto-dismiss, and carries a failure marker', async () => {
-    // CARRIED FORWARD FROM #172, which landed this contract on the page this rewrite
-    // replaced. Rewriting a file is the easiest way to drop a behaviour nobody restates,
+    // Rewriting a file is the easiest way to drop a behaviour nobody restates,
     // so it is restated: the marker distinguishes a failure at a glance, and it has its own
     // testid because the dismiss button's X is an svg too — "some icon in the toast" would
     // let a mutant that deletes the marker pass.
@@ -563,7 +542,7 @@ describe('create and delete', () => {
   })
 
   it('does not flash the first-run state while a cleared search is still debouncing', async () => {
-    // ALSO FROM #172. `appliedQuery` is what decides what an empty list MEANS; branching on
+    // `appliedQuery` is what decides what an empty list MEANS; branching on
     // the live input would read a cleared box as "this person has no projects" and flash
     // the first-run panel at someone who has plenty.
     h.listProjects.mockResolvedValue(page([]))
@@ -588,7 +567,7 @@ describe('create and delete', () => {
     //
     // Driven through real navigation, because the window is computed from the component's
     // OWN page state — but the mocked RESPONSE has to answer with the page that was actually
-    // requested too (round-4 finding 10). The original version of this test used one static
+    // requested too. The original version of this test used one static
     // `mockResolvedValue` that always said `page: 1` regardless of what was asked for, so
     // `appliedPage` never moved past 1 no matter which button was clicked — the window slid
     // (computed from local `page` state) but NO button was ever `aria-current`, and mutating
@@ -637,7 +616,7 @@ describe('create and delete', () => {
     // 10 here; a window that never slid would strand you as it did before the fix. Neither
     // is caught by the mid-list case above.
     //
-    // The response has to echo the page actually requested (round-4 finding 10) — a static
+    // The response has to echo the page actually requested — a static
     // mock always answering `page: 1` left `appliedPage` at 1 while the window rendered
     // 6-10, so nothing was ever `aria-current` and this test's own title ("marked active")
     // was not being checked at all.
@@ -650,8 +629,6 @@ describe('create and delete', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Last page' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: '10' })).toBeTruthy())
-    // Exactly the last five, nothing past the end, and 10 — not any of the others — is
-    // the one marked current.
     for (const n of ['6', '7', '8', '9']) {
       expect(screen.getByRole('button', { name: n }).getAttribute('aria-current')).toBeNull()
     }
@@ -661,7 +638,7 @@ describe('create and delete', () => {
   })
 
   it('jumps to the first page and back, without walking', async () => {
-    // §2 spells the control set literally — « ‹ 1 2 › ». Both jumps were missing.
+    // The control set is spelled out literally — « ‹ 1 2 › ». Both jumps were missing.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 80, totalPages: 10 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -675,10 +652,10 @@ describe('create and delete', () => {
   })
 
   it('★ the row leaves when the cascade returns, not when the button is pressed', async () => {
-    // U23/AE1a. The row used to be filtered out of `items` one line ABOVE the request, so a
-    // citizen watched their project vanish while the server was still dropping its database —
-    // and if the drop failed the row came back under them. A completed delete the platform has
-    // not performed is the one thing the sentence they agreed to must not show them.
+    // The row used to be filtered out of `items` one line ABOVE the request, so a citizen
+    // watched their project vanish while the server was still dropping its database — and if
+    // the drop failed the row came back under them. A completed delete the platform has not
+    // performed is the one thing the sentence they agreed to must not show them.
     //
     // The dialog is what says "this is happening": it stays open and busy for the whole round
     // trip, which is real work — a force-dropped database, a blob sweep, a container teardown.
@@ -703,10 +680,10 @@ describe('create and delete', () => {
     expect(screen.getByText('Alpha')).toBeTruthy()
     expect(screen.queryByTestId('projects-empty')).toBeNull() // and not the first-run screen
 
-    // THE DIALOG HOLDS ITS BUSY STATE for the whole round trip (round-4 finding 9). It used to
-    // close in the same commit as the optimistic removal — batched before the request had even
-    // been sent — so the spinner and the disabled Cancel were set and unmounted in one render
-    // and could never be observed.
+    // THE DIALOG HOLDS ITS BUSY STATE for the whole round trip. It used to close in the same
+    // commit as the optimistic removal — batched before the request had even been sent — so
+    // the spinner and the disabled Cancel were set and unmounted in one render and could never
+    // be observed.
     expect(screen.getByRole('button', { name: /cancel/i }).hasAttribute('disabled')).toBe(true)
 
     // The server answers; the refetch is what takes the row.
@@ -718,16 +695,15 @@ describe('create and delete', () => {
     // FOCUS LANDS ON THE HEADING, not <body>, and it still has to be sent there explicitly:
     // the Delete button Radix captured is unmounted by the refetch a beat after the dialog
     // closes, so restoring onto it would put the keyboard on a control that is removed a
-    // moment later (round-4 finding 2, in its new shape).
+    // moment later.
     expect(document.activeElement?.textContent).toBe('Your apps')
   })
 
   it('an empty page with a non-zero total is NOT the first-run screen', async () => {
-    // Round-4 finding 13, tested at the guard rather than at the frame. The race he
-    // describes — the committed render between the delete settling and the refetch effect
-    // running — is not observable from RTL, which flushes effects inside `act()`; asserting
-    // around it produced a test that passed with the fix REMOVED, so this pins the condition
-    // itself instead.
+    // TESTED AT THE GUARD RATHER THAN AT THE FRAME. The race — the committed render between
+    // the delete settling and the refetch effect running — is not observable from RTL, which
+    // flushes effects inside `act()`; asserting around it produced a test that passed with the
+    // fix REMOVED, so this pins the condition itself instead.
     //
     // `items: []` with `total: 40` is the same state that frame has, and it is reachable for
     // real: delete the last row on page 5 and the server answers an empty page while the
@@ -762,12 +738,12 @@ describe('create and delete', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /delete project/i }))
 
-    await waitFor(() => expect(h.listProjects).toHaveBeenCalled()) // totals refetched
-    expect(screen.queryByRole('alert')).toBeNull() // and still no scary toast
+    await waitFor(() => expect(h.listProjects).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
-describe('the projects list and the count tiles keep WORDS and a busy state (#210)', () => {
+describe('the projects list and the count tiles keep WORDS and a busy state', () => {
   /** Every live region currently SAYING the given thing — see the twin helper in `App.test.jsx`. */
   const regionsSaying = (re: RegExp): Element[] =>
     Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
@@ -794,10 +770,10 @@ describe('the projects list and the count tiles keep WORDS and a busy state (#21
   })
 
   it('★ the region is already in the tree, EMPTY, before the wait starts — and it is the SAME node', async () => {
-    // THE ARM ASM5 EXISTS FOR. Every skeleton on this page is conditional, so a region rendered
-    // beside one is born holding its own text — which several reader-and-browser combinations
-    // miss entirely. Move `<div role="status">` inside the `waiting` branch and the empty-region
-    // assertion below goes red.
+    // THE REASON THE REGION IS MOUNTED PERMANENTLY. Every skeleton on this page is
+    // conditional, so a region rendered beside one is born holding its own text — which
+    // several reader-and-browser combinations miss entirely. Move `<div role="status">` inside
+    // the `waiting` branch and the empty-region assertion below goes red.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 12, totalPages: 2 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -831,11 +807,11 @@ describe('the projects list and the count tiles keep WORDS and a busy state (#21
   })
 })
 
-// --- the list remembers where you were (#208) -----------------------------------
+// --- the list remembers where you were -----------------------------------
 
-describe('page, search and rows-per-page live in the URL (#208)', () => {
+describe('page, search and rows-per-page live in the URL', () => {
   /**
-   * The three round trips the issue reproduced on a real account with 23 projects across 3 pages:
+   * The three round trips reproduced on a real account with 23 projects across 3 pages:
    * page 3 → open a project → Back landed on page 1; a search survived neither the trip nor a
    * reload; and rows-per-page reset to 8. All three were component state that no navigation could
    * see. What makes it a bug rather than a stated policy is the neighbour: the SAME page already
@@ -982,10 +958,10 @@ describe('page, search and rows-per-page live in the URL (#208)', () => {
   })
 
   it('the footer narrates the page the ROWS answer, not the page that was asked for', async () => {
-    // ASM7: `appliedPage` / `appliedPageSize` are NOT redundant copies of the URL. The URL is
+    // `appliedPage` / `appliedPageSize` are NOT redundant copies of the URL. The URL is
     // what was asked for and moves the instant a number is clicked; the mirrors are what the rows
-    // on screen answer and move only when a response lands. §11 keeps a failed page's rows on
-    // screen, so the gap between the two is a real rendered state, not a theoretical one.
+    // on screen answer and move only when a response lands. A failed request leaves the previous
+    // rows on screen, so the gap between the two is a real rendered state, not a theoretical one.
     //
     // MUTATION RECEIPT: collapse the mirrors into the URL state — render `page` / `pageSize`
     // where `appliedPage` / `appliedPageSize` are read — and both halves below go red.
@@ -1010,7 +986,7 @@ describe('page, search and rows-per-page live in the URL (#208)', () => {
     expect(screen.queryByText(/Showing 9–9 of 12/)).toBeNull()
   })
 
-  it('#206’s arrival notice scrubs itself WITHOUT taking the view with it', async () => {
+  it('the arrival notice scrubs itself WITHOUT taking the view with it', async () => {
     // The two mechanisms meet here. The notice rides router state and is replaced away the moment
     // it is read; that replace carries `location.search` through verbatim, so the page and query
     // the reader arrived with survive being told a project is gone. The reverse matters as much:

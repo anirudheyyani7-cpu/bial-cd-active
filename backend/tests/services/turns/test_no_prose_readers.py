@@ -1,22 +1,25 @@
-"""U14 / R92 / N2 — the census of what may branch on a chat kind, enforced instead of asserted.
+"""The census of what may branch on a chat kind, enforced instead of asserted.
 
-WHY A GUARD AND NOT A SENTENCE. Two comments in this codebase used to state this census — one
+WHY THIS EXISTS
+
+A GUARD AND NOT A SENTENCE. Two comments in this codebase used to state this census — one
 on `ChatKind` itself ("exactly two readers"), one in the turn engine ("three ... the closed
 set") — and they were both wrong, they disagreed with each other, and neither could go red. A
 number in a docstring cannot fail. This can.
 
 WHAT IT KEYS ON, and the distinction is the whole design: a conditional that names a MEMBER of
-`ChatKind` is deciding something on the strength of which kind a chat is, which is what N2
-forbids outside the run configurator. A conditional that compares two kinds to each other
+`ChatKind` is deciding something on the strength of which kind a chat is, which nothing
+outside the run configurator may do. A conditional that compares two kinds to each other
 (`existing.kind == body.kind`) is asking whether they MATCH — an idempotency or ownership
 question — and is deliberately not in scope. Widening the rule to "any attribute called kind"
 was tried and catches `part_kind`, `problem_type`, parser kinds and half of `projection.py`;
 what it buys in coverage it loses in meaning.
 
-THE PROSE-READER HALF IS PLAN B'S AND IS CITED, NOT REBUILT. `_looks_plan_shaped` and its call
-sites are gone, and `test_plan_options.py` carries the regression guard against the exact
-shapes that used to trip it — kept verbatim from a real production incident. A second copy here
-would either be B's symbol list again or an AST heuristic that fires on every string operation.
+THE PROSE-READER HALF IS GUARDED ELSEWHERE AND IS CITED, NOT REBUILT. `_looks_plan_shaped` and
+its call sites are gone, and `test_plan_options.py` carries the regression guard against the
+exact shapes that used to trip it — kept verbatim from a real production incident. A second copy
+here would either be that symbol list again or an AST heuristic firing on every string
+operation.
 """
 
 from __future__ import annotations
@@ -71,18 +74,14 @@ def _local_names_for_chat_kind(tree: ast.AST) -> set[str]:
 
 
 def _conditionals_naming_a_chat_kind(path: pathlib.Path) -> list[int]:
-    """Line numbers of every branch in `path` whose test names a `ChatKind` member.
+    """Line numbers of every branch in `path` whose test names a `ChatKind` member: an
+    `if`/`while`/ternary condition, or a `match`, matched against whatever THIS module calls
+    the enum (see `_local_names_for_chat_kind`), not the literal spelling.
 
-    `if` / `while` / a ternary's condition, and a `match` — the four places Python puts a value
-    under a decision.
-
-    Matched against whatever THIS module calls the enum (see `_local_names_for_chat_kind`),
-    not against the literal spelling.
-
-    A `match` is scanned SUBJECT AND PATTERNS TOGETHER, and counted once. `match kind:` names
-    the enum nowhere in its subject and everywhere in its arms, so a subject-only rule reports
-    the run configurator as having no branch at all — which is how a guard quietly stops
-    guarding the one module it was written for."""
+    A `match` is scanned SUBJECT AND PATTERNS TOGETHER, and counted once — `match kind:` names
+    the enum nowhere in its subject and everywhere in its arms, so a subject-only rule would
+    report the run configurator as branch-free, quietly un-guarding the one module this test
+    was written for."""
     tree = ast.parse(path.read_text())
     spellings = _local_names_for_chat_kind(tree)
     found: list[int] = []
@@ -103,14 +102,11 @@ def _conditionals_naming_a_chat_kind(path: pathlib.Path) -> list[int]:
 
 
 def test_only_the_named_modules_decide_anything_on_a_chat_kind() -> None:
-    """★ N2, enforced. A fifth module branching on a chat kind fails here rather than passing a
-    review — which is what "behaviour lives in the toolset, not in branches" has to mean if it
-    is to survive the next feature.
+    """★ THE CENSUS, enforced: a fifth module branching on a chat kind fails here, not in review.
 
-    WRITTEN AGAINST THE HONEST LIST. The plan expected two entries; the tree has four, and the
-    fourth is an identity check in the handoff route. Trimming the list to two would have meant
-    either deleting a legitimate ownership guard or weakening this test into a superset, and a
-    guard that cannot pass gets weakened until it proves nothing.
+    WRITTEN AGAINST WHAT THE TREE DOES: the allowlist holds four modules, the fourth an identity
+    check in the handoff route rather than a run-configuring branch. Trimming it out would mean
+    deleting a legitimate guard or weakening this test into a superset.
 
     Mutation check: add `if conversation.kind is ChatKind.PLAN:` to any other module under
     `src/` and this goes red naming it."""
@@ -144,14 +140,13 @@ def test_every_allowlisted_module_still_has_the_branch_it_is_allowed_for() -> No
 
 
 def test_the_projection_reads_no_chat_kind_at_all() -> None:
-    """★ U4's verification, pinned as its own claim because it is the one that regressed twice.
+    """★ Pinned as its own claim, separate from the census above, because this is the guarantee
+    that regressed twice.
 
-    The reload emitter used to drop a response's prose only in a Build chat. It reads no kind
-    now — not in a conditional, not anywhere — so the same stored response projects the same
-    way whichever chat it came from, which is what AE43 is about.
+    The reload emitter used to drop a response's prose only in a Build chat; it reads no kind
+    now, so the same stored response projects the same way whichever chat it came from.
 
-    Asserted on the IMPORT rather than on a branch: a module that cannot name `ChatKind` cannot
-    branch on one, and that is a stronger and simpler claim than enumerating the branches it
-    does not have."""
+    Asserted on the IMPORT rather than a branch: a module that cannot name `ChatKind` cannot
+    branch on one — stronger and simpler than enumerating the branches it does not have."""
     source = (SRC / "services/messages/projection.py").read_text()
     assert "ChatKind" not in source

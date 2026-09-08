@@ -1,32 +1,15 @@
-"""U5 — the WRITE turn's sandbox lifecycle: `ensure_sandbox` / `finish_turn_sandbox`.
+"""The WRITE turn's sandbox lifecycle: `ensure_sandbox` / `finish_turn_sandbox`.
 
-A Write turn allocates everything a build allocates (container, one-per-user lock, registry
-entry, heartbeat) and none of what a build runs (the `run_build` task, the `build_started`
-marker, attachments). These tests pin both halves of that sentence.
+A Write turn allocates everything a build allocates (container, lock, registry, heartbeat) and
+none of what a build runs (`run_build`, `build_started`, attachments). These tests pin both
+halves, plus the save model: `write_snapshot` is the only path that pushes the tree to Blob
+storage, and a Write turn with no reachable save point would report success while silently
+losing every edit to the next reaper sweep.
 
-The starred one is `test_the_write_turn_terminal_actually_saves_the_work`. It is the P0 this
-whole commit exists for: `write_snapshot` is the only thing that ever pushes the sandbox tree
-to Blob storage, and before U5 the only caller was the build harness's `_do_finalize`. A Write
-turn running on the chat engine with no equivalent save point would report success, show a
-correct preview, and lose every edit to the next reaper sweep — silently, with nothing in any
-log to say so.
-
-ON `may_write` — the pairing rule these tests hold themselves to:
-
-`may_write` is not a free knob, it MIRRORS THE TURN'S TOOLSET. `toolsets_for_kind` hands the
-mutating `sandbox_toolset` to `ChatKind.BUILD` alone, every `workspace_touched = True`
-lives inside that toolset, and `workspace_touched` is the only thing the engine derives
-`finish_turn_sandbox(touched=...)` from. So `may_write=False` implies `touched=False` in
-production: a read-only turn that ends with `touched=True` is a turn that both cannot and did
-mutate the tree, and a test built on that pairing pins nothing.
-
-`may_write=False` is therefore used only where the turn really is read-only — an Ask or Plan
-question, which pins the container but cannot touch it (see "a QUESTION is not a build"
-below). Where a scenario needs BOTH a Save and a mutating turn it does what a user does: the
-turn ends first (`finish_turn_sandbox` frees the slot and pardons the container, which stays
-up), and the Save follows between turns — which is exactly why `save_project_snapshot`
-deliberately does not require an in-process session.
-"""
+`may_write` mirrors the turn's toolset (`toolsets_for_kind` gives the mutating `sandbox_toolset`
+only to `ChatKind.BUILD`), so `may_write=False` implies `touched=False` in production — a test
+pairing `may_write=False` with `touched=True` pins nothing. Where a scenario needs both a Save and
+a mutating turn, end the turn first and save between turns, as `save_project_snapshot` expects."""
 
 from __future__ import annotations
 
@@ -218,18 +201,11 @@ def _with_head(client: FakeSandboxClient, sha: str) -> FakeSandboxClient:
     bundle = base64.b64encode(b"# v2 git bundle\n" + sha.encode() + b" HEAD\n\nPACK").decode()
 
     def handler(cmd: list[str]) -> ExecResult:
-        # The state probe: `<head>@@<porcelain>`. A clean tree at `sha`.
+        # `<head>@@<porcelain>@@<commit count>@@<ancestry>`. Count is 3, not 1, so this reads as
+        # "holds work" rather than the 1-commit seeded baseline, which is deliberately reclaimable.
         if cmd[0] == "sh" and "rev-parse" in cmd[-1]:
-            # `<head>@@<porcelain>@@<commit count>@@<ancestry>`. The count is 3, not 1: 1 is the
-            # `bial: golden template baseline` every fresh provision seeds, and a container
-            # sitting on the baseline alone is deliberately reclaimable. A test that means
-            # "this workspace holds work" has to say so.
-            #
-            # The ancestry field answers only when the probe ASKED (U1) — `0 0`, "the reference
-            # is in this repository and HEAD is below it", which is the shape of a container
-            # that moved forward normally. Answering it unconditionally would be worse than
-            # useless: an unasked probe returning a judgement is exactly the confusion
-            # `Ancestry.NOT_ASKED` exists to prevent.
+            # Ancestry answers only when the probe asked (`merge-base` in the command) — answering
+            # unconditionally would be a judgement `Ancestry.NOT_ASKED` exists to prevent.
             answered = "0 0" if "merge-base" in cmd[-1] else ""
             return ExecResult(stdout=f"{sha}\n@@@@3@@{answered}", stderr="", exit=0)
         if cmd[0] == "base64":
@@ -258,10 +234,8 @@ def _pristine(client: FakeSandboxClient) -> FakeSandboxClient:
 async def test_the_turn_terminal_does_not_save_because_saving_is_the_users_call(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ THE SAVE MODEL (KTD-5e). This used to snapshot at every turn terminal, which quietly
-    took the decision away from the user: every message became a new saved version, so there
-    was no such thing as trying something and walking away from it. The agent commits inside
-    the container as it works; the bundle is pushed only when the user asks.
+    """★ THE SAVE MODEL: the agent commits inside the container as it works; the bundle is
+    pushed only when the user clicks Save, never automatically at a turn's end.
 
     Mutation-check: put the `write_snapshot` call back in `finish_turn_sandbox` and this goes
     red."""
@@ -340,10 +314,9 @@ async def test_unsaved_work_reads_as_dirty_and_a_save_settles_it(
 async def test_a_brand_new_project_offers_a_save_rather_than_reading_unknown(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ The bug this arm exists for. The golden template ships NO `.git` — `write_snapshot`
-    runs `git init` itself — so `git rev-parse HEAD` fails on every brand-new project. Read as
-    "unknown" that hid the Save button on exactly the projects that most need it: the user
-    builds their first app and has no way to keep it."""
+    """★ The bug this arm exists for: the golden template ships NO `.git`, so `git rev-parse
+    HEAD` fails on every brand-new project. Read as "unknown", that hid the Save button on
+    exactly the projects that most need it."""
     user, project_id = await _mk(db_session, "w6f@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -351,10 +324,8 @@ async def test_a_brand_new_project_offers_a_save_rather_than_reading_unknown(
         db_session, user, project_id, sandbox_client=client, may_write=True
     )
     client.attach_handle = session.handle
-    # SAID EXPLICITLY, because the fake's default is now a container that HOLDS work (U2). It has
-    # to be: read as "no head at exit 0", the old empty default made every turn test with a
-    # recovery bundle exercise the confirmed-reversion branch while asserting something else.
-    # A test that means "this container has no repository" says so.
+    # SAID EXPLICITLY: the fake's default now HOLDS work, so a test meaning "no repository
+    # here" must override it rather than lean on the old empty default (which hid this branch).
     client.exec_handler = lambda cmd: ExecResult(stdout="", stderr="", exit=0)
 
     state = await manager.project_save_state(db_session, user, project_id, sandbox_client=client)
@@ -408,10 +379,9 @@ async def test_no_workspace_reads_as_unknown_never_as_clean(
 async def test_the_terminal_pardons_the_container_so_the_preview_outlives_the_turn(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The one place the Write path diverges from `_do_finalize` rather than omitting from it.
-    # A build's container is scaffolding and survives only a clean success; a Write turn's
-    # container IS the preview on screen, and the turn ending is not a reason for the user's
-    # app to go dark mid-sentence.
+    # The Write path diverges from `_do_finalize` here rather than omitting from it: a build's
+    # container is scaffolding that survives only a clean success, but a Write turn's container
+    # IS the preview on screen — the turn ending is not a reason for it to go dark.
     user, project_id = await _mk(db_session, "w7@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -432,12 +402,9 @@ async def test_the_terminal_pardons_the_container_so_the_preview_outlives_the_tu
 async def test_a_second_message_attaches_instead_of_rebuilding_the_container(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ THE COST OF A MESSAGE. A sandbox used to exist only for the length of a build, so
-    reconcile-then-allocate ran once per build and nobody felt it. Write is a chat mode now:
-    every message allocates, and that same rule tore down a HEALTHY container and rebuilt it
-    from the snapshot every single time — a blocking container delete, a blocking create, an
-    image pull and a bundle restore, to arrive back where it already was. The user watched
-    "Getting your workspace ready…" on every message while their app sat there running.
+    """★ THE COST OF A MESSAGE: Write is a chat mode, so every message calls `ensure_sandbox` —
+    and without a guard, the same reconcile-then-allocate rule that ran once per build would
+    tear down and rebuild a HEALTHY container on every single message.
 
     Mutation-check: drop the `spare_app` guard in `_holding_user_lock` and this goes red —
     `torn_down` gains the first container and `restored` gains a second entry."""
@@ -464,16 +431,12 @@ async def test_a_second_message_attaches_instead_of_rebuilding_the_container(
 async def test_a_different_project_never_steals_the_container(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """The other half, and the reason the spare is keyed on the APP NAME rather than merely
-    "something is live". Attaching to whatever container happened to be up would hand project B
-    project A's code. The ghost hazard the reconcile exists for stays closed.
+    """The other half: the spare is keyed on the APP NAME, not merely "something is live" —
+    attaching to whatever container happened to be up would hand project B project A's code.
 
-    RE-CUT FOR #83 (was `…_still_reaps_rather_than_stealing_the_container`). The claim above is
-    unchanged and still the point: B must never inherit A's workspace. What changed is the
-    alternative. Refusing to STEAL the container never implied a licence to DESTROY it, but
-    that is what the code did — silently, inside B's request, taking A's unsaved work with it.
-    A's container survives now; the destruction moved to `release_project_sandbox`, which the
-    user reaches through a prompt. See the refusal tests below."""
+    Refusing to STEAL the container never implied a licence to DESTROY it, which the code used
+    to do silently, taking A's unsaved work with it. Destruction now lives only in
+    `release_project_sandbox`, reached through a user prompt — see the refusal tests below."""
     user, project_a = await _mk(db_session, "w11@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -500,20 +463,11 @@ async def test_a_different_project_never_steals_the_container(
 async def test_a_clean_incumbent_is_asked_about_and_reported_clean(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """INVERTED DELIBERATELY (R94, plan 006 U5). This used to assert the opposite — "only unsaved
-    work earns an interruption; with A saved there is nothing to lose, so the switch stays silent".
+    """INVERTED DELIBERATELY: a saved-and-clean incumbent used to stay silent, which was true
+    about the work but wrong about the person — their project stopped with no warning.
 
-    That was true about the WORK and wrong about the person. Their other project stopped with no
-    warning and no record because a screen somewhere else needed the one workspace, and
-    sandbox-first makes it far more common, since a planning question now takes the slot too. R94
-    says the asking happens either way: "Today it asks only when there is something to lose … that
-    difference goes."
-
-    TWO ASSERTIONS, AND THE SECOND IS THE ONE WITH TEETH. That the dialog opens is the easy half —
-    it passes against the wrong `dirty` value too. That the refusal reports the incumbent CLEAN is
-    what stops the dialog telling somebody their pristine, saved project "has unsaved changes":
-    `dirty` answers the Save button's question, and this arm fires precisely because there is
-    nothing to lose."""
+    THE SECOND ASSERTION HAS TEETH: opening the dialog is the easy half; reporting the incumbent
+    CLEAN is what stops it telling a citizen their saved project "has unsaved changes"."""
     user, project_a = await _mk(db_session, "w12@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -604,7 +558,8 @@ async def test_the_next_write_turn_restores_the_tree_the_last_one_saved(
     # ...from the SAVED key: `newest_restore_source` found nothing newer to prefer, because the
     # user's click landed after the turn's recovery copy. This pins the SOURCE SELECTION only —
     # `FakeSandboxClient` hands back the same constant bundle whichever key is read, so it says
-    # nothing about the bytes. The e2e twin (`test_s5`) is what proves the tree itself.
+    # nothing about the bytes. The e2e twin
+    # (`test_s5_a_reaped_container_resumes_the_work_not_the_last_save`) proves the tree itself.
     assert client.restored_from[-1] is None
 
 
@@ -639,7 +594,7 @@ async def test_a_storage_failure_during_save_reaches_the_user(
     assert state.dirty is True
 
 
-# --- #83 follow-up: autosave to the recovery slot ------------------------------------
+# --- autosave to the recovery slot ------------------------------------
 
 
 async def test_a_finished_write_turn_autosaves_to_recovery_not_over_the_saved_bundle(
@@ -649,8 +604,8 @@ async def test_a_finished_write_turn_autosaves_to_recovery_not_over_the_saved_bu
     net so a crash, a closed laptop or the idle reaper stops costing a whole session — while
     `snapshot_key` stays exactly what the user last chose to save.
 
-    Point the autosave at `snapshot_key` and this goes red twice over: KTD-5e is reversed (every
-    message becomes a saved version again) and the assertion below that the user's bundle is
+    Point the autosave at `snapshot_key` and this goes red twice over: the save model is reversed
+    (every message becomes a saved version again) and the assertion below that the user's bundle is
     untouched fails outright."""
     user, project_id = await _mk(db_session, "w14@rvaiglobal.com")
     manager = SessionManager()
@@ -708,28 +663,14 @@ async def test_a_failing_autosave_never_fails_the_turn(
 async def test_a_plan_only_project_does_not_block_a_real_one(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """A QUESTION IS NOT WORK. Found in live testing, and it made the guard worse than the bug.
+    """A QUESTION IS NOT WORK, and missing that made this guard worse than the bug it replaced:
+    `_pin_workspace` attaches the container for every mode, so a Plan prompt into a brand-new
+    project takes the one-per-user workspace, and `_save_state_of` reports that untouched
+    template as dirty — read as "unsaved changes" that locked the user out of their real app.
 
-    `_pin_workspace` attaches the container for every mode, so typing one Plan prompt into a
-    brand-new project takes the one-per-user workspace. That container is the untouched golden
-    template — nothing written, nothing committed, nothing saved — but `dirty` is True for it,
-    because `_save_state_of` answers the Save button's question and a never-built project must
-    show a Save button. Read as "unsaved changes" it locked the user out of the project that
-    held their actual app, to protect an empty template.
-
-    Flip any of the four conditions and this must go red: a commit BEYOND the seeded baseline,
-    a tree dirty with anything outside `FRAMEWORK_CHURN`, a saved bundle, or a recovery
-    snapshot each mean there IS something to lose. Note it is not "no commits" — the sandbox
-    client seeds `bial: golden template baseline` at birth, so a pristine container has exactly
-    one and a no-commits check would never fire.
-
-    WHAT R94 CHANGED HERE, AND WHAT IT DID NOT (plan 006, U5). The switch is no longer SILENT —
-    it raises, because the platform now asks every time. What `_nothing_to_lose` still decides is
-    the thing it was written for: the COPY. Its arm reports `dirty=False`, so the dialog offers a
-    clean stop with no Save button and no unsaved-work claim, instead of telling a citizen their
-    untouched golden template "has unsaved changes" — the live-observed wording that made this
-    guard worse than the bug it replaced. The hatch keeps doing its real job; what it stopped
-    choosing is silence."""
+    Flip any of these and this must go red: a commit beyond the seeded baseline, a tree dirty
+    outside `FRAMEWORK_CHURN`, a saved bundle, or a recovery snapshot. See the inline comment
+    below for why `dirty` must still read False here."""
     user, project_a = await _mk(db_session, "w17@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -760,7 +701,7 @@ async def test_a_committed_but_unsaved_workspace_still_blocks(
 ) -> None:
     """The other side of the same line, so the exemption above cannot quietly widen into
     "never-saved projects are always disposable". A commit in the container IS work — it is
-    what a Write turn leaves behind — and losing it is the whole point of #83."""
+    what a Write turn leaves behind — and losing it is the whole point."""
     user, project_a = await _mk(db_session, "w18@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -779,12 +720,11 @@ async def test_a_committed_but_unsaved_workspace_still_blocks(
     assert client.torn_down == []
 
 
-# --- the guard's UNKNOWN arms (#83 review, findings 4 and 5) ----------------------
+# --- the guard's UNKNOWN arms ----------------------
 #
 # Every `return` inside `_refuse_if_reclaim_would_destroy_work` lets the teardown below
 # proceed, so each one asserts "nothing will be lost". These two pin the arms where the
-# honest answer is "I could not tell" — which the first cut answered by reclaiming, i.e.
-# #83 again with a rarer trigger.
+# honest answer is "I could not tell" — which the first cut answered by reclaiming.
 
 
 class _UnreachableAttach(FakeSandboxClient):
@@ -966,13 +906,11 @@ async def test_saving_a_project_mid_build_is_refused(
     """THE DATA-INTEGRITY HALF, and a real bug this found rather than a hypothetical.
 
     `save_project_snapshot` had no session guard, so "Save and switch" on a building project
-    SUCCEEDED — bundling whatever the agent had on disk mid-edit and storing it as the version
-    Relaunch restores — and only then failed on the release. The user was left with a corrupted
-    saved bundle and an error message.
+    SUCCEEDED — bundling whatever the agent had on disk mid-edit as the version Relaunch
+    restores — and only then failed on the release, leaving a corrupted saved bundle.
 
-    A save is only meaningful once the turn has settled, so this refuses and the dialog stops
-    the build first. Mutation-check: drop the `_live_session_holds` check in
-    `save_project_snapshot` and this goes green with a bundle in storage."""
+    Mutation-check: drop the `_live_session_holds` check in `save_project_snapshot` and this
+    goes green with a bundle in storage."""
     user, project_a = await _mk(db_session, "w22@rvaiglobal.com")
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "0" * 40)
@@ -994,17 +932,12 @@ async def test_stop_active_work_settles_the_build_so_the_switch_can_proceed(
     _fresh_engine: TurnEngine,
     session_factory,
 ) -> None:
-    """The first of the three steps, and the one that makes the other two possible.
+    """The first of three steps: while the build runs, save and release both refuse, and after
+    `stop_active_work` returns the slot must be free — `_active_by_user` empty ON RETURN is the
+    whole contract, not merely "asked to settle".
 
-    Asserts the ordering invariant end to end: while the build runs, save and release both
-    refuse; after `stop_active_work` returns, the slot is free and the release goes through.
-    That `_active_by_user` is empty ON RETURN is the whole contract — a stop that returned
-    before the turn unwound would hand the caller a container still owned by a running task.
-
-    UPDATED FOR THE THREE STATES: this used to assert `stopped is True`, which the code returned
-    unconditionally — so the assertion held whether or not the turn had actually unwound, and
-    the two lines below it were carrying the whole test. `STOPPED` is now derived from exactly
-    what they check, so the three agree by construction rather than by luck."""
+    `STOPPED` used to be a bare `True` returned unconditionally, holding even if the turn had
+    not actually unwound; it is now derived from exactly what the two lines below check."""
     user, project_a = await _mk(db_session, "w23@rvaiglobal.com")
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "1" * 40)
@@ -1022,7 +955,6 @@ async def test_stop_active_work_settles_the_build_so_the_switch_can_proceed(
     stopped = await manager.stop_active_work(db_session, user, project_a, sandbox_client=client)
 
     assert stopped is StopOutcome.STOPPED
-    # THE CONTRACT: settled by the time it returned, not "asked to settle".
     assert manager.active_session_for(user.id) is None
     assert user.id not in manager._active_by_user
 
@@ -1030,14 +962,13 @@ async def test_stop_active_work_settles_the_build_so_the_switch_can_proceed(
 async def test_stopping_a_project_that_is_not_building_is_a_quiet_success(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """`NOTHING_WAS_RUNNING`, not an error. The caller's goal is "settled", and it already is —
-    a 409 here would make the dialog's own first step fail on the common path where the build
+    """`NOTHING_WAS_RUNNING`, not an error: the caller's goal is "settled", and it already is —
+    a 409 here would fail the dialog's own first step on the common path where the build
     finished while the user was reading.
 
-    ITS OWN STATE, not the absence of a stop. The boolean this replaces spelt this case `False`
-    and a *timeout* `True`, so the one answer that must never be proceeded on shared a face with
-    the one that always may. Named separately, both proceed-able answers stay proceed-able and
-    the third can be refused on its own."""
+    ITS OWN STATE, not the absence of a stop: the boolean this replaces spelt this case `False`
+    and a *timeout* `True`, so the one answer that must never proceed shared a face with the one
+    that always may. Named separately, both proceed-able answers stay proceed-able."""
     user, project_a = await _mk(db_session, "w24@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -1142,19 +1073,15 @@ async def test_a_read_only_turn_does_not_block_the_save_button(
 async def test_a_read_only_turn_on_an_empty_project_refuses_as_clean_not_as_building(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """The escape hatch the building arm was short-circuiting — still doing its job, now choosing
-    the COPY rather than choosing silence.
+    """The escape hatch the building arm was short-circuiting — still doing its job, now
+    choosing the COPY over silence. `_nothing_to_lose` exists for a Plan question against a
+    brand-new project; raising `building` above it locked such a user out of the project
+    holding their real app.
 
-    `_nothing_to_lose` exists precisely for "one Plan question against a brand-new project", and
-    raising `building` above it meant a user who had typed a single question into an untouched
-    template was locked out of the project holding their real app.
-
-    R94 (plan 006, U5) makes the refusal unconditional, so the old assertion — "no refusal at all"
-    — is inverted. The regression it guarded is NOT inverted with it, and this is the distinction
-    worth holding on to: the failure was never that a dialog appeared, it was WHICH dialog. The
-    building arm shows a hammer icon and two Stop buttons the server then refuses; the clean arm
-    shows a plain stop with no Save button. Reaching the wrong one for a citizen who asked a
-    question is the bug, and it is what this now pins."""
+    The refusal is now unconditional, inverting the old "no refusal at all" assertion, but the
+    regression it guarded is not inverted: the failure was always WHICH dialog, not whether one
+    appeared — the building arm shows a hammer and Stop buttons the server refuses, the clean
+    arm a plain stop with no Save button."""
     user, project_a = await _mk(db_session, "w28@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -1209,21 +1136,14 @@ async def test_a_write_turn_still_reports_building(
 async def test_stopping_still_covers_a_read_only_turn(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """`stop_active_work` keeps the BROAD predicate on purpose. An Ask turn holds the
-    container just as firmly as a build and `release` refuses for either, so the client calls
-    stop unconditionally — narrowing this one too would put read-only modes back in the dead
-    end the whole flow exists to remove.
+    """`stop_active_work` keeps the BROAD predicate on purpose: an Ask turn holds the container
+    just as firmly as a build, so narrowing this to `may_write` would put read-only modes back in
+    the dead end the flow exists to remove — and is the mutation that turns the final assertion
+    red with `NOTHING_WAS_RUNNING`.
 
-    IT NOW REPORTS `STILL_RUNNING`, AND THAT IS THE FIX RATHER THAN A REGRESSION. The old
-    boolean answered `True` here whatever happened, which a caller reads as "the slot is yours".
-    It never was: this fixture pins the container the way a read-only turn does, and nothing
-    owns the engine turn the pin exists for, so the pin outlives the stop. `release` refuses on
-    precisely the predicate that is still true — asserted below — so "still running" is an
-    accurate prediction of the very next step, where "stopped" was a promise it would break.
-
-    WHAT THIS STILL PINS is the one thing it was written for: the broad predicate selects a
-    read-only turn. A `stop_active_work` narrowed to `may_write` would answer
-    `NOTHING_WAS_RUNNING`, and that is the assertion that goes red."""
+    It reports `STILL_RUNNING` rather than a bare `True`: this fixture pins the container the way
+    a read-only turn does, and nothing owns the engine turn the pin exists for, so the pin outlives
+    the stop. `release` refuses on that still-true predicate, making "still running" accurate."""
     user, project_id = await _mk(db_session, "w30@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -1247,7 +1167,7 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
 ) -> None:
     # RENAMED from "failed_attach", which it never tested: it scripts `provision_new` to raise,
     # i.e. a failure on the CREATE arm, before any handle is assigned. That is why nothing here
-    # caught #90 — no committed test took the ATTACH arm and then failed. The attach-arm
+    # caught the bug — no committed test took the ATTACH arm and then failed. The attach-arm
     # failures are pinned separately below.
     user, project_id = await _mk(db_session, "w5@rvaiglobal.com")
     manager = SessionManager()
@@ -1271,7 +1191,7 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
     assert session.handle is not None
 
 
-# --- #90: a failure on the ATTACH arm must not destroy the borrowed container ---
+# --- a failure on the ATTACH arm must not destroy the borrowed container ---
 # `_resolve_sandbox` has three arms. Two CREATE a container, so compensation tearing it down is
 # a genuine rollback. One ATTACHES to a container that was already serving — and the attach arm
 # is the STEADY STATE for every Write message after the first, because
@@ -1279,11 +1199,13 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
 # message does not demolish and rebuild a running app.
 #
 # The container's tree is the ONLY copy of everything since the user last clicked Save
-# (`finish_turn_sandbox` does not snapshot — KTD-5e), so destroying it here is unrecoverable and
+# (`finish_turn_sandbox` does not snapshot), so destroying it here is unrecoverable and
 # silent: the preview simply stops loading and Relaunch restores the older SAVED bundle, so the
 # app comes back looking healthy at an earlier state.
 #
-# These invert the four probes from issue #90 — they assert the container SURVIVES.
+# The two `spares_the_attached_container` tests below invert the earlier teardown probes —
+# they assert the container SURVIVES. The third checks that a container THIS request created
+# is still torn down, so the sparing is scoped to the attach arm rather than blanket.
 
 
 class _RecordingClient(FakeSandboxClient):
@@ -1327,7 +1249,7 @@ async def _a_container_that_is_already_up(
 async def test_a_redis_blip_seeding_the_heartbeat_spares_the_attached_container(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ #90. The window between taking the handle and `scope.adopt()` holds exactly one await
+    """The window between taking the handle and `scope.adopt()` holds exactly one await
     — the heartbeat seed, deliberately unguarded — so a single `RedisError` there used to run
     compensation against a container this request had merely borrowed.
 
@@ -1659,16 +1581,14 @@ async def test_a_same_second_tie_resumes_the_newer_work_not_the_save(
 async def test_an_unchanged_tree_is_not_offered_however_new_its_bundle_is(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """`touched` means "a mutating tool ran", not "the tree changed". Ordering by time alone then
-    claims work that does not exist — permanently, and while `dirty` is False. The stamped HEAD is
-    what settles it.
+    """`touched` means "a mutating tool ran", not "the tree changed". Ordering by time alone
+    would claim work that does not exist — permanently, and while `dirty` is False. The stamped
+    HEAD is what settles it.
 
-    THE NEWER BUNDLE IS PLACED DIRECTLY NOW, and that is a consequence of U3 rather than a
-    weakening of the test. `finish_turn_sandbox` used to produce this shape by rewriting the
-    recovery bundle from an unchanged worktree on every mutating turn; the guarded write skips
-    that outright (see `test_finish_turn.py`). But `recoverable_work`'s guard still has to hold,
-    because the recovery slot has other writers — the U25 operator promote among them — and a
-    newer object over an identical tree is still not work to recover."""
+    The newer bundle is placed directly here (`finish_turn_sandbox`'s guarded write now skips
+    rewriting an unchanged recovery bundle, see `test_finish_turn.py`), but `recoverable_work`'s
+    guard still has to hold: the recovery slot has other writers — the operator promote among
+    them — and a newer object over an identical tree is still not work to recover."""
     user, project_id = await _mk(db_session, "wsame@rvaiglobal.com")
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "a" * 40)
@@ -1700,14 +1620,11 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ U3 — the third way a turn's work fails to reach a durable copy, and the only one the
-    call site can see.
-
-    The swallow stays: a safety net that can fail a turn is not a safety net. What changes is
-    that it is no longer SILENT. That silence is exactly what made the 2026-08-18 reframe
-    unfalsifiable — nobody could say afterwards whether the platform had failed to CHECK the
-    workspace or failed to make it DURABLE, because a write that never landed left no trace an
-    operator would ever look for.
+    """★ The third way a turn's work fails to reach a durable copy, and the only one the call
+    site can see. The swallow stays — a safety net that can fail a turn is not a safety net —
+    but it is no longer SILENT: a write that never landed used to leave no trace an operator
+    would ever look for, making it unfalsifiable whether the platform had failed to CHECK the
+    workspace or failed to make it DURABLE.
 
     Mutation check: drop the event back to a `warning` with a prose message and this goes red."""
     user, project_id = await _mk(db_session, "wboom@rvaiglobal.com")
@@ -1735,7 +1652,7 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
 
 
 # --------------------------------------------------------------------------------------
-# R94 (plan 006, U5) — the asking is unconditional, and EXACTLY TWO EXITS WIDENED
+# The asking is unconditional, and EXACTLY TWO EXITS WIDENED
 # --------------------------------------------------------------------------------------
 #
 # The unit's own framing: "an implementer who reads 'always ask' as 'delete the silent path'
@@ -1788,7 +1705,7 @@ async def test_a_ghost_registry_entry_raises_nothing_because_it_has_no_project_t
     """THE SHARP EXIT — the one the unit singles out. The registry names a container whose app maps
     to no project this user owns: a leftover the reconcile will clear.
 
-    R95 requires the dialog to NAME the project being stopped. There is no project here, so
+    The dialog is required to NAME the project being stopped. There is no project here, so
     widening this exit renders a dialog with a blank where the name goes — worse than the silence
     it replaced, because it asks a person to make a decision about something it cannot describe."""
     user, project_a = await _mk(db_session, "w94-ghost@rvaiglobal.com")

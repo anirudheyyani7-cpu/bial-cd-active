@@ -1,9 +1,8 @@
-"""Frozen-surface tests for the build-session schemas (C3 + C7, U8).
+"""Frozen-surface tests for the build-session schemas.
 
-C3 and C7 are cross-track coordination contracts rendered as executable code, so their
-shapes are PINNED here: drift (a member added/removed, a payload field renamed, a wrong
-discriminator accepted) is a test failure, not a silent divergence. Also asserts the
-Stage-0 stub router mounts cleanly so `create_app()` still boots.
+These shapes are a cross-track contract rendered as executable code, so drift — a member
+added or removed, a payload field renamed, a wrong discriminator accepted — has to be a
+test failure rather than a silent divergence.
 """
 
 from __future__ import annotations
@@ -43,10 +42,10 @@ from src.main import create_app
 _NOW = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
 
 
-# --- C3: BuildSessionStatus StrEnum -------------------------------------------
+# --- BuildSessionStatus StrEnum ------------------------------------------------
 
 
-def test_status_enum_has_exactly_the_five_c3_members() -> None:
+def test_status_enum_has_exactly_the_five_members() -> None:
     assert {s.value for s in BuildSessionStatus} == {
         "provisioning",
         "building",
@@ -57,7 +56,6 @@ def test_status_enum_has_exactly_the_five_c3_members() -> None:
 
 
 def test_status_enum_round_trips_value_to_member() -> None:
-    # StrEnum: value ↔ member both directions.
     assert BuildSessionStatus("ready") is BuildSessionStatus.READY
     assert BuildSessionStatus.READY.value == "ready"
     assert str(BuildSessionStatus.PROVISIONING) == "provisioning"
@@ -68,20 +66,17 @@ def test_status_enum_rejects_unknown_value() -> None:
         BuildSessionStatus("deploying")
 
 
-# --- C3: frozen lock TTL + cadence constants ----------------------------------
+# --- the frozen lock TTL + cadence constants ----------------------------------
 
 
-def test_cadence_constants_are_the_frozen_c3_values() -> None:
-    # Byte-stable pins (like the C5 key constants in tests/services/redis/test_keys.py):
-    # SESSION-API's Wave-1 lock ops + the portal keep-alive loop are coded to these exact
-    # seconds, so silent drift must break a test, not slip through (C3 §3).
+def test_cadence_constants_are_the_frozen_values() -> None:
     assert LOCK_TTL_SECONDS == 900
     assert LOCK_RENEW_CADENCE_SECONDS == 300
     assert HEARTBEAT_CADENCE_SECONDS == 30
     assert HEARTBEAT_TTL_SECONDS == 90
 
 
-# --- C3: control-op response models -------------------------------------------
+# --- control-op response models -----------------------------------------------
 
 
 def test_status_response_serializes_with_preview_url_camel() -> None:
@@ -96,7 +91,6 @@ def test_status_response_serializes_with_preview_url_camel() -> None:
         updated_at=_NOW,
     )
     wire = resp.model_dump(by_alias=True)
-    # CamelModel: snake_case Python ⇄ camelCase wire; preview_url MUST be present (C3 §2.3).
     assert wire["previewUrl"] == "https://app-xyz.westeurope.azurecontainerapps.io/"
     assert wire["lastSeq"] == 42
     assert "sessionId" in wire and "session_id" not in wire
@@ -130,19 +124,19 @@ def test_start_response_defaults_preview_url_null() -> None:
 
 
 def test_start_response_requires_its_fields() -> None:
-    # A partial body (only session_id) must fail — project_id/app_id/status/created_at required.
     with pytest.raises(ValidationError):
         StartBuildResponse.model_validate({"session_id": str(uuid.uuid4())})
 
 
-# --- C3: lock-op response models ------------------------------------------------
-# U28 retired `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` along with the
+# --- lock-op response models ----------------------------------------------------
+# `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` were retired along with the
 # `acquire` / `renew` / `release` / `heartbeat` routes they served — nothing called them (the
-# portal's keep-alive loop that was their only caller was itself deleted back in U13).
-# `ForceEndResponse` outlived them and has now outlived its own route too: U33 deleted
-# `POST /{session_id}/lock/force-end`, so NO ROUTE SERVES THIS MODEL. It is kept because
-# `tests/test_import_graph.py` freezes the C3 schema surface at this location, and the shape is
-# still what `SessionManager.force_end` — which keeps its service tests — would answer with.
+# portal's keep-alive loop that was their only caller was itself deleted).
+# `ForceEndResponse` outlived them and has now outlived its own route too: the `POST
+# /{session_id}/lock/force-end` route was deleted, so NO ROUTE SERVES THIS MODEL. It is kept
+# because `tests/test_import_graph.py` freezes the schema surface at this location, and the
+# shape is still what `SessionManager.force_end` — which keeps its service tests — would answer
+# with.
 
 
 def test_force_end_response_validates() -> None:
@@ -157,20 +151,16 @@ def test_stop_response_carries_terminal_status() -> None:
     assert resp.status is BuildSessionStatus.ENDED
 
 
-# --- C7: the tagged-union progress envelope -----------------------------------
+# --- the tagged-union progress envelope ---------------------------------------
 
 _ENVELOPE: TypeAdapter[ProgressEnvelope] = TypeAdapter(ProgressEnvelope)
 
 _C7_TYPES = {"step", "error", "preview_ready", "escalation", "quota_exceeded", "ended"}
 
 
-def test_envelope_union_is_the_six_c7_members_plus_the_reconnecting_signal() -> None:
-    # `ProgressEnvelope` is `Annotated[Union[...], Field(discriminator="type")]`: get_args()[0]
-    # is the Union. Its args are the six LIVE C7 variant classes PLUS the U5 `preview_reconnecting`
-    # feed-only signal (F8) — a member that does NOT change the frozen 5-member BuildSessionStatus.
-    # This is the exact-membership guard: an accidental addition/removal turns it red. U29 retired
-    # `log` (nothing in production had ever emitted it), so the count dropped from eight to seven
-    # — recounted against the LIVE union, not the plan's pre-split arithmetic (constraint 11).
+def test_envelope_union_is_the_six_members_plus_the_reconnecting_signal() -> None:
+    # `ProgressEnvelope` is `Annotated[Union[...], Field(discriminator="type")]`, so the union
+    # itself is `get_args(...)[0]` — walking the annotation directly finds only the Annotated.
     union = get_args(ProgressEnvelope)[0]
     assert set(get_args(union)) == {
         StepEvent,
@@ -231,11 +221,11 @@ def test_each_of_the_six_types_validates_its_own_payload() -> None:
         "quota_exceeded": QuotaExceededEvent,
         "ended": EndedEvent,
     }
-    assert set(payloads) == _C7_TYPES  # the fixture itself covers all six
+    assert set(payloads) == _C7_TYPES
     for type_name, payload in payloads.items():
         parsed = _ENVELOPE.validate_python(payload)
         assert isinstance(parsed, expected[type_name])
-        assert parsed.seq == payload["seq"]  # every variant carries `seq` (§2)
+        assert parsed.seq == payload["seq"]
 
 
 def test_preview_ready_validates_and_carries_preview_url() -> None:
@@ -263,7 +253,6 @@ def test_error_event_carries_source_title_cleaned_stack() -> None:
 
 
 def test_envelope_snake_case_wire_is_byte_stable() -> None:
-    # C7 keeps snake_case keys + snake_case `type` literals (NO camelCase alias generator).
     ev = PreviewReadyEvent(seq=4, preview_url="https://p/")
     dumped = ev.model_dump()
     assert dumped == {"type": "preview_ready", "seq": 4, "preview_url": "https://p/"}
@@ -281,7 +270,6 @@ def test_envelope_rejects_missing_type() -> None:
 
 
 def test_envelope_rejects_mismatched_payload_for_type() -> None:
-    # A `preview_ready` without its `preview_url`, or with a foreign field, must fail.
     with pytest.raises(ValidationError):
         _ENVELOPE.validate_python({"type": "preview_ready", "seq": 4})
     with pytest.raises(ValidationError):
@@ -297,17 +285,17 @@ def test_envelope_rejects_mismatched_payload_for_type() -> None:
         )
 
 
-def test_error_source_has_exactly_the_four_c7_members() -> None:
+def test_error_source_has_exactly_the_four_members() -> None:
     assert {s.value for s in ErrorSource} == {"tsc", "next_build", "server", "client"}
 
 
-# --- C7: BuildError + BuildResult ---------------------------------------------
+# --- BuildError + BuildResult -------------------------------------------------
 
 
 def test_build_error_shape() -> None:
     err = BuildError(source=ErrorSource.SERVER, title="boom", cleaned_stack="stack")
     assert err.source is ErrorSource.SERVER
-    with pytest.raises(ValidationError):  # cleaned_stack required
+    with pytest.raises(ValidationError):
         BuildError.model_validate({"source": "server", "title": "boom"})
 
 
@@ -320,14 +308,11 @@ def test_build_result_validates_required_fields() -> None:
         snapshot_committed=True,
     )
     assert result.status is BuildSessionStatus.ENDED
-    assert result.preview_url is None  # defaults null
+    assert result.preview_url is None
     assert result.error is None
 
 
 def test_build_result_carries_the_reason_the_terminal_frame_is_rendered_from() -> None:
-    # `reason` travels on the verdict because BRAIN emits no terminal frame (R7): SESSION-API
-    # renders the one `ended` from this after its C4 snapshot. Status alone cannot supply it —
-    # `completed` and `quota_exceeded` are both ENDED, and both must reach the portal distinctly.
     completed = BuildResult(
         status=BuildSessionStatus.ENDED,
         reason="completed",
@@ -343,7 +328,7 @@ def test_build_result_carries_the_reason_the_terminal_frame_is_rendered_from() -
         snapshot_committed=False,
     )
     assert completed.status is quota.status
-    assert completed.reason != quota.reason  # only `reason` tells them apart
+    assert completed.reason != quota.reason
 
 
 def test_build_result_carries_error_on_failed() -> None:
@@ -361,10 +346,8 @@ def test_build_result_carries_error_on_failed() -> None:
 
 
 def test_build_result_rejects_missing_required() -> None:
-    # app_id / last_seq / snapshot_committed / reason are required.
     with pytest.raises(ValidationError):
         BuildResult.model_validate({"status": "ended"})
-    # `reason` specifically: without it SESSION-API cannot render an accurate terminal frame.
     with pytest.raises(ValidationError):
         BuildResult.model_validate(
             {
@@ -376,12 +359,10 @@ def test_build_result_rejects_missing_required() -> None:
         )
 
 
-# --- C7: terminal-status narrowing (EndedEvent + BuildResult) ------------------
+# --- terminal-status narrowing (EndedEvent + BuildResult) ---------------------
 
 
 def test_ended_event_rejects_non_terminal_status() -> None:
-    # EndedEvent.status is narrowed to the terminal members {ended, failed}: a terminal frame
-    # carrying a non-terminal status (e.g. `building`) must FAIL validation, not slip through.
     with pytest.raises(ValidationError):
         EndedEvent.model_validate(
             {
@@ -393,7 +374,6 @@ def test_ended_event_rejects_non_terminal_status() -> None:
                 "reason": "completed",
             }
         )
-    # Both terminal members still validate.
     ended = EndedEvent(
         seq=7, status=BuildSessionStatus.ENDED, snapshot_committed=True, reason="completed"
     )
@@ -405,7 +385,6 @@ def test_ended_event_rejects_non_terminal_status() -> None:
 
 
 def test_build_result_rejects_non_terminal_status() -> None:
-    # BuildResult.status is narrowed the same way — a non-terminal verdict is invalid.
     with pytest.raises(ValidationError):
         BuildResult.model_validate(
             {
@@ -418,21 +397,19 @@ def test_build_result_rejects_non_terminal_status() -> None:
         )
 
 
-# --- C3 router mounts cleanly -------------------------------------------------
+# --- the router mounts cleanly ------------------------------------------------
 
 
 def test_app_boots_with_build_sessions_router_mounted() -> None:
     app = create_app()
-    # Wave 1 fills the C3 control surface; the app + OpenAPI schema must build cleanly with
-    # the routes mounted (Stage 0 asserted the inert stub; SESSION-API added the endpoints).
     assert isinstance(app, FastAPI)
     schema = app.openapi()
     assert schema["openapi"].startswith("3.")
     paths = schema.get("paths", {})
-    # INVERTED, deliberately. This used to assert the bare collection path was PRESENT (`start`);
-    # `POST /v1/build-sessions` is deleted, so its absence is now the fact worth pinning — a
-    # route re-added here would be a route with no client and no `SessionManager.start` behind
-    # it. `lock/force-end` is gone the same way and is asserted absent beside it.
+    # INVERTED, deliberately: `POST /v1/build-sessions` (`start`) is deleted, so its absence is
+    # the fact worth pinning here — a route re-added would be a route with no client and no
+    # `SessionManager.start` behind it. `lock/force-end` is gone the same way and is asserted
+    # absent beside it.
     assert "/v1/build-sessions" not in paths  # start — DELETED, must not come back
     assert "/v1/build-sessions/{session_id}/lock/force-end" not in paths  # also deleted
     assert "/v1/build-sessions/{session_id}" in paths  # status — the reader that survives

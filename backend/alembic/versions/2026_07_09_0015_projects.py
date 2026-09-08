@@ -4,26 +4,24 @@ Revision ID: 0015_projects
 Revises: 0014_merge_plan_ab_heads
 Create Date: 2026-07-09
 
-Stands up `projects` (the parent container, R1/R2) and wires the one-app-per-project
-model (KD-4) against an **empty DB** — this is a PURE-SCHEMA revision with NO data pass
-(KD-2). Existing local Postgres data is disposable and dropped; the deployed PoC still
-runs on Cosmos, and the real Cosmos→Postgres data migration (which will preserve
-appId/appKey/conversation ids and map legacy data into one-app-per-project) is a
-SEPARATE future script, not this revision. So `project_id` is added NOT NULL directly
-— no nullable→backfill→NOT NULL dance, no Default/General backfill.
-
+WHY THIS EXISTS
+Stands up `projects` (the parent container) and wires the one-app-per-project
+model against an **empty DB** — this is a PURE-SCHEMA revision with NO data pass.
+Existing local Postgres data is disposable and dropped; the deployed PoC still runs
+on Cosmos, and the real Cosmos→Postgres data migration is a SEPARATE future script,
+not this revision. So `project_id` is added NOT NULL directly — no
+nullable→backfill→NOT NULL dance, no Default/General backfill.
 Changes:
   * create `projects` (mixin columns; `user_id` FK CASCADE).
   * add NOT NULL `project_id` FK (→ projects.id, ON DELETE CASCADE) to `app_registry`
-    and `conversations`. The DB cascade is a row-integrity backstop only — blob-aware
-    cleanup runs through the U6 service (KD-3a).
-  * add `app_registry.current_code` (JSONB) — the project's live code source of truth
-    for continuity (KD-9).
+    and `conversations`; the DB cascade is a row-integrity backstop only —
+    blob-aware cleanup runs through a separate application service.
+  * add `app_registry.current_code` (JSONB) — the project's live code source of truth.
   * swap `uq_app_registry_owner_conversation` (user_id, conversation_id) for
-    `uq_app_registry_project` (project_id) — one app per project (KD-4).
+    `uq_app_registry_project` (project_id) — one app per project.
 
-Hand-finalized from an autogenerate starting point (ADR-0013). Chains off the single
-merged head so `tests/test_alembic_single_head.py` stays green.
+Hand-finalized from an autogenerate starting point; chains off the single merged head
+so `tests/test_alembic_single_head.py` stays green.
 """
 
 from __future__ import annotations
@@ -44,11 +42,11 @@ def upgrade() -> None:
     op.create_table(
         "projects",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004).
+        # OwnedByUserMixin — the single-tenant ownership boundary.
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
-        # Optional shared chat context (R15/R16); capped + normalized at the write
-        # boundary (KD-8), so the column itself is a plain nullable TEXT.
+        # Optional shared chat context; capped + normalized at the write
+        # boundary, so the column itself is a plain nullable TEXT.
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
@@ -67,8 +65,8 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_projects_user_id"), "projects", ["user_id"], unique=False)
 
-    # 2. app_registry: add the project parent (NOT NULL, empty DB — KD-2), swap the
-    #    uniqueness to one-app-per-project (KD-4), and add the current-code home (KD-9).
+    # 2. app_registry: add the project parent (NOT NULL, empty DB), swap the
+    #    uniqueness to one-app-per-project, and add the current-code home.
     op.add_column("app_registry", sa.Column("project_id", sa.Uuid(), nullable=False))
     op.add_column(
         "app_registry",
@@ -87,7 +85,7 @@ def upgrade() -> None:
         ondelete="CASCADE",
     )
 
-    # 3. conversations: add the project parent (NOT NULL, empty DB — KD-2).
+    # 3. conversations: add the project parent (NOT NULL, empty DB).
     op.add_column("conversations", sa.Column("project_id", sa.Uuid(), nullable=False))
     op.create_index(
         op.f("ix_conversations_project_id"), "conversations", ["project_id"], unique=False
@@ -106,14 +104,10 @@ def downgrade() -> None:
     """Schema-shape rollback — safe only PRE-DIVERGENCE.
 
     Recreating `uq_app_registry_owner_conversation` assumes no two apps share a
-    (user_id, conversation_id). The NEW schema makes that shape legal — the same
-    conversation may head one app per project (proven by
-    `tests/db/test_projects_migration.py::test_old_owner_conversation_uniqueness_dropped`)
-    — so once such rows exist, the constraint recreation below aborts with a
-    UniqueViolation (transactionally: the whole downgrade rolls back cleanly, nothing
-    half-applied). Manually resolve conflicting (user_id, conversation_id) groups
-    before downgrading a diverged database.
-    """
+    (user_id, conversation_id) — legal under the NEW schema (one conversation, one app per
+    project). If such rows exist, the constraint recreation aborts with a UniqueViolation
+    (transactional: the whole downgrade rolls back cleanly). Resolve conflicting
+    (user_id, conversation_id) groups manually before downgrading a diverged database."""
     # conversations: drop the project parent.
     op.drop_constraint("conversations_project_id_fkey", "conversations", type_="foreignkey")
     op.drop_index(op.f("ix_conversations_project_id"), table_name="conversations")

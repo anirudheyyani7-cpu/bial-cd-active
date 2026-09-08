@@ -1,55 +1,29 @@
 """Turn BIAL's vulnerability exports into a remediation report the reviewer can add up.
 
-THE GENERATOR IS TRACKED; ITS INPUTS AND OUTPUTS ARE NOT. Both the incoming vulnerability
-lists and the workbook this produces are client vulnerability data about a live system, and
-this repository is public. They live in a local working directory OUTSIDE the repo tree; the
-repo's ignore rules are a backstop against an accidental `git add`, not the control. Only this
-file — code, which has to be reviewable and testable — belongs in the tree.
+WHY THIS EXISTS: inputs and outputs are live client vulnerability data on a public repo, so
+only this generator — reviewable, testable code — is tracked; exports and workbooks stay in a
+local directory OUTSIDE the tree, and the repo's ignore rules are a backstop against an
+accidental `git add`, not the control. For the same reason no CVE IDs appear in this file: every
+disposition rule matches on STRUCTURE (image, package manager, software, install path), so it
+keeps matching across BIAL's rescans instead of silently going stale the way a CVE list would.
 
-That split is also why THERE ARE NO CVE IDENTIFIERS IN THIS FILE. Every disposition rule below
-matches on STRUCTURE — the image, the package manager, the software name, the installation path
-— never on a list of specific findings. A CVE list would be client data, would rot the moment
-BIAL rescans, and would silently stop matching without failing. A structural rule keeps working
-across rescans and states the actual reason a finding is cleared, which is what a reviewer is
-checking.
+Two passes. `map` reads BIAL's BEFORE export alone and gives every row an INTENDED
+disposition (cleared, exception, dispute, deferred, held) before any fix is made — the
+checkable definition of done, so a fix can be attributed to a row. `register` reconciles that
+map against the post-remediation AFTER export: vanished rows are Fixed, survivors keep their
+residual disposition, and any row the map never anticipated is a NON-RECONCILING row — the fix
+didn't land, not a new exception.
 
-TWO PASSES, ONE TOOL.
-
-  Pass 1 (the coverage map — plan U9). Run against BIAL's BEFORE export alone, before any
-  Dockerfile is touched. Every row is mapped to its INTENDED disposition: cleared by a named
-  unit, exception, dispute, deferred, or held. That map is the checkable definition of done —
-  at handover no row may be unmapped — and it is what bounds the remediation work. A fix made
-  before the map exists cannot be attributed to a row, and unattributed fixes are exactly what
-  make a reduction claim unverifiable.
-
-      uv run python -m scripts.exception_register map \\
-          --before "<dir>/citizen-dev-sandbox - vulnerabilities.xlsx" \\
-          --before "<dir>/vibe-coding_sheet.xlsx" \\
-          --out-dir "<dir>/coverage"
-
-  Pass 2 (the register — plan U7). Run again once BIAL returns the post-remediation export.
-  Every BEFORE row is reconciled against what actually survived: rows that disappeared are
-  Fixed, rows that survived carry their residual disposition, and a residual row the map never
-  anticipated is reported as a NON-RECONCILING row — a signal the fix did not land, not a new
-  exception.
-
-      uv run python -m scripts.exception_register register \\
-          --before ... --after "<dir>/post-remediation.xlsx" \\
-          --out "<dir>/out/bial-remediation-report.xlsx"
-
-THE PARTITION INVARIANT IS THE POINT. Every row on the original list lands in exactly one
-sheet. The sheets' accounted-row counts sum back to the original total, and the residual sheets
-sum to the post-remediation total. A reviewer who adds the sheets up and gets a different number
-has found a real error, so the arithmetic is the report's own self-check rather than decoration.
-`Summary` is therefore never typed: every number on it is an Excel formula over the other
-sheets, so the report cannot drift internally even if someone edits a row by hand.
-
-GRANULARITY (plan AE6). One ENTRY per (image, CVE, software name, software version), each
-carrying `Rows Accounted` — the number of scanner rows that collapse into it. BIAL's scanner
-emits one row per affected sibling package AND per installation path, so 1,083 rows resolve to
-far fewer real findings; reporting entries while carrying the row count lets the reviewer
-reconcile against the row totals their own console shows, in either direction.
+Every row lands in exactly one output sheet, and the sheets' counts must sum back to the
+original and post-remediation totals — `Summary` is pure Excel formulas over the other sheets,
+so that arithmetic self-checks even if a row is hand-edited. Findings report one ENTRY per
+(image, CVE, software, version) with a `Rows Accounted` count: BIAL's scanner emits one row per
+affected sibling package AND per installation path, so 1,083 rows resolve to far fewer real
+findings; reporting entries while carrying the row count lets the reviewer reconcile against the
+row totals their own console shows, in either direction.
 """
+
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
 
 from __future__ import annotations
 
@@ -81,14 +55,11 @@ from openpyxl.worksheet.worksheet import Worksheet
 class Disposition(StrEnum):
     """What we are saying about a finding. Exactly one applies to every row.
 
-    The five RESIDUAL states are the ones the handover defends: EXCEPTION, DISPUTE,
-    DEFERRED, SUPERSEDED and DISPUTE_REJECTED. FIXED is not residual (it is gone from the
-    after-export) and OUT_OF_SCOPE is attributed elsewhere rather than defended.
+    Five states are RESIDUAL, defended at handover: EXCEPTION, DISPUTE, DEFERRED, SUPERSEDED,
+    DISPUTE_REJECTED. FIXED is gone from the after-export; OUT_OF_SCOPE is attributed elsewhere.
 
-    HELD is a PRE-FINAL state and must be empty before delivery — it exists so that rows we
-    cannot honestly disposition yet are visible and counted rather than quietly filed as
-    something they are not. A held row makes both CLI commands exit non-zero, so a report that
-    is not ready to ship cannot be mistaken for one that is.
+    HELD is PRE-FINAL and must be empty before delivery — it keeps un-dispositioned rows
+    visible instead of misfiled, and makes both CLI commands exit non-zero until cleared.
     """
 
     FIXED = "fixed"
@@ -127,13 +98,13 @@ CONTENT_SHEETS: Final[tuple[str, ...]] = (
     "Held",
 )
 
-#: NOTE: the plan's second reconciliation direction — "the residual sheets sum back to the
-#: post-remediation export's total" — is NOT implemented, and a `RESIDUAL_SHEETS` constant that
-#: named the sheets without checking anything only made it look like it was. It cannot be
-#: implemented against the current entry model: a surviving entry carries its BEFORE rows, so
-#: summing the residual sheets yields the before-count of the residual set, not the after-count.
-#: Doing it properly needs each surviving entry to carry its after-row count alongside its
-#: before-row count. Tracked as follow-up rather than faked here.
+#: NOTE: the reconciliation direction that would pair with the partition check — "the residual
+#: sheets sum back to the post-remediation export's total" — is NOT implemented, and a
+#: `RESIDUAL_SHEETS` constant that named the sheets without checking anything only made it look
+#: like it was. It cannot be implemented against the current entry model: a surviving entry
+#: carries its BEFORE rows, so summing the residual sheets yields the before-count of the
+#: residual set, not the after-count. Doing it properly needs each surviving entry to carry its
+#: after-row count alongside its before-row count. Tracked as follow-up rather than faked here.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,7 +124,7 @@ _PRERELEASE = re.compile(
 def is_prerelease(version: str) -> bool:
     """True when `version` is an alpha/beta/rc/dev build rather than a released one.
 
-    Load-bearing for plan AE3: a finding whose ONLY offered fix is a pre-release cannot be
+    Load-bearing: a finding whose ONLY offered fix is a pre-release cannot be
     taken (Scope Boundaries forbids pre-release language runtimes), so it becomes accepted
     risk WITH the pre-release status as its stated reason — never filed as not-affected.
     """
@@ -264,16 +235,11 @@ def _line_of(version: str) -> str:
 def already_at_or_past_fix(installed: str, fixed: str) -> bool:
     """True when the INSTALLED version already meets or exceeds the vendor's fixed version.
 
-    This is plan AE2, and it routes to DISPUTE rather than to an exception: if we already ship
-    the fixed version, the finding is a scanner error, and filing it as an accepted risk would
-    concede a vulnerability we do not have.
+    Routes to DISPUTE, not an exception — shipping the fix means the finding is a scanner error.
 
-    The release-LINE rule matters and is easy to get wrong. Installed `go1.23.12` against fixes
-    `1.24.9, 1.25.3` is NOT disputed — the vendor is saying "there is no fix on your line, move
-    up" — whereas installed `go1.22.3` against `1.21.11, 1.22.4` compares only against the
-    1.22 candidate. Comparing against the maximum candidate in either case would mark almost
-    every genuine finding as a dispute, which is the single most damaging error this report can
-    make: it is the one claim the reviewer can disprove from their own console.
+    Compares within the release LINE, not the max candidate: `go1.23.12` vs fixes `1.24.9,
+    1.25.3` is NOT disputed (no fix on that line). Using the max candidate would falsely dispute
+    real findings — the one claim a reviewer can disprove from their own console.
     """
     candidates = parse_fix_versions(fixed)
     if not candidates or not installed.strip():
@@ -339,7 +305,7 @@ class Finding:
 
     @property
     def key(self) -> tuple[str, str, str, str]:
-        """The ENTRY key (plan AE6): one entry per image, CVE, package name and version."""
+        """The ENTRY key: one entry per image, CVE, package name and version."""
         return (self.image, self.cve_id, self.software_name, self.software_version)
 
     @property
@@ -355,7 +321,7 @@ class Finding:
 
     @property
     def prerelease_only_fix(self) -> bool:
-        """True when a fix exists but EVERY offered fix is a pre-release (plan AE3)."""
+        """True when a fix exists but EVERY offered fix is a pre-release."""
         candidates = parse_fix_versions(self.fixed_version)
         return bool(candidates) and all(is_prerelease(c) for c in candidates)
 
@@ -602,7 +568,7 @@ RULES: Final[tuple[Rule, ...]] = (
         reason="esbuild collapsed onto a single current version by a package override, "
         "rebuilding the vendored Go binary that runs schema generation.",
     ),
-    # ── sandbox: the package manager's OWN bundled modules (plan R3) ─────────
+    # ── sandbox: the package manager's OWN bundled modules ───────────────────
     Rule(
         name="sandbox-bundled-npm",
         images=(SANDBOX,),
@@ -634,7 +600,7 @@ RULES: Final[tuple[Rule, ...]] = (
         "dist-packages, carried forward by the Debian 13 base (R3).",
     ),
     # ── sandbox: the golden template ─────────────────────────────────────────
-    #: NAMES THE PACKAGES THAT ACTUALLY MOVED, and nothing else. Plan U3 scoped a 25-of-26 pin
+    #: NAMES THE PACKAGES THAT ACTUALLY MOVED, and nothing else. This scoped a 25-of-26 pin
     #: bump to latest stable; what shipped is `next` 16.2.10 → 16.2.12 plus the `overrides`
     #: block (esbuild — its own rule above — and postcss). A `path_contains` rule over the whole
     #: of /workspace/app/node_modules/ would have filed all 26 pins as FIXED, claiming 25
@@ -642,8 +608,8 @@ RULES: Final[tuple[Rule, ...]] = (
     #: fixability fallback: a fixable one becomes an owned DEFERRED, which is exactly what an
     #: un-taken pin bump is.
     #:
-    #: WHEN THE REST OF U3 LANDS, widen `software_names` in the same commit as the package.json
-    #: change — never ahead of it.
+    #: WHEN THE REST OF THIS PIN BUMP LANDS, widen `software_names` in the same commit as the
+    #: package.json change — never ahead of it.
     Rule(
         name="sandbox-golden-template",
         images=(SANDBOX,),
@@ -685,10 +651,10 @@ RULES: Final[tuple[Rule, ...]] = (
     #: row is not evidence of an unfixable package, so filing these as exceptions would assert
     #: something the data does not support, and it is exactly the claim a reviewer can disprove
     #: from their own console. Two things resolve them: the rescan (which shows whether the
-    #: base move cleared them) and A4's answer on the feed (plan U8 question 2).
+    #: base move cleared them) and a pending answer on the feed itself.
     #:
-    #: The sandbox is the ONLY image where this matters. U4 removes the backend's Debian
-    #: package set outright, so the feed question cannot change that image's answer.
+    #: The sandbox is the ONLY image where this matters: the backend image is Alpine and
+    #: carries no Debian feed at all, so the feed question cannot change its answer.
     Rule(
         name="sandbox-os-no-fix-held",
         images=(SANDBOX,),
@@ -810,18 +776,10 @@ class Verdict:
 def disposition_for(f: Finding, *, rules: Sequence[Rule] = RULES) -> Verdict:
     """Assign exactly one disposition to one scanner row.
 
-    DERIVED verdicts are evaluated FIRST and deliberately outrank every structural rule:
-
-    * Already at or past the vendor's fix → DISPUTE. This is true regardless of what we are
-      about to change, and conceding it as an exception would concede a vulnerability we do
-      not have (plan AE2).
-    * Only a pre-release fix exists → EXCEPTION with the pre-release status as its reason.
-      Scope Boundaries rules out pre-release language runtimes, so there is no version move
-      available and calling it deferred would imply one (plan AE3).
-
-    The final fallback splits on fixability, because those are the two claims a reviewer can
-    check independently: a fix exists and we did not take it (DEFERRED, which must carry an
-    owner and a target date and is NEVER filed as not-affected), or no fix exists (EXCEPTION).
+    DERIVED verdicts run first, outranking structural rules: already at/past the fix is DISPUTE
+    regardless of pending changes; pre-release-only fix is EXCEPTION (Scope Boundaries excludes
+    pre-release runtimes, so there's no version move to defer to). Otherwise it splits on
+    fixability: DEFERRED (owner + target date, never not-affected) or EXCEPTION (no fix exists).
     """
     if already_at_or_past_fix(f.software_version, f.fixed_version):
         return Verdict(
@@ -1036,32 +994,14 @@ def reconcile(
     addition_rules: Sequence[Rule] = ADDITION_RULES,
     current_digests: dict[str, str] | None = None,
 ) -> Reconciliation:
-    """Measure the after-export against the coverage map.
+    """Measure the after-export against the coverage map. Fixed-and-gone is the only good outcome;
+    still-present means the fix did not land — surfaced separately, never a fresh exception.
 
-    Four outcomes, and only one of them is good:
-
-    * A before-entry predicted FIXED that is absent from the after-export — the claim held.
-    * A before-entry predicted FIXED that is STILL THERE — the fix did not land. Reporting it
-      as a fresh exception would launder a failed remediation into a defended one, so it is
-      surfaced under its own heading and its `Fixed` claim is withdrawn.
-    * An after-entry with no before-entry — an ADDITION. Anticipated additions (installing git
-      to fix the publish defect) carry their stated reason; anything else is reported as
-      unanticipated so it is investigated rather than absorbed.
-    * An after-entry measured against a manifest we no longer ship — SUPERSEDED.
-
-    THE SUPERSEDED CASE IS THE ONE THAT DECIDES THE REDUCTION CLAIM, and it is invisible
-    without `current_digests`. Every artifact here ships under a mutable tag, so a push untags
-    the previous manifest without deleting it. If the scanner enumerates ALL retained manifests
-    rather than only what a tag points at, the old image keeps reporting its full finding set
-    forever — and a naive reconcile reads those rows as "predicted cleared, still present" and
-    reports the entire remediation as failed. The fix landed; the scan is looking at the wrong
-    object.
-
-    So a residual row is checked against the digest we actually ship BEFORE it is judged. Pass
-    `current_digests` as `{image: "sha256:..."}`. Without it this check is skipped rather than
-    guessed — and, importantly, its absence is visible in the report rather than silently
-    changing every verdict.
-    """
+    THE SUPERSEDED CASE DECIDES THE REDUCTION CLAIM, and it is invisible without `current_digests`.
+    Every artifact here ships under a mutable tag, so a push untags the previous manifest without
+    deleting it, and a scanner enumerating ALL retained manifests reads a landed fix as
+    still-present. Pass `{image: "sha256:..."}`; without it the check is skipped visibly rather
+    than guessed."""
     before_by_key = {e.key: e for e in before}
     after_by_key = {e.key: e for e in after}
     shipped = dict(current_digests or {})
@@ -1175,23 +1115,11 @@ def reconcile(
 class Override:
     """A human decision the structural rules cannot derive, applied to matching entries.
 
-    Two of the report's required states exist ONLY here, because neither is inferable from a
-    scan:
-
-    * **dispute-rejected.** A dispute is a round-trip: we tell the scan owner their finding is
-      wrong, and it can come back negative. A rejected dispute must fall back to accepted risk
-      WITH a stated reason — never quietly vanish from the report, which is what would happen if
-      the only way to record it were deleting the dispute row.
-    * **a named owner and a target date on a deferral.** "Affected, fix available, deliberately
-      not taken" is only an honest disposition if somebody owns it and there is a date. Without
-      those it is indistinguishable from an oversight, and the generator deliberately emits
-      `UNASSIGNED`/`UNSET` so an unowned deferral is loud rather than tidy.
-
-    It also carries the vendor's own status text and tracker URL, so every exception row is
-    checkable against a public tracker in one click rather than on our say-so.
-
-    Matching is by image + CVE + software name, with an optional version. Anything omitted
-    matches every version of that package.
+    Two states live only here: dispute-rejected (falls back to accepted risk WITH a reason,
+    never silently vanishes) and a deferral needing an owner + target date (unowned/undated
+    reads as an oversight, so the generator emits `UNASSIGNED`/`UNSET` to make it loud).
+    Vendor status/tracker URL make each row checkable in one click. Matches by image + CVE +
+    software name; an omitted version matches every version.
     """
 
     image: str
@@ -1218,7 +1146,7 @@ def load_overrides(path: Path) -> list[Override]:
     """Read the annotations file. Lives in the local working directory, never the repo.
 
     Its content is per-CVE commentary about a live system — client data by the same argument
-    that keeps the workbooks out of the tree (R13). The SHAPE is code and is tested; the
+    that keeps the workbooks out of the tree. The SHAPE is code and is tested; the
     content is not committed.
     """
     raw: Any = json.loads(path.read_text(encoding="utf-8"))
@@ -1704,7 +1632,7 @@ def check_integrity(findings: Sequence[Finding], entries: Sequence[Entry]) -> In
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Coverage map output (plan U9)
+# Coverage map output
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MAP_COLUMNS: Final[tuple[str, ...]] = (

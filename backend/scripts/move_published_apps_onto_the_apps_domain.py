@@ -1,37 +1,29 @@
 """Move already-published apps onto the shared apps hostname — REPORT FIRST, REWRITE SECOND.
 
-WHY THIS EXISTS. Every published app's address used to be its own container's Azure Container
-Apps FQDN. BIAL's environment is internal, so that name has no public DNS and never resolved
-from an employee's desk. Those addresses are recorded in TWO independently-written places and
-have been shared outside the platform, so a link already in circulation is affected.
-
-WHAT SELF-HEALS AND WHAT DOES NOT. `deployments.url` is written by the deploy pipeline's own
-success terminal, which now records the public address — so an app that is republished corrects
-that column by itself, with no backfill. `app_registry.deployed_url` does NOT: it is the manual
-go-live runbook's field, written only by an admin, and nothing republishes it.
+WHY THIS EXISTS. A published app's address used to be its own container's Azure Container Apps
+FQDN — no public DNS, unreachable from an employee's desk on BIAL's internal network — and it
+lives in TWO independently-written places, some already shared outside the platform.
+`deployments.url` self-heals on republish (the deploy pipeline's own success terminal rewrites
+it); `app_registry.deployed_url` does NOT — it's the manual go-live runbook's field, written
+only by an admin.
 
 THE ORDER IS THE SAFETY. An image built before the base path shipped serves at `/`, so pointing
-a live link at `/a/pub-<key>/` makes the app answer 404 — turning today's honest
-name-resolution failure into a page that reads to the person who followed it as "the platform
-broke my app". This script therefore REFUSES to rewrite an app's recorded address until that
-app's platform address has already moved, which is the observable proof a republished image
-exists. The gate lives in `src/services/deploy/backfill.py` and is unit-tested there; this file
-is only the driver.
+a live link at `/a/pub-<key>/` 404s — turning a name-resolution failure into "the platform broke
+my app". This script REFUSES to rewrite an address until that app's platform address has already
+moved, the observable proof a republish exists. The gate lives in
+`src/services/deploy/backfill.py` and is unit-tested there; this file is only the driver.
 
-THE OPERATOR PROCEDURE, in order:
-
-  1. Run this script with no flags. It writes nothing and prints, per app, whether it is already
-     moved, waiting on a republish, or deliberately left alone.
-  2. For every app it lists as WAITING, publish it again through the ordinary deploy path — the
-     same button a citizen uses. That is what produces an image carrying the base path. Nothing
-     here can do it for you: a republish re-runs the classification gate, and this script has no
-     business bypassing it.
-  3. Run this script again with `--execute`. It rewrites only the apps whose republish it can
-     see, and it is idempotent — a second run writes nothing.
+OPERATOR PROCEDURE: (1) run with no flags — writes nothing, reports per app whether it's already
+moved, WAITING on a republish, or deliberately left alone; (2) for every WAITING app, republish
+through the ordinary deploy path (the same button a citizen uses — the classification gate
+always runs; this script never bypasses it); (3) run again with `--execute`, which rewrites only
+the apps whose republish it can see and is idempotent — a second run writes nothing.
 
   DRY RUN (default):  uv run python -m scripts.move_published_apps_onto_the_apps_domain
   EXECUTE:            uv run python -m scripts.move_published_apps_onto_the_apps_domain --execute
 """
+
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
 
 from __future__ import annotations
 

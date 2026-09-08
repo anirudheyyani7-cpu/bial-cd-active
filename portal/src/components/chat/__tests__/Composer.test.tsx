@@ -1,24 +1,12 @@
 /**
- * ONE COMPOSER (R40–R45, R55, R57–R60, R64, R72).
+ * ONE COMPOSER.
  *
- * ══ THE PROPERTY THIS FILE EXISTS FOR ══
+ * Nothing here is ever `disabled`; ComposerBox.tsx carries why. This file is the mechanical half —
+ * `noRealDisabled` sweeps the rendered subtree in EVERY state rather than once, because the states
+ * are where a real `disabled` would come back.
  *
- * NOTHING HERE IS EVER `disabled`. Not the textarea, not attach, not Send — in any state,
- * including mid-turn, over the cap, and with an offer pending. `disabled` on the currently-focused
- * element blurs it to `document.body`, which is the mechanism behind "it blurs mid-sentence and
- * focus never comes back"; this codebase has recorded that twice and it is not a style preference.
- *
- * So the subtree sweep below is not one assertion among many — it is the mechanical form of "the
- * library's Send is not used here". `createActionButton` renders
- * `<button disabled={props.disabled || !callback}>` and `useComposerSend` returns no callback
- * while `isRunning && !capabilities.queue`, and `queue` is never registered, so the library's Send
- * ships a hard `disabled` for the whole of every turn. It is swept for in EVERY state rather than
- * checked once, because the states are where it would come back.
- *
- * ══ THE DRAFT IS HELD, NOT RESTORED (R58/R59) ══
- *
- * Nothing is cleared optimistically. A failed send therefore has nothing to put back and no race
- * to guard — which is how issue #154's defect class stops existing rather than being patched.
+ * The draft is held rather than cleared optimistically, so a failed send has nothing to put back
+ * and no race to guard.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -49,11 +37,10 @@ const send = () => screen.getByTestId('composer-send')
 const gateNote = () => screen.queryByTestId('composer-gate-note')
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } })
 
-/** The sweep. Every state this composer can be in has to pass it. */
 const noRealDisabled = (container: HTMLElement) =>
   expect(container.querySelector('[disabled]')).toBeNull()
 
-describe('a turn in flight: typing stays, sending waits (AE30)', () => {
+describe('a turn in flight: typing stays, sending waits', () => {
   it('takes typed input, marks Send unavailable, and says why in one short line', () => {
     const { container } = draw({ isRunning: true })
 
@@ -62,7 +49,6 @@ describe('a turn in flight: typing stays, sending waits (AE30)', () => {
 
     expect(send().getAttribute('aria-disabled')).toBe('true')
     expect(gateNote()?.textContent).toMatch(/send unlocks when it is done/i)
-    // ONE line, not a stack of them.
     expect(screen.getAllByTestId('composer-gate-note')).toHaveLength(1)
     noRealDisabled(container)
   })
@@ -115,10 +101,10 @@ describe('nothing is ever `disabled` — swept in every state', () => {
     type('x'.repeat(10_001))
     expect(send().getAttribute('aria-disabled')).toBe('true')
     noRealDisabled(container)
-    expect(box().value.length).toBe(10_001) // and NOTHING was cut
+    expect(box().value.length).toBe(10_001)
   })
 
-  it('the textarea carries no `maxLength` — issue #156 forbids it by name', () => {
+  it('the textarea carries no `maxLength` attribute', () => {
     draw()
     expect(box().hasAttribute('maxLength')).toBe(false)
   })
@@ -126,10 +112,9 @@ describe('nothing is ever `disabled` — swept in every state', () => {
 
 describe('focus never drops', () => {
   it('Send keeps focus across a turn starting', () => {
-    // The regression guard for the reported "it blurs mid-sentence" defect. jsdom does not
-    // implement blur-on-disable, so this cannot catch a reintroduced `disabled` on its own — the
-    // subtree sweep above is that half. What this pins is the other one: nothing here GRABS or
-    // drops focus at the turn's edges.
+    // jsdom does not implement blur-on-disable, so this cannot catch a reintroduced `disabled` on
+    // its own — the subtree sweep above is that half. What this pins is the other one: nothing here
+    // GRABS or drops focus at the turn's edges.
     const { rerender, props } = draw()
     send().focus()
     expect(document.activeElement).toBe(send())
@@ -151,11 +136,8 @@ describe('growth is bounded, then it scrolls', () => {
     // `react-textarea-autosize` measures with `scrollHeight`, which jsdom reports as 0 — so the
     // pixel behaviour cannot be observed here. What CAN be pinned is that the ceiling is declared
     // and finite, and that reaching it drops nothing.
-    //
-    // THE CEILING MOVED WITH THE BOX (plan 002, U5). It was a `maxRows` prop on our own textarea;
-    // it is a `max-h` on the library's, because the library's input owns its own autosize. One
-    // line is the board's resting height — the box grows from a single line rather than opening
-    // two rows tall.
+    // The ceiling is a `max-h` on the library's input, and one line is the resting height — the
+    // box grows from a single line rather than opening two rows tall.
     draw()
     expect(box().getAttribute('rows')).toBe('1')
     expect(box().className).toMatch(/max-h-\[\d+px\]/)
@@ -166,7 +148,7 @@ describe('growth is bounded, then it scrolls', () => {
   })
 })
 
-describe('the draft is held until the server confirms (R58/R59)', () => {
+describe('the draft is held until the server confirms', () => {
   it('clears text and staged files ONLY on a resolved send', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     draw({ onSubmit })
@@ -178,9 +160,6 @@ describe('the draft is held until the server confirms (R58/R59)', () => {
   })
 
   it('keeps EVERYTHING when the send rejects, and says so once', async () => {
-    // The defect this replaces: `ChatPage` did a blind `setText(rawText)` on failure, and because
-    // the input was fully controlled the browser's undo stack could not recover what it replaced.
-    // Holding the text means there is nothing to restore and no race to lose.
     const onUrgent = vi.fn()
     draw({ onSubmit: vi.fn().mockRejectedValue(new Error('refused')), onUrgent })
     type('do not lose me')
@@ -220,7 +199,7 @@ describe('the draft is held until the server confirms (R58/R59)', () => {
     expect(box().value).toBe('actually make it red')
   })
 
-  it('stamps the conversation at PRESS time, so a mid-send switch cannot misfile it (R60)', async () => {
+  it('stamps the conversation at PRESS time, so a mid-send switch cannot misfile it', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     draw({ onSubmit })
     type('for chat one')
@@ -252,11 +231,11 @@ describe('the draft follows its own chat', () => {
   })
 
   it('★ a send that lands after a switch clears ITS chat, not the sibling’s live words', async () => {
-    // THE LEAK THIS IS WRITTEN AGAINST, and it is a leak the first attempt at the guard could not
-    // catch: the box performs a send from its PRESS-TIME closure, so the completion callback and
-    // the conversation it compared itself against came from the same render. The comparison was a
-    // value against itself, always true, and chat-1's accepted send therefore wrote whatever stood
-    // in the box — chat-2's half-typed sentence — over chat-1's stored draft.
+    // THE LEAK THIS IS WRITTEN AGAINST: the box performs a send from its PRESS-TIME closure, so
+    // the completion callback and the conversation it compared itself against came from the same
+    // render. The comparison was a value against itself, always true, and chat-1's accepted send
+    // therefore wrote whatever stood in the box — chat-2's half-typed sentence — over chat-1's
+    // stored draft.
     let release = () => {}
     const gate = new Promise<void>((r) => { release = r })
     const onSubmit = vi.fn().mockReturnValue(gate)
@@ -282,7 +261,7 @@ describe('the draft follows its own chat', () => {
   })
 })
 
-describe('R55 — the relocated stop', () => {
+describe('the relocated stop', () => {
   it('renders when a turn is running, with a stable accessible name', () => {
     draw({
       isRunning: true,
@@ -315,10 +294,6 @@ describe('attachments', () => {
   it('the drop target is the WHOLE composer, not just the row', () => {
     // A drop landing on the chips or the gate note would otherwise fall through to the browser's
     // default handler — which navigates the tab away and discards the draft AND the staged files.
-    //
-    // THE DROPZONE IS THE LIBRARY'S NOW (plan 002, U5) and it wraps the whole box, which is the
-    // same property said about a different element. It sets the same `data-dragging` attribute
-    // the hand-rolled one did, so what changed is the handle, not the behaviour.
     const { container } = draw()
     const zone = screen.getByTestId('composer-dropzone')
     expect(zone.contains(screen.getByTestId('composer'))).toBe(true)
@@ -409,7 +384,7 @@ describe('★ an offer waiting, drawn the way the boards draw it', () => {
   })
 })
 
-describe('one composer, both kinds (R72)', () => {
+describe('one composer, both kinds', () => {
   it('behaves identically whichever kind mounted it — the placeholder is the only difference', () => {
     // The placeholder is a HINT, not a mode: nothing downstream reads it, and every behaviour
     // above is a property of this component rather than of the surface that mounted it.
@@ -425,17 +400,14 @@ describe('one composer, both kinds (R72)', () => {
 })
 
 /**
- * WHICH REASON WINS WHEN MORE THAN ONE IS TRUE.
+ * WHICH REASON WINS WHEN MORE THAN ONE IS TRUE. `unavailableReason` is a four-arm cascade, and
+ * every other test in this file drives exactly one arm, so the ORDER — the only thing a cascade
+ * encodes — was never actually asserted before this block.
  *
- * `unavailableReason` is a four-arm cascade, and every other test in this file drives exactly one
- * arm — so the ORDER, which is the only thing a cascade encodes, was never actually asserted.
- * Reordering it would have broken nothing.
- *
- * The order is by immediacy, and the offer is deliberately LAST: the first three describe
- * something happening right now — the citizen's own text is too long, a reply is arriving, their
- * app is being built — while a pending offer describes a question still waiting. The offer also
- * stays pending for the whole round trip its own Build press starts, so putting it first told a
- * citizen to "choose one of the two above" while the build they had just chosen was starting.
+ * The order is by immediacy: the first three describe something happening right now (too-long
+ * text, a reply arriving, the app being built), while a pending offer describes a question still
+ * waiting — and stays pending through its own Build press's whole round trip, so putting it first
+ * would tell a citizen to "choose one of the two above" while the build they just chose starts.
  */
 describe('the send-unavailable cascade, with more than one arm true', () => {
   const OVER_CAP = 'x'.repeat(20000)

@@ -1,22 +1,19 @@
 """Build a container image with ACR Tasks — the registry's own build agent, over ARM REST.
 
-WHY NOT THE SDK. `azure-mgmt-containerregistry` 15.0.0 (the current GA release) does NOT
-contain the Tasks surface at all: no `schedule_run`, no `get_build_source_upload_url`, no
-`DockerBuildRequest`, no runs operations. Those live only under the `2019-06-01-preview` API
-version, which the older multi-api clients exposed and the regenerated GA client dropped.
-Reaching them would mean pinning an unmaintained SDK several major versions back, purely
-for four JSON calls.
-
-So this module speaks ARM REST directly. That is not a workaround, it is the better shape
-here: it is async-native over the `httpx` already in the dependency set (no sync SDK to
-offload to a worker thread), the API version is pinned explicitly and visibly, and the whole
-thing is testable against `httpx.MockTransport` exactly like `services/sandbox/client.py`.
+WHY THIS EXISTS. `azure-mgmt-containerregistry` 15.0.0 (current GA) has no Tasks surface at
+all — no `schedule_run`, no `get_build_source_upload_url`, no `DockerBuildRequest`, no runs
+operations. Those live only under the `2019-06-01-preview` API version, which the older
+multi-api clients exposed and the regenerated GA client dropped. Reaching them would mean
+pinning an unmaintained SDK several major versions back for four JSON calls — so this module
+speaks ARM REST directly instead: async-native over the `httpx` already in the dependency
+set, the API version pinned explicitly, testable against `httpx.MockTransport` exactly like
+`services/sandbox/client.py`.
 
 THE CONTROL PLANE NEVER PUSHES. ACR's build agent does the push, which is why this needs no
 `AcrPush` grant — only `read`, `listBuildSourceUploadUrl/action`, `scheduleRun/action`,
-`runs/read` and `runs/listLogSasUrl/action`, scoped to the single registry resource. Keep it
-that way: widening to a push credential here would move a real secret into the control
-plane for no capability it does not already have.
+`runs/read` and `runs/listLogSasUrl/action`, scoped to the single registry resource. Widening
+to a push credential here would move a real secret into the control plane for no capability
+it does not already have.
 
 The flow is four calls:
   1. listBuildSourceUploadUrl  -> a blob URL + the relative path ACR will read from

@@ -1,30 +1,14 @@
 /**
- * AN ATTACHMENT, OPENED OVER THE CONVERSATION (R47, R50, R52, R64).
+ * WHY THIS EXISTS: framing an attachment is refused by both `X-Frame-Options: DENY` (server) and
+ * `frame-src 'self'` (CSP, for `data:`), and a refused frame renders BLANK with no `error` event —
+ * a citizen gets an empty rectangle and nothing to explain it. So this component renders images
+ * and text from bytes it already holds, and says a sentence for anything else, for every address
+ * it can still be handed: a `data:` URL and a `blob:` object URL.
  *
- * ══ NOTHING IS FRAMED, AND THAT IS THE PROPERTY THIS SUITE GUARDS ══
- *
- * The control plane sets `X-Frame-Options: DENY` on every response, which forbids framing by any
- * origin including same-origin; `nginx.conf` sets `frame-src 'self'`, which refuses `data:` too.
- * Both of a preview's possible addresses are therefore un-framable, and a refused frame renders
- * BLANK with no `error` event — a citizen gets an empty rectangle and nothing to explain it.
- *
- * So this component renders images and text from bytes it already holds and says a sentence for
- * anything else. The assertions below are written against the reintroduction of a frame around the
- * addresses this component can still be HANDED — a `data:` URL and a `blob:` object URL, for every
- * media type it takes.
- *
- * THE SECOND FORM IS GUARDED BY THE TYPE, NOT BY A TEST, and that is worth saying rather than
- * implying. The same-origin `/api/attachments/{id}` frame — which looked safe, was recommended in
- * this file's own docblock, and is refused just as completely — needs an attachment id to build,
- * and `PreviewTarget` no longer has one: it carries a name, a media type and a URL. Bringing that
- * frame back means putting the id back on the type first, which is a deliberate act with a
- * compiler error in front of it. No fixture here can reach that branch, so no assertion here can
- * pretend to hold it.
- *
- * ══ R47 — NOTHING BUT THE READER DISMISSES IT ══
- *
- * `open` is never derived from stream state. The transcript keeps streaming behind the dialog and
- * is not scrolled; closing returns the reader exactly where they were.
+ * Not covered here: the same-origin `/api/attachments/{id}` frame, which looked safe but is
+ * refused just as completely. `PreviewTarget` no longer carries an attachment id, so no fixture
+ * can construct that branch — reintroducing it needs the id back on the type first, a deliberate,
+ * compiler-checked act. Guarded by the type, not by a test.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
@@ -51,13 +35,8 @@ describe('the dialog', () => {
   })
 
   it('is a real dialog — the things the hand-rolled overlay did not have', () => {
-    // `AttachmentLightbox` was 55 lines, images only: no focus trap, no `role="dialog"`, no
-    // accessible name, no scroll lock, and it closed on a backdrop click with nothing returning
-    // focus. Each of those is a keyboard user's problem, which is why the dialog replaced it.
-    //
-    // NAMED AND DESCRIBED, asserted through the ROLE QUERY rather than by reading attributes:
-    // `getByRole('dialog', {name})` resolves whichever labelling mechanism Radix used, so this
-    // keeps meaning the same thing if the library changes how it wires them.
+    // Asserted through the ROLE QUERY, not by reading attributes: `getByRole('dialog', {name})`
+    // resolves whichever labelling mechanism Radix used, so this survives if the library changes.
     render(<AttachmentPreview target={pdf} onClose={vi.fn()} />)
     expect(screen.getByRole('dialog', { name: /gate-plan\.pdf/i })).toBeTruthy()
     expect(screen.getByTestId('attachment-preview')).toBeTruthy()
@@ -76,8 +55,7 @@ describe('the dialog', () => {
   })
 
   it('says something useful when an IMAGE cannot be loaded', () => {
-    // THE IMAGE IS THE ONE BRANCH `onError` ACTUALLY REACHES: an `<img>` fires `error` on a 404 or
-    // an expired session. Nothing else here loads over the network at all.
+    // The image is the only branch `onError` reaches — nothing else here loads over the network.
     render(<AttachmentPreview target={image} onClose={vi.fn()} />)
     fireEvent.error(screen.getByTestId('attachment-preview-image'))
     expect(screen.getByTestId('attachment-preview-error').textContent).toMatch(/reload the page/i)
@@ -102,7 +80,7 @@ describe('the dialog', () => {
   })
 })
 
-describe('R47 — the reader dismisses it, and only the reader', () => {
+describe('the reader dismisses it, and only the reader', () => {
   it('Escape closes it', () => {
     const onClose = vi.fn()
     render(<AttachmentPreview target={pdf} onClose={onClose} />)
@@ -118,11 +96,7 @@ describe('R47 — the reader dismisses it, and only the reader', () => {
   })
 })
 
-describe('U11 — a file is never a blank box', () => {
-  // THE DEFECT THIS UNIT EXISTS TO CLOSE. A frame this component can address is refused by the
-  // browser — `data:` by `frame-src 'self'`, a same-origin `/api/attachments/{id}` by the control
-  // plane's own `X-Frame-Options: DENY` — and a refused `<iframe>` fires NO `error` event, so
-  // every non-image rendered as an empty rectangle with nothing to explain it.
+describe('a file is never a blank box', () => {
   const csv: PreviewTarget = {
     name: 'stands.csv',
     mediaType: 'text/csv',
@@ -133,8 +107,8 @@ describe('U11 — a file is never a blank box', () => {
     render(<AttachmentPreview target={csv} onClose={vi.fn()} />)
     const pre = screen.getByTestId('attachment-preview-text')
     expect(pre.textContent).toContain('12A,A320')
-    // The liveness half: an absence assertion alone would pass just as happily if the component
-    // had thrown and rendered nothing at all.
+    // Liveness: an absence assertion alone would pass just as happily if the component had
+    // thrown and rendered nothing at all.
     expect(document.querySelectorAll('iframe')).toHaveLength(0)
     expect(screen.queryByTestId('attachment-preview-error')).toBeNull()
   })
@@ -158,21 +132,13 @@ describe('U11 — a file is never a blank box', () => {
 
   it('says so for a PDF, which has no address the framing policy allows', () => {
     render(<AttachmentPreview target={pdf} onClose={vi.fn()} />)
-    // The whole point: a SENTENCE, where the defect drew an empty rectangle.
     expect(screen.getByTestId('attachment-preview-pending').textContent).toMatch(/once you have sent it/i)
     expect(document.querySelectorAll('iframe')).toHaveLength(0)
   })
 
   it('★ FRAMES NOTHING, at any address — the regression that drew the blank box', () => {
-    // EVERY ADDRESS THIS COMPONENT CAN BE HANDED, AND EVERY KIND OF FILE: a `data:` URL for a PDF,
-    // a text file and an unknown binary type, and a `blob:` object URL for an image. A framed
-    // `data:` URL is refused by `frame-src 'self'` and fires no `error`, so the citizen gets an
-    // empty rectangle with nothing to explain it — which is the regression this scenario names.
-    //
-    // IT IS NOT THE RECEIPT FOR THE SAME-ORIGIN FORM, and claiming to be was this comment's own
-    // defect. `/api/attachments/{id}` needs an id, `PreviewTarget` no longer carries one, and no
-    // fixture below can therefore construct that branch — the deletion from the type is what holds
-    // it, and it holds it at compile time rather than here. See this file's docblock.
+    // Every address and file kind this component can be handed. The same-origin
+    // `/api/attachments/{id}` form is guarded by the type instead — see the file docblock.
     for (const target of [pdf, csv, image, { name: 'x.docx', mediaType: 'application/msword', dataUrl: 'data:application/msword;base64,AA' }]) {
       render(<AttachmentPreview target={target} onClose={vi.fn()} />)
       expect(document.querySelectorAll('iframe'), target.name).toHaveLength(0)

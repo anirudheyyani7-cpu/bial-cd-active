@@ -1,20 +1,16 @@
 /**
- * Typed client for the C3 build-session control API (`/api/build-sessions*`), the
- * portal's FIRST build-session control surface. Mirrors `projectApi.ts` exactly:
- * every call is `fn(args, deps = {})`, forwards `deps` to `authFetch` (cookie
- * session + one 401-refresh retry), and the edge rewrites `/api/*` → `/v1/*`.
+ * Typed client for the build-session control API (`/api/build-sessions*`), mirroring
+ * `projectApi.ts`: every call is `fn(args, deps = {})`, forwards `deps` to `authFetch` (cookie
+ * session + one 401-refresh retry); the edge rewrites `/api/*` → `/v1/*`.
  *
- * Wire format is camelCase (C3 `CamelModel`). Response bodies are untrusted network
- * input: they arrive as `unknown` and are narrowed with `toX()` guards — never cast,
- * never `any`. Every non-2xx becomes an `ApiError` (via `readApiError`) so callers
- * branch on `.status` / `.code` (409 / 403) instead of re-parsing envelopes.
+ * Wire format is camelCase; bodies are untrusted `unknown`, narrowed with `toX()` guards — never
+ * cast, never `any`. Every non-2xx becomes an `ApiError`, so callers branch on `.status`/`.code`.
  *
- * CSRF (KTD-2): `relaunchPreview` / `stop` (and the project-scoped save / release / stop-active
- * calls below) are mutating POSTs and carry the
- * signed double-submit token (`X-CSRF-Token`, reusing `auth.js` `getCsrfToken()`);
- * `getStatus` GET and the SSE GET (a separate transport, `buildSessionEvents.ts`)
- * are safe methods and carry NO token. This is net-new: no prior business route in
- * the portal enforces CSRF (`api.js` names itself "the seam to add it to").
+ * CSRF: `relaunchPreview` / `stop` (and the project-scoped save / release / stop-active
+ * calls below) are mutating POSTs and carry the signed double-submit token (`X-CSRF-Token`,
+ * reusing `auth.ts` `getCsrfToken()`); `getStatus` GET and the SSE GET (a separate transport,
+ * `buildSessionEvents.ts`) are safe methods and carry NO token. This is net-new: no prior
+ * business route in the portal enforces CSRF.
  */
 import { ApiError, extractApiCode, extractApiMessage, isRecord, readApiError } from './apiError'
 import { authFetch } from './api'
@@ -37,31 +33,19 @@ import type {
  */
 export type AuthFetchDeps = NonNullable<Parameters<typeof authFetch>[2]>
 
-// THE TWO MIRRORED TTLs ARE GONE TOO (`LOCK_TTL_SECONDS`, `HEARTBEAT_TTL_SECONDS`). Their header
-// said they lived here so the lifecycle hook kept one source of truth — and that hook was deleted,
-// so the mirror had no reader and only a schema to disagree with. The backend schema is the real
-// source of truth and is pinned by its own tests, so nothing knowable was lost with them.
-//
-// THE TWO CLIENT CADENCES ARE GONE, along with `renewLock` and `heartbeat` themselves. U13
-// deleted the blind keep-alive loop that was their only caller, and a client function with no
-// caller is not neutral: it reads as a supported way to keep a session alive, and the next
-// person needing one would have wired the loop straight back. What holds a turn open now is the
-// R10 wall-clock lease the SERVER renews (U12) — legible to a sweep in another process, which a
-// browser timer never was.
-//
-// The backend routes stay. They are the operator surface and the supervisor's, and nothing about
-// deleting a browser client says anything about them.
+// NO KEEP-ALIVE CLIENT HERE, and none may be added back: the `renew` / `heartbeat` routes one
+// would call are retired, so it would be a browser timer POSTing at a 404. The lock and
+// heartbeat TTLs are the backend schema's and are not mirrored here.
 
 const BASE = '/api/build-sessions'
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
 /**
  * Thrown by `relaunchPreview` on a `409 build_session_already_active`, carrying the EXISTING
- * session's id — the `409` alone is not a self-describing discriminator (U5 identity model).
+ * session's id — the `409` alone is not a self-describing discriminator.
  *
  * Its one live handler is `StartAppControl`, which reports "a build is already running in this
- * project" through the workspace state. The session hook's block banner, which used to render this
- * with a force-end button, is gone: it hung off a pane callback nobody consumed.
+ * project" through the workspace state.
  */
 export class BuildSessionAlreadyActiveError extends ApiError {
   readonly existingSessionId: string | null
@@ -158,7 +142,7 @@ function toStopBuildResponse(value: unknown): StopBuildResponse {
 
 // ─── request plumbing ────────────────────────────────────────────────────────
 
-/** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.js`). */
+/** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.ts`). */
 function csrfHeaders(): Record<string, string> {
   const csrf = getCsrfToken()
   return csrf ? { 'X-CSRF-Token': csrf } : {}
@@ -227,15 +211,13 @@ async function postJson(url: string, body: unknown, fallback: string, deps: Auth
   return res.json()
 }
 
-// ─── control operations (C3 §2) ─────────────────────────────────────────────
+// ─── control operations ─────────────────────────────────────────────
 
-// `start` IS GONE. It POSTed `BASE` to provision a C3 build session, and nothing had called it
-// since row creation and the build itself moved inside the turn's own transaction — a composer
-// send is a TURN. Its 409 fed the block banner, which this unit deletes with it. The ROUTE stays:
-// deleting a browser client says nothing about the surface it spoke to.
+// `start` IS GONE: nothing here provisions a session — a build happens inside the turn's own
+// transaction. The ROUTE is untouched; deleting a browser client says nothing about it.
 
 /**
- * `relaunch` — restore a project's saved app into a fresh, ready sandbox and get its live URL (#43).
+ * `relaunch` — restore a project's saved app into a fresh, ready sandbox and get its live URL.
  * A mutating POST (carries CSRF). Project-scoped, not session-scoped: the torn-down session is gone.
  * `postJson` already turns a `409 build_session_already_active` into `BuildSessionAlreadyActiveError`
  * (a build is running); 404 = nothing to relaunch, 503 = transient/retryable.
@@ -262,21 +244,21 @@ export async function getStatus(sessionId: string, deps: AuthFetchDeps = {}): Pr
   return toBuildSessionStatusResponse(await res.json())
 }
 
-// ─── lock operations (C3 §3) — THERE ARE NONE LEFT ──────────────────────────
+// ─── lock operations — THERE ARE NONE LEFT ─────────────────────────────────
 //
-// `acquireLock` and `releaseLock` went in U28: nothing called them — the portal's blind
-// keep-alive loop that was their only caller was itself deleted back in U13, same as
-// `renewLock` and `heartbeat` before them (see the note above).
+// `acquireLock` and `releaseLock` are gone: nothing called them — the portal's blind
+// keep-alive loop that was their only caller was itself deleted, same as `renewLock` and
+// `heartbeat` before them (see the note above).
 //
-// `forceEnd` went in U33, and so did the ROUTE it spoke to. It was the owner-only kill switch for
-// a session stuck mid-`building` that never emits a terminal `ended` (C3 §3.4), but its one
-// control was the block banner's Force-end button, deleted with the banner — so no surface had
-// been able to reach it for two units, and keeping a client for it only advertised a way to end a
-// build that a citizen could not actually take. What a live build offers now is `stop` (graceful,
-// the whole interrupt vocabulary of a turn) and, project-scoped, `stopActiveBuild`.
+// `forceEnd` is gone too, and so is the ROUTE it spoke to. It was the owner-only kill switch
+// for a session stuck mid-`building` that never emits a terminal `ended`, but its one control
+// was the block banner's Force-end button, deleted with the banner — so no surface could reach
+// it any more, and keeping a client for it only advertised a way to end a build that a citizen
+// could not actually take. What a live build offers now is `stop` (graceful, the whole
+// interrupt vocabulary of a turn) and, project-scoped, `stopActiveBuild`.
 
 /**
- * The dependency bag the C3 client + event feed accept, so U4's hook and U5's page
+ * The dependency bag the client + event feed accept, so a hook and a page
  * can swap in the scripted mock (dev/test) or the real transport (prod default).
  * The client half is the `buildSessionApi` module surface; the feed half is the
  * `EventSource` factory (`buildSessionEvents.ts`).
@@ -287,14 +269,14 @@ export interface BuildSessionClient {
   getStatus: typeof getStatus
 }
 
-/** The real, wired-by-default client (this track merges after SESSION-API, so no swap is needed at merge — KTD-6). */
+/** The real, wired-by-default client — already the final implementation, so no later swap between mock and real is needed. */
 export const buildSessionClient: BuildSessionClient = {
   relaunchPreview,
   stop,
   getStatus,
 }
 
-// --- the save model (U5b / KTD-5e) ---------------------------------------------------------
+// --- the save model ---------------------------------------------------------
 
 export interface SaveResult {
   appId: string
@@ -358,18 +340,16 @@ export async function releaseProject(
 }
 
 /**
- * WHAT A STOP ACHIEVED — THREE NAMED STATES, never a boolean (plan 002, U9).
+ * WHAT A STOP ACHIEVED — THREE NAMED STATES, never a boolean.
  *
- * The boolean this replaces said the wrong thing twice over: the server hardcoded success on both
- * branches, while its own docstrings promised a timeout would read as "still running". So the one
- * answer a caller must never act on — a stop that has NOT finished — arrived wearing the same face
- * as one that had. And `false` already meant "nothing was running", which is a success the caller
- * proceeds on, so a timeout folded into it would take a container out from under a task still
- * writing to it.
+ * The boolean this replaced hardcoded success on both branches, so a stop that had NOT
+ * finished — the one answer a caller must never act on — read identically to one that had.
+ * Folding a timeout into `false` ("nothing was running") would take a container out from
+ * under a task still writing to it.
  *
- *   `stopped`              proceed. Something was running and has finished unwinding.
- *   `nothing_was_running`  proceed. There was nothing to stop.
- *   `still_running`        DO NOT PROCEED. The wait expired, or something holds the app anyway.
+ *   `stopped`              proceed — something ran and has finished unwinding.
+ *   `nothing_was_running`  proceed — there was nothing to stop.
+ *   `still_running`        DO NOT PROCEED — the wait expired, or something still holds the app.
  */
 export type StopState = 'stopped' | 'nothing_was_running' | 'still_running'
 
@@ -393,10 +373,9 @@ function readStopState(body: unknown): StopState {
  * ASK for the stop. Returns immediately with the state at the instant the ask landed — usually
  * `still_running`, because the unwind has barely begun.
  *
- * NOTHING HOLDS A REQUEST OPEN FOR THE LENGTH OF A STOP any more, and that is what removed a
- * dependency nobody could satisfy: the old shape's budget had to sit under the request timeout of
- * the gateway in front of the service, a number recorded nowhere in this repo and owned by the
- * client's network.
+ * NOTHING HOLDS A REQUEST OPEN FOR THE LENGTH OF A STOP any more: the old shape's budget had
+ * to sit under the request timeout of the gateway in front of the service, a number recorded
+ * nowhere in this repo and owned by the client's network.
  */
 export async function stopActiveBuild(projectId: string, deps: AuthFetchDeps = {}): Promise<StopState> {
   return readStopState(
@@ -426,65 +405,55 @@ export async function readStopStateOf(
 }
 
 /**
- * HOW OFTEN TO ASK, AND FOR HOW LONG. Ordinary tuning, chosen with the code open, and neither
- * number constrains anything: the read is cheap, nothing is held open, and the ceiling only
- * decides when the dialog stops saying "closing…" and starts saying it could not.
+ * HOW OFTEN TO ASK, AND FOR HOW LONG. Ordinary tuning; neither number constrains anything —
+ * the read is cheap, nothing is held open, and the ceiling only decides when the dialog stops
+ * saying "closing…" and starts saying it could not.
  *
- * THE CEILING IS DELIBERATELY BELOW THE SERVER'S OWN STOP BUDGET, which is the opposite of what
- * this said when the two were closer together. That budget is derived from the work a stop
- * actually waits on, and the derivation now includes the snapshot a build's unwind writes — four
- * bounded steps of two minutes each — which puts it a little over eight minutes. Nobody should be
- * held in front of a modal for eight minutes to learn whether they may switch projects, so the
- * browser stops WAITING first, at two.
+ * DELIBERATELY BELOW THE SERVER'S OWN STOP BUDGET (~8 minutes: four bounded two-minute steps,
+ * including the unwind's snapshot write). Nobody should sit in front of a modal for eight
+ * minutes to learn whether they may switch projects, so the browser stops WAITING first, at two.
  *
- * WHICH COSTS NOTHING, BECAUSE EXPIRING HERE IS NOT A VERDICT. The stop runs as a detached task
- * server-side; the state read is the authority and is idempotent; and the hand-over proceeds on
- * nothing but a settled answer. So reaching this ceiling ends the WAIT, not the stop, and a
- * second press picks it up wherever it has got to. What must not be said at this point is that
- * anything failed — the likeliest reason for passing two minutes is a large app being packed up
- * exactly as it should be, which is why the sentence in `handOverWorkspace` says so.
+ * EXPIRING HERE IS NOT A VERDICT. The stop runs as a detached server-side task; the state read
+ * is the authority and is idempotent; the hand-over proceeds only on a settled answer. Reaching
+ * this ceiling ends the WAIT, not the stop — a second press picks it up wherever it got to, and
+ * nothing here may say it failed (the likely cause is a large app still being packed up, per
+ * `handOverWorkspace`'s sentence).
  */
 export const STOP_POLL_MS = 1200
 export const STOP_CEILING_MS = 120_000
 /**
- * HOW LONG ONE READ MAY HANG BEFORE IT IS ABANDONED — and why this is a REAL timer and not the
- * injected clock's.
+ * HOW LONG ONE READ MAY HANG BEFORE IT IS ABANDONED — a REAL timer, not the injected clock's.
  *
- * The ceiling below is checked BETWEEN iterations, so it can only fire if each iteration actually
- * returns. `authFetch` sets no timeout of its own: a connection that opens and then stalls never
- * settles, the `while` never re-evaluates, and the two-minute ceiling silently becomes forever —
- * with `ReclaimWorkspaceDialog` holding Escape and the overlay click disabled the whole time. So
- * every read is abandoned on its own deadline and retried, which is the same treatment a dropped
- * connection already gets: a read that gave up decided nothing.
+ * The ceiling below is checked BETWEEN iterations, so it can only fire if each iteration
+ * returns. `authFetch` sets no timeout of its own: a stalled connection never settles, the
+ * `while` never re-evaluates, and the two-minute ceiling silently becomes forever, with the
+ * dialog stuck holding Escape and its overlay click disabled. So every read is abandoned on
+ * its own deadline and retried — the same treatment a dropped connection already gets.
  *
- * It uses `setTimeout` rather than `clock.sleep` deliberately. The injected clock exists so a test
- * can reach the ceiling without waiting two minutes, and its `sleep` resolves immediately — racing
- * a read against an instant sleep would abandon every read in every test. This bound is about a
- * socket, not about pacing, so it belongs on the real timer either way.
+ * `setTimeout`, not `clock.sleep`: the injected clock's `sleep` resolves instantly for tests,
+ * so racing a read against it would abandon every read in every test. This bound is about a
+ * socket, not about pacing.
  */
 const STOP_READ_TIMEOUT_MS = 15_000
 
 /**
  * Wait for a stop to genuinely finish, narrating while it does.
  *
- * IT POLLS THE STATE RATHER THAN WATCHING A CLOCK, which is the whole of the fix. A container
- * declared dead when it was merely slow has destroyed unsaved work in this repo before, precisely
- * because a timeout was read as a verdict.
+ * IT POLLS THE STATE RATHER THAN WATCHING A CLOCK — a container declared dead when merely slow
+ * has destroyed unsaved work in this repo before, because a timeout was read as a verdict.
  *
- * A DROPPED CONNECTION IS NOT A VERDICT EITHER. A failed read is retried until the ceiling rather
- * than treated as "still running for ever" — the browser losing the network is not evidence about
- * the other project's turn — and the caller can simply ask again afterwards, because the stop
- * itself is running server-side and the state read is idempotent.
+ * A DROPPED CONNECTION IS NOT A VERDICT EITHER: a failed read is retried until the ceiling
+ * rather than treated as "still running forever", because the stop itself runs server-side and
+ * the state read is idempotent — the caller can simply ask again.
  *
- * BUT A DECIDED ANSWER IS NOT A BLIP, AND RETRYING ONE IS ITS OWN DEFECT (review #38). A session
- * that expired mid-hand-over answers 401 to every read; `authFetch` attempts a refresh on each of
- * them, so the dialog sat on "Closing the other app…" for two minutes issuing a hundred reads and
- * a hundred refresh attempts — the very traffic the refresh path documents as tripping
- * reuse-detection — and then answered with the ceiling's own sentence, which describes the other
- * project still packing its work away and had nothing to do with what actually failed. A
- * 403 (or a 404 from a project deleted in another tab) behaved the same way. Those statuses are
- * answers the poll cannot change, so they travel straight out to the dialog, which says the true
- * thing immediately. Everything else — an abort, a dropped socket, a 5xx — is still a blip.
+ * BUT A DECIDED ANSWER IS NOT A BLIP, AND RETRYING ONE IS ITS OWN DEFECT. A session that expired
+ * mid-hand-over answers 401 to every read; `authFetch` retries a refresh on each one, so the
+ * dialog once sat on "Closing the other app…" for two minutes issuing a hundred refresh attempts
+ * — traffic that trips reuse-detection — before answering with the ceiling's own sentence, which
+ * had nothing to do with what actually failed. 403 (and a 404 from a project deleted in another
+ * tab) behave the same way: the poll cannot change those answers, so they travel straight to the
+ * dialog, which says the true thing immediately. Everything else — an abort, a dropped socket, a
+ * 5xx — is still a blip.
  */
 export interface StopWaitClock {
   now: () => number
@@ -532,31 +501,24 @@ export async function awaitStopSettled(
   return last
 }
 
-/** Hand the workspace over: STOP, then optionally SAVE, then RELEASE — the whole of what the
- *  #83 refusal dialog's buttons do to the server, in the one order that works.
+/** Hand the workspace over: STOP, then optionally SAVE, then RELEASE — what the refusal
+ *  dialog's buttons do to the server, in the one order that works.
  *
- *  THE ORDER IS THE DESIGN, and it lives here rather than in each caller because it is an
- *  invariant of these three endpoints, not of any one surface. Save and release BOTH refuse
- *  while an agent is writing, so a sequence that saved first would simply fail — and a save
- *  that slipped past that guard would bundle a tree caught mid-edit as the version Relaunch
- *  later restores. Stopping settles the turn (terminal frame, billing, `finish_turn_sandbox`)
- *  and only then is there a coherent tree to save.
+ *  THE ORDER IS THE DESIGN: save and release BOTH refuse while an agent is writing, so
+ *  saving first would simply fail (or, past that guard, bundle a tree caught mid-edit) —
+ *  stopping settles the turn first, and only then is there a coherent tree to save.
  *
- *  THE STOP IS UNCONDITIONAL, not gated on `ReclaimBlocked.building`. `building` describes what
- *  to SAY, not what to do: it is true only for a Write turn, because that is the one whose
- *  interruption costs the user something. But an Ask or Plan turn holds the container just as
- *  firmly — every mode pins it — and `release` refuses for either, so gating the stop on it left
- *  the other modes in the dead end this flow exists to remove: a dialog whose buttons the server
- *  declines. Stopping when nothing is running is free and says so.
+ *  THE STOP IS UNCONDITIONAL, not gated on `ReclaimBlocked.building` (true only for a Write
+ *  turn). Every mode pins the container and `release` refuses for all of them, so gating the
+ *  stop on the Write-only flag would leave Ask/Plan turns stuck in the dead end this flow
+ *  removes. Stopping when nothing is running is free.
  *
- *  AND IT WAITS FOR THE STOP TO GENUINELY FINISH (plan 002, U9). The ask returns immediately now;
- *  the state read is the authority, and this proceeds only on one of the two settled answers. A
- *  stop that times out is reported as still running and the transfer DOES NOT PROCEED — which is
- *  the difference between a clean stop and a timeout that this repo has shipped confused before.
+ *  IT WAITS FOR THE STOP TO GENUINELY FINISH: the ask returns immediately, the state read is
+ *  the authority, and this proceeds only on a settled answer — a timeout reports still
+ *  running and the transfer DOES NOT PROCEED (shipped confused before, without this).
  *
- *  REJECTS RATHER THAN SWALLOWS. A failed save must not be followed by a release — that is
- *  precisely the data loss the dialog exists to prevent — so the rejection travels back to the
- *  caller, which is the only thing still mounted that can report it. */
+ *  REJECTS RATHER THAN SWALLOWS: a failed save must not be followed by a release, so the
+ *  rejection travels back to the only thing still mounted that can report it. */
 export async function handOverWorkspace(
   projectId: string,
   save: boolean,
@@ -571,7 +533,7 @@ export async function handOverWorkspace(
     // NOT AN ERROR OF OURS, AND NOT A REASON TO TAKE THE CONTAINER. Everything the citizen has is
     // still where it was; what failed is the wait, and asking again is the remedy.
     throw new ApiError(
-      // THE TRUE THING AT TWO MINUTES, which is not "that project failed" (review #45). The
+      // THE TRUE THING AT TWO MINUTES, which is not "that project failed". The
       // browser's ceiling is under the server's on purpose — see `STOP_CEILING_MS` — so arriving
       // here almost always means the other app is still putting its work away, and the wait is
       // what ran out rather than the stop. Nothing has been taken from either project, and asking
@@ -592,12 +554,10 @@ export async function handOverWorkspace(
 /**
  * What a hand-over is doing right now, so the dialog can say it rather than spin.
  *
- * IT STOPS AT `starting`, AND THAT IS THE WHOLE SEQUENCE (review #39/#82). There was an `opening`
- * member here for the chat being opened, with copy already written for it, and nothing could ever
- * produce it: the retry's last act is a navigate, which unmounts the surface publishing the dialog
- * in the very commit that would have carried the new step, so no render can reach it. The wait it
- * was meant to describe is the destination's own — the chat surface and the app pane both narrate
- * themselves as they come up — and a member no writer can set is dead code with copy attached.
+ * STOPS AT `starting` DELIBERATELY. An `opening` member once existed for the chat being
+ * opened, but nothing could ever produce it: the retry's last act is a navigate, which
+ * unmounts the dialog-publishing surface in the same commit that would carry the step. The
+ * destination narrates its own wait, so an unreachable member was dead code with copy attached.
  */
 export type HandoverStep = 'stopping' | 'saving' | 'releasing' | 'starting'
 
@@ -619,32 +579,28 @@ export interface ReclaimBlocked {
    *  runs `stopActiveBuild` first instead of offering them directly. */
   building: boolean
   /**
-   * AN AGENT IS MID-TURN IN THERE, OF ANY KIND (plan 002, U9) — deliberately wider than
-   * `building`, and deliberately a SEPARATE field.
+   * AN AGENT IS MID-TURN IN THERE, OF ANY KIND — deliberately wider than `building`, and a
+   * separate field. `building` marks only write-capable turns; widening it would show a stop
+   * button and hammer icon to someone who only asked a question, short-circuiting the escape
+   * hatch that lets a pristine container be reclaimed without asking. This field carries the
+   * wider sentence instead — "their agent is still working" — over a workspace already
+   * reported as holding nothing to lose.
    *
-   * `building` marks only turns whose toolset can WRITE, and the server records why: widening
-   * that one put a stop button and a hammer icon in front of someone who had only asked a
-   * question, and short-circuited the escape hatch that lets a pristine container be reclaimed
-   * without asking. This is the wide answer, for a different sentence — "their agent is still
-   * working, and transferring will stop it" — which the dialog has to be able to say over a
-   * workspace it has just reported as holding nothing to lose.
-   *
-   * Absent reads as false: an older backend that does not send it cannot have an agent to report,
-   * and defaulting the other way would tell every citizen their other project is busy.
+   * Absent reads as false: an older backend that omits it cannot have an agent to report, and
+   * defaulting the other way would falsely mark every citizen's other project busy.
    */
   agentWorking: boolean
 }
 
-/** Narrow a thrown error to the #83 refusal, or `null` for anything else.
+/** Narrow a thrown error to the refusal, or `null` for anything else.
  *
  *  Branch on the CODE, never the 409 alone: the same status also carries
- *  `build_session_already_active`, which has no remedy the user can act on, and treating the
- *  two alike would offer a Save button for a build that is simply still running.
+ *  `build_session_already_active`, which has no remedy — treating the two alike would offer a
+ *  Save button for a build that is simply still running.
  *
- *  STRUCTURAL, not `instanceof`, because the refusal arrives as two different error types —
- *  `ApiError` from `relaunchPreview`, `TurnStartError` from `startTurn` — and both carry the
- *  same `{code, details}` shape. Keying on the shape means the modal works on whichever path
- *  the user happened to take. */
+ *  STRUCTURAL, not `instanceof`: the refusal arrives as two different error types (`ApiError`
+ *  from `relaunchPreview`, `TurnStartError` from `startTurn`) sharing the same `{code, details}`
+ *  shape, so keying on the shape works on whichever path the user took. */
 export function asReclaimBlocked(err: unknown): ReclaimBlocked | null {
   if (!isRecord(err) || err.code !== 'sandbox_reclaim_blocked') return null
   const d = err.details
@@ -663,23 +619,20 @@ export function asReclaimBlocked(err: unknown): ReclaimBlocked | null {
   }
 }
 
-/** What is (or is not) serving a project's preview right now — C3 §8.3.
+/** What is (or is not) serving a project's preview right now.
  *
- *  FIVE STATES AND AN UNKNOWN, because `alive: false` used to mean all five at once and one
- *  of them was not a state at all but an error:
+ *  SIX STATES, because `alive: false` used to mean all of them at once and one was an error:
  *
  *   - `alive`       — a container is serving this project; `previewUrl` is framable.
- *   - `asleep`      — built before, nothing serving it now. The next prompt brings it back
- *                     from the durable copy. NOT a failure, and nothing may style it as one.
- *   - `starting`    — U13: a build, a relaunch, or a turn's sandbox start is IN FLIGHT for this
- *                     project right now. Not `alive` (no container yet) and not `asleep` (a
- *                     start is actively under way) — the server's own action mapping (C3 §10.3)
- *                     groups it with `alive` as "nothing to offer, just a wait", so it must NOT
- *                     be treated as a "gone" state that invites a remedy.
+ *   - `asleep`      — built before, nothing serving it now; the next prompt restores it from
+ *                     the durable copy. NOT a failure — never styled as one.
+ *   - `starting`    — a build, relaunch, or turn sandbox-start is IN FLIGHT. Not `alive` (no
+ *                     container yet), not `asleep` (a start is under way) — grouped with
+ *                     `alive` as "just a wait", never as a "gone" state inviting a remedy.
  *   - `slot_taken`  — another of this user's projects holds the one-per-user workspace.
  *   - `never_built` — nothing has ever been built here.
  *   - `unknown`     — the server could not read its coordination store, so it claims NOTHING.
- *                     A client that renders this as "gone" has put the bug back. */
+ *                     Rendering this as "gone" puts the bug back. */
 export const PREVIEW_LIFE_STATES = ['alive', 'asleep', 'starting', 'slot_taken', 'never_built', 'unknown'] as const
 export type PreviewLifeState = (typeof PREVIEW_LIFE_STATES)[number]
 
@@ -700,7 +653,7 @@ export interface PreviewState {
    *  from the recovery copy or the saved bundle, `false` = confirmed it could not, `null` =
    *  NO CLAIM, so the UI promises nothing and keeps whatever it already knew. Two ways to
    *  reach that null and they mean the same thing to us: the object store was unreachable, or
-   *  `state === 'alive'` and the poll did not ask (C3 §8.3 — a running app renders no restore
+   *  `state === 'alive'` and the poll did not ask (a running app renders no restore
    *  affordance, so the answer could not change the screen and is not worth a Blob round trip
    *  every 45 seconds). This is why `hasSavedBuild` reads it with `??` and not `||`. */
   restorable: boolean | null
@@ -726,16 +679,15 @@ function asPreviewLifeState(value: unknown, alive: boolean): PreviewLifeState {
   return PREVIEW_LIFE_STATES.find((s) => s === value) ?? (alive ? 'alive' : 'unknown')
 }
 
-/** Is the preview this tab is framing still real — and if not, why? (#83, C3 §8.3.)
+/** Is the preview this tab is framing still real — and if not, why?
  *
  *  A reclaimed preview is visually IDENTICAL to a working one — the last render stays on
- *  screen, the iframe reports nothing, and a cross-origin pane cannot read a status code. Once
- *  a build ends there is no SSE and no timer left, and the teardown happens inside another
- *  project's request, so nothing can be pushed here. The tab has to ask.
+ *  screen and a cross-origin pane cannot read a status code. Once a build ends there is no
+ *  SSE and no timer left, and the teardown happens inside another project's request, so
+ *  nothing can be pushed here — the tab has to ask.
  *
- *  Cheap by contract (C3 §8.3): one Redis hash read, at most two rows, at most two object-store
- *  HEADs, and no container call at all — unlike `fetchSaveState`, which runs two `git` execs
- *  inside the container per call. */
+ *  Cheap by contract: one Redis hash read, at most two rows, at most two object-store HEADs,
+ *  no container call — unlike `fetchSaveState`, which runs two `git` execs per call. */
 export async function fetchPreviewState(
   projectId: string,
   deps: AuthFetchDeps = {},
@@ -777,20 +729,16 @@ export async function fetchPreviewState(
   }
 }
 
-/** Is there unsaved work? Compared by COMMIT server-side, so it survives a reload and a
- *  second tab — neither of which a local dirty flag would. */
 /**
- * What is the app compiling right now — for a tab with NO LIVE TURN (R17/R18).
+ * What is the app compiling right now — for a tab with NO LIVE TURN.
  *
- * During a turn the state arrives on the turn stream as a `compile` frame. That producer stops
- * at the terminal, so a tab that reloads after a red turn has nothing to cover a broken preview
- * with: the pane comes up uncovered and the citizen reads the framework's error screen under a
- * live-preview label. This is the producer that outlives the turn.
+ * A turn's `compile` frame stops at the terminal, so a tab reloaded after a red turn has
+ * nothing covering a broken preview and reads the framework's error screen under a
+ * live-preview label; this call is the producer that outlives the turn.
  *
- * Deliberately its own call rather than a field on `preview-state`, whose cost budget is frozen
- * at no container call of any kind (C3 §8.3). Anything unreadable answers `unknown`, which the
- * pane HOLDS its cover on — never `clean`. It never throws for the same reason: this is a
- * signal about an app that may already be broken, and it must not become a second failure.
+ * Its own call, not a field on `preview-state` (whose budget is frozen at no container call).
+ * Unreadable answers `unknown` — the pane HOLDS its cover, never `clean` — and this never
+ * throws: a signal about an app that may already be broken must not become a second failure.
  */
 export async function fetchCompileState(
   projectId: string,
@@ -811,21 +759,19 @@ export async function fetchCompileState(
 }
 
 /**
- * Is the app this tab is framing still the citizen's app? (U4, R4/R7.)
+ * Is the app this tab is framing still the citizen's app?
  *
- * THE TURN MAY NEVER COME. Every other integrity check runs at the start of a turn, which catches
- * every reversion between one message and the next — and nothing at all for someone who is
- * reading, or in another tab, or at lunch. The "Build complete — your app is live below" claim
- * goes on being displayed for as long as the page stays open.
+ * THE TURN MAY NEVER COME: every other integrity check runs at the start of a turn, which
+ * catches a reversion between messages but nothing for someone reading, in another tab, or at
+ * lunch — a completion claim stays displayed for as long as the page stays open.
  *
- * ONLY A POSITIVE `reverted` MEANS ANYTHING, and it is the server's boolean rather than something
- * derived here. Four states can come back and only one of them may retract a completion claim;
- * writing `state !== 'intact'` on this side would retract on the two that mean "we could not
- * tell", which is the mistake the whole verdict is shaped to prevent.
+ * ONLY A POSITIVE `reverted` MEANS ANYTHING — the server's own boolean, not derived here. Four
+ * states can come back and only one may retract a claim; `state !== 'intact'` would also
+ * retract on the two that mean "we could not tell", which this verdict exists to prevent.
  *
- * NEVER THROWS, and answers `false` on anything unreadable. This runs on a background timer
- * beside a preview the citizen is looking at: a probe that could fail the page would be a second
- * failure caused by the check for the first one.
+ * NEVER THROWS, answering `false` on anything unreadable — this runs on a background timer
+ * beside a preview the citizen is looking at, and a probe that failed the page would be a
+ * second failure caused by the check for the first one.
  */
 export async function checkWorkspace(
   projectId: string,
@@ -845,6 +791,8 @@ export async function checkWorkspace(
   }
 }
 
+/** Is there unsaved work? Compared by COMMIT server-side, so it survives a reload and a
+ *  second tab — neither of which a local dirty flag would. */
 export async function fetchSaveState(
   projectId: string,
   deps: AuthFetchDeps = {},

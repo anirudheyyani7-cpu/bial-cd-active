@@ -1,33 +1,25 @@
-"""The destructive-SQL sentinel over the improvisation channel (U1 / R1 / #12).
+"""The destructive-SQL sentinel over the improvisation channel.
 
 `run_command` is the one place BRAIN can improvise SQL against the app's REAL database (the
-per-app `BIAL_DATABASE_URL` is injected into the sandbox for every build — ADR-0028 provisions
-the database at project create, so "first build" is no safe harbour). The 2026-07-22 walkthrough
-proved the stakes: an unguarded `DELETE FROM visitors` issued "to clean up" wiped real records.
+per-app `BIAL_DATABASE_URL` is injected for every build — the database is provisioned at
+project create, so "first build" is no safe harbour).
 
-The sentinel scans the argv text — the joined token stream, which also covers `bash -c` scripts
-and heredocs carried inside a single token — for improvised destructive SQL: `DELETE FROM`,
-`TRUNCATE`, `DROP <object>`, `UPDATE … SET`, `ALTER TABLE … DROP`. It deliberately guards EVERY
-build, not only change builds: improvised DML is never part of a build, and an empty database
-loses nothing by refusing it (simpler than plumbing a build-kind flag for a weaker guard).
+WHY THIS EXISTS: a production walkthrough proved the stakes — an unguarded `DELETE FROM
+visitors` issued "to clean up" wiped real records. The sentinel now scans the joined argv
+text (covers `bash -c` scripts and heredocs carried in a single token) for improvised
+destructive SQL: `DELETE FROM`, `TRUNCATE`, `DROP <object>`, `UPDATE … SET`, `ALTER TABLE …
+DROP` — guarding EVERY build, since improvised DML is never legitimately part of one.
 
 Generated Drizzle migrations remain the sanctioned channel for schema changes INCLUDING drops
-(user decision 2026-07-23 — no additive-only gate; requirements legitimately evolve to remove
-features). The exemption is structural, not a carve-out: the sanctioned path
-(`apply_schema_change`, and the `drizzle-kit generate` / `npm run db:migrate` commands underneath
-it) carries no SQL text in argv, so it passes without special-casing. The sentinel never reads
-file contents — iteration 1 by explicit decision; the write-a-script-then-run-it bypass is a
-named, accepted follow-up (iteration 2), with BRAIN-trace monitoring as the tripwire.
+(requirements legitimately evolve to remove features). The exemption is structural: the
+sanctioned path carries no SQL text in argv, so it passes without special-casing. The sentinel
+never reads file contents by design; write-a-script-then-run-it is a named, accepted bypass,
+with BRAIN-trace monitoring as the tripwire.
 
-Spelling coverage: the same destructive statement has many legal spellings, and the sentinel
-must not be a keyword-shape trivia quiz. Comments are legal whitespace to the server, so the
-text is scanned both raw and comment-stripped (`DELETE/**/FROM t`, `DELETE -- x\\nFROM t`), and
-the UPDATE pattern tolerates `ONLY` and a table alias (`UPDATE t AS a SET`, `UPDATE t a SET`).
-
-Hardening (the ReDoS learning, `security-issues/redos-secret-redaction-regex-2026-07-14.md`):
-every pattern is linear (bounded quantifiers over disjoint character classes), and the input is
-length-capped BEFORE any regex runs. A command too large to scan is REFUSED rather than
-partially scanned — a destructive statement could hide past the cap (fail-closed).
+Spelling coverage handles legal variants (raw and comment-stripped text, `UPDATE`'s `ONLY`/
+alias forms) rather than a keyword-shape trivia quiz. Every regex is linear and length-capped
+before it runs; an oversized command is REFUSED rather than partially scanned (fail-closed) —
+a destructive statement could otherwise hide past the cap.
 """
 
 from __future__ import annotations

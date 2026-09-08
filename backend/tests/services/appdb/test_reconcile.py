@@ -1,19 +1,15 @@
 """The orphan reconciler — REPORT-ONLY, for databases and for stranded roles.
 
-Two layers, deliberately:
+Two layers, deliberately: pure classifier tests feed a synthetic cluster with every
+dangerous name at once (Postgres's own, both control-plane lanes, Azure's, and six
+unrelated databases this dev box really hosts) — the DECISION site, proven exhaustively
+rather than for whatever happens to exist on the machine. Integration tests then create
+real orphans on the real cluster and assert both that the report finds them AND that they
+are still there afterwards — "nothing is deleted" is the whole safety contract, asserted
+against the catalog, never inferred from the absence of a `DROP`.
 
-* **Pure classifier tests** feed a synthetic cluster containing every dangerous name at
-  once — PostgreSQL's own, both control-plane lanes, Azure's, and the six unrelated
-  databases that really do share this dev box. That is the DECISION site, so proving the
-  guards there proves them exhaustively; an integration test can only prove them for
-  whatever names happen to exist on the machine it runs on.
-* **Integration tests** create real orphans on the real cluster and assert both that the
-  report finds them AND that they are still there afterwards. "Nothing is deleted" is the
-  entire safety contract of this unit, so it is asserted against the catalog, never inferred
-  from the absence of a `DROP` in the source.
-
-Every project that gets provisioned is registered with `salted` FIRST, so a failure
-mid-test still cleans up — the `db_session` rollback cannot undo cluster DDL.
+Every project is registered with `salted` FIRST, so a failure mid-test still cleans up —
+the `db_session` rollback cannot undo cluster DDL.
 """
 
 from __future__ import annotations
@@ -293,14 +289,12 @@ async def _forget_the_registry_row(db: AsyncSession, record: ProjectDatabase) ->
 async def _verdict_for(db: AsyncSession, db_name: str) -> DatabaseCounts:
     """The real classifier's verdict on ONE real database, read live from the catalog.
 
-    A whole-cluster before/after delta is NOT a stable measurement here and pretending
-    otherwise buys a flaky test: `.env.test` configures a real substrate, so every project
-    any test in the session creates leaves a real database behind (the conftest hook salts
-    them only at session END), and a background provision can land between two reports.
-    Restricting the catalog read to the name this test created makes the bucket assertion
-    exact while still measuring the REAL cluster row and the REAL registry through the same
-    classifier the driver uses. The driver's own wiring is covered separately.
-    """
+    A whole-cluster before/after delta is NOT stable here: every project any test in the
+    session leaves a real database behind (salted cleanup runs at session END), and a
+    background provision can land between two reports. Restricting the catalog read to the
+    name this test created keeps the bucket assertion exact while still measuring the REAL
+    row and REAL registry through the same classifier the driver uses. The driver's own
+    wiring is covered separately."""
     engine = get_maintenance_engine()
     assert engine is not None
     async with engine.connect() as conn:

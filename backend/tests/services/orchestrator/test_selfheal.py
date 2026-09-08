@@ -1,9 +1,9 @@
-"""The self-heal state machine (U7, KD-5/6/7/8) — `verify`, `where_are_we`, the re-check.
+"""The self-heal state machine — `verify`, `where_are_we`, the re-check.
 
 ONE layer now: the verify primitives, driven against a fake container and asserted on the
 `VerifyOutcome` they return. The second layer this file used to carry — the standalone build
-harness's multi-run loop, driven through `BuildOrchestrator.run_build` — went with the harness
-in U33. Its live successor is the turn engine's self-heal loop, whose budget, re-seed and
+harness's multi-run loop, driven through `BuildOrchestrator.run_build` — was deleted with the
+harness. Its live successor is the turn engine's self-heal loop, whose budget, re-seed and
 endings are pinned in `tests/services/turns/test_write_turn.py` and `test_run_budget.py`; the
 re-seed prompt itself is `prompt.build_repair_prompt`, pinned in `test_prompt.py`.
 
@@ -61,16 +61,11 @@ async def _verify(
     had_prior_building_turns: bool = False,
     indeterminate_retries: int = 0,
 ) -> tuple[VerifyOutcome, int]:
-    """`verify` with this file's defaults, and ONE default that is a decision rather than
-    convenience: `indeterminate_retries=0`.
-
-    `verify` in production asks again before reporting a defect, which is exactly what makes an
-    unanswerable verdict cheap. In a unit test that patience would mean every INDETERMINATE case
-    ran the whole pass three times to assert something the first pass already established. Zero
-    lets a test observe ONE honest verdict; the retry itself has its own test below.
-
-    `had_prior_building_turns=False` for the same reason: the content check is off unless a test
-    says the app has been built, so tests that predate U6 keep asking what they always asked."""
+    """`verify` with this file's defaults, plus two DELIBERATE overrides, not mere convenience:
+    `indeterminate_retries=0` (production retries before reporting a defect; zero surfaces ONE
+    honest verdict instead of a patient test re-confirming it three times — the retry path has
+    its own test below) and `had_prior_building_turns=False` (the content check stays off unless
+    a test opts in)."""
     return await verify(
         fake,
         fake.handle(),
@@ -108,7 +103,7 @@ async def test_where_are_we_dead_process_is_not_slow() -> None:
 
 
 async def test_where_are_we_believes_ready_over_a_dead_child() -> None:
-    """U1's new `/dev/status` row (`running=False, ready=True`): the supervisor's child is dead
+    """The `/dev/status` row (`running=False, ready=True`): the supervisor's child is dead
     but an agent-relaunched server answers the dev port — observed truth says serving. The
     `ready` check runs FIRST, so this is "there", never the dead-process fast-fail. Pins that
     ordering: swap the two checks and this goes red."""
@@ -149,7 +144,7 @@ async def test_verify_never_runs_next_build() -> None:
     fake = FakeSandbox()
     fake.dev_ready = True
     await _verify(fake, log_cursor=0, max_polls=3)
-    # Only `tsc` is ever run between runs — `next build` is a DEPLOY concern (D2/KD-6).
+    # Only `tsc` is ever run between runs — `next build` is a DEPLOY concern.
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
     assert not any("build" in " ".join(cmd) for cmd in fake.command_calls)
 
@@ -158,7 +153,7 @@ async def test_verify_bounds_the_tsc_run_with_exec_timeout() -> None:
     fake = FakeSandbox()
     fake.dev_ready = True
     await _verify(fake, log_cursor=0, max_polls=3)
-    # The tsc run is bounded by EXEC_TIMEOUT_S (300s), NOT the ABC's 900s default (KD-8) — the
+    # The tsc run is bounded by EXEC_TIMEOUT_S (300s), NOT the ABC's 900s default — the
     # constant is actually threaded to the call, not merely defined.
     assert fake.command_timeouts == [constants.EXEC_TIMEOUT_S]
 
@@ -170,9 +165,7 @@ async def test_verify_bounds_the_dev_log_tail() -> None:
     fake.push_dev_logs(*[f"filler {i}" for i in range(constants.LOG_TAIL_MAX_LINES + 50)])
     fake.push_dev_logs("⨯ unhandledRejection Error: boom at the tail")  # crash at the very end
     outcome, _ = await _verify(fake, log_cursor=0, max_polls=3)
-    # The crash at the tail is still detected …
     assert outcome.error is not None and outcome.error.source == ErrorSource.SERVER
-    # … but only the last LOG_TAIL_MAX_LINES lines are scanned — the oldest line is dropped.
     assert "EARLY_SENTINEL_LINE" not in outcome.error.cleaned_stack
 
 
@@ -182,7 +175,7 @@ async def test_verify_bounds_the_dev_log_tail() -> None:
 
 
 async def test_verify_restarts_a_dead_dev_server_and_goes_green() -> None:
-    """THE 2026-07-30 prod incident, fixed: the dev child is dead (exit 137, OOM) and nothing
+    """The dev child is dead (exit 137, OOM) and nothing
     serves the port — verify restarts it instead of blaming the app, and a healthy comeback is
     plain green: no error envelope, no repair run burned, no agent wild-goose chase."""
     fake = FakeSandbox()
@@ -197,8 +190,7 @@ async def test_verify_restarts_a_dead_dev_server_and_goes_green() -> None:
 
 async def test_verify_dead_server_unrevivable_reports_the_death_not_a_render_bug() -> None:
     """Restarted but still not ready: the diagnostic names the PROCESS failure (exit code,
-    last output) — never the old 'throws during render' guess that sent the calculator build
-    on a 3-run, ~875k-token chase after app code that was already correct."""
+    last output) — never the old 'throws during render' guess."""
     fake = FakeSandbox()
     fake.push_dev_logs("npm ERR! Killed")
     fake.kill_dev(exit_code=137)
@@ -214,9 +206,9 @@ async def test_verify_dead_server_unrevivable_reports_the_death_not_a_render_bug
 
 
 async def test_verify_dead_child_crash_last_words_surface_the_crash() -> None:
-    # A crash marker in the dead child's last output is the TRUE diagnostic (KD-6: the tail
-    # since the last cursor must be clean) — it wins even when the restarted child comes up
-    # fine. The returned cursor is 0: the restart reset the C1 log ring, and re-reading the
+    # A crash marker in the dead child's last output is the TRUE diagnostic (the tail since
+    # the last cursor must be clean) — it wins even when the restarted child comes up
+    # fine. The returned cursor is 0: the restart reset the log ring, and re-reading the
     # fresh ring from 0 is what keeps the next verify's crash detection alive.
     fake = FakeSandbox()
     fake.push_dev_logs("⨯ ReferenceError: boom at module load")
@@ -243,9 +235,9 @@ async def test_verify_dead_server_failed_restart_reports_honestly(monkeypatch) -
 
 
 async def test_verify_slow_but_running_server_is_never_restarted() -> None:
-    """A LIVE child that has not reported ready is the slow-startup case (open-Q F): no rescue.
+    """A LIVE child that has not reported ready is the slow-startup case: no rescue.
 
-    The diagnosis moved but the RESCUE rule did not, which is what this pins. Before U6 the
+    The diagnosis moved but the RESCUE rule did not, which is what this pins. The
     verdict here was red-with-no-error and the loop synthesized one; now `verify` names it itself
     once its patience is spent. Either way nothing restarts a child that is merely slow."""
     fake = FakeSandbox()
@@ -277,13 +269,13 @@ async def test_dev_never_ready_reseeds_a_diagnostic_not_the_done_nudge() -> None
     falls through to the "green but forgot declare_done" nudge and tells the model to carry on
     — a misdiagnosis, on the one path where the citizen is already waiting longest.
 
-    RE-HOSTED ONTO `verify` (U33). It used to be asserted through the standalone harness's
-    multi-run loop, on the reseeded prompt text of the next run; the loop is deleted and the
-    live one is the turn engine's. What was ever `selfheal`'s in it is the half asserted here:
-    `verify` NAMES this state itself rather than leaving the caller to synthesize something.
-    The re-seed channel that carries the diagnostic into the next run is
-    `prompt.build_repair_prompt` (`test_prompt.py`), and the live loop that spends it is
-    `turns/engine.py` (`tests/services/turns/test_write_turn.py`).
+    RE-HOSTED ONTO `verify`. It used to be asserted through the standalone harness's multi-run
+    loop, on the reseeded prompt text of the next run; the loop is deleted and the live one is
+    the turn engine's. What was ever `selfheal`'s in it is the half asserted here: `verify`
+    NAMES this state itself rather than leaving the caller to synthesize something. The re-seed
+    channel that carries the diagnostic into the next run is `prompt.build_repair_prompt`
+    (`test_prompt.py`), and the live loop that spends it is `turns/engine.py`
+    (`tests/services/turns/test_write_turn.py`).
 
     Mutation check: return `error=None` on the never-ready arm and the source assert goes red."""
     fake = FakeSandbox()
@@ -306,7 +298,7 @@ async def test_dev_never_ready_reseeds_a_diagnostic_not_the_done_nudge() -> None
 
 async def test_verify_transient_blip_is_retried_not_escalated(monkeypatch) -> None:
     # One supervisor blip on the tsc hop must NOT escape `verify` — the bounded retry absorbs it
-    # and the pass returns its ordinary verdict. (Re-hosted onto `verify` in U33: the assertion
+    # and the pass returns its ordinary verdict. (Re-hosted onto `verify`: the assertion
     # that the caller then does not escalate belonged to the deleted harness loop; the retry
     # itself is `selfheal._attempt`'s and is what is measured here.)
     monkeypatch.setattr(selfheal, "VERIFY_RETRY_BACKOFF_S", 0.0)
@@ -354,16 +346,15 @@ async def test_verify_sandbox_gone_escalates_immediately_without_retry() -> None
 
 
 # =============================================================================
-# U4 — the compile errors `tsc` cannot see
+# The compile errors `tsc` cannot see
 # =============================================================================
 
 
 async def test_a_next_only_compile_error_is_invisible_until_someone_asks_for_the_page() -> None:
-    """★ U4 (R4), and the whole point of the unit. A Server Component calling a client-only hook
-    typechecks CLEANLY, leaves `/dev/logs` empty, and keeps `/dev/status` reporting ready — so
-    the build ended GREEN and shipped a blank page to the citizen. Next writes its `⨯` only when
-    the route is actually requested. Driven through the log-cursor mechanics on purpose: stubbing
-    `detect_server_crash` would assert the plumbing and prove nothing about the ordering."""
+    """★ A Server Component calling a client-only hook typechecks clean and ships a blank page —
+    `tsc`, `/dev/status`, and the log tail all stay silent until the route is actually requested.
+    Driven through the log-cursor mechanics on purpose: stubbing `detect_server_crash` would
+    assert the plumbing and prove nothing about the ordering."""
     fake = FakeSandbox()
     fake.dev_ready = True  # tsc default exit 0, readiness holds — green by every old measure
     fake.compile_error_appears_on_first_request(
@@ -383,7 +374,7 @@ async def test_a_next_only_compile_error_is_invisible_until_someone_asks_for_the
 
 async def test_a_clean_workspace_stays_green_and_costs_no_extra_iteration() -> None:
     """The other side of the same change: a warm request against a healthy app must not invent
-    a red. U4 spends self-heal budget only where there is a genuine defect."""
+    a red. Self-heal budget is spent only where there is a genuine defect."""
     fake = FakeSandbox()
     fake.dev_ready = True
 
@@ -394,13 +385,8 @@ async def test_a_clean_workspace_stays_green_and_costs_no_extra_iteration() -> N
 
 
 async def test_a_serving_probe_that_never_answers_is_indeterminate_not_broken() -> None:
-    """★ COVERS AE8. The probe swallows its own failures and answers `None`, and `None` means WE
-    could not ask — never that the app could not answer.
-
-    This test replaces one that asserted the opposite conclusion from the same input: before U6 an
-    unanswered probe left the verdict green, because the status was logged and discarded. Green
-    was the wrong answer for the same reason red would have been. The app is very likely serving;
-    we simply do not know, so the honest verdict is the one that asks again.
+    """The probe swallows its own failures and answers `None`, meaning WE could not ask — never
+    that the app could not answer.
 
     Mutation check: map `served is None` to UNHEALTHY and this goes red on the state; map it to
     HEALTHY and it goes red on the `green` assertion."""
@@ -419,14 +405,11 @@ async def test_a_serving_probe_that_never_answers_is_indeterminate_not_broken() 
 async def test_a_root_route_that_500s_without_a_marker_is_now_red() -> None:
     """★ THE SILENT GREEN, CLOSED. The status code came back from the app's own root and every
     call site discarded it — including this one, the only place in the codebase that decides
-    whether a build is green. That verdict was `detect_server_crash` matching five hard-coded text
-    markers, so a root route answering 500 while printing none of them shipped green over a broken
-    app.
+    whether a build is green: a root route answering 500 while printing none of
+    `detect_server_crash`'s five hard-coded text markers shipped green over a broken app.
 
-    The test that stood here asserted `green is True` and said in as many words that promoting a
-    non-2xx "belongs to the owner, not to this test". R9 is that decision, taken. The supervisor's
-    readiness probe fail-opens on 5xx by explicit design, so if this verdict does not call it
-    broken, nothing does.
+    The supervisor's readiness probe fail-opens on 5xx by explicit design, so if this verdict
+    does not call it broken, nothing does.
 
     Mutation check: widen the accepted range to include 5xx and this goes red on the state."""
     from structlog.testing import capture_logs
@@ -461,7 +444,7 @@ async def test_a_root_route_that_answers_200_says_nothing() -> None:
 
 
 # =============================================================================
-# U6 / R9 / R10 — the three-state verdict, the serving half and the content half
+# The three-state verdict, the serving half and the content half
 # =============================================================================
 
 
@@ -486,9 +469,9 @@ async def test_where_are_we_tells_a_dead_process_from_a_slow_one() -> None:
 
 
 async def test_a_readiness_budget_that_ran_out_is_asked_again_not_reported() -> None:
-    """★ COVERS AE8. The dev server is still `running` — we stopped waiting, it did not stop
-    starting. Before U6 that was red and carried `dev_not_ready_error()`, so the model spent a
-    repair run, and the citizen's tokens, on a startup hang that did not exist.
+    """★ The dev server is still `running` — we stopped waiting, it did not stop starting.
+    Reported red it would carry `dev_not_ready_error()`, and the model would spend a repair run,
+    and the citizen's tokens, on a startup hang that does not exist.
 
     THE WIN IS THE SECOND LOOK, not a permanent verdict: an app that comes up while we were
     deciding is healthy, and costs nothing.
@@ -505,14 +488,10 @@ async def test_a_readiness_budget_that_ran_out_is_asked_again_not_reported() -> 
 
 
 async def test_a_readiness_budget_that_never_answers_becomes_an_honest_defect() -> None:
-    """★ THE BOUND ON THE TEST ABOVE, and the distinction that cost this unit a round of review.
-
-    The three unanswerable checks are not the same kind of silence. A serving probe that never
-    came back, or a baseline with no root commit to compare against, describes an app that is up
-    and answering. A READINESS budget that ran out describes an app that is not serving at all —
-    and once patience is spent, a full budget several times over has stopped being our impatience
-    and become a fact about the app. Telling that citizen their app "looks like it's running"
-    would be a new false claim in the plan whose whole purpose is removing one.
+    """★ THE BOUND ON THE TEST ABOVE: this silence is not the same kind as the others. A serving
+    probe that never answers, or a baseline with no root commit, describes an app that IS up. A
+    READINESS budget that ran out describes an app that is not serving at all — once patience is
+    spent that is a fact about the app, not our impatience.
 
     Mutation check: drop the `Unanswered.READINESS` conversion and this goes red on the state."""
     fake = FakeSandbox()
@@ -552,10 +531,9 @@ async def test_a_dev_process_that_is_down_is_still_a_defect() -> None:
 
 
 async def test_an_app_still_serving_the_starter_template_is_not_finished() -> None:
-    """★ COVERS AE6 — THE 2026-08-18 HEADLINE. `tsc` is clean, the dev server is ready, the log
-    tail is quiet, the root answers 200, and `app/page.tsx` is byte-for-byte the golden template.
-    Every signal the platform had said green, and "Build complete — your app is live below" sat
-    above the untouched starter page for nine minutes in front of a client.
+    """`tsc` is clean, the dev server is ready, the log tail is quiet, the root answers 200, and
+    `app/page.tsx` is byte-for-byte the golden template — every server-side signal clean over an
+    app that is not the user's.
 
     Mutation check: drop the `STILL_THE_BASELINE` arm and this goes green — which is precisely
     the bug."""
@@ -641,9 +619,9 @@ async def test_a_type_error_outranks_the_content_check() -> None:
 
 
 async def test_the_raw_served_head_is_carried_beside_the_derived_verdict() -> None:
-    """The 2026-08-02 learning, applied: a derived metric produced a false P0 that the raw field
-    disproved in one step. Whoever asks "but what was it actually serving?" must not have to
-    reproduce the run to find out."""
+    """A derived metric can produce a false critical verdict that the raw field disproves in one
+    step. Whoever asks "but what was it actually serving?" must not have to reproduce the run to
+    find out."""
     from structlog.testing import capture_logs
 
     fake = FakeSandbox()
@@ -662,7 +640,7 @@ async def test_the_raw_served_head_is_carried_beside_the_derived_verdict() -> No
 
 
 async def test_an_indeterminate_verdict_is_asked_again_before_it_is_believed() -> None:
-    """★ "The check is retried rather than failed" (AE8). The patience lives in `verify` rather
+    """★ "The check is retried rather than failed". The patience lives in `verify` rather
     than at either loop, because `selfheal` is the ONE health authority both harnesses consult —
     a budget applied in the turn engine and forgotten in the legacy harness would be a health
     rule with an escape hatch.
@@ -705,16 +683,15 @@ async def test_may_never_be_green_is_true_for_exactly_one_state() -> None:
 
 
 # =============================================================================
-# U9 / R15 — the stale-evidence re-check
+# The stale-evidence re-check
 # =============================================================================
 
 
 class _AnswersOnTheSecondLook(FakeSandbox):
     """A container whose root route is unreachable on the first ask and answers on the second.
 
-    A SUBCLASS rather than a reassigned bound method, which is what this file's own
-    `_WarmOrderSandbox` note explains: assigning over a bound method is a type error under `ty`,
-    and the fakes here are subclassed anyway."""
+    A SUBCLASS rather than a reassigned bound method — assigning over one is a type error
+    under `ty`, so the fakes here are subclassed anyway."""
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         if self.serving_calls >= 1:
@@ -723,14 +700,9 @@ class _AnswersOnTheSecondLook(FakeSandbox):
 
 
 async def test_a_crash_the_agent_has_already_fixed_costs_no_repair_round_trip() -> None:
-    """★ COVERS AE12. Three of the four repair cycles in the 2026-08-18 demo were the platform
-    re-reporting errors it had already fixed, and the mechanism is structural: `log_cursor` bounds
-    the read by log POSITION rather than by agent action, a dev-server restart resets the ring
-    underneath it, and a dead child's last words are carried forward on purpose. So a crash
-    printed before the agent's edit can be read after it and charged as a fresh defect.
-
-    Here the log holds a crash, the agent HAS written since the watermark, and the re-check's
-    fresh window is clean — so the verdict is healthy and no repair is bought.
+    """The log holds a crash, the agent HAS written since the watermark, and the re-check's fresh
+    window is clean — so the verdict is healthy and no repair is bought. Why a crash can be stale
+    in the first place is `selfheal.verify`'s re-check comment.
 
     Mutation check: drop the `changed is True` gate (or the `continue`) and this goes red."""
     fake = FakeSandbox()
@@ -785,8 +757,7 @@ async def test_a_file_written_through_the_shell_still_advances_the_watermark() -
 
 async def test_a_container_that_cannot_answer_the_watermark_changes_nothing() -> None:
     """`None` is not folded into `False`, and it is not folded into `True` either. A container
-    that cannot answer costs the improvement, never the correctness — the verdict is exactly what
-    it was before U9."""
+    that cannot answer costs the improvement, never the correctness."""
     fake = FakeSandbox()
     fake.dev_ready = True
     fake.push_dev_logs("⨯ unhandledRejection Error: boom")
@@ -836,8 +807,9 @@ async def test_the_re_check_happens_once_so_a_busy_container_cannot_loop_it() ->
 
 async def test_a_died_diagnostic_that_postdates_the_watermark_is_preserved() -> None:
     """The carried-forward `died_lines` behaviour is deliberate — a crash marker in a dead child's
-    last words is the true diagnostic even when the restarted child comes up clean — and U9 must
-    not delete it. Nothing changed since the watermark, so the death stands as reported."""
+    last words is the true diagnostic even when the restarted child comes up clean — and future
+    changes must not delete it. Nothing changed since the watermark, so the death stands as
+    reported."""
     fake = FakeSandbox()
     fake.kill_dev(exit_code=137)
     fake.push_dev_logs("⨯ FATAL: out of memory while loading app/layout.tsx")
@@ -870,8 +842,9 @@ async def test_a_dev_server_that_never_came_up_is_not_asked_for_a_page() -> None
     """ "After readiness" is a precondition, not just an ordering. A server that never came up
     has nothing to answer with, so warming it spends the helper's whole budget re-learning what
     the readiness poll just established — up to three times per build, on exactly the red path
-    where the citizen is already waiting longest. U4's case is the opposite one: ready is TRUE,
-    `tsc` is clean, and the page is still blank."""
+    where the citizen is already waiting longest.
+    `test_a_next_only_compile_error_is_invisible_until_someone_asks_for_the_page` covers the
+    opposite case: ready is TRUE, `tsc` is clean, and the page is still blank."""
     fake = FakeSandbox()  # dev server down, and it never becomes ready
 
     outcome, _ = await _verify(fake, log_cursor=0, max_polls=2)
@@ -881,7 +854,7 @@ async def test_a_dev_server_that_never_came_up_is_not_asked_for_a_page() -> None
 
 
 async def test_a_root_route_that_redirects_counts_as_serving() -> None:
-    """The plan's redirect scenario, asserted on the VERDICT rather than only on the failure copy.
+    """The redirect scenario, asserted on the VERDICT rather than only on the failure copy.
 
     An agent that replaces the root with a redirect has built something: the route compiled and
     answered, which is the whole question the serving half asks. Reading 3xx as "not serving"
@@ -901,14 +874,14 @@ async def test_a_root_route_that_redirects_counts_as_serving() -> None:
 
 
 async def test_an_indeterminate_verdict_never_reaches_a_teardown_or_a_restore() -> None:
-    """★ The plan's directly-asserted safety property: no ambiguous verdict may reach a
+    """★ The directly-asserted safety property: no ambiguous verdict may reach a
     destructive branch.
 
     Asserted on the CONTAINER rather than on a code path, because that is what actually matters —
     `teardown_calls` counts every delete this verdict could have caused, and the fake records one
     whether the caller was the loop, the funnel or a compensation.
 
-    RE-HOSTED ONTO `verify` (U33). It used to drive the standalone harness's whole loop and count
+    RE-HOSTED ONTO `verify`. It used to drive the standalone harness's whole loop and count
     teardowns across it; that loop is deleted, and the live one (`turns/engine.py`) reaches no
     teardown from a verdict at all. `verify` is the one surviving thing that both produces the
     INDETERMINATE verdict and holds a container handle, so this is where the property stays
@@ -928,13 +901,11 @@ async def test_an_indeterminate_verdict_never_reaches_a_teardown_or_a_restore() 
 
 
 async def test_a_re_check_that_comes_back_unanswerable_is_retried_not_charged() -> None:
-    """★ The plan's "the authoritative re-check itself returns INDETERMINATE → retry, do not spend
-    a repair" scenario.
-
-    The two mechanisms compose rather than colliding: the re-check runs because the evidence could
-    be stale, and when the fresh pass cannot answer either, patience takes over. What must NOT
-    happen is the pair resolving into a defect the citizen is charged for — the crash marker is
-    behind the cursor by then, so calling it red would be reporting evidence nobody re-read.
+    """★ The re-check and the patience budget compose rather than colliding: the re-check runs
+    because evidence could be stale, and when the fresh pass cannot answer either, patience takes
+    over. What must NOT happen is that pair resolving into a defect the citizen is charged for —
+    the crash marker is behind the cursor by then, so calling it red would report evidence nobody
+    re-read.
 
     Mutation check: return on the first INDETERMINATE and the pass count goes red."""
     fake = FakeSandbox()
@@ -952,18 +923,11 @@ async def test_a_re_check_that_comes_back_unanswerable_is_retried_not_charged() 
 
 
 async def test_the_re_check_does_not_carry_a_browser_crash_out_of_the_verdict() -> None:
-    """★ A FALSE GREEN THE FIX FOR U9 WOULD OTHERWISE HAVE CREATED.
-
-    `drain_client_errors` is destructive: it takes the parked reports and forgets them. The
-    ordered chain ranks a dev-log crash marker ABOVE the browser reports, so a pass can come back
-    UNHEALTHY-on-log-evidence having already consumed a real browser crash — and then U9 throws
-    that whole pass away and looks again. Pass two drains an empty queue, sees a clean log window,
-    and calls the app healthy. A crash the browser positively observed disappears between two
-    looks at the same app, which is exactly the class of lie this plan exists to remove, created
-    by the fix for a different one.
-
-    "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER, never
-    about each attempt at it.
+    """★ A FALSE GREEN THE RE-CHECK WOULD OTHERWISE CREATE: `drain_client_errors` is destructive,
+    so a pass that goes UNHEALTHY on a dev-log crash can still have consumed a real browser crash
+    from the queue — if the re-check drains again it finds nothing and calls the app healthy, and
+    the crash disappears between two looks at the same app. "A report counts against exactly one
+    verdict" must hold for `verify`'s ANSWER, never for each attempt at it.
 
     Mutation check: drop `carried_reports` from the drain and this goes green — verified."""
     fake = FakeSandbox()

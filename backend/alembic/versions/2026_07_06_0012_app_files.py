@@ -4,11 +4,11 @@ Revision ID: 0012_app_files
 Revises: 0011_data_records
 Create Date: 2026-07-06
 
-Per-app file metadata (Plan B U6, R25). App-scoped (FK app_registry.id, CASCADE);
+Per-app file metadata. App-scoped (FK app_registry.id, CASCADE);
 the blob lives at `apps/{app_id}/{id}` in the object store. `status` is a native PG
-enum (ADR-0008) driving the pending→ready two-store choreography. Chains off
-0011_data_records (Plan B's linear sub-chain). Hand-finalized from an autogenerate
-starting point (ADR-0013).
+enum driving the pending→ready two-store choreography. Chains off
+0011_data_records (a linear sub-chain). Hand-finalized from an autogenerate
+starting point.
 """
 
 from __future__ import annotations

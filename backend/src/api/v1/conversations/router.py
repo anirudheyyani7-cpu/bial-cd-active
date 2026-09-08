@@ -1,18 +1,14 @@
 """Conversations HTTP endpoints — user-scoped chat headers (list / get / patch / delete)
-plus the project's canonical builder thread (retires in U13).
+plus the project's canonical builder thread.
 
-The legacy SPA message append/read endpoints are GONE (U4's destructive reset): the `messages`
-table now holds native pydantic-ai batches written by the SERVER (the turn engine and BRAIN —
-U5), and the browser never persists a transcript again. What remains here is the header CRUD
-the SPA still drives: the wire shape keeps Mongo-style `_id` (the SPA normalizes `_id → id`),
-camelCase timestamps, and the `{error:{message}}` envelope. Identity is ALWAYS the
-authenticated caller; every query is scoped by `user_id` (a dropped predicate is a cross-user
-leak). The conversation read API grows the projection + `active_turn` in U6.
+The legacy SPA message append/read endpoints are gone: the `messages` table holds native
+pydantic-ai batches written by the server, and the browser never persists a transcript.
+What remains is the header CRUD the SPA still drives, in the Express wire shape — Mongo-style
+`_id` (the SPA normalizes `_id → id`), camelCase timestamps, and the `{error:{message}}`
+envelope. Identity is ALWAYS the authenticated caller and every query is scoped by `user_id`.
 
-THERE IS NO ROUTE HERE THAT CHANGES WHAT A CHAT IS. The explicit mode switch this file used
-to serve is retired with the vocabulary it switched (R14/R17): a chat is a Plan chat or a Build
-chat, chosen at creation and fixed. Building from a plan does not mutate the plan chat either —
-`transition.py`'s handoff creates a SECOND chat and starts its turn there.
+No route here changes what a chat is; the kind is fixed at creation. Building from a plan
+creates a SECOND chat (`transition.py`) rather than mutating the plan chat.
 """
 
 from __future__ import annotations
@@ -68,7 +64,7 @@ async def _json_object_body(request: Request) -> dict[str, Any]:
 
     Coercing an unparseable / non-object body to `{}` turns a lost write into a cheerful
     success: a truncated builder auto-save would PATCH nothing and still answer `200 {ok:true}`.
-    Parse once at the boundary instead (`.claude/rules/fail-first.md`)."""
+    Parse once at the boundary instead."""
     try:
         body: Any = await request.json()
     except (ValueError, TypeError):  # fmt: skip  # ruff py314 strips parens
@@ -90,7 +86,7 @@ def _header_dict(conv: Conversation) -> dict[str, Any]:
     fields are omitted when unset (matching the raw Cosmos doc the SPA normalizes)."""
     header: dict[str, Any] = {
         "_id": str(conv.id),
-        # The parent project (R2/KD-4) — the SPA resolves it to the breadcrumb
+        # The parent project — the SPA resolves it to the breadcrumb
         # ("ProjectName / chat title"); the chat itself stays addressed flat by its own id.
         "projectId": str(conv.project_id),
         "kind": conv.kind.value,
@@ -124,7 +120,7 @@ async def list_conversations(
     query = sa.select(Conversation).where(Conversation.user_id == user.id)
     if kind is not None:
         query = query.where(Conversation.kind == ChatKind(kind))
-    # Optional project scope (R6). Already user-scoped, so a cross-user project_id simply
+    # Optional project scope. Already user-scoped, so a cross-user project_id simply
     # returns nothing — no leak, no separate ownership check needed.
     if project_id is not None:
         query = query.where(Conversation.project_id == project_id)
@@ -133,7 +129,7 @@ async def list_conversations(
     return JSONResponse(content={"conversations": [_header_dict(c) for c in rows]})
 
 
-# --- 003-U1: the project's ONE canonical builder thread -----------------------
+# --- the project's ONE canonical builder thread -------------------------------
 
 
 @router.post(
@@ -151,14 +147,14 @@ async def list_conversations(
 async def create_conversation(
     body: ConversationCreateRequest, user: CurrentUser, db: DbSession
 ) -> JSONResponse:
-    """Create a conversation row BEFORE its first turn (U7).
+    """Create a conversation row BEFORE its first turn.
 
-    The stateless-turn relay 404s an unknown conversation (there is no longer a row-appears-
-    on-first-append upsert — that died with the legacy message API), so the SPA creates the
-    row it just minted, then streams. Idempotent per owner: re-POSTing the same id with the
+    The stateless-turn relay 404s an unknown conversation, so the SPA creates the row it just
+    minted, then streams. Idempotent per owner: re-POSTing the same id with the
     same parentage answers 200 with the existing header (a retry, a second tab), while an id
     that exists under ANYONE else or under different parentage is a 409 — one arm, one
-    message, so existence under another owner is not distinguishable (ADR-0004)."""
+    message, so existence under another owner is never distinguishable from a parentage
+    conflict, matching the platform's single-tenant, owner-scoped isolation rule."""
     existing = await db.get(Conversation, body.id)
     if existing is None:
         project = await owned_project_or_404(db, user.id, body.project_id)
@@ -195,19 +191,10 @@ async def create_conversation(
     raise AppApiError(409, "This conversation id is already in use.")
 
 
-# THERE IS NO MODE-SWITCH ROUTE, and there is no route that changes a chat's kind at all.
-# A chat is one thing or the other from the moment it is created (R14/R15/R17), so the control
-# that let a conversation become something else — and the hidden marker row it appended to tell
-# the model where its toolset changed — are both gone. What used to be a switch is now a choice
-# made once, at creation, on `POST /conversations`.
-
-
 async def _load_owned(db: DbSession, user_id: uuid.UUID, conversation_id: str) -> Conversation:
     """Resolve a caller-owned conversation from a path id, or RAISE the matching error:
     400 for a malformed id token, 404 for a well-formed id that resolves to nothing the
-    caller owns (owner-scoped — a cross-user id is indistinguishable from a missing one).
-    Raising (vs the old sentinel return) lets the callers drop their isinstance guards
-    while keeping the exact status/body."""
+    caller owns (owner-scoped — a cross-user id is indistinguishable from a missing one)."""
     if not _ID_RE.match(conversation_id):
         raise AppApiError(400, "Invalid conversation id.")
     try:
@@ -235,11 +222,11 @@ async def _load_owned(db: DbSession, user_id: uuid.UUID, conversation_id: str) -
     ),
 )
 async def get_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> JSONResponse:
-    """The conversation header + the display projection (U6) — everything a reopened chat
+    """The conversation header + the display projection — everything a reopened chat
     needs, in one read. The projection is THE derivation (`services/messages/projection.py`);
-    U10's live catch-up snapshot reuses it, so reload and live can never disagree.
+    the live catch-up snapshot reuses it, so reload and live can never disagree.
 
-    `activeTurn` (U10): the in-process turn registry's answer — `{turnId, lastSeq}` while a
+    `activeTurn`: the in-process turn registry's answer — `{turnId, lastSeq}` while a
     turn runs (the cursor a subscriber resumes `GET /events` from), null when settled.
 
     `contextTokens`: how full the chat is — the provider's raw prompt count for the largest
@@ -283,10 +270,7 @@ async def patch_conversation(
     """Update the mutable header fields the SPA owns: `title` and `context`. The legacy `code`
     snapshot is gone with its column (0024) — code truth lives in `app_registry.current_code`
     and the build snapshots; a body that still sends `code` gets a 400 naming the retirement,
-    not a silent ignore.
-
-    AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see the
-    audit record."""
+    not a silent ignore."""
     if not _ID_RE.match(conversation_id):
         raise AppApiError(400, "Invalid conversation id.")
     body = await _json_object_body(request)
@@ -315,7 +299,7 @@ async def patch_conversation(
     return JSONResponse(content={"ok": True})
 
 
-# --- U9: delete with cleanup --------------------------------------------------
+# --- delete with cleanup ------------------------------------------------------
 
 
 @router.delete(
@@ -334,7 +318,7 @@ async def delete_conversation(
 
     # Delete the rows (attachments + conversation + cascaded messages) INSIDE the txn,
     # commit, and only THEN best-effort sweep the object-store blobs — so a rolled-back
-    # delete never destroys a blob a restored row still points at (KD-3 rollback safety).
+    # delete never destroys a blob a restored row still points at (rollback safety).
     blob_keys = await gather_and_delete_conversation(db, owned, user_id=user.id)
     await db.commit()
     await sweep_blobs(storage, blob_keys)

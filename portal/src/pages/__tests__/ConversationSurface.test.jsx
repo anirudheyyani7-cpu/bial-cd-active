@@ -1,25 +1,13 @@
 /**
- * WHAT U17 ITSELF CLAIMS — the properties of the surface as a whole (R30, R49, R51, R52, R54, R55,
- * R72).
+ * WHAT THIS FILE ITSELF CLAIMS — properties true of the surface as a WHOLE, not any one behaviour:
+ * a running turn stays STOPPABLE now the old stop card is gone; exactly ONE control starts a
+ * build; exactly ONE scroll container in the chat slot and no `calc(100vh - …)` anywhere; no chat
+ * list crept back during the rewrite; and the save-state tri-state reaches the shell UNCOLLAPSED
+ * (`null` as `null`).
  *
- * The fifteen re-pointed page suites pin the BEHAVIOUR that came across the migration. This file
- * pins the things that are only true of the surface once the deletions have happened, and which no
- * individual behaviour test would notice going wrong:
- *
- *   - a running turn is still STOPPABLE now that the card carrying the old stop is gone (R55).
- *     U3's verification sentence is otherwise a claim about a commit that nothing checks;
- *   - exactly ONE control on the whole surface starts a build (R29a's other half);
- *   - exactly ONE scroll container inside the chat slot, and no `calc(100vh - …)` anywhere (R49);
- *   - no chat list reappeared while the pages around it were being rewritten (R54 is Plan A's;
- *     this is the assertion that it STAYED removed);
- *   - the save-state tri-state is published UNCOLLAPSED, so the shell's unsaved-work guard gets
- *     `null` as `null`.
- *
- * The last of those is the one worth being unhappy about getting wrong. The guard itself is
- * covered in `components/workspace/__tests__/WorkspaceShell.test.tsx` — `true` arms it, `false`
- * and `null` do not, and it never claims "nothing unsaved" from an unknown. What THAT file cannot
- * see is whether this surface hands it a `null` at all, or quietly turns one into a boolean on the
- * way past. This does.
+ * The last one matters most: `WorkspaceShell.test.tsx` covers what the guard does with
+ * `true`/`false`/`null`, but not whether THIS surface hands it a `null` at all, or quietly turns
+ * one into a boolean on the way past. This file does.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react'
@@ -100,11 +88,10 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-describe('R55 — a running turn is STILL stoppable now the card is gone', () => {
+describe('a running turn is STILL stoppable now the card is gone', () => {
   it('the surface renders a stop control and pressing it calls the turn-stop path', async () => {
-    // THE SCENARIO THE WHOLE ORDERING EXISTS FOR. U3 shipped the relocated stop before anything
-    // was deleted so that no commit in this plan left a build startable and not stoppable; this is
-    // what checks the claim AFTER the deletion rather than trusting the sequence.
+    // This checks the STOPPABLE claim AFTER the deletion, rather than trusting that the relocated
+    // stop shipped before anything was removed.
     // THE SNAPSHOT IS WHAT CARRIES THE TURN ID, and every subscribe gets one first on cursor 0
     // (the server emits it before any model byte). Without it the control resolves no target and
     // correctly falls through to the legacy session stop — a real arm, but not the one under test.
@@ -158,7 +145,7 @@ describe('exactly one control initiates a build', () => {
   })
 })
 
-describe('R49 — one scroll container, and no viewport-height assertions', () => {
+describe('one scroll container, and no viewport-height assertions', () => {
   it('exactly one `overflow-y-auto` inside the chat slot', async () => {
     renderBuilder({ deps: deps().deps })
     await waitForGateOpen()
@@ -187,9 +174,9 @@ describe('R49 — one scroll container, and no viewport-height assertions', () =
   })
 })
 
-describe('R54 — no chat list came back while the pages were being rewritten', () => {
+describe('no chat list came back while the pages were being rewritten', () => {
   it('renders no list of conversations, in any state', async () => {
-    // Plan A removed the in-chat list; this is the assertion that the rewrite around it did not
+    // The chat list was removed earlier; this is the assertion that the rewrite around it did not
     // quietly restore one. Past conversations live on the project page the breadcrumb links to.
     h.listProjectConversations.mockResolvedValue([
       { id: 'other-1', kind: 'build', title: 'Another build', updatedAt: '2026-08-01T00:00:00Z' },
@@ -247,17 +234,15 @@ describe('the save-state TRI-STATE is published uncollapsed', () => {
 })
 
 describe('the per-conversation guardrail reaches the composer', () => {
-  // ★ WHY THIS FILE AND NOT A UNIT TEST. `contextLimits.ts` is unit-tested and `Composer`'s
-  // rendering of the prop is unit-tested, and BOTH stayed green while the one line joining
-  // them was deleted — the whole 1,649-test suite did. That is the same shape as the incident
-  // this branch exists to repair: the client-side guardrail died with `ChatPage.tsx` and
-  // nothing went red, because what was covered was the parts and never the wiring.
+  // ★ WHY THIS FILE AND NOT A UNIT TEST: `contextLimits.ts` and `Composer`'s rendering of the
+  // prop are BOTH unit-tested, and both stayed green while the one line joining them was
+  // deleted — covering the parts never covered the wiring.
   //
   // So this asserts the SEAM: a long conversation loaded into the surface puts the sentence on
   // the composer. Delete the `contextWarning` prop pass in `ConversationSurface.tsx`, or the
   // `useMemo` that feeds it, and this is what goes red.
   //
-  // ══ WHAT "A LONG CONVERSATION" MEANS CHANGED, AND SO DID THIS FIXTURE (#194) ══
+  // WHAT "A LONG CONVERSATION" MEANS, AND WHY THIS FIXTURE IS SHAPED THIS WAY
   //
   // It used to be a pile of characters: 600,000 of them, priced at four to the token by an
   // estimator this browser ran. That estimator is deleted on both sides — it read a 61-page
@@ -314,13 +299,12 @@ describe('the per-conversation guardrail reaches the composer', () => {
   })
 })
 
-describe('U9 — the offer\'s Build reaches the SAME hand-over dialog as the composer', () => {
+describe('the offer\'s Build reaches the SAME hand-over dialog as the composer', () => {
   it('opens the shell\'s dialog naming both projects, in citizen language', async () => {
-    // THE THIRD DOOR. Three presses can be refused because another project holds the one
-    // workspace — a rail send, the pane's start control, and this one — and the plan asks that
-    // they be proven identical rather than correct on the one that was tested. This is the one
-    // with no test: it once shipped rendering the refusal as plain red text with no way to act,
-    // and a regression there would look exactly like that again while every suite stayed green.
+    // THE THIRD DOOR: three presses can be refused because another project holds the one
+    // workspace — a rail send, the pane's start control, and this one — and this is the one of
+    // the three with no coverage elsewhere, proving it converges on the SAME dialog rather than
+    // degrading silently.
     h.readTurnStream.mockImplementation(turnStreaming(planReply('Here is the plan.', PLAN_CARD_ID)))
     h.buildFromPlan.mockRejectedValue(
       Object.assign(new Error('“Car pool” is still open.'), {
@@ -345,13 +329,10 @@ describe('U9 — the offer\'s Build reaches the SAME hand-over dialog as the com
   })
 })
 
-describe('U11 — a failed launch INSIDE a chat says why', () => {
+describe('a failed launch INSIDE a chat says why', () => {
   it('puts the server\'s reason on the pane, not just a stopped spinner', async () => {
-    // The press used to report nothing at all here: the spinner stopped, the same sentence came
-    // back, and pressing again did the same thing — because this surface handed the shared map a
-    // hardcoded `null` for the outcome on the grounds that it had a relaunch path of its own.
-    // That path belongs to a different control. Nothing rendered the pane's own failure, and
-    // nothing went red when it did not.
+    // This surface's own launch path hands the shared map a real outcome now — a hardcoded `null`
+    // here would silently swallow the pane's own failure and show only a stopped spinner.
     h.fetchPreviewState.mockResolvedValue({
       state: 'asleep', alive: false, previewUrl: null,
       occupyingProjectName: null, occupyingProjectId: null, restorable: true,
@@ -371,7 +352,7 @@ describe('U11 — a failed launch INSIDE a chat says why', () => {
 })
 
 /**
- * ★ A SAVE FROM THE CHAT RAISES THE DEPLOYMENT NUDGE (#205) — the other half of the seam.
+ * ★ A SAVE FROM THE CHAT RAISES THE DEPLOYMENT NUDGE — the other half of the seam.
  *
  * `savedHead` and `savedAt` are fields of the DEPLOYMENT read, and a Save is what changes them.
  * The surface performing the save holds no such read: the row is drawn by `AppStatusPanel` and
@@ -384,7 +365,7 @@ describe('U11 — a failed launch INSIDE a chat says why', () => {
  * was missing on this surface. Delete `announceDeploymentChanged(activeProjectId)` from
  * `handleSave` and this is what goes red.
  */
-describe('★ a Save from the chat raises the deployment nudge (#205)', () => {
+describe('★ a Save from the chat raises the deployment nudge', () => {
   /** Every nudge the window saw, in order. A CustomEvent is the whole mechanism, so listening for
    *  it is watching the real wire rather than a spy standing in for one. */
   const nudges = []

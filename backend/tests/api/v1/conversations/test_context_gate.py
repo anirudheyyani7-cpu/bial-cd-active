@@ -1,7 +1,7 @@
 """The per-conversation guardrail, at the routes that enforce it.
 
 ★ THIS IS THE FILE WHOSE ABSENCE LET THE REGRESSION THROUGH. The old client-side guardrail died
-with `ChatPage.tsx` in #170 and nothing turned red, because the only tests that covered it were
+with `ChatPage.tsx` and nothing turned red, because the only tests that covered it were
 deleted in the same commit. Meanwhile an administrator had been setting a number in a field
 whose help text promised a hard stop, and no call site anywhere — front or back — read it.
 
@@ -11,7 +11,7 @@ satisfy half of them, which is why the first one exists.
 WHAT THE GATE READS CHANGED, AND EVERY TEST BELOW IS DRIVEN ACCORDINGLY. It used to estimate a
 conversation's occupancy — characters to tokens, a flat nominal per attachment, a reserve for
 the system prompt it could not see. It now reads the token count the PROVIDER reported for a
-turn it served, and derives nothing (#194). So `_stuff_the_conversation` persists a MEASUREMENT
+turn it served, and derives nothing. So `_stuff_the_conversation` persists a MEASUREMENT
 rather than a pile of characters, and the rule itself is pinned next door in
 `tests/services/usage/test_context_window.py`.
 """
@@ -153,9 +153,7 @@ async def _a_conversation(db_session, *, kind: ChatKind = ChatKind.PLAN):
     return user, project, conversation
 
 
-# =============================================================================
-# The gate has to let ordinary conversations through
-# =============================================================================
+# --- the gate has to let ordinary conversations through -------------------------------
 
 
 async def test_a_short_conversation_starts_a_turn_normally(
@@ -176,7 +174,7 @@ async def test_a_short_conversation_starts_a_turn_normally(
 async def test_the_accept_hands_back_the_very_number_it_admitted_on(
     client, db_session, _fresh_engine
 ) -> None:
-    """★ COVERS AE3b. THE METER AND THE WALL ARE ONE NUMBER, and this is the seam that makes it
+    """★ THE METER AND THE WALL ARE ONE NUMBER, and this is the seam that makes it
     true: the 202 carries `contextTokens`, which is what `enforce_context_limit` measured to
     decide this exact request.
 
@@ -184,7 +182,7 @@ async def test_the_accept_hands_back_the_very_number_it_admitted_on(
     test itself seeded proves only that a number came back. The second send is one token past
     the ceiling and is refused with `occupied` equal to the figure the first send reported — so
     the number a citizen watches really is the number they will be stopped at, not a second
-    reading of one scale (#194).
+    reading of one scale.
 
     AND NOTHING WAS ASKED TO SIZE ANYTHING. The figure rides the send the citizen was making
     anyway; there is no endpoint that counts a message before it is sent, and this platform has
@@ -224,9 +222,7 @@ async def test_a_chat_nobody_has_measured_reports_no_figure_rather_than_zero(
     await _settle(_fresh_engine, conversation.id)
 
 
-# =============================================================================
-# Past the limit: refused, and nothing written
-# =============================================================================
+# --- past the limit: refused, and nothing written --------------------------------------
 
 
 async def test_an_over_long_conversation_is_refused_before_anything_persists(
@@ -264,11 +260,9 @@ async def test_an_over_long_conversation_is_refused_before_anything_persists(
 
 
 async def test_the_refusal_names_the_way_out(client, db_session) -> None:
-    """The sentence a citizen reads is written on the SERVER and rendered verbatim, so what it
-    says is a server-side property and this is where it is pinned.
-
-    Two facts, both load-bearing: what to do (start a new chat) and that the app survives it.
-    Without the second, "this chat has got too long" reads as "you have lost your work"."""
+    """The sentence a citizen reads is written on the SERVER and rendered verbatim, so this
+    is where the property is pinned. Two facts, both load-bearing: what to do (start a new
+    chat) and that the app survives it — without the second, "too long" reads as "lost"."""
     user, _project, conversation = await _a_conversation(db_session)
     await _stuff_the_conversation(db_session, user, conversation, tokens=DEFAULT_CONTEXT_HARD)
 
@@ -276,14 +270,11 @@ async def test_the_refusal_names_the_way_out(client, db_session) -> None:
 
     assert "new chat" in message
     assert "stays exactly as it is" in message
-    # And it does NOT do the thing the old admin copy implied it would: quote the number.
-    assert str(DEFAULT_CONTEXT_HARD) not in message
+    assert str(DEFAULT_CONTEXT_HARD) not in message  # never quotes the number
     assert "200,000" not in message
 
 
-# =============================================================================
-# The administrator's number is the boundary — the whole point of the unit
-# =============================================================================
+# --- the administrator's number is the boundary — the whole point of the unit ----------
 
 
 async def test_an_administrator_override_changes_what_the_platform_accepts(
@@ -291,13 +282,10 @@ async def test_an_administrator_override_changes_what_the_platform_accepts(
 ) -> None:
     """★ THE TEST THAT PROVES THE ADMIN FIELD IS NO LONGER A LIE.
 
-    One size, two users. Under the default limit the conversation sends. With a per-user hard
-    limit set below that size it is refused. Nothing else differs — so the ONLY thing that can
-    have changed the answer is the number an administrator typed.
-
-    Without this test the unit has not done its job: a gate hard-wired to `DEFAULT_CONTEXT_HARD`
-    would pass every other test in this file and leave `UsersLimitsPanel.tsx:193`'s "Hard stop
-    for a single chat" exactly as false as it was."""
+    One size, two users: the default limit sends it, a per-user hard limit set below that
+    size refuses it, and nothing else differs — the number is the only thing that changed.
+    Without this, a gate hard-wired to `DEFAULT_CONTEXT_HARD` would pass every other test
+    here and leave `UsersLimitsPanel.tsx`'s "Hard stop" hint exactly as false as it was."""
     size = 40_000
 
     allowed_user, _p1, allowed_conv = await _a_conversation(db_session)
@@ -349,9 +337,7 @@ async def test_a_user_with_no_override_is_governed_by_the_default(client, db_ses
     assert (await _send(client, user, conversation.id)).status_code == 413
 
 
-# =============================================================================
-# The second door (KTD-4)
-# =============================================================================
+# --- the second door --------------------------------------------------------------------
 
 
 async def test_pressing_build_from_a_long_plan_chat_is_not_refused(
@@ -403,7 +389,7 @@ async def test_the_build_door_still_refuses_a_plan_that_is_too_long_to_build_fro
     chat" is not, because the plan being built lives in the chat the citizen would be leaving.
 
     This is the preflight's test, rewritten against the refusal that actually exists rather than
-    deleted with the call — so the bound on this door stays guarded (D16). The card is seeded
+    deleted with the call — so the bound on this door stays guarded. The card is seeded
     directly because the engine now refuses to RECORD an over-ceiling offer at write time; this
     is the defence in depth behind that, for a row written before it existed.
 
@@ -445,9 +431,7 @@ async def test_the_build_door_still_refuses_a_plan_that_is_too_long_to_build_fro
     assert await db_session.get(Conversation, minted) is None
 
 
-# =============================================================================
-# The contract the browser reads
-# =============================================================================
+# --- the contract the browser reads ------------------------------------------------------
 
 
 def test_the_refusal_is_documented_where_it_can_actually_happen() -> None:
@@ -470,31 +454,23 @@ def test_the_refusal_is_documented_where_it_can_actually_happen() -> None:
 
 def test_the_code_is_byte_stable() -> None:
     """Nothing in the refusal path is exhaustive — no `Literal` union, no native enum, no
-    `assertNever`. Every code is an open string compared by hand, so a rename is free and silent
-    and every reader keeps compiling. This is the guard that notices."""
+    `assertNever`. Every code is an open string, so a rename is free, silent, and still
+    compiles. This is the guard that notices."""
     assert CHAT_TOO_LONG_CODE == "context_hard_limit_exceeded"
 
 
 async def test_a_refused_turn_does_not_burn_a_pending_plan_card(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """★ THE ORDERING TRAP, AND IT WAS REAL — this test failed before the gate was moved.
+    """★ THE ORDERING TRAP: `start_turn` resolves a pending plan-options card as an implicit
+    "keep refining" once free text passes it — a WRITE the rollback does not cover, because
+    `resolve_pending_as_refine` reaches `append_batch`, which owns its own commit. A refusal
+    raised after that write leaves the card resolved on disk and the offer silently burned,
+    with nothing on screen saying so. The gate sits ABOVE that write for exactly this reason,
+    and the history is re-read afterwards only when the resolve actually wrote something.
 
-    `start_turn` resolves a pending plan-options card as an implicit "keep refining" when the
-    citizen types free text past it. That is a WRITE, and the route's own comment states the
-    invariant: "a refused start must never burn the user's pending plan-options card."
-
-    THE ROLLBACK DOES NOT COVER IT. `resolve_pending_as_refine` reaches `append_batch`, whose
-    docstring says it OWNS ITS COMMIT — so a refusal raised after it leaves the card resolved on
-    disk however cleanly `get_db` rolls the session back. The citizen's message is refused AND
-    their offer is silently consumed, and nothing on screen says the second thing happened.
-
-    The gate therefore sits ABOVE that write, and the history is re-read afterwards only when
-    the resolve actually wrote something.
-
-    Mutation check: move `enforce_context_limit` back below `resolve_pending_as_refine` and this
-    goes red while every other test in this file stays green.
-    """
+    Mutation check: move `enforce_context_limit` back below `resolve_pending_as_refine` and
+    this goes red while every other test in this file stays green."""
     user, _project, conversation = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, conversation.id, "plan it")).status_code == 202
@@ -519,11 +495,8 @@ async def test_a_refused_turn_does_not_burn_a_pending_plan_card(
 async def test_an_accepted_turn_still_resolves_a_pending_card(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """The other half, so the fix above cannot be "never resolve anything".
-
-    Moving the guardrail above `resolve_pending_as_refine` reordered a write. This is the test
-    that the write still happens on the path where it should: free text past a pending card, in
-    a conversation comfortably under the limit, resolves the card as U11 intends."""
+    """The other half, so the fix above cannot be "never resolve anything": free text past a
+    pending card, in a conversation comfortably under the limit, still resolves the card."""
     user, _project, conversation = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, conversation.id, "plan it")).status_code == 202
@@ -537,13 +510,11 @@ async def test_an_accepted_turn_still_resolves_a_pending_card(
     assert await find_pending(db_session, user_id=user.id, conversation_id=conversation.id) is None
 
 
-# =============================================================================
-# Documents — what an attachment costs on the way IN, which is now nothing
-# =============================================================================
+# --- documents — what an attachment costs on the way IN, which is now nothing -----------
 #
 # The platform no longer prices a document at admission. It used to charge a flat nominal per
 # attachment and refuse against the total, and that charge was wrong by 47x in the direction
-# that hurts (#194); the window check now reads what the provider reported for a turn it served.
+# that hurts; the window check now reads what the provider reported for a turn it served.
 #
 # TWO BOUNDS SURVIVE ON THE WAY IN, and both are COUNTS rather than derived token figures — the
 # only kind of bound that can act before the provider has seen anything. The upload route
@@ -590,21 +561,17 @@ async def test_three_documents_on_one_message_are_refused_by_count_not_by_tokens
 ) -> None:
     """★ THE REFUSAL THAT HAD TO BE ITS OWN SENTENCE.
 
-    Documents are the one attachment big enough to end a message on their own, and nothing
-    counts them on the way in any more, so left to itself an over-long one would be sent, fail
-    at the provider, and come back as "this chat has got too long — start a new chat". That is
-    WRONG ADVICE here: the new chat refuses the identical message, so the citizen is sent round
-    a loop with no way out. `MAX_ATTACHMENT_BLOCKS` meanwhile still advertises eight
-    attachments, so nothing on the way in warned them.
+    Documents are the one attachment big enough to end a message alone, and nothing counts them
+    on the way in any more — left uncaught, an over-long one is sent, fails at the provider, and
+    comes back as "chat too long, start a new chat": WRONG ADVICE, since the new chat refuses
+    the identical message and loops the citizen with no way out. `MAX_ATTACHMENT_BLOCKS` still
+    advertises eight attachments, warning them of nothing.
 
-    THE NUMBER IS NOT DERIVED FROM A TOKEN SUM, and this test does not assert one. The
-    arithmetic that used to justify it (a per-page cost times the page cap against the ceiling)
-    is deleted from `_shared.py` rather than recomputed at the raised ceiling — #214 removes the
-    limit outright.
-
-    So the third document is refused BY COUNT, before anything is sent, with a sentence that
-    names the DOCUMENT limit and an action that works. Delete the count check and this goes red
-    on the copy — the request still fails, but it fails telling the citizen something untrue."""
+    THE NUMBER IS NOT A TOKEN SUM: the old per-page arithmetic is deleted from `_shared.py`
+    rather than recomputed at the raised ceiling, so the limit is removed outright. The third
+    document is refused BY COUNT, before anything is sent, naming the DOCUMENT limit with an
+    action that works. Delete the count check and this goes red on the copy — the request still
+    fails, but it fails telling the citizen something untrue."""
     user, _project, conversation = await _a_conversation(db_session)
     for index in range(3):
         await _upload(client, user, f"doc_{index}", "application/pdf", pdf_with_pages(2))
@@ -664,14 +631,11 @@ async def test_eight_images_still_send_the_document_cap_is_not_an_attachment_cap
 async def test_uploading_a_document_computes_and_stores_no_token_figure(
     client, db_session, shared_storage, _fresh_engine
 ) -> None:
-    """★ AE3b, AND THE TEST THAT REPLACED A REFUSAL THIS ROUTE NO LONGER MAKES.
+    """★ THE TEST THAT REPLACED A REFUSAL THIS ROUTE NO LONGER MAKES.
 
-    What used to be here asserted the OPPOSITE: a chat holding two documents was refused at its
-    next message, because each one was charged a flat 75,000 on the way in. That charge is gone
-    — it was a guess, and the guess before it was 1,600 for the same file (#194) — so the
-    property to pin is the one that is now true.
-
-    A thirty-page document, the longest the upload route admits, is uploaded and then SENT on a
+    Documents used to be charged a flat 75,000 tokens on the way in, replacing an earlier guess
+    of 1,600 for the same file — so the property to pin now is the one that is true today: a
+    thirty-page document, the longest the upload route admits, is uploaded and then SENT on a
     conversation the provider has already reported at 60,000 tokens. Nothing derives a figure
     for it, nothing stores one, and the turn starts. The daily-usage ledger is the place a token
     figure would land if anything computed one, and it is empty until the provider has served

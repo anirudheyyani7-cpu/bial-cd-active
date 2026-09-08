@@ -1,37 +1,25 @@
 /**
- * Reading the submitted data-classification declaration for the administrator's review
- * screen (U13: R15, P3, OD-B).
+ * Reads the submitted data-classification declaration for the admin review screen.
  *
- * The declaration is STORED DATA, not a wire schema: the publish gate writes it once
- * (`backend/src/api/v1/deploy/router.py::_declaration`), three consumers read it, and the
- * questionnaire it is keyed by is expected to be reworded. So this module narrows
- * defensively at every step rather than typing the document and trusting it — an
- * unrecognised key renders as nothing, never as a crash and never as a blank dispute row
- * an administrator would read as "nothing was flagged".
+ * STORED DATA, not a wire schema: the publish gate writes it once
+ * (`backend/src/api/v1/deploy/router.py::_declaration`) and the questionnaire it is keyed
+ * by is expected to be reworded, so this module narrows defensively at every step instead
+ * of typing the document — an unrecognised key renders as nothing, never a crash and never
+ * a blank row read as "nothing was flagged".
  *
- * WHAT THE ADMINISTRATOR IS DECIDING (P3): whether an app holding this kind of data is
- * acceptable to publish. Not whether the code is correct — they are not re-auditing it.
+ * The admin decides whether this app's DATA is acceptable to publish, not whether the code
+ * is correct. Evidence locations are structurally absent here — a separate `evidence`
+ * document holds them — so this module has no branch to get wrong; rendered reasons were
+ * redacted before storage.
  *
- * WHAT THEY NEVER SEE (OD-B): evidence locations. They are structurally absent from the
- * declaration — the review stores them in a separate `evidence` document that no path
- * reaching this screen reads — so this module has no branch to get wrong. The reasons it
- * does render were written for a non-technical reader and passed through the shared
- * redactor before they were stored.
+ * DRIFT comes from the `drift` block, not from comparing `commits`: `answeredAbout` is the
+ * commit the citizen's answers describe, and when it differs from `commits.shipping` the
+ * screen names both and marks newly-raised categories unexplained.
  *
- * DRIFT (the version the citizen never saw), READ FROM THE `drift` BLOCK — not from the
- * two commits. `drift.answeredAbout` is the commit the citizen's answers and explanation
- * describe; when the pipeline routes a version they never saw, that is the commit that
- * differs from `commits.shipping`, and the explanation on file was written about the OTHER
- * one — so the screen names both and marks the newly-raised categories as unexplained
- * rather than presenting old prose as an answer to a new finding.
- *
- * An earlier version derived this from `commits.shipping !== commits.reviewed` and was
- * therefore DEAD: the writer sets `reviewed` to `head_sha if review.available else None`
- * against the same `head_sha` it writes to `shipping`, so the pair is only ever equal or
- * half-null — never two different commits. The banner and the per-category "not covered by
- * the explanation" marker could not render in production, on exactly the path they were
- * built for. `commits.reviewed === null` remains the different, far more common thing: no
- * review informed the decision at all.
+ * WHY THIS EXISTS: an earlier version derived drift from `commits.shipping !==
+ * commits.reviewed`, which was dead — the writer sets `reviewed` to the same `head_sha` it
+ * writes to `shipping`, so the pair is only ever equal or half-null. `reviewed === null` is
+ * the separate, common case of no review at all.
  */
 import { isRecord } from '../../utils/apiError'
 import { DATA_CLASSIFICATION_QUESTIONS } from '../../utils/deployApi'
@@ -167,7 +155,7 @@ export function readDeclaration(declaration: Record<string, unknown> | null): Re
 
   const shippingCommit = shaOrNull(commits.shipping)
   const reviewedCommit = shaOrNull(commits.reviewed)
-  // U10's own block. Absent on the ordinary path — its PRESENCE is the signal that this
+  // The drift block. Absent on the ordinary path — its PRESENCE is the signal that this
   // queue item was routed by the pipeline after a save, with nobody at the form.
   const answeredAbout = shaOrNull(record(declaration, 'drift').answeredAbout)
 

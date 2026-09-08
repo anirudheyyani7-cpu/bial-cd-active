@@ -18,7 +18,7 @@ the worst way to find out).
 from typing import Final
 
 TEARDOWN_ARTEFACT_SURVIVED_EVENT: Final = "delete_left_an_artefact_behind"
-"""A delete finished and something it was supposed to destroy is still out there (U22, R7).
+"""A delete finished and something it was supposed to destroy is still out there.
 
 NOBODY COLLECTS THIS AUTOMATICALLY, which is the whole reason it is an alarm rather than a
 debug line. Every teardown arm on the delete path is best-effort by necessity — the rows are

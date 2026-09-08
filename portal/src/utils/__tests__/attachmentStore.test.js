@@ -61,7 +61,7 @@ describe('countAttachments', () => {
   })
 })
 
-describe('wireMessageFromParts — the U7 stateless wire message', () => {
+describe('wireMessageFromParts — the stateless wire message', () => {
   it('an image part becomes an OWNED REF, never bytes (the server rehydrates at send)', () => {
     const message = wireMessageFromParts([imagePart('img9'), { type: 'text', text: 'look' }])
     expect(message).toEqual({ text: 'look', attachmentIds: ['img9'] })
@@ -144,7 +144,7 @@ describe('releaseUploadedAttachments', () => {
 })
 
 /**
- * THE PRODUCERS ARE GONE — inertness, not absence (R46, L8).
+ * THE PRODUCERS ARE GONE — inertness, not absence.
  *
  * `attachmentStore` used to MINT deck parts under a comment claiming the server converted them,
  * while the wire builder dropped them again a hundred lines away. Both went with the office

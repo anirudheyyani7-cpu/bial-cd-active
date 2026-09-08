@@ -1,30 +1,15 @@
 /**
- * THE FIFTH LINK OF THE REMOVAL TRACE, made mechanical.
+ * The final link in this repo's removal convention: once code, tests, and imports are gone,
+ * human-facing prose (comments included) must still read as history, not present tense. A
+ * retired name may appear when it explains why code is shaped the way it is, but the sentence
+ * around it must say the thing is gone.
  *
- * This repo's convention for removing a behaviour has five links: the surface · the navigation
- * payloads · the consumers and imports · the tests-become-inertness-guards · and the human-facing
- * copy, INCLUDING COMMENTS. Wave 3 completed four. The fifth is where fifty present-tense-false
- * sentences then sat — four of them inside `ConversationSurface.tsx` describing itself as
- * `BuilderPage`, one in `App.tsx` actively wrong about routing, and a docstring in the backend
- * telling the next reader that a branch retires with the relay while a shipping endpoint depended
- * on it.
+ * Marker-list matching, not real prose analysis, is deliberate: cheap enough to stay, and wrong
+ * in the harmless direction — a miss, not a false alarm. Test files are excluded; a `*-retired`
+ * test file legitimately narrates what it retired.
  *
- * A comment cannot be asserted, so this does the one thing that can be: it insists that a mention
- * of something DELETED reads as history. A retired name may appear — explaining why code is
- * shaped the way it is often requires naming what it replaced — but the sentence around it has to
- * say the thing is gone. "`BuilderPage` relays them to the harness" fails. "`BuilderPage` was the
- * page that matched, and it was destroyed on every project switch" passes.
- *
- * WHY A MARKER LIST RATHER THAN REAL PROSE ANALYSIS: this has to be cheap enough to stay, and
- * wrong in the harmless direction. A present-tense sentence that happens to contain "legacy"
- * slips through; that is a miss, not a false alarm. A guard that cried wolf would be deleted
- * within a month and the next wholesale deletion would leave this link undone again.
- *
- * PRODUCTION FILES ONLY. Test files legitimately name what they retired: `twoPageEra-retired`
- * and `relaunch-chain-retired` exist to pin that something is GONE, so a retirement guard's own
- * filename and prose would trip every marker in the list below. (This used to add "and seventeen
- * suites in `pages/__tests__` are still named after the page they no longer render" — that was
- * true until the rename sweep in this same branch made it zero.)
+ * ABSENCE GUARD: adding a word to either list below changes what the whole source tree is
+ * scanned for and can turn an unrelated edit elsewhere red. Treat both as fixed data.
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -32,8 +17,8 @@ import path from 'node:path'
 
 const SRC_ROOT = path.resolve(process.cwd(), 'src')
 
-/** Deleted by the two-page retirement (#170) and this change. Unambiguous identifiers only —
- *  a generic word like "relay" appears in live contexts and would only produce noise. */
+/** Unambiguous identifiers only — a generic word like "relay" appears in live contexts and
+ *  would only produce noise. */
 const RETIRED = [
   'ChatPage',
   'BuilderPage',
@@ -41,7 +26,7 @@ const RETIRED = [
   'fetchClaudeStream',
   'BuildProgress',
   '/v1/claude',
-  // U33 deleted the standalone build stack from both trees. `forceEnd` is the portal half: the
+  // The standalone build stack was deleted from both trees. `forceEnd` is the portal half: the
   // typed client, its `ForceEndResponse`, the `useBuildSession` wrapper and the backend route all
   // went together, having had no UI call site since the block banner's Force-end button was
   // removed. Its sibling `tests/api/v1/claude_retired/test_retired_names_are_past_tense.py` names
@@ -51,7 +36,7 @@ const RETIRED = [
   'forceEnd',
 ] as const
 
-/** Past-tense markers. Deliberately generous: a miss is cheaper than a false alarm. */
+/** Deliberately generous: a miss is cheaper than a false alarm. */
 const HISTORICAL = [
   'used to',
   'was ',

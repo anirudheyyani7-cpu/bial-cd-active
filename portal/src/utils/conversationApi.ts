@@ -62,34 +62,15 @@ function normalizeHeader(doc: unknown): ConversationHeader | null {
   }
 }
 
-/**
- * Server projection items → the in-memory message shape the pages render
- * ({id, role, parts, seq}). U7: the reload read returns DISPLAY ITEMS derived
- * server-side from the native transcript, not raw message docs.
- *
- * Every projection item type is rendered (an earlier U15 closed the last gaps; #186 added the
- * turn terminal's conditional one):
- *   - `user_text` / `assistant_text` — plain chat bubbles;
- *   - `banner` — the build outcome (its stored sentence + the `type:'build'` part the
- *     builder page's existing renderer draws);
- *   - `step` — a stored friendly agent step, the reload half of the build narrative
- *     (hidden steps are skipped, the same rule the live feed applies);
- *   - `build_in_progress` — the durable anchor for a build with no recorded outcome;
- *   - `plan_options` — the Build it / Keep refining card, carried with its STORED
- *     resolution state so live and reload agree;
- *   - `turn_terminal` — the durable record of HOW a turn ended, rendered as the outcome
- *     sentence when the ending needs explaining and silent when it does not (see its arm).
- */
-/** The raw projection item shapes read here — one union, discriminated on
- * `type` like everything else, but kept LOCAL (not exported) since this is the
- * server-projection wire shape, not the message-parts shape (`messageTypes.ts`)
- * it gets mapped into. UNCHECKED (matches pre-migration behavior): asserted per
+/** The raw projection item shapes read here — one union discriminated on `type`, kept LOCAL
+ * (not exported) since this is the server-projection wire shape, not the message-parts shape
+ * (`messageTypes.ts`) it maps into. UNCHECKED (pre-migration behavior): asserted per
  * `item.type`, not validated.
  *
  * EVERY KIND THE SERVER SENDS HAS AN ARM NOW, and `turn_terminal`'s is the one that draws
  * conditionally rather than always. It is the durable record of HOW a turn ended, written so a
  * transcript rebuilt without the live stream can tell a finished turn from a running one; a
- * NON-COMPLETED one is now the reload half of the outcome sentence (#186), and a completed one
+ * NON-COMPLETED one is now the reload half of the outcome sentence, and a completed one
  * still draws nothing at all — see the arm itself for why that asymmetry is the whole design and
  * not an omission. An unrecognised type pushes no message at all, so it costs an empty bubble
  * rather than rendering one. */
@@ -101,7 +82,7 @@ type RawProjectionItem = { type: string; seq: number } & Record<string, unknown>
  * DELIBERATELY NOT A THROW, and deliberately not a rendered message either. A throw would take a
  * whole transcript down because the server shipped one new item kind ahead of the browser, which
  * is a routine deployment order. A rendered message would put platform-internal text in a
- * citizen's chat, which is exactly what R36 forbids. So the item is surfaced to DEVELOPERS, loudly,
+ * citizen's chat, which the split-audience rule forbids. So the item is surfaced to DEVELOPERS, loudly,
  * and the transcript renders everything it does understand.
  */
 export function reportUnknownProjectionItem(item: RawProjectionItem): void {
@@ -136,6 +117,22 @@ function bannerStatus(banner: unknown): BuildOutcomeStatus {
 }
 
 /**
+ * Server projection items → the in-memory message shape the pages render
+ * ({id, role, parts, seq}). The reload read returns DISPLAY ITEMS derived
+ * server-side from the native transcript, not raw message docs.
+ *
+ * Every projection item type is rendered, including the turn terminal's arm, which draws
+ * conditionally rather than always:
+ *   - `user_text` / `assistant_text` — plain chat bubbles;
+ *   - `banner` — the build outcome (stored sentence + the `type:'build'` part the
+ *     builder page's renderer draws);
+ *   - `step` — a stored friendly agent step (hidden steps skipped, as the live feed does);
+ *   - `build_in_progress` — the durable anchor for a build with no recorded outcome;
+ *   - `plan_options` — the Build it / Keep refining card, carried with its STORED
+ *     resolution state so live and reload agree;
+ *   - `turn_terminal` — the durable record of HOW a turn ended, rendered as the outcome
+ *     sentence when the ending needs explaining and silent when it does not (see its arm).
+ *
  * @param onUnknown Injected so a test can assert the surfaced item rather than scrape the console.
  *   A parameter with a default rather than module state: every existing call site is unchanged and
  *   two tests running in parallel cannot see each other's handler.
@@ -149,20 +146,15 @@ export function messagesFromProjection(
   /**
    * THE ASSISTANT MESSAGE CURRENTLY BEING FILLED — one per reply, not one per item.
    *
-   * A citizen asks once and is answered once, and a reply is prose and steps interleaved. The
-   * LIVE path has always built it that way: `streamingParts` returns ONE ordered `MessagePart[]`
-   * for the whole turn, and the library coalesces adjacent tool parts into an activity group,
-   * so a paragraph written between two runs of steps seals one group and opens the next.
+   * A reply is prose and steps interleaved, matching the LIVE path: `streamingParts` returns
+   * ONE ordered `MessagePart[]` per turn, coalescing adjacent tool parts into an activity group.
    *
-   * This path used to push a SEPARATE message per projection item, so the same reply came back
-   * from a reload as seven, or fourteen, assistant messages. Everything hung off a message then
-   * multiplied with them — most visibly the copy control, which sits on each one: a real
-   * transcript offered 41 copy buttons where it should offer 8, none of which copied the reply
-   * a citizen had actually read, only the fragment beside it. Live and reload are supposed to
-   * render identically (R72/AE43); they did not, and the reload half was wrong.
+   * This path used to push a SEPARATE message per item, so a reload turned one reply into
+   * seven or fourteen assistant messages — 41 copy buttons where there should be 8, none
+   * copying what the citizen actually read. Live and reload must render identically.
    *
-   * Only `assistant_text` and `step` accumulate, which is exactly the set `streamingParts`
-   * carries. Banners, offers and the in-progress marker stay their own messages on both paths.
+   * Only `assistant_text` and `step` accumulate — exactly the set `streamingParts` carries.
+   * Banners, offers and the in-progress marker stay their own messages on both paths.
    */
   let open: (ChatMessage & { parts: MessagePart[] }) | null = null
 
@@ -180,7 +172,7 @@ export function messagesFromProjection(
     open = { id, role: 'assistant', parts: [part], seq }
     messages.push(open)
   }
-  // THE KEY CARRIES THE ITEM'S POSITION, not just its seq (N3). One `messages` row can project
+  // THE KEY CARRIES THE ITEM'S POSITION, not just its seq. One `messages` row can project
   // SEVERAL items — an assistant turn with two text parts, a row that yields both a step and a
   // banner — and every one of them inherits that row's seq. Keyed `srv_{seq}_{kind}` alone,
   // those collide, and React is explicit that duplicate keys "may cause children to be
@@ -213,12 +205,13 @@ export function messagesFromProjection(
           {
             type: 'build',
             sessionId: item.sessionId as string,
-            // THE RELOAD HALF OF #204. The projection's banner vocabulary is four-valued —
-            // `completed` / `failed` / `stopped` / `quota` (`projection.py::_banner_kind`) — and
-            // this mapping used to throw two of those away, landing `stopped` and `quota` on
-            // `ended`. That put a part claiming the build ended normally directly beside the
-            // stored sentence "You stopped this build before it finished." A quota stop is a stop
-            // for the same reason the live path treats it as one: nothing broke, the day ran out.
+            // THE RELOAD HALF OF THE BANNER-VOCABULARY FIX. The projection's banner vocabulary is
+            // four-valued — `completed` / `failed` / `stopped` / `quota`, the four kinds
+            // `projection.py::_banner_kind` returns — and this mapping used to throw two of those
+            // away, landing `stopped` and `quota` on `ended`. That put a part claiming the build
+            // ended normally directly beside the stored sentence "You stopped this build before it
+            // finished." A quota stop is a stop for the same reason the live path treats it as
+            // one: nothing broke, the day ran out.
             status: bannerStatus(item.banner),
             reason: item.banner as string,
             previewUrl: (item.previewUrl as string | null) ?? null,
@@ -228,7 +221,7 @@ export function messagesFromProjection(
       })
     }
     else if (item.type === 'plan_options') {
-      // The Build it / Keep refining card (U11/U13): carried as its own part so the surface
+      // The Build it / Keep refining card: carried as its own part so the surface
       // renders the offer with the STORED resolution state — live and reload agree.
       // Narrowed via toPlanOptionsItem — the same function the live path uses
       // (turnStreamApi.ts) — rather than a raw `as unknown as PlanOptionsItem` cast, so
@@ -248,7 +241,7 @@ export function messagesFromProjection(
         })
       }
     } else if (item.type === 'step') {
-      // A stored friendly agent step (U6/U15) — the reload half of the build narrative.
+      // A stored friendly agent step — the reload half of the build narrative.
       // Hidden steps stay out of the transcript, same rule as the live feed — checked on the
       // RAW item.hidden, which is a structural filter (reload drops hidden steps before they
       // become a message at all; live forwards them and the surface filters them out of the
@@ -274,7 +267,7 @@ export function messagesFromProjection(
     } else if (item.type === 'build_in_progress') {
       seal()
       // A build began and no outcome closed it — the page reattaches to the live session
-      // when there is one, and states the durable truth when there is not (U15).
+      // when there is one, and states the durable truth when there is not.
       messages.push({
         id: `srv_${item.seq}_g_${index}`,
         role: 'assistant',
@@ -282,7 +275,7 @@ export function messagesFromProjection(
         seq: item.seq,
       })
     } else if (item.type === 'turn_terminal') {
-      // THE RELOAD HALF OF THE OUTCOME SENTENCE (#186).
+      // THE RELOAD HALF OF THE OUTCOME SENTENCE.
       //
       // A stopped turn used to say NOTHING after a refresh. Live, the surface draws a sentence
       // the moment the turn ends (`announceTerminal` → `showBuildOutcome`); this row is the only
@@ -293,11 +286,9 @@ export function messagesFromProjection(
       //
       // THE SENTENCE COMES FROM `outcomeSummary`, THE SAME FUNCTION THE LIVE PATH CALLS, and
       // that shared call is the entire point rather than a convenience. Two authors for one
-      // sentence is a documented failure of this codebase
-      // (`docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`),
-      // where fixing one emitter only changed WHEN the wrong text appeared. The server's own
-      // contract says the same thing from its end: the terminal is "derived from the same
-      // mapping of the same stored meta".
+      // sentence is a documented failure of this codebase — fixing one emitter only changed WHEN
+      // the wrong text appeared. The server's own contract says the same thing from its end: the
+      // terminal is "derived from the same mapping of the same stored meta".
       //
       // A COMPLETED TERMINAL STILL DRAWS NOTHING, and the narrowing stops exactly there. Every
       // turn writes one of these rows — `_write_turn_terminal` runs for BOTH kinds,
@@ -334,12 +325,13 @@ export function messagesFromProjection(
       // was built in this chat" to the preview pane (`transcriptHasBuildOutcome`) and carry a
       // `snapshotCommitted` warning. A turn terminal knows neither — it has no preview URL and
       // no snapshot verdict — so synthesising one would answer the pane's question with a guess,
-      // on every stopped Plan turn as well. What #186 is missing is the SENTENCE.
+      // on every stopped Plan turn as well. The reload fix above supplies only the sentence, never
+      // a build part.
     } else {
-      // THE LOUD FALLBACK ARM (L4). Until this existed the chain simply ended, so an item type
+      // THE LOUD FALLBACK ARM. Until this existed the chain simply ended, so an item type
       // this client did not recognise vanished with no error, no warning and no trace — on the
       // one path a reloaded transcript is rebuilt from. That is the four-edit change no compiler
-      // enforces, on the path this plan makes load-bearing for BOTH kinds of chat.
+      // enforces, on the path that is load-bearing for BOTH kinds of chat.
       //
       // A KNOWN TYPE THAT DRAWS NOTHING NOW HAS ITS OWN ARM rather than a membership set: the
       // completed `turn_terminal` above falls out of that arm having rendered nothing, and never
@@ -390,10 +382,10 @@ export async function listProjectConversations(
 
 /**
  * Header + display projection for one conversation; null if not found (404).
- * U7: `messages` is derived from the server-side projection (one read rebuilds the
- * chat — R8). `activeTurn` is `{turnId, lastSeq}` while a turn is running server-side and
+ * `messages` is derived from the server-side projection (one read rebuilds the
+ * chat). `activeTurn` is `{turnId, lastSeq}` while a turn is running server-side and
  * null otherwise — `ConversationSurface` re-subscribes to it on adopt, which is the other half
- * of R8: a reload mid-reply keeps streaming instead of freezing.
+ * of the same guarantee: a reload mid-reply keeps streaming instead of freezing.
  */
 export interface ActiveTurn {
   turnId: string
@@ -409,7 +401,8 @@ export type ConversationWithMessages = ConversationHeader & {
    * reopened chat already makes, so the "getting long" line is right from first paint.
    *
    * `null` MEANS UNMEASURED, NOT EMPTY. A chat with no served turn has no measurement, and the
-   * meter stays silent rather than assuming either — guessing is what #194 deleted.
+   * meter stays silent rather than assuming either: a guessed number reads as a measurement,
+   * and the platform stopped deriving this one for exactly that reason.
    */
   contextTokens: number | null
 }
@@ -431,46 +424,32 @@ export async function getConversation(id: string, deps: AuthFetchDeps = {}): Pro
   }
 }
 
-/* THE ROW-CREATE AND HEADER-PATCH WRAPPERS ARE GONE (plan 001, unit 6), and the ruling of
-   2026-09-02 is why nothing is left to point them at.
-
-   A CHAT'S ROW IS NO LONGER CREATED BY A ROUND TRIP OF ITS OWN. It used to be: `POST
-   /conversations` committed the row, and the first turn went out behind it — and that create
-   route's only workspace awareness was a project-ownership check, so a first message the
-   workspace then refused left a real, titled, empty chat sitting in the project. The row's
-   parentage rides the turn itself now (`startTurn`'s `create` block, `turnStreamApi.ts`): it
-   carries the chat's KIND and is written inside the turn's own transaction, after every
-   side-effect-free refusal, so a refusal rolls it back. `PATCH /conversations/{id}` lost its
-   client the same way — the header a page used to patch is written by the turn that derives it.
-
-   NOTHING RENDERS A LIST OF CHATS, which is the other half. The ruling of 2026-09-02 is that
-   nothing points back to a chat, running or finished: there is no recents list in the rail and
-   no chat list inside a chat. So there is no row to summarise (the narrowed `ChatSummary` row
-   shape went with it), no row to date (`relativeTime` rendered each row's "1h ago") and no row
-   to delete (`deleteConversation` was reached only through that list's ⋮ menu). The SERVER
-   routes are all untouched — these are clients with no caller, not capabilities the backend has
-   lost — and chats, their plans and their uploaded files all stay. Cleanup, if the client ever
-   asks for it, is a scheduled job rather than a control.
-
-   Recorded here rather than removed in silence, because an export that simply stops existing
-   tells the next reader nothing about why, and the next person reaching for any of these needs
-   to know it was a decision. */
+/* THE ROW-CREATE AND HEADER-PATCH WRAPPERS ARE GONE.
+ *
+ * A CHAT'S ROW IS NO LONGER CREATED BY A ROUND TRIP OF ITS OWN. `POST /conversations` used to
+ * commit the row before the first turn went out, checking only project ownership — so a first
+ * message the workspace then refused left a real, empty chat behind. The row's parentage now
+ * rides the turn itself (`startTurn`'s `create` block, `turnStreamApi.ts`): written inside the
+ * turn's own transaction, after every side-effect-free refusal, so a refusal rolls it back.
+ * `PATCH /conversations/{id}` lost its client the same way — the header is written by the turn.
+ *
+ * NOTHING RENDERS A LIST OF CHATS, the other half: no recents rail, no chat list inside a chat.
+ * So there is no row to summarise, date, or delete — the SERVER routes are untouched, these are
+ * clients with no caller, not capabilities the backend lost. Cleanup, if ever needed, is a
+ * scheduled job rather than a control. */
 
 // Client-minted ids + timestamps (Decision 3): ids are no longer guessable `chat_<timestamp>`.
 //
-// UUIDv7, NOT `crypto.randomUUID()` — that mints a v4, and ADR-0006 mandates v7 for DB primary
-// keys. The id minted here IS the primary key: the create route builds `Conversation(id=body.id,
-// …)`, which OVERRIDES the server's own UUIDv7 column default, so a v4 here is a v4 in Postgres.
-// A random v4 lands at an arbitrary point in the btree and splits pages; a v7 sorts by mint time,
-// so inserts stay at the index's right edge and keep their locality.
-//
-// Forward-only: rows already carrying a v4 are still valid ids and keep loading untouched.
+// UUIDv7, NOT `crypto.randomUUID()` (that mints a v4). The id minted here IS the primary key —
+// the create route builds `Conversation(id=body.id, …)`, overriding the server's own UUIDv7
+// column default — so a v4 here is a v4 in Postgres. A random v4 lands at an arbitrary point in
+// the btree and splits pages; a v7 sorts by mint time, keeping index locality. Forward-only:
+// rows already carrying a v4 stay valid.
 //
 // No npm uuid dependency — 16 random bytes from `crypto.getRandomValues` with the first six
-// overwritten by the 48-bit BIG-ENDIAN Unix-ms timestamp. Big-endian is the entire trick:
-// most-significant byte first is what makes the canonical string sort chronologically. Emit the
-// bytes little-endian and every version-nibble assertion still passes while the sortability —
-// the only reason v7 exists — is silently gone.
+// overwritten by the 48-bit BIG-ENDIAN Unix-ms timestamp. Big-endian is the whole trick: MSB
+// first is what makes the string sort chronologically — little-endian would still pass every
+// version-nibble assertion while silently losing the only reason v7 exists.
 /** A canonical lowercase UUIDv7 (8-4-4-4-12). */
 export function uuidv7(): string {
   const bytes = new Uint8Array(16)

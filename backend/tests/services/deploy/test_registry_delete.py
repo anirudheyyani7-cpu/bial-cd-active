@@ -1,4 +1,4 @@
-"""The deleted app's repository goes with it, and the token it uses reaches nothing else (U21).
+"""The deleted app's repository goes with it, and the token it uses reaches nothing else.
 
 THE SCOPE ASSERTION IS THE POINT OF THIS FILE. The credential is the registry-wide ACR admin
 account the backend already holds and already pushes with, so what stands between a bug in the

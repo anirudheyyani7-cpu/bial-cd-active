@@ -1,10 +1,7 @@
 /**
- * THE TWO OBJECT-URL HELPERS, WHICH IS ALL THIS MODULE IS NOW.
- *
- * This file used to test the base64 chain (`base64ToBlob` → `openAttachmentBytes` → `openPdf`)
- * from the AttachmentLightbox era. The pipeline moved to server-served object URLs, that chain
- * lost its last caller, and it went. What was never covered is what survived — `AttachmentChips`
- * reaches both helpers below on a click — so the file is repointed rather than deleted.
+ * THE TWO OBJECT-URL HELPERS, WHICH IS ALL THIS MODULE IS NOW. The base64 chain this file used to
+ * test lost its last caller when the pipeline moved to server-served object URLs; it is repointed
+ * at what survived — the two helpers `AttachmentChips` reaches on a click.
  *
  * WHAT IS WORTH ASSERTING HERE, given neither helper has a return value that carries much: that
  * exactly ONE action happens per call (a tab-open that also downloads, or the reverse, is the

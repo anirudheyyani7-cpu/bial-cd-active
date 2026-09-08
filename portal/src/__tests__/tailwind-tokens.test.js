@@ -4,31 +4,20 @@ import path from 'node:path'
 import { stripComments } from './_stripComments'
 
 /**
- * An invented Tailwind token renders INVISIBLY, and no test that reads text content will ever
- * notice. `bg-bial-primary` shipped in the #83 dialog: the class does not exist, so the button
- * had no background, `text-white` painted white on a white card, and the primary action was
- * gone. Every unit test still passed — `getByRole` found it, `toBeEnabled()` was true, the
- * textContent matched. It was caught by looking at a screenshot from a live browser.
- *
- * jsdom computes no Tailwind styles, so a `getComputedStyle` assertion cannot close this in the
- * unit suite. What CAN be checked cheaply is the SOURCE TEXT, and this file holds every rule of
- * that kind. There are four now; the first is the original, the other three arrived with the
- * chat-surface rebuild (Plan D, U1) because porting v4 registry sources into a v3 build makes
- * the same failure reachable three new ways.
- *
+ * WHY THIS EXISTS — an invented Tailwind token renders INVISIBLY, and no test that reads text
+ * content will ever notice; jsdom computes no Tailwind styles, so `getComputedStyle` can't close
+ * this in the unit suite. The SOURCE TEXT can, and this file holds every rule of that kind:
  *   1. `bial-*` — the project's own colour family. A reference outside it is always a typo.
- *   2. TAILWIND v4 SYNTAX. The portal is on 3.4.17 and the assistant-ui / shadcn registry
- *      sources we port are authored for v4. Every token below is valid v4 and produces
- *      NOTHING on 3.4.17 — no build error, no console warning, no failing test.
+ *   2. TAILWIND v4 SYNTAX ported from v4-authored registry sources onto this 3.4.17 build —
+ *      valid v4, produces NOTHING here: no build error, no console warning, no failing test.
  *   3. `--color-*` VARIABLE REFERENCES. v4 names its theme variables `--color-foreground`;
- *      this portal defines `--foreground`. `var(--color-foreground)` resolves to nothing and
- *      the declaration is dropped, so the element paints transparent.
- *   4. R68 — SUB-BODY-SIZE ARBITRARY FONT SIZES, scoped (see IN_SCOPE below).
+ *      this portal defines `--foreground`, so the reference resolves to nothing and the
+ *      declaration is dropped — the element paints transparent.
+ *   4. SUB-BODY-SIZE ARBITRARY FONT SIZES, scoped (see IN_SCOPE below).
  *
- * EACH RULE IS A PURE FUNCTION OVER SOURCE TEXT, and is asserted twice: once across the real
- * tree, and once against a fixture string that is KNOWN to violate it. Without the second, a
- * rule whose regex never matches anything passes for ever and protects nothing — which is the
- * failure mode a source-scanning guard is most prone to.
+ * Each rule is asserted TWICE: once across the real tree, and once against a fixture KNOWN to
+ * violate it. Without the second, a rule whose regex never matches anything passes forever and
+ * protects nothing.
  */
 const ROOT = path.resolve(__dirname, '..')
 const CONFIG = path.resolve(__dirname, '../../tailwind.config.js')
@@ -66,14 +55,8 @@ describe('tailwind custom tokens', () => {
   })
 })
 
-// ─────────────────────────────────────────────────────────────────────────────────────────
-// Rule 2 — Tailwind v4 syntax
-//
-// Every entry was read out of a real registry source during the component survey
-// (`.claude/scratch/component-decisions.md`, the v4→v3 rewrite table). These are the tokens
-// actually present in `thread`, `tool-group`, `tool-fallback` and `attachment` — not a
-// speculative list of everything v4 added.
-// ─────────────────────────────────────────────────────────────────────────────────────────
+// Rule 2 — Tailwind v4 syntax. Every entry below is a token actually present in `thread`,
+// `tool-group`, `tool-fallback` or `attachment`, not a speculative list of everything v4 added.
 const V4_ONLY = [
   {
     name: 'data-open: / data-closed: (v4 Radix shorthand)',
@@ -109,8 +92,7 @@ const V4_ONLY = [
   { name: 'not-last: variant', re: /\bnot-last:/g, v3: '[&:not(:last-child)]:' },
   {
     name: 'trailing-! important (v4 order)',
-    // v3 wants the bang LEADING: `!ring-0`, never `ring-0!`. `ui/pagination.tsx`'s own
-    // docstring records this repo hitting the trap once already.
+    // v3 wants the bang LEADING: `!ring-0`, never `ring-0!`.
     re: /(?<=[\s"'`{])[a-z][a-z0-9:/[\]().-]*[a-z0-9\])]!(?=[\s"'`}])/g,
     v3: 'move the ! to the front: !ring-0',
   },
@@ -206,10 +188,8 @@ describe('tailwind v4 syntax never reaches this v3.4.17 build', () => {
   })
 
   it('walks src/ only — it never descends into node_modules', () => {
-    // The `content` glob in tailwind.config.js deliberately scans
-    // `node_modules/streamdown/dist`, so "scan everything Tailwind scans" would pull a
-    // megabyte of minified dist through these regexes and report v4 tokens we do not own.
-    // The walk is rooted at src/ and terminates; this pins that it stays that way.
+    // tailwind.config.js's own `content` glob deliberately scans `node_modules/streamdown/dist`;
+    // this pins the walk staying rooted at src/ instead.
     const files = sourceFiles(ROOT)
     expect(files.length).toBeGreaterThan(50)
     expect(files.filter((f) => f.includes('node_modules'))).toEqual([])
@@ -217,24 +197,18 @@ describe('tailwind v4 syntax never reaches this v3.4.17 build', () => {
 })
 
 /**
- * R68 — nothing a person reads is smaller than the platform's body size.
+ * Nothing a person reads is smaller than the platform's body size.
  *
- * SCOPE IS DELIBERATELY A LIST, NOT THE WHOLE TREE. Sub-body-size text is widespread on
- * `main` (admin tables, the navbar's token meter, project cards) and R68 is a chat-surface
- * requirement, not a portal-wide restyle. So the rule covers exactly "the files this plan
- * authors or modifies": the whole ported tree, plus each chat file as the unit that owns it
- * opens it.
+ * SCOPE IS DELIBERATELY A LIST, NOT THE WHOLE TREE: sub-body-size text is widespread on `main`
+ * (admin tables, the token meter, project cards), and this is a chat-surface requirement, not a
+ * portal-wide restyle — it covers exactly the files the chat-surface rebuild authors or modifies.
+ * ADD YOUR FILE HERE WHEN YOUR UNIT OPENS IT.
  *
- * ADD YOUR FILE HERE WHEN YOUR UNIT OPENS IT. That is the growth the plan describes — a file
- * enters scope in the same commit that raises its type, so the guard is never committed red
- * and never quietly stops covering something.
- *
- * Named scale steps are not flagged: `text-xs` and up are the platform's own ramp and moving
- * between them is a design decision, not a typo. What this catches is the ARBITRARY value —
- * `text-[11px]` — which is how a component ends up below the ramp without anyone choosing it.
+ * Named scale steps (`text-xs` and up) are not flagged — moving between them is a design
+ * decision. What this catches is the ARBITRARY value, `text-[11px]`, that skips the ramp unchosen.
  */
 const IN_SCOPE = [
-  'components/assistant-ui/', // every ported registry source, for the life of the plan
+  'components/assistant-ui/', // every ported registry source, for the life of the chat-surface rebuild
 ]
 
 function inR68Scope(file) {
@@ -242,7 +216,7 @@ function inR68Scope(file) {
   return IN_SCOPE.some((entry) => (entry.endsWith('/') ? r.startsWith(entry) : r === entry))
 }
 
-describe('R68 — no text below the platform body size on the chat surface', () => {
+describe('no text below the platform body size on the chat surface', () => {
   it('no in-scope file sets an arbitrary font size below the body ramp', () => {
     const offenders = []
     for (const file of sourceFiles(ROOT).filter(inR68Scope)) {
@@ -271,8 +245,8 @@ describe('R68 — no text below the platform body size on the chat surface', () 
     const missing = IN_SCOPE.filter((entry) =>
       entry.endsWith('/') ? !present.some((p) => p.startsWith(entry)) : !present.includes(entry),
     )
-    // A directory entry may legitimately be empty while the plan has not created it yet;
-    // a named FILE that has vanished is always a hole in the guard.
+    // A directory entry may legitimately be empty pending the rebuild; a named FILE that
+    // vanished is always a hole in the guard.
     expect(missing.filter((m) => !m.endsWith('/'))).toEqual([])
   })
 })

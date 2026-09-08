@@ -9,10 +9,9 @@ here runs both over the same persisted conversation and demands the same answer.
 ★ AND WHY THE CACHE TEST IS NOT OPTIONAL. Under pydantic-ai `input_tokens` is ALREADY INCLUSIVE
 of both cache classes — it is the provider's raw prompt count, which is the occupancy wanted —
 while `weighted_spend` next door is a COST figure that discounts a cache read to a tenth. This
-codebase has shipped the opposite belief three times, twice past review
-(`docs/solutions/integration-issues/run-token-ceiling-billed-cache-reads-at-face-value-2026-09-01.md`).
-Real conversations here run 97-99% cache-read, so a spend-shaped meter reads a full chat as a
-tenth-full one and warns nobody.
+codebase has shipped the opposite belief three times, twice past review. Real conversations here
+run 97-99% cache-read, so a spend-shaped meter reads a full chat as a tenth-full one and warns
+nobody.
 
 Every row below is written through the REAL store, so the measurement has to survive the JSONB
 round trip to be found — a history assembled by hand would prove the rule and not the wiring.
@@ -126,7 +125,7 @@ async def test_a_served_conversation_reports_what_the_provider_reported(db_sessi
 async def test_the_platforms_own_last_word_does_not_read_back_as_an_empty_chat(
     db_session,
 ) -> None:
-    """★ COVERS AE3, THE HAPPY PATH THIS UNIT IS FOR.
+    """★ THE HAPPY PATH THIS UNIT IS FOR.
 
     A long conversation whose NEWEST response is one the platform wrote — which carries no
     measurement at all — must still report the last turn that WAS measured. Read "the last
@@ -148,7 +147,7 @@ async def test_a_conversation_nobody_has_measured_is_unmeasured_not_zero(db_sess
     `None` and `0` are different claims. `0` says the chat is empty, which the meter would be
     entitled to act on; `None` says nobody has counted, which is the truth for a brand-new chat
     and for one where only the platform has spoken. The browser stays silent on `None` rather
-    than assuming either — guessing is the whole thing #194 deleted."""
+    than assuming either — guessing is exactly the behavior this measurement replaced."""
     user, conversation = await _thread(db_session)
 
     assert measured_context_tokens(await _rows(db_session, user, conversation)) is None
@@ -179,7 +178,7 @@ async def test_the_hidden_turn_terminal_row_does_not_become_the_measurement(db_s
 
 
 async def test_the_figure_is_the_raw_prompt_count_and_not_the_bill(db_session) -> None:
-    """★ ASM14, AND THE ONE MISTAKE THIS PLATFORM KEEPS MAKING.
+    """★ THE ONE MISTAKE THIS PLATFORM KEEPS MAKING.
 
     A long conversation served almost entirely from cache. The BILL is tiny and correctly so —
     `weighted_spend` prices a cache read at a tenth, because that is what it costs. The WINDOW
@@ -238,10 +237,9 @@ async def test_the_largest_measurement_wins_even_when_a_later_turn_reports_less(
 async def test_the_meter_and_the_wall_measure_the_same_conversation_identically(
     db_session,
 ) -> None:
-    """★ COVERS AE3b, AT THE SEAM. The browser's meter reads this; `enforce_context_limit` reads
-    a validated `list[ModelMessage]` from `load_history`. Two readers, two input shapes, one
-    rule — and the whole point of #194 is that they are the SAME NUMBER rather than two readings
-    of one scale.
+    """★ AT THE SEAM. The browser's meter reads this; `enforce_context_limit` reads a validated
+    `list[ModelMessage]` from `load_history`. Two readers, two input shapes, one rule — the two
+    must report the SAME NUMBER rather than two readings of one scale.
 
     So both are run over the same persisted conversation, and the check's own expression is
     reproduced here rather than mocked: if either side changes what it counts, this goes red.

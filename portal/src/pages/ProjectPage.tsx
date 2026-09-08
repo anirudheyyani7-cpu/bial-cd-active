@@ -1,43 +1,24 @@
 /**
  * `/projects/:projectId` — the project screen IS the app now.
  *
- * ═══ THE PHASE-1 DECISION THIS REVERSES, AND WHY THE REVERSAL IS NOT A REGRESSION ═══
+ * WHY THIS EXISTS: it shows the RUNNING SANDBOX beside the rail, behind one control the person
+ * presses deliberately — nothing starts a container because a screen was opened (the pane reads
+ * a cheap state endpoint, no container call). No passive view of stored code, no lifecycle badge,
+ * no reroute into a chat; the suite beside this file asserts their absence.
  *
- * This page's previous docblock recorded a removal: "the passive 'View app' preview is HIDDEN in
- * Phase-1: a stored app is not a running sandbox". That decision was RIGHT ABOUT WHAT IT REMOVED.
- * What it took away was a passive view of stored code, plus a lifecycle badge and a reroute into a
- * chat — three things that told a citizen about an artefact rather than showing them their app.
+ * This file owns the route, the data, and the beacon — everything visual moved down
+ * (`ProjectWorkspace` publishes on the workspace channel, `WorkspaceRail` renders it); it holds
+ * no layout of its own, since the two-column frame belongs to `WorkspaceShell`, above the Outlet.
+ * THE BEACON FIRES FROM EXACTLY ONE PLACE — the successful-load branch below — because it feeds a
+ * measurement nothing in the UI reflects, so a drop or a double-fire makes the numbers wrong with
+ * no symptom and no failing test; `observe.ts`'s per-project guard only makes a REPEATED call a
+ * no-op, so a second tracker (tempting, since `ProjectWorkspace` independently needs
+ * `project.appId`) would bypass that guard rather than be caught by it.
  *
- * What arrives here is not that. It is the RUNNING SANDBOX, in a pane beside the rail, behind one
- * control the person presses deliberately. Nothing starts a container because a screen was opened
- * (R3): the pane reads a cheap state endpoint that makes no container call, and the only thing that
- * starts anything is a press. So the argument the removal rested on is answered rather than
- * overruled — a stored app is still not a running sandbox, and this screen no longer shows one a
- * stored app. The three things it removed stay removed, and the suite beside this file keeps
- * asserting their absence.
- *
- * ═══ WHAT THIS FILE OWNS AFTER THE SPLIT ═══
- *
- * The route, the data, and the beacon. Everything visual moved down: `ProjectWorkspace` is the
- * project-scoped publisher on the workspace channel, and `WorkspaceRail` is what the rail renders.
- * This file starts no publish of its own and holds no layout — the two-column frame belongs to
- * `WorkspaceShell`, above the Outlet, and building a second one here would nest one grid inside
- * another and remount the app on every navigation.
- *
- * THE OBSERVATION BEACON FIRES FROM EXACTLY ONE PLACE, and that place is here — the successful-load
- * branch below. It feeds a measurement nothing in the UI reflects, so dropping it, double-firing
- * it, or letting a remount fire it twice makes the numbers wrong with no symptom and no failing
- * test. `ProjectWorkspace` independently needs `project.appId` for the rail's status line, which is
- * exactly the pull that would make somebody add a second tracker down there; `observe.ts`'s own
- * per-project guard makes a repeated call a safe no-op, so the risk is not defeating that guard but
- * bypassing it with a second mechanism it does not cover.
- *
- * Identity model (memory: app identity + flat URL model):
- *   - `appId` / `hasRelaunchableSnapshot` are READ off the project (a LEFT JOIN on the backend);
- *     the portal never fires a mutating provision call just to learn them. `appStatus` is not
- *     surfaced here — app lifecycle lives on the admin registry, not the citizen project screen.
- *   - a new chat opens at a flat `/chat/{uuid}` carrying its project in a transient
- *     `?projectId=&kind=` query; the row does not exist until its first message.
+ * Identity model (see: app identity + flat URL model): `appId`/`hasRelaunchableSnapshot` are READ
+ * off the project (a backend LEFT JOIN), never via a mutating provision call; `appStatus` lives on
+ * the admin registry, not here. A new chat opens at a flat `/chat/{uuid}` carrying its project in
+ * a transient `?projectId=&kind=` query — the row doesn't exist until its first message.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -51,7 +32,7 @@ import { markProjectOpened } from '../utils/observe'
 import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 
 /**
- * WHAT THE CARD SAYS — and the one status whose sentence is never the server's (`#207`).
+ * WHAT THE CARD SAYS — and the one status whose sentence is never the server's.
  *
  * A 422 on this GET can only be the PATH PARAMETER: the read carries no body for Pydantic to
  * validate, so the `detail[]` FastAPI sends back is always the parser's account of an id that is
@@ -65,8 +46,8 @@ import { PROJECT_GONE_NOTICE } from './ProjectsPage'
  * sentence is `PROJECT_GONE_NOTICE`: from where they stand a malformed address and a deleted one
  * are the same event, an address that does not lead anywhere, and they get the same words for it.
  *
- * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above (`#206`). A 404
- * is a project that WAS an address and stopped being one, so the list is where the citizen now
+ * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above. A 404 is a
+ * project that WAS an address and stopped being one, so the list is where the citizen now
  * belongs. A 422 never addressed a project at all, and redirecting out of an address somebody
  * deliberately opened reads as the app taking their place away. The page stays — with its back
  * control on it, which is what makes staying a choice rather than a dead end.
@@ -94,13 +75,13 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // WHAT THE TOOLBAR ROW NAMES, PUBLISHED FROM THE ROUTE (plan 002, U2) — above the early returns
+  // WHAT THE TOOLBAR ROW NAMES, PUBLISHED FROM THE ROUTE — above the early returns
   // below, for the same reason the project declaration is above them. The loading and load-error
   // branches are still this project's screen, and the row draws its back control and holds its own
   // height on both, rather than appearing once the fetch lands. `chatTitle`/`chatKind` are `null`
   // here and that IS the signal: a heading with no kind is a project screen.
   //
-  // THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES (R46). `projectId` is a route param on
+  // THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES. `projectId` is a route param on
   // a route that is NOT remounted when it changes (see the wait region's own note below), so
   // moving from one project to another re-renders this same instance with the OLD `project` still
   // in state until the new fetch resolves. Without the guard, the rename pencil kept gating on
@@ -117,15 +98,15 @@ export default function ProjectPage() {
 
   const goToProjects = useCallback(() => navigate('/projects', { replace: true }), [navigate])
 
-  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY (`#206`). Two navigations rather
-  // than one flag, because they are not the same event: `goToProjects` is the back control a
-  // citizen PRESSED, and being told "that project is no longer available" after asking to leave a
-  // project that is perfectly fine would be a lie. This one is the involuntary exit.
+  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY. Two navigations rather than one
+  // flag, because they are not the same event: `goToProjects` is the back control a citizen
+  // PRESSED, and being told "that project is no longer available" after asking to leave a project
+  // that is perfectly fine would be a lie. This one is the involuntary exit.
   //
   // The sentence is `ProjectsPage`'s constant, never `err.message`. The server's 404 for another
-  // citizen's project is deliberately identical to its 404 for a project that never existed
-  // (ADR-0004), and piping its text through is the one change that could ever make those two
-  // print differently.
+  // citizen's project is deliberately identical to its 404 for a project that never existed —
+  // this platform is single-tenant with no cross-user existence leak — and piping its text
+  // through is the one change that could ever make those two print differently.
   const bounceGone = useCallback(
     () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
     [navigate],
@@ -146,11 +127,12 @@ export default function ProjectPage() {
         if (!active) return
         setProject(loaded)
         setLoadError(null)
-        // R105's denominator, and the R104 clock's start. Marked HERE rather than on the raw mount
-        // because `hasApp` is only knowable once the project has loaded — a project with nothing
-        // built has no app to first-see, and starting a clock for it would make this number and the
-        // sandbox-first number answer different questions. `markProjectOpened` is idempotent per
-        // project id per page load, which is also the StrictMode guard.
+        // The chat-open ratio's denominator, and the time-to-app-visible clock's start. Marked
+        // HERE rather than on the raw mount because `hasApp` is only knowable once the project
+        // has loaded — a project with nothing built has no app to first-see, and starting a
+        // clock for it would make this number and the sandbox-first number answer different
+        // questions. `markProjectOpened` is idempotent per project id per page load, which is
+        // also the StrictMode guard.
         markProjectOpened(loaded.id, { hasApp: loaded.appId !== null })
       } catch (err) {
         if (!active) return
@@ -168,15 +150,15 @@ export default function ProjectPage() {
     }
   }, [projectId, goToProjects, bounceGone])
 
-  /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE GONE (plan 002, U3). They existed for
+  /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE DELIBERATELY ABSENT. They existed for
      one renderer, the rail's "Conversations · this project" list, which the client asked not to
-     have — and the ruling of 2026-09-02 is that nothing points back to a chat, running or
-     finished. Removing the list removed the only route back to an existing chat AND the only way
-     to delete one; both are the owner's decision, taken knowingly. Chats, their plans and their
-     uploaded files stay in the database. Said here as well as in the rail because this is where
-     the reads used to be, and an absent fetch explains itself to nobody. */
+     have — nothing points back to a chat, running or finished. Removing the list removed the only
+     route back to an existing chat AND the only way to delete one; both are the owner's decision,
+     taken knowingly. Chats, their plans and their uploaded files stay in the database. Said here
+     as well as in the rail because this is where the reads would be, and an absent fetch explains
+     itself to nobody. */
 
-  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM (`#210`, ASM5).
+  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM.
      They used to be three early returns, and that shape is exactly what cannot carry a live
      region: a region inserted together with its text is missed entirely by several reader-and-
      browser combinations (`TurnBanner`, `LivePreview` both record it), and an early return means

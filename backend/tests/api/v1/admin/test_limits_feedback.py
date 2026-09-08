@@ -1,4 +1,4 @@
-"""Admin per-user limits + feedback read (U9, R28): super-admin-only; overrides take
+"""Admin per-user limits + feedback read: super-admin-only; overrides take
 effect on the LIVE daily gate; clearing falls back to the default; feedback is capped
 with a true total; limit edits are audited."""
 
@@ -45,9 +45,8 @@ async def _citizen(db: AsyncSession) -> dict[str, str]:
 
 
 def test_admin_users_routes_document_error_codes_in_openapi() -> None:
-    # The `/admin` users/limits/feedback sub-router: each route lists the inherited
-    # dependency 401/403 (DetailBody) + the v1-router 500 default; the limits PATCH also
-    # documents its explicit 400/404.
+    # Inherited dependency 401/403 (DetailBody) + the v1-router 500 default; the limits
+    # PATCH also documents its explicit 400/404.
     paths = create_app().openapi()["paths"]
     patch = set(paths["/v1/admin/users/{user_id}/limits"]["patch"]["responses"])
     assert {"400", "401", "403", "404", "500"} <= patch
@@ -191,12 +190,10 @@ async def test_a_chat_length_below_the_floor_is_refused_and_the_floor_is_named(
 
 
 async def test_a_limit_already_stored_below_the_floor_still_opens_a_chat(db_session) -> None:
-    """The other half of the floor, for the people the defect already reached.
-
-    A row written before the validator existed still holds its number, and validation cannot
-    reach back. Without the read-time clamp those citizens stay locked out until an
-    administrator notices and edits them by hand — and nothing in the product tells anyone that
-    is what happened.
+    """The other half of the floor, for the people the defect already reached: a row written
+    before the validator existed still holds its bad number, and validation cannot reach back.
+    Without the read-time clamp those citizens stay locked out until an administrator notices
+    and edits them by hand.
 
     Mutation check: drop `CONTEXT_HARD_FLOOR` from the `max(...)` in `effective_context` and
     this goes red.

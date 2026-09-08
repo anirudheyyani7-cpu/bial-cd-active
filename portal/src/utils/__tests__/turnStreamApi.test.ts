@@ -1,5 +1,5 @@
 /**
- * The U10 stream reader's transport disciplines: carry-buffered reassembly of torn
+ * The stream reader's transport disciplines: carry-buffered reassembly of torn
  * frames, distinct outcomes (completed / truncated / stalled / aborted), and the
  * cross-repo keepalive⁄stall inequality pin.
  */
@@ -106,7 +106,6 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     }
 
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":true}')).toBe(true)
-    // Absent — the server said nothing, so the block already open continues.
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there"}')).toBe(false)
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":false}')).toBe(false)
     // Present but not the boolean: a coercion would read either of these as a paragraph break.
@@ -117,7 +116,7 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
   it('drops a tool\'s arguments and result even when a frame still carries them', () => {
     // THE FRAME ABOVE FEEDS THIS ONE ON PURPOSE: it is the same wire text, including a
     // `detail` object holding the tool's args and result. The server stopped sending that
-    // (U14 — a step is a label and a state, never the payload behind it), but a frame from an
+    // (a step is a label and a state, never the payload behind it), but a frame from an
     // older server, a replayed fixture, or a hand-crafted request can still contain it, and
     // the parse is the seam that decides whether it reaches a component. `toMatchObject`
     // above cannot catch a field arriving; only an explicit key check can.
@@ -142,10 +141,8 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     // A terminal with an unreadable status is still a terminal — never lost, read as failed.
     const [ended] = parseOne('{"type":"turn_ended","seq":9,"turnId":"t","status":"nonsense"}')
     expect(ended).toMatchObject({ type: 'turn_ended', status: 'failed' })
-    // An unreadable snapshot status reads as idle, and its unusable PARTS are dropped one by
-    // one rather than spread through. Three shapes at once: a part that is not an object at
-    // all, a step part with no `toolCallId` (the key the live tail replaces it by — without one
-    // it is a row that can never resolve), and a good text part that must survive beside them.
+    // An unreadable snapshot status reads as idle, and its unusable parts are dropped one by
+    // one rather than spread through.
     const [snap] = parseOne(
       '{"type":"snapshot","seq":1,"turnStatus":"nonsense","parts":' +
         '["x",{"type":"step","item":{"type":"step","seq":1,"tool":"t","label":"l","state":"ok"}},' +
@@ -171,7 +168,7 @@ function streamResponse(chunks: string[]): Response {
   return new Response(body, { status: 200 })
 }
 
-describe('the compile frame (R17/R18) — an absent signal is never good news', () => {
+describe('the compile frame — an absent signal is never good news', () => {
   const parseOne = (json: string) => parseSseText(`data: ${json}\n\n`).frames
 
   it('parses each of the four states', () => {
@@ -280,13 +277,10 @@ describe('readTurnStream', () => {
     expect(outcome).toBe('stalled')
   })
 
-  it('resolves stalled when the REQUEST itself never answers (#137)', async () => {
-    // THE HUNG-SUBSCRIBE HOLE. The watchdog used to guard only `reader.read()` — i.e. only
-    // after response HEADERS arrived. A server that accepted the connection and then never
-    // answered left this promise pending FOREVER, and `BuilderPage`'s `endGenerating` sits
-    // after the await, so `generatingChatId` was never cleared: the composer kept animating
-    // "Setting up your sandbox… running Nm Ns" with a live Stop button (and a disabled mode
-    // toggle) on a turn the server had already failed in under a second.
+  it('resolves stalled when the REQUEST itself never answers', async () => {
+    // THE HUNG-SUBSCRIBE HOLE: the watchdog used to guard only `reader.read()`, i.e. only after
+    // response headers arrived — a server that accepted the connection and never answered left
+    // this promise pending forever, with no timeout to fall back on.
     const fetchFn = vi.fn(() => new Promise<Response>(() => {})) // accepted, never answers
     const outcome = await readTurnStream({
       conversationId: 'c1',
@@ -298,7 +292,7 @@ describe('readTurnStream', () => {
     expect(outcome).toBe('stalled')
   })
 
-  it('resolves aborted when the caller aborts during the REQUEST (#137)', async () => {
+  it('resolves aborted when the caller aborts during the REQUEST', async () => {
     // The abort arm of the same window: a navigation away mid-subscribe must settle the
     // promise, not leave the page pinned to a request that will never answer.
     const controller = new AbortController()
@@ -352,8 +346,6 @@ describe('startTurn', () => {
     )
     expect(result.turnId).toBe('t9')
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
-    // F2: the edge rewrite is `^/api → /v1`, so the client base must be `/api/...` (un-prefixed).
-    // A `/api/v1/...` base doubled to `/v1/v1/...` → 404 for every turn call (the P0 this pins).
     expect(url).toBe('/api/conversations/c1/turns')
     expect(JSON.parse(init.body as string)).toEqual({
       message: { text: 'hello', attachmentTexts: [], attachmentIds: [] },
@@ -361,7 +353,7 @@ describe('startTurn', () => {
   })
 
   it('★ carries the occupancy the server admitted on, verbatim', async () => {
-    // #194. `contextTokens` is the RAW prompt count the provider reported — cache-inclusive, and
+    // `contextTokens` is the RAW prompt count the provider reported — cache-inclusive, and
     // never a cost-weighted spend, which for a 97-99% cached conversation would be a tenth of
     // it. It arrives on the send the citizen was already making; nothing sizes a message before
     // it is sent. Passed through untouched, because the moment this client adjusts the number it
@@ -390,12 +382,7 @@ describe('startTurn', () => {
   })
 
   it("binds a new chat's KIND into the create block on a first message", async () => {
-    // RELOCATED HERE (plan 001, unit 6) from the retired `createConversation` / `createBuild`
-    // wrappers' own tests. Those made a `POST /conversations` round trip of their own and pinned
-    // that the chat's kind reached the wire; the round trip is gone — the server writes the row
-    // inside the turn's transaction, after every side-effect-free refusal — and its arguments
-    // moved onto THIS request. So the contract is pinned where it now travels. The test above is
-    // the other half: with no parentage, the body carries no `create` key at all.
+    // Pairs with the test above: with no parentage, the body carries no `create` key at all.
     const fetchFn = vi.fn(async () =>
       new Response(JSON.stringify({ turnId: 't1' }), { status: 202 })
     )
@@ -436,15 +423,10 @@ describe('startTurn', () => {
   })
 
   it('carries the context refusal through with the SERVER\'s sentence, not a generic one', async () => {
-    // ★ The whole client half of the restored per-conversation guardrail is this line. The
-    // hard boundary is enforced on the server and the sentence a citizen reads is WRITTEN
-    // there — `ConversationSurface` puts `TurnStartError.message` straight into `TurnBanner`.
-    // So "refused with a reason" is true only if the reason survives this hop.
-    //
-    // The catch-all in `ConversationSurface` ("The message could not be sent. Try again.")
-    // fires for anything that is NOT a `TurnStartError`, and that generic line is exactly the
-    // dead end this guardrail exists to replace. A 413 that arrived without its message would
-    // reproduce today's opaque failure while looking fixed.
+    // `ConversationSurface` puts `TurnStartError.message` straight into `TurnBanner`; anything
+    // that isn't a `TurnStartError` falls to its generic catch-all ("The message could not be
+    // sent. Try again."). A 413 arriving without its message would silently regress to that
+    // generic line while looking fixed.
     const sentence =
       'This chat has got too long to carry on. Start a new chat to keep going — your app and everything you have built stays exactly as it is.'
     const fetchFn = vi.fn(
@@ -463,11 +445,11 @@ describe('startTurn', () => {
   })
 })
 
-// F2 REGRESSION GUARD. The edge/nginx rewrite is `^/api → /v1`. If ANY of the six turn-transport
+// REGRESSION GUARD. The edge/nginx rewrite is `^/api → /v1`. If ANY of the six turn-transport
 // call sites keeps a `/api/v1/...` base it doubles to `/v1/v1/...` → 404 for every turn / mode /
-// build / events call — the P0 that broke the whole unified-chat flow. Pin every call site to the
+// build / events call. Pin every call site to the
 // un-prefixed `/api/conversations/...` base so the doubling can never come back silently.
-describe('base-path contract (F2 regression guard) — every call hits /api/conversations, never /api/v1', () => {
+describe('base-path contract (regression guard) — every call hits /api/conversations, never /api/v1', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const urlOf = (fetchFn: ReturnType<typeof vi.fn>) => (fetchFn.mock.calls[0] as unknown[])[0] as string
   const expectUnPrefixed = (url: string) => {
@@ -488,7 +470,7 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 
   it('this module exports NO mode-switch call at all', () => {
-    // AN INERTNESS GUARD, not a deleted test (L8). `switchMode` posted to
+    // AN INERTNESS GUARD, not a deleted test. `switchMode` posted to
     // `/api/conversations/{id}/mode` — a route that no longer exists, because what a chat is
     // is decided when it is created and cannot be moved afterwards. A base-path assertion
     // cannot express that; the absence of the transport itself is the whole claim.
@@ -518,7 +500,7 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 
   it('buildFromPlan surfaces the refusal CODE, not just a sentence', async () => {
-    // R98 / the one-slot rule reach the browser as four different remedies on three statuses.
+    // The one-slot rule reaches the browser as four different remedies on three statuses.
     // A bare `Error` collapses them into one string, and the string is wrong for three of them.
     const fetchFn = vi.fn(
       async () =>
@@ -551,13 +533,13 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 })
 
-// F1 REGRESSION GUARD (turn transport). These four MUTATING calls ride the signed double-submit
+// REGRESSION GUARD (turn transport). These four MUTATING calls ride the signed double-submit
 // X-CSRF-Token, and every one of their routes enforces RequireCsrf server-side — so a dropped header
-// would 403 every turn-start and every Build-it press in prod (the P0 class) while the base-path
-// guard above stays fully green. Since U1 the header comes from `authFetch` rather than a second copy in this
+// would 403 every turn-start and every Build-it press in prod while the base-path
+// guard above stays fully green. The header now comes from `authFetch` rather than a second copy in this
 // module; the assertion is unchanged because the observable contract is. The read path
 // (readTurnStream) is a safe GET and carries none.
-describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
+describe('CSRF double-submit (regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const headersOf = (fetchFn: ReturnType<typeof vi.fn>) =>
     ((fetchFn.mock.calls[0] as unknown[])[1] as RequestInit).headers as Record<string, string>
@@ -606,13 +588,13 @@ describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call 
   })
 })
 
-// N11 REGRESSION GUARD (U1). Before U1 this module called raw `fetch` at all six sites and had no
+// REGRESSION GUARD. This module used to call raw `fetch` at all six sites and had no
 // 401 handling at all, so an expired JWT did not degrade the chat — it KILLED it: start, stop,
 // mode-switch, Build-it, plan-resolve and the SSE reader every one died where the rest of the app
 // quietly refreshed and retried. Routing them through `authFetch` is the whole fix, so pin it at
 // every site: a single call site slipping back to raw `fetch` reintroduces the dead transport for
 // exactly one action, which is precisely how this shipped unnoticed the first time.
-describe('session expiry recovery (N11) — every turn call refreshes once and retries', () => {
+describe('session expiry recovery — every turn call refreshes once and retries', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const unauthorized = () => new Response(JSON.stringify({ detail: 'Not authenticated' }), { status: 401 })
 
@@ -696,8 +678,8 @@ describe('session expiry recovery (N11) — every turn call refreshes once and r
     expect(seen.map((frame) => frame.type)).toEqual(['snapshot', 'text_delta'])
   })
 
-  it('the retried mutating call carries the POST-refresh CSRF token (the KTD-9 pairing)', async () => {
-    // U1 is two halves and they only work together: routing through authFetch without the
+  it('the retried mutating call carries the POST-refresh CSRF token', async () => {
+    // This fix is two halves and they only work together: routing through authFetch without the
     // per-attempt CSRF read would trade every 401 for a 403. Pin the pairing from this side too —
     // api.test.js owns the wrapper-level proof.
     document.cookie = 'csrf=before-refresh'

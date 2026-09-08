@@ -1,17 +1,14 @@
-"""`compute_publish_state` — U15's pure mapping from `(registry row, newest deployment
+"""`compute_publish_state` — a pure mapping from `(registry row, newest deployment
 row, saved head)` to one of thirteen `PublishState` values.
 
-Every case below is built WITHOUT a database session and WITHOUT an event loop: the
-function reads nothing but plain columns off two ORM instances it never persists. That
-is not an incidental convenience — it is the property the unit's "technical design"
-note asks for ("no I/O, no storage handle in the signature, so it cannot acquire a
-hidden input later"), and constructing the inputs by hand rather than through
-`AppRegistryFactory`/a live `deployments` row is what actually proves it, rather than
-merely asserting it in a docstring.
+Every case is built WITHOUT a database session and WITHOUT an event loop: the function
+reads nothing but plain columns off two ORM instances it never persists. That is the
+property the unit's technical-design note requires ("no I/O, no storage handle in the
+signature, so it cannot acquire a hidden input later"), and building inputs by hand rather
+than through `AppRegistryFactory` or a live `deployments` row is what proves it.
 
-The single object-store metadata HEAD this depends on, and the storage-error /
-no-app-row cases that only make sense at the route, are covered where the I/O lives:
-`test_deploy_routes.py`.
+The object-store HEAD this depends on, and the storage-error / no-app-row cases that only
+make sense at the route, are covered where the I/O lives: `test_deploy_routes.py`.
 """
 
 from __future__ import annotations
@@ -47,7 +44,7 @@ def _deployment(**overrides: object) -> Deployment:
 # `NOTHING_BUILT` is the thirteenth and is not here: `compute_publish_state` takes an
 # `AppRegistry` as a required argument, so "no app row at all" is decided in the route
 # BEFORE the function is ever called — see `test_deploy_routes.py`'s
-# `test_a_project_with_no_app_reads_nothing_built_with_no_approval_block`.
+# `test_the_approval_state_is_null_only_when_the_project_has_no_app`.
 
 
 @pytest.mark.parametrize(
@@ -166,8 +163,8 @@ def test_each_of_the_remaining_twelve_values_is_reachable(
 # --- the drift bullet: named scenarios worth pinning on their own -----------------------
 
 
-def test_ae24_a_live_app_with_four_saves_and_no_new_submission_reads_live_newer_work() -> None:
-    """THE case that motivated reading the saved head at all (R39/AE24). The submitted
+def test_a_live_app_with_four_saves_and_no_new_submission_reads_live_newer_work() -> None:
+    """THE case that motivated reading the saved head at all. The submitted
     commit (`source_commit_sha`) has NOT moved since approval — a Save never touches it
     — so a check that only ever compared the submitted commit against the live head
     would see no difference and answer `live_drift_unknown`. The saved snapshot's head
@@ -205,9 +202,8 @@ def test_ladder_rule_7_unattended_publish_reads_live_off_the_saved_head_never_th
 
 
 def test_approved_with_a_matching_pin_and_no_deployment_reads_ready_to_publish() -> None:
-    """The earlier draft's two lies, named: a never-published approved app is neither
-    `draft` (it has a real, actionable lifecycle) nor `starting_up` (nothing is
-    running — approval starts no pipeline)."""
+    """A never-published approved app is neither `draft` (it has a real, actionable
+    lifecycle) nor `starting_up` (nothing is running — approval starts no pipeline)."""
     app = _app(
         status=AppStatus.APPROVED,
         approval_route=ApprovalRoute.SELF_PUBLISH,
@@ -239,8 +235,8 @@ def test_a_non_routed_failure_code_reads_did_not_start() -> None:
     assert compute_publish_state(app, deployment, None) is PublishState.DID_NOT_START
 
 
-def test_switched_off_and_taken_offline_are_told_apart_ae23() -> None:
-    """AE23: a disabled app reads `switched_off` regardless of its deployment row; a
+def test_switched_off_and_taken_offline_are_told_apart() -> None:
+    """A disabled app reads `switched_off` regardless of its deployment row; a
     live app an administrator merely unpublished reads `taken_offline`. Different
     remedies, both durable, and neither may stand in for the other."""
     disabled = _app(status=AppStatus.DISABLED)

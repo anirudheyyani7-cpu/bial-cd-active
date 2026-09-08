@@ -54,8 +54,7 @@ export interface UserLimitsOut {
  * because a real caller can get an envelope without it — the fallback below is
  * `{}` rather than a fabricated all-null object, so a types-only diff should
  * widen the type to match the real fallback rather than reshape the fallback to
- * match a narrower type. (Independently, release's own admin.js fallback
- * already reads `data.defaults || {}` too.) */
+ * match a narrower type. */
 interface UsersPage {
   defaults: Partial<LimitFields>
   users: UserLimitsOut[]
@@ -68,9 +67,7 @@ interface UsersPage {
  * effective limits, `usageToday`, `role`, and the `suspendedAt` marker — plus the
  * standard-plan `defaults` and the `{nextCursor, hasMore}` cursor envelope.
  *
- * The page is filtered server-side by `q` (email / display-name substring). Today's
- * call used to send NO params, so once the backend paginated at 25 a larger roster
- * was silently truncated with nothing thrown; sending the cursor/limit/q closes that.
+ * The page is filtered server-side by `q` (email / display-name substring).
  *
  * `cursor` is `string | null` (not just `string`), matching `useKeysetList`'s real
  * `KeysetFetchArgs.cursor: string | null` contract — passed straight through rather
@@ -92,7 +89,7 @@ export async function fetchUsers(
   const query = params.toString()
   const res = await authFetch(`/api/admin/users${query ? `?${query}` : ''}`, { signal }, deps)
   if (!res.ok) throw await readApiError(res, 'Failed to load users')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   const data = body as Partial<UsersPage>
   return {
@@ -120,7 +117,7 @@ export interface FeedbackItem {
 export async function fetchFeedback(deps: AuthFetchDeps = {}): Promise<{ feedback: FeedbackItem[]; total: number }> {
   const res = await authFetch('/api/admin/feedback', {}, deps)
   if (!res.ok) throw await readApiError(res, 'Failed to load feedback')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   const data = body as { feedback?: FeedbackItem[]; total?: number }
   return { feedback: data.feedback || [], total: data.total ?? 0 }
@@ -132,9 +129,9 @@ export async function fetchFeedback(deps: AuthFetchDeps = {}): Promise<{ feedbac
  * contextSoftLimit / contextHardLimit — a number to set, or null to reset that field
  * to the default. Returns `{userId, limits, effectiveLimits}` (the new state).
  *
- * Propagation note (see docs/solutions/.../per-user-limits-daily-vs-context-…): a
- * dailyTokenLimit change lands on the user's NEXT request (live server read); the
- * context limits ride the cached profile and only take effect after the user reloads.
+ * Propagation note: a dailyTokenLimit change lands on the user's NEXT request (live
+ * server read); the context limits ride the cached profile and only take effect after
+ * the user reloads.
  */
 export async function updateUserLimits(
   userId: string,
@@ -151,7 +148,7 @@ export async function updateUserLimits(
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to update limits')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; limits: LimitFields; effectiveLimits: LimitFields }
 }
@@ -191,13 +188,13 @@ export async function bulkUpdateUserLimits(
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to apply the bulk limit')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { updatedCount: number }
 }
 
 /**
- * POST to suspend a user (R10). Returns `{userId, suspendedAt}`. The server bumps
+ * POST to suspend a user. Returns `{userId, suspendedAt}`. The server bumps
  * the user's token_version and kills every live session/refresh/runner token, so the
  * suspension is immediate. Distinct failure paths the panel branches on:
  *   403 → target is a super-admin (never suspendable — and since the caller is one,
@@ -212,13 +209,13 @@ export async function deactivateUser(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to deactivate user')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; suspendedAt: string | null }
 }
 
 /**
- * POST to restore a suspended user (R12). Returns `{userId, suspendedAt: null}`.
+ * POST to restore a suspended user. Returns `{userId, suspendedAt: null}`.
  *   409 → user is not suspended;
  *   404 → no such user.
  */
@@ -229,7 +226,7 @@ export async function reactivateUser(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to reactivate user')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; suspendedAt: string | null }
 }
@@ -246,7 +243,7 @@ export async function resetUserUsage(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to reset usage')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; usageToday: number }
 }

@@ -36,29 +36,18 @@ const QUOTA: ProgressEnvelope = { type: 'quota_exceeded', seq: 3, limit: 1_000_0
 const ENDED_QUOTA: ProgressEnvelope = { type: 'ended', seq: 4, status: 'ended', preview_url: null, snapshot_committed: true, reason: 'quota_exceeded' }
 
 /**
- * `start` AND `relaunch` ARE GONE FROM THIS HOOK, and the two describe blocks that drove them went
- * with them — thirteen tests over two functions that production could not call.
- *
- *   · `start` lost its caller when row creation and the build itself moved inside the turn's own
- *     transaction: a composer send is a TURN. Its client wrapper went in the same change.
- *   · `relaunch` was called only by `ConversationSurface.handleRelaunch`, wired to `LivePreview`'s
- *     `onRelaunch` — a prop the pane accepts and never reads.
- *
- * NOTHING THEY PINNED IS UNCOVERED, and this note is where a reader checks that rather than
- * assuming it:
+ * `start` and `relaunch` are gone from this hook — useBuildSession.ts carries why — and so are the
+ * two describe blocks that drove them. Nothing they pinned is uncovered:
  *   · the 409 → `BuildSessionAlreadyActiveError` mapping is `postJson`'s, and its two cases are
  *     re-pointed onto `relaunchPreview` in `utils/__tests__/buildSessionApi.test.ts`;
  *   · the `blocked` banner those 409s fed is deleted, and `pages/__tests__/relaunch-chain-retired`
  *     drives BOTH producers to prove it cannot come back;
- *   · the server's verbatim 503 copy (R6) is asserted where it is now read — the live restore path
+ *   · the server's verbatim 503 copy is asserted where it is now read — the live restore path
  *     in `components/workspace/__tests__/StartAppControl.test.tsx`;
  *   · the mid-flight-unmount guard (FIX 1) is re-pointed onto `reattach` below, which carries the
  *     identical `mountedRef` bail.
- *
- * Every scenario below that needed a live session now reaches one through `reattach`, the
- * surviving entry point — a reload onto a build that is still running.
  */
-describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2)', () => {
+describe('useBuildSession — status derivation across the lifecycle', () => {
   it('derives status at EACH hop: provisioning →(first step)→ building → preview_ready → ready → stop → ended', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
@@ -78,7 +67,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.envelopes.map((e) => e.type)).toEqual(['step'])
   })
 
-  it('preview_reconnecting raises a DISTINCT reconnecting flag (not a feed row, not feedDisconnected), cleared by the re-frame (F8/U5)', async () => {
+  it('preview_reconnecting raises a DISTINCT reconnecting flag (not a feed row, not feedDisconnected), cleared by the re-frame', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -108,7 +97,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.status).toBe('failed')
   })
 
-  it('quota graceful end resolves ENDED (not FAILED); quota banner set; timers torn down (C7 §8)', async () => {
+  it('quota graceful end resolves ENDED (not FAILED); quota banner set; timers torn down', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -119,7 +108,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.quota).toEqual({ limit: 1_000_000, used: 1_000_000, resetsAt: '2026-07-15T18:30:00Z' })
   })
 
-  it('missed preview_ready (KTD-1): reattach seeds previewUrl from getStatus even though no live preview_ready arrives', async () => {
+  it('missed preview_ready: reattach seeds previewUrl from getStatus even though no live preview_ready arrives', async () => {
     const client = makeClient({
       getStatus: vi.fn(async (): Promise<BuildSessionStatusResponse> => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'ready', previewUrl: PREVIEW_URL, lastSeq: 7, createdAt: 'c', updatedAt: 'u' })),
     })
@@ -130,7 +119,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.previewUrl).toBe(PREVIEW_URL)
   })
 
-  it('reattach measures elapsed time from the session createdAt, not the moment of reattach (review F3)', async () => {
+  it('reattach measures elapsed time from the session createdAt, not the moment of reattach', async () => {
     const created = '2026-07-14T00:00:00.000Z'
     const client = makeClient({
       getStatus: vi.fn(async (): Promise<BuildSessionStatusResponse> => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'building', previewUrl: null, lastSeq: 3, createdAt: created, updatedAt: 'u' })),
@@ -141,7 +130,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
   })
 })
 
-describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', () => {
+describe('useBuildSession — endReason: the pardoned preview signal', () => {
   const ENDED_COMPLETED: ProgressEnvelope = { type: 'ended', seq: 3, status: 'ended', preview_url: PREVIEW_URL, snapshot_committed: true, reason: 'completed' }
 
   it("a completed terminal carries reason 'completed' and KEEPS previewUrl — the done-preview-live state", async () => {
@@ -186,9 +175,9 @@ describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', 
   })
 
   it('a RECLAIMED terminal settles with a NULL reason — it must not claim a live preview', async () => {
-    // Reclaim now arrives from the server's own verdict on the feed rather than from a failed
-    // browser heartbeat (U13 deleted that loop), but the pane's contract is unchanged: a
-    // container taken back does not get to say "completed" and keep its preview on screen.
+    // Reclaim arrives from the server's own verdict on the feed, never from a browser heartbeat,
+    // and the pane's contract holds either way: a container taken back does not get to say
+    // "completed" and keep its preview on screen.
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -201,7 +190,7 @@ describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', 
 })
 
 /*
- * THE FORCE-END SUITE IS GONE (U33) — two tests, and both died WITH their subject rather than
+ * THE FORCE-END SUITE IS GONE — two tests, and both died WITH their subject rather than
  * losing coverage. One pinned the control-plane override (a stuck-mid-`building` session settles
  * from `ForceEndResponse.status`, never from the stream); the other pinned the non-owner 403
  * surfacing fail-closed. There is nothing left for either to describe: the hook wrapper, the
@@ -213,17 +202,10 @@ describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', 
  * 'stopped_by_user' and never as the pardoned 'completed'.
  */
 
-describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)', () => {
+describe('useBuildSession — an open tab is NOT a keep-alive writer', () => {
   /*
-   * REPLACES the old "keep-alive fails closed" suite, which characterised a blind `setInterval`
-   * that heartbeated and renewed the lock for as long as the tab existed. That loop made AN OPEN
-   * TAB a deadline writer — a browser left on a project overnight kept its container alive until
-   * morning, and nothing could reclaim it. R13 names the writers permitted to extend a sandbox's
-   * deadline and an open connection is deliberately not one of them.
-   *
-   * What replaced it is not another timer. A turn in flight is held server-side by the R10
-   * wall-clock lease (U12), which outranks every writer and — unlike this loop ever did — is
-   * legible to a sweep in another process.
+   * useBuildSession.ts carries why nothing in the browser extends a deadline; what is pinned here
+   * is that this hook makes no such call, however long a tab sits.
    */
 
   it('a live session with an untouched tab makes NO keep-alive calls, however long it sits', async () => {
@@ -233,17 +215,12 @@ describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)'
     act(() => { fake.open() })
     act(() => { fake.emitEnvelope(READY) })
 
-    // An hour of a tab nobody is touching. Before U13 this was ~120 heartbeats and 12 lock
-    // renewals — an hour of a container being told to stay up by a window.
+    // An hour of a tab nobody is touching.
     await act(async () => { await vi.advanceTimersByTimeAsync(3_600_000) })
 
-    // The old assertions here counted calls to `client.heartbeat` and `client.renewLock`. Both
-    // functions are now DELETED from the client, which is a strictly stronger guarantee than
-    // counting their calls: the type checker refuses the loop rather than a test noticing it ran.
-    // ...and the session is not torn down by the absence either: reclamation is the server's
-    // decision now, not something the browser talks itself into. This used to also assert
-    // `reclaimed === false`; that flag is gone, because deleting the loop deleted its only
-    // producer and left the state, its banner and its attention dot standing unreachable.
+    // There is nothing left to count: `heartbeat` and `renewLock` are gone from the client, so the
+    // type checker refuses the loop rather than a test noticing it ran. What is asserted instead is
+    // the other half — the session is not torn down by the absence either.
     expect(result.current.status).toBe('ready')
   })
 
@@ -259,7 +236,7 @@ describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)'
   })
 })
 
-describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
+describe('useBuildSession — feed disconnection + teardown', () => {
   it('a bounded-reconnect exhaustion raises feedDisconnected (not a stalled-build masquerade); reconnect resubscribes', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
@@ -273,7 +250,7 @@ describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
     expect(result.current.feedDisconnected).toBe(false)
   })
 
-  it('reconnect() reseeds previewUrl/status from getStatus — a preview_ready missed while the feed was dead still frames (finding #18)', async () => {
+  it('reconnect() reseeds previewUrl/status from getStatus — a preview_ready missed while the feed was dead still frames', async () => {
     // The reattach that opens the session and the reconnect that reseeds it now read the SAME
     // `getStatus`, so the fixture has to move between them or the "never seen" assertion below is
     // vacuous: the first call answers as the session looked when the tab reattached, the second as
@@ -298,9 +275,7 @@ describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
 
   it('unmount WHILE reattach() is in flight wires NO feed and NO timers (FIX 1 — no zombie heartbeat)', async () => {
     vi.useFakeTimers()
-    // RE-POINTED off `start`, which is gone. The guard is `mountedRef`, and `reattach` carries the
-    // identical bail — it is the surviving entry point, so it is now the only place the guard can
-    // be driven from at all.
+    // The guard is `mountedRef`, and `reattach` carries the identical bail.
     vi.useFakeTimers()
     let resolveStatus!: (v: BuildSessionStatusResponse) => void
     const statusGate = new Promise<BuildSessionStatusResponse>((res) => { resolveStatus = res })
@@ -320,7 +295,7 @@ describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
 
     expect(esFactory).not.toHaveBeenCalled() // no zombie EventSource
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
-    // No keep-alive interval can be left running: the client has no keep-alive surface left.
+    // No keep-alive interval can be left running.
   })
 
   it('a terminal end clears a lingering feed-disconnected banner (FIX 3 — no dead Reconnect button)', async () => {

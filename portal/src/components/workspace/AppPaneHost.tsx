@@ -1,52 +1,30 @@
 /**
- * THE APP PANE HOST (Plan A, U4) — one iframe for the whole workspace.
+ * THE APP PANE HOST — one iframe for the whole workspace.
  *
- * ═══ THE ONE IDEA ═══
+ * WHY THIS EXISTS: a SIBLING of the shell's `<Outlet/>`, so a route change (which replaces the
+ * outlet's content) can never reach it. The pane is rendered BY THE ADDRESS, not by whichever
+ * page matches — no address, no element; same address across every transition, same element.
+ * Mounting `LivePreview` anywhere else builds a second host, the remount this file forbids. The
+ * address deliberately outlives the surface that published it (leaving a build chat for the
+ * project screen must not kill a running app), so it is bounded by the PROJECT, not a
+ * publisher's lifetime — see `useWorkspaceAddress`.
  *
- * The pane used to be rendered BY THE ROUTE: it existed because `BuilderPage` was the page that
- * matched, and it was destroyed because a different page matched next. Here it is rendered BY THE
- * ADDRESS. No address, no element; the same address across every transition, the same element. R8
- * stops being a rule somebody has to remember and becomes a consequence of where the element lives.
+ * Frame identity is the URL plus `LivePreview`'s own reload nonce — route, rail mode and open
+ * chat are NOT part of it, and this host adds no `key`. THE FAILURE this guards against: buying
+ * continuity by weakening that identity, most obviously by never unmounting at all, which leaves
+ * a frame pointing at a gone container, undetectably. Continuity comes from WHERE THE ELEMENT
+ * LIVES, not from what identifies it — so the two legitimate re-frames stay exactly as they are:
+ * a turn ending over a live preview, and the manual Reload control. A different project is a
+ * different app, so a different address, so a legitimate remount; an UNRESOLVED project is not a
+ * different project.
  *
- * This component is a SIBLING of the shell's `<Outlet/>`, which is the whole mechanism. A route
- * change replaces the outlet's content and cannot reach a sibling.
- *
- * ═══ WHAT IDENTIFIES THE FRAME, AND THE FAILURE THIS IS WRITTEN AGAINST ═══
- *
- * The frame's identity is the framed URL plus the reload nonce that URL already carries inside
- * `LivePreview` (`url#nonce`). The route, the rail mode and the open chat are not part of it, and
- * this host adds no `key` of its own.
- *
- * THE FAILURE: buying continuity by weakening what identifies the frame — most obviously by making
- * it never unmount at all. That satisfies "nothing reloaded" and leaves a frame pointing at a
- * container that is gone, with nothing able to detect it. Continuity has to come from WHERE THE
- * ELEMENT LIVES, not from what identifies it — so the two legitimate re-frames stay exactly as they
- * are: a turn ending over a live preview, and the manual Reload control.
- *
- * A DIFFERENT PROJECT IS A DIFFERENT APP, so a different address, so a legitimate remount. That is
- * said here rather than left to be discovered, and the channel enforces it: a held address carries
- * the project it belongs to, and stops being this workspace's the moment a surface declares a
- * different one. An UNRESOLVED project is not a different project — see `useWorkspaceAddress`.
- *
- * ═══ HIDDEN IS NOT UNMOUNTED ═══
- *
- * When no mounted surface declares the pane visible, the frame stays in the document inside a
- * zero-size wrapper with `visibility:hidden`. The distinction is the requirement: the pane is a
- * cross-origin frame whose `src` is re-issued on remount, and re-issuing it means a full reload
- * plus a fresh framing handshake.
- *
- * `visibility:hidden` RATHER THAN `aria-hidden` OR ZERO WIDTH ALONE, for the reason `hiddenSubtree.ts`
- * records beside the constant: zero width and `overflow:hidden` clip a subtree visually but leave its
- * descendants in the tab order, so `aria-hidden` alone left controls keyboard-reachable while
- * collapsed — a WCAG 4.1.2 violation. The stake is highest here of the three appliers: what this one
- * hides is a cross-origin frame holding a whole application.
- *
- * ═══ WHAT THIS COMPONENT WILL NOT DO ═══
- *
- * NOTHING HERE REQUESTS AN ADDRESS. The host frames what already exists; it never starts a
- * sandbox. That is what keeps R3 true before Plan F owns the start control — a mounted-but-hidden
- * pane on the project screen costs nothing, because there is nothing for it to frame unless a
- * conversation already put something there.
+ * HIDDEN IS NOT UNMOUNTED: an invisible pane stays in the document, zero-size and
+ * `visibility:hidden` — re-issuing this cross-origin frame's `src` means a full reload plus a
+ * fresh handshake. Not `aria-hidden`/zero-width alone (see `hiddenSubtree.ts`): those leave
+ * descendants tab-reachable while visually clipped, a WCAG 4.1.2 violation — the highest-stakes
+ * case of the three appliers, since this hides a whole application. NOTHING HERE REQUESTS AN
+ * ADDRESS: the host frames what already exists and never starts a sandbox, so a mounted-but-
+ * hidden pane on the project screen costs nothing.
  */
 import { useRef } from 'react'
 import LivePreview from '../LivePreview'
@@ -59,9 +37,9 @@ export interface AppPaneHostProps {
   device: DeviceName
   reloadNonce: number
   /**
-   * The pane is unwanted but has not finished going (plan 002, U6). Decided by `AppPane`, which
-   * owns the column this sits inside, so the two cannot disagree about whether they are still on
-   * their way out — see `paneExit.ts`.
+   * The pane is unwanted but has not finished going. Decided by `AppPane`, which owns the column
+   * this sits inside, so the two cannot disagree about whether they are still on their way out
+   * — see `paneExit.ts`.
    */
   leaving: boolean
 }
@@ -84,23 +62,24 @@ export default function AppPaneHost({ device, reloadNonce, leaving }: AppPaneHos
   //                  the app: silently, and semantically wrongly, because the turn had not ended.
   //
   // IT USED TO BE TWO, AND THE SECOND ONE IS NOW SOMEBODY ELSE'S PROBLEM. `completedLive` — the
-  // #13/R2 pardon, "this container is alive under an idle lease" — was the field that made
+  // pardon, "this container is alive under an idle lease" — was the field that made
   // `keepFramed` outrank a terminal status, so defaulting it to `false` on a leave collapsed
   // `frameContext` and UNMOUNTED the iframe: leaving a build chat right after the build succeeded,
   // which is the most common moment to leave one, destroyed an app the server was still serving.
   //
-  // The comment that stood here proposed the fix and U2 took it: liveness is a fact about WHAT IS
-  // FRAMED, not about the conversation's chrome, so it moved onto the ADDRESS as `serving`. The
-  // address cell is KEPT across an unmount by the channel's own rules, so the hazard is structural
-  // rather than guarded — there is no held ref to forget to update, and no second copy of the value
-  // to go stale. The hold below is what remains, and it is genuinely chat-scoped.
+  // The comment that stood here proposed the fix, and the fix landed: liveness is a fact about
+  // WHAT IS FRAMED, not about the conversation's chrome, so it moved onto the ADDRESS as
+  // `serving`. The address cell is KEPT across an unmount by the channel's own rules, so the
+  // hazard is structural rather than guarded — there is no held ref to forget to update, and no
+  // second copy of the value to go stale. The hold below is what remains, and it is genuinely
+  // chat-scoped.
   //
   // Every other pane field that reaches the frame chain — `reconnecting`, `previewState`,
   // `compileState` — defaults to the permissive value, so losing it cannot unmount anything.
   // (`relaunching` was another such field and the one genuine counter-example: it defaulted
-  // permissively too, but only because it was never read. It is gone with the rest of the relaunch
-  // chain.) Adding a restrictive-by-default field to `PaneView` means adding it here too — or,
-  // better, asking first whether it describes the ADDRESS rather than the conversation.
+  // permissively too, but only because it was never read. It is gone with the rest of the
+  // relaunch chain.) Adding a restrictive-by-default field to `PaneView` means adding it here
+  // too — or, better, asking first whether it describes the ADDRESS rather than the conversation.
   //
   // Holding the last published value keeps the leave side inert. The RETURN side still re-frames
   // where it should, and that is correct and unchanged: a remounted surface publishes its own pane
@@ -119,10 +98,10 @@ export default function AppPaneHost({ device, reloadNonce, leaving }: AppPaneHos
     <div
       data-testid="app-pane"
       aria-hidden={!visible}
-      // THE MOVEMENT THE BOARD DRAWS (plan 002, U6). `T2Sliding` is an artboard of this one
-      // transition, caught halfway, with an annotation that says exactly what it is: the app card
-      // sliding out to the right and fading as it goes, and "nothing about the app is stopped or
-      // reloaded — it is only taken off the screen".
+      // THE MOVEMENT THE BOARD DRAWS. `T2Sliding` is an artboard of this one transition, caught
+      // halfway, with an annotation that says exactly what it is: the app card sliding out to the
+      // right and fading as it goes, and "nothing about the app is stopped or reloaded — it is
+      // only taken off the screen".
       //
       // THE ANIMATION IS ON THE HIDE TREATMENT, NEVER ON THE MOUNT, and that distinction is the
       // whole reason this is safe. The element is not conditionally rendered — it is the same node

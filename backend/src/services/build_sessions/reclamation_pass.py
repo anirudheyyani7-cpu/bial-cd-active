@@ -1,21 +1,14 @@
-"""Gather the evidence one reclamation pass needs, and hand it to the classifier (U11).
+"""Gather the evidence one reclamation pass needs, and hand it to the classifier.
 
 THE SPLIT IS THE TESTABILITY ARGUMENT. `reclaim.py` decides and touches nothing; this module
-touches everything and decides nothing. Every safety property lives in the pure half, where it can
-be proven against a synthetic fleet holding every dangerous combination at once; this half is the
-plumbing that feeds it, and it can be exercised with fakes.
+touches everything and decides nothing. Every safety property is proven in the pure half against a
+synthetic fleet; this half is the plumbing that feeds it, and fakes exercise it.
 
-THREE SOURCES, AND THEY DISAGREE ON PURPOSE:
-
-* **Azure** is the fleet of record (ADR-0029). What it says exists, exists.
-* **Redis** is a spare-list ONLY — never an inventory. A container missing from it is not thereby
-  an orphan; it is a container with no claim on it.
-* **Postgres** answers "does an app row match this container", which decides whether an unclaimed
-  container waits one hour or four.
-
-`None` from the product database means COULD NOT ASK, and the classifier escalates the whole fleet
-on it. That is not paranoia: the alternative reads a database outage as "no app matches any
-container", which is the shape that turns every real builder's app into a high-confidence orphan.
+THREE SOURCES, AND THEY DISAGREE ON PURPOSE. **Azure** is the fleet of record: what it
+says exists, exists. **Redis** is a spare-list ONLY, never an inventory — a container missing from
+it is not thereby an orphan, it is a container with no claim on it. **Postgres** answers "does an
+app row match this container", which decides whether an unclaimed container waits one hour or
+four.
 """
 
 from __future__ import annotations
@@ -66,20 +59,14 @@ class PassReport:
 async def _who_the_store_thinks_owns_what(
     redis: aioredis.Redis,
 ) -> list[tuple[uuid.UUID, str]]:
-    """Every `(user, container name)` pair the coordination store currently records.
-
-    Walks the same patterns `sweep_all` does — during the R22 dual-read window that is the
-    environment-scoped prefix AND the legacy one — and reads through the same `read_registry`, so
+    """Every `(user, container name)` pair the coordination store currently records — walked
+    through `registry_scan_patterns` and `read_registry`, exactly as `sweep_all` walks them, so
     this and the sweep can never disagree about what is registered.
 
     A LIST, NOT A MAP, and that is the whole point: nothing here is keyed by container name, so
-    nothing here can silently drop a record because another record named the same container.
-    Both readers below do their own keying, deliberately and visibly.
-
-    ONE SPELLING FOR BOTH READS. The classifier's spare-list and the destroy arm's re-read ask
-    the same question of the same keys through this function; two implementations of "what does
-    the store say" would drift, and the drift would show up as a container spared by the
-    classifier and destroyed by the arm that re-checks it."""
+    nothing can silently drop a record because another named the same container. Both readers
+    below key it themselves, and both ask this one function — two spellings of "what does the
+    store say" would drift into sparing and destroying the same container."""
     out: list[tuple[uuid.UUID, str]] = []
     seen: set[uuid.UUID] = set()
     for pattern in registry_scan_patterns():
@@ -129,22 +116,14 @@ async def _claim_of(redis: aioredis.Redis, user: uuid.UUID) -> RegistryClaim:
 
 
 async def claim_for_container(redis: aioredis.Redis, *, app_name: str) -> RegistryClaim | None:
-    """What the store says about ONE container right now, or `None` when nothing claims it.
+    """What the store says about ONE container right now, or `None` when nothing claims it — the
+    destroy arm's re-read of the classifier's spare-list, immediately before the delete.
 
-    THE NAME CHECK IS THE POINT, not a formality. The claim keys are container names but the
-    signals are keyed by USER, so reading a user's lock and calling it a claim on `app_name` is
-    only true while their registry still names `app_name`. Once it names a fresh container, those
-    signals describe THAT one — and reading them as a claim on the orphan would spare the very
-    container the pass exists to collect, every pass, forever.
-
-    ASKS THE STORE, NOT THE OWNER. An earlier version took the `user_id` off the container's ARM
-    tags and read only that user's record, which quietly re-narrowed the question to "does the
-    ARM-tagged owner claim this?" — and a container claimed by a DIFFERENT record answered `None`
-    and was destroyed. Scanning costs a pass at most `DESTROY_CEILING` extra walks of a small
-    keyspace every five minutes, which is nothing against deleting a live build.
-
-    Used by the destroy arm to re-run the classifier's spare-list read immediately before the
-    delete, against a store that has had a whole staging interval to change its mind."""
+    THE NAME CHECK IS THE POINT, not a formality. The signals are keyed by USER, so a user's lock
+    is a claim on `app_name` only while their registry still names it; once it names a fresh
+    container those signals describe THAT one, and sparing on them spares the orphan forever. ASKS
+    THE STORE, NOT THE OWNER: reading only the ARM-tagged owner's record answers `None` for a
+    container a different record claims, and the extra walks of a small keyspace cost nothing."""
     claim: RegistryClaim | None = None
     for user, name in await _who_the_store_thinks_owns_what(redis):
         if name != app_name:

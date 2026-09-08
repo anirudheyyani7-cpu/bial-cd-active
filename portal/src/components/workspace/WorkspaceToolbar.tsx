@@ -1,46 +1,25 @@
 /**
- * THE TOOLBAR ROW (plan 002, U2) — one 54px row under the navbar, on both workspace screens.
+ * THE TOOLBAR ROW — one 54px row under the navbar, on both workspace screens, drawn once by
+ * the shell rather than per-surface.
  *
- * ═══ WHY IT IS DRAWN BY THE SHELL AND NOT BY THE RAIL ═══
+ * WHY THIS EXISTS: it used to be three separate headers (rail, conversation panel, framed
+ * preview), and the project name lived inside the 400px rail — so it truncated at the rail's
+ * width and disappeared entirely when the rail collapsed. Drawing it once, above the two-column
+ * grid, makes "the title survives a collapse" true by construction, and makes the row a single
+ * element across a route change (position never remounts, only its contents change).
  *
- * It used to be three separate headers: the rail's own (back control, project name, status chip,
- * rename), the conversation panel's (a bordered breadcrumb), and the framed preview's (device
- * widths, Reload, Save). Three headers, three widths, three sets of contents — and the project
- * name lived inside the 400px rail, so it truncated at the rail's width and DISAPPEARED entirely
- * when the rail was collapsed. The collapse board draws the opposite: hide the details and the
- * title is still there.
+ * Its SHAPE comes from `rail.mode`, not `heading.chatKind`: mode is derived from the pathname
+ * and is right on the first frame, while chatKind is an answer that arrives from a fetch — using
+ * it re-shaped the row under the reader on a cold `/chat/{id}` open (bookmark, reload, hand-over
+ * from a plan chat). It deliberately does NOT read the `pane` cell (republished every keystroke,
+ * cleared on unmount) — either fact alone disqualifies it. `heading` comes from the ROUTES so a
+ * cold open still renders the row's full height and back control while data resolves. Save reads
+ * its values/action from the `save`/`actions` cells at press time, so a handler whose identity
+ * changes every render costs nothing and no stale closure is reachable.
  *
- * Drawing it once, above the two-column grid, is what makes that true by construction rather than
- * by a rule someone has to keep. It also means the row is a SINGLE ELEMENT across a route change
- * from the project screen to one of its chats — its contents change, its position never does, and
- * nothing in it remounts.
- *
- * ═══ WHICH CHANNEL CELLS FEED IT, WHICH THE PLAN ASKED TO HAVE RECORDED ═══
- *
- * The heading comes from `heading`, published by the ROUTES rather than by the surfaces, so a cold
- * open of a chat address renders the row at its full height with its back control working while
- * the conversation and the project are both still resolving. See `WorkspaceHeading`.
- *
- * WHICH OF THE TWO SHAPES IT DRAWS comes from `rail.mode` instead, and that is the whole reason
- * the two are separate reads. The heading's fields are ANSWERS — a name, a title, a kind — and
- * every one of them arrives from a fetch; the rail's mode is derived from the pathname, so it is
- * right on the first frame. Deciding the shape from an answer meant the row wore the project
- * screen's layout for the length of a cold chat open and then re-shaped under the reader.
- *
- * It deliberately does NOT read the `pane` cell, which is the obvious place chrome already lives:
- * that cell is republished on every keystroke in the composer and is cleared to nothing when its
- * publisher unmounts. Either one alone would disqualify it.
- *
- * The save control reads its VALUES from `save` and its ACTION from `actions`, at press time —
- * so a handler whose identity changes on every render of the conversation surface costs this row
- * nothing, and a stale closure is not reachable. See `useWorkspaceActions`.
- *
- * ═══ WHAT IS DELIBERATELY NOT HERE ═══
- *
- * THE HISTORY CONTROL. Four boards draw a clock icon in this row's right cluster and the history
- * drawer behind it is a later feature by the owner's decision — so the control is not built, and
- * not left as a disabled stub either. A control that implies a drawer nobody can open is worse
- * than its absence.
+ * NOT HERE: the history-drawer control. Four boards draw its icon, but the drawer is a later
+ * feature by the owner's decision — an affordance for a drawer nobody can open is worse than
+ * no affordance, so it is neither built nor left as a disabled stub.
  */
 import { useMemo } from 'react'
 import {
@@ -87,18 +66,12 @@ export default function WorkspaceToolbar({
   const address = useWorkspaceAddress()
   const paneVisible = useWorkspacePaneVisible()
 
-  // WHICH SHAPE THE ROW TAKES IS A FACT ABOUT THE ADDRESS, not about the conversation. It used to
-  // be `heading.chatKind !== null`, and a kind is something only the SERVER can answer: opening a
-  // bare `/chat/{id}` — a reload, a bookmark, the hand-over out of a plan chat — spends a whole
-  // `GET /conversations/{id}` with no kind at all. For that window the row drew the PROJECT
-  // screen's shape over a chat: a lone `<h1>` reading "Your project", no breadcrumb, and a back
-  // control labelled and aimed at the projects list, which threw a citizen who reloaded and
-  // pressed back straight out of the project they were in. Then it re-shaped under them when the
-  // fetch landed — the layout shift this row is drawn by the shell to prevent.
-  //
-  // The rail's mode is that fact and it is available from the first frame: the shell derives it
-  // from the pathname and nothing else (`railModeFor`), so a chat address is a chat address before
-  // anything has been fetched. The KIND still decides only what the kind pill says.
+  // A fact about the ADDRESS, not the conversation. It used to be `heading.chatKind !== null`,
+  // but kind only ever arrives from the server — so a cold `/chat/{id}` open drew the PROJECT
+  // shape instead (a bare "Your project" heading, a back control aimed at the projects list),
+  // then re-shaped under the reader once the fetch landed and threw anyone who pressed back
+  // right out of the project they were in. `rail.mode` is derived from the pathname alone, so
+  // it is right on the first frame; the kind still decides only what the pill says.
   const isChat = useRailSlot().mode === 'conversation'
   const kind = useMemo(() => (heading.chatKind ? chatKindFor(heading.chatKind) : null), [heading.chatKind])
   // Capitalised so JSX reads it as a component rather than as an intrinsic element. `null` is a
@@ -122,7 +95,7 @@ export default function WorkspaceToolbar({
   return (
     <div
       data-testid="workspace-toolbar"
-      /* THE ROW SCROLLS SIDEWAYS RATHER THAN BEING CLIPPED (`#201`, plan 001 D22).
+      /* THE ROW SCROLLS SIDEWAYS RATHER THAN BEING CLIPPED.
          Nine occupants do not fit in 360px and never will. The shell's root is `overflow-hidden`
          — a deliberate scroll-containment choice for the rail and the pane, unrelated to narrow
          screens — so what overflowed this row was not merely off to the right, it was CLIPPED,
@@ -147,7 +120,7 @@ export default function WorkspaceToolbar({
         aria-label={backToProject ? 'Back to project' : 'Back to projects'}
         title={backToProject ? 'Back to project' : 'Back to projects'}
         /* THE SMALLEST TARGET IN THE ROW, at 20×20 — a 16px chevron in 2px of padding. Below the
-           stacking threshold it presents 44×44 (R38a). The GLYPH does not move: `min-h`/`min-w`
+           stacking threshold it presents 44×44. The GLYPH does not move: `min-h`/`min-w`
            grow the box around it and `justify-center` keeps it in the middle, so nothing about the
            row's drawn weight changes — only the area a finger can land on. */
         className="inline-flex flex-shrink-0 items-center justify-center rounded-lg p-0.5 text-neutral transition hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
@@ -173,7 +146,7 @@ export default function WorkspaceToolbar({
                   build chat — `BuildChat`, `NewBuildChat`, `PlainAnswer`, `ChatStarting` — draws
                   BUILD as the word alone. That is why the catalogue answers this with its own
                   `pillIcon` rather than with the picker's `Icon`: the row must not branch on a
-                  chat's kind (R72), so the difference has to live in the one table that holds the
+                  chat's kind, so the difference has to live in the one table that holds the
                   kinds. Decorative beside the word it accompanies, hence `aria-hidden`. */}
               {PillIcon && <PillIcon size={11} aria-hidden="true" className="flex-shrink-0" />}
               {kind.word}
@@ -182,13 +155,14 @@ export default function WorkspaceToolbar({
           )}
           <h1
             data-testid="toolbar-title"
-            /* THE TITLE STOPS COLLAPSING TO NOTHING (R40, `#201`).
+            /* THE TITLE STOPS COLLAPSING TO NOTHING.
                Every other occupant of this row is `flex-shrink-0`, and this one carried `min-w-0`
                with no floor — so it was the ONLY flexible participant and 100% of any width
                deficit landed on it, all the way to a measured zero. At 360px the heading a citizen
                needs in order to know where they are simply was not on screen.
                144px is about ten characters and the ellipsis: enough to tell two projects apart.
-               Past that the deficit goes to the row's scroller, which is what D22 gave it.
+               Past that the deficit goes to the row's own sideways scroll, where everything that
+               no longer fits stays reachable instead of being clipped.
                WHY IT IS GATED AT `narrow:` AND NOT UNCONDITIONAL. `min-width` in flex does not
                only stop shrinking — it also GROWS an item whose content is narrower than the
                floor. Ungated, a short name would be padded out to 144px at every width and shove
@@ -217,42 +191,38 @@ export default function WorkspaceToolbar({
         </h1>
       )}
 
-      {/* ONE PLACE SAYS THE STATE AT A TIME, and which place it is depends on whether the rail is
-          showing it. `BuildChat`, `PlanChat` and every other chat board draws the chip beside the
-          title, because a chat has no APP STATUS section. `Collapsed` draws it there too, for the
-          same reason — the section it lives in has just gone off screen. `PreviewOff`, `Main`,
-          `NewProject` and `NothingBuilt` draw the identity cluster as back-chevron + title and
-          NOTHING else, because the rail is right there carrying the pill.
-
-          Ungated, the project screen stated the same word twice inside 300px — a `Draft` chip in
-          the row and a `Draft` pill in the rail — which is the classic way two renderings of one
-          fact start to disagree. */}
+      {/* ONE PLACE SAYS THE STATE AT A TIME. Chat boards (which have no app-status section) and
+          `Collapsed` (whose section just went off screen) draw the chip beside the title;
+          `PreviewOff`, `Main`, `NewProject` and `NothingBuilt` draw only chevron + title, since
+          the rail is right there carrying the pill. Ungated, the project screen stated the same
+          word twice inside 300px — a `Draft` chip here and a `Draft` pill in the rail — the
+          classic way two renderings of one fact start to disagree. */}
       {heading.projectId && (isChat || collapsed) && (
         <span className="ms-2.5 flex-shrink-0">
           <PublishStatusChip projectId={heading.projectId} />
         </span>
       )}
 
-      {/* RENAME SURVIVES THE REBUILD, and it had to be moved rather than dropped. It lived in the
-          rail's header, which U3 replaces with the board's three sections — none of which is a
-          project name. No board draws a rename control anywhere, but the origin's rule is not to
-          delete a shipped capability because an older board omits it, so it comes here, next to
-          the name it edits, at the smallest weight the row has.
+      {/* RENAME SURVIVES THE REBUILD, moved here from the rail's header once that header was
+          replaced by the board's three sections, none of which is a project name. No board draws
+          a rename control anywhere, but a shipped capability is not deleted because an older
+          board omits it, so it lives next to the name it edits, at the smallest weight the row
+          has.
 
-          WHAT GATES IT IS THE NAME, NOT THE ID (`#207`). `projectId` is the ROUTE PARAM — it is
-          non-null for an address that never resolved to a project at all, including the mangled
-          paste that 422s at the boundary — so gating on it drew a pencil over a page with no
-          project behind it, whose press was a measured no-op (`NO_ACTIONS.rename` is `null` and
-          the call site is optional). The NAME is the only field on this heading that is an ANSWER
-          from the project's own fetch, so it is the one that means "a project loaded", on both
-          routes that publish a heading. Explicitly against `null` rather than truthy: a name is a
-          string, and `'' && …` renders a stray text node instead of nothing.
+          WHAT GATES IT IS THE NAME, NOT THE ID. `projectId` is the route param — non-null even for
+          an address that never resolved to a project at all, including a mangled paste that 422s
+          at the boundary — so gating on it drew a pencil over a page with no project behind it,
+          whose press was a measured no-op (rename is nullable and optional at the call site). The
+          NAME is the only field on this heading that is an answer from the project's own fetch, so
+          it is the one that means "a project loaded", on both routes that publish a heading.
+          Explicitly against `null` rather than truthy: a name is a string, and `'' && …` renders a
+          stray text node instead of nothing.
 
           IT MUST NOT SPREAD TO THE BACK CONTROL ABOVE. That control's whole job is to survive the
-          branch where nothing loaded — it is the way OUT of the dead address this issue is about,
-          and gating it on the same fact would strand the citizen on the page. For the same reason
-          the breadcrumb keeps its "Your project" fallback: a missing name silences the pencil, and
-          nothing else in the row. */}
+          branch where nothing loaded — it is the way out of a dead address — and gating it on the
+          same fact would strand the citizen on the page. For the same reason the breadcrumb keeps
+          its "Your project" fallback: a missing name silences the pencil, and nothing else in the
+          row. */}
       {!isChat && heading.projectName !== null && (
         <button
           type="button"
@@ -338,12 +308,11 @@ export default function WorkspaceToolbar({
 
         <SaveControl save={save} readActions={readActions} />
 
-        {/* THE COLLAPSE, ON THE ROW RATHER THAN ON THE PANE. It was drawn by `AppPane`, which was
-            already an improvement on living inside the rail it hides — a collapsed rail is
-            invisible and untabbable, so a toggle in it is a one-way door. The row is better still
-            for the same reason it holds the title: it survives the collapse AND it survives the
-            pane going away, so the control has one home in every state instead of appearing and
-            disappearing with the pane. */}
+        {/* THE COLLAPSE, ON THE ROW RATHER THAN ON THE PANE OR IN THE RAIL. A collapsed rail is
+            invisible and untabbable, so a toggle inside the rail it hides is a one-way door. The
+            row is right for the same reason it holds the title: it survives the collapse AND it
+            survives the pane going away, so the control has one home in every state instead of
+            appearing and disappearing with the pane. */}
         {paneVisible && (
           <button
             type="button"
@@ -365,36 +334,14 @@ export default function WorkspaceToolbar({
 }
 
 /**
- * THE SAVE CONTROL, in the board's three states.
- *
- * Clean is an outlined chip reading "Saved". Dirty is a TEAL OUTLINE on a pale teal ground with a
- * 6px amber dot — not a filled teal button, which is what the code had: a permanently loud control
- * is one people learn to ignore, and the dot is what the eye actually catches. That dot is one of
- * exactly two places the whole canvas uses the accent colour.
- *
- * `dirty === null` MEANS "COULD NOT TELL" AND RENDERS NOTHING. It is not clean. The check costs two
- * `git` executions inside the container, so a stopped project has no answer at all, and a chip
- * reading "Saved" over an unknown is the one thing this control must never say.
- *
- * WITH NO ACTION PUBLISHED IT IS A STATUS, NOT A BUTTON — a real `<span>`, so nothing invites a
- * press that would do nothing. That is today's project screen, whose surface deliberately has no
- * `onSave`; U11 gives it one and the same control becomes pressable there.
- *
- * ═══ AND WHILE IT IS WORKING IT SHOWS IT, NOT ONLY SAYS IT (`#202`) ═══
- *
- * The control standing between a citizen and losing their work was the quietest wait in the
- * product: one word changed and nothing else did — no moving part, and `aria-busy` measured at
- * zero across the whole row. The canvas rebuild dropped the spinner the old preview header
- * shipped (`{saving ? <Loader2 className="animate-spin" /> : <Save />}`) and nothing went red,
- * because a test that asserts a LABEL passes whether or not anything moves beside it.
- *
- * So it is back, in the idiom the five other confirm-and-wait controls already use —
- * `ReclaimWorkspaceDialog`, `UnsavedWorkGuard`, `ProjectCreateModal`, `ProjectDeleteDialog`,
- * `DataClassificationModal`. `animate-spin` is not an arbitrary class: it is one of the three
- * utilities `index.css`'s reduced-motion block suppresses, so this spinner stops moving for a
- * citizen who asked for that WITHOUT this file knowing the preference exists. The suite asserts
- * the class name for exactly that reason — jsdom cannot evaluate a media query, so a test that
- * only proved "a spinner is here" would be equally green in both worlds.
+ * THE SAVE CONTROL, in the board's three states. Clean is an outlined "Saved" chip; dirty is a
+ * teal outline on pale teal with a 6px amber dot, one of only two accent-colour uses on the
+ * canvas — a loud filled control gets ignored. `dirty === null` means "could not tell" and renders
+ * nothing, never "Saved": the git check costs two executions, so a stopped project has no answer.
+ * With no action published it is a real `<span>`, not a button, so nothing invites a no-op press.
+ * While it works it now SHOWS that too, with `animate-spin` — one of the three utilities
+ * `index.css`'s reduced-motion block suppresses — asserted by class name because jsdom cannot
+ * evaluate a media query and a label-only assertion would pass whether or not anything moved.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save
@@ -404,7 +351,7 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
     ? 'border-primary bg-canvas-savedirty text-primary font-bold'
     : 'border-bial-border bg-white text-neutral font-semibold'
   // ~31px tall and comfortably past 44px wide on its own words, so only the HEIGHT needs a floor
-  // below the stacking threshold (R38a). The floor is on the shared shell rather than on the
+  // below the stacking threshold. The floor is on the shared shell rather than on the
   // button alone: the pressable and the unpressable rendering of this control are meant to be the
   // same object in two states, and one of them quietly changing height would say otherwise.
   const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] narrow:min-h-[44px] ${look}`

@@ -1,7 +1,7 @@
-"""provision_app_storage — the birth-path Blob provisioning half (C9 §6, KTD-2/KTD-3).
+"""provision_app_storage — the birth-path Blob provisioning half.
 
 Network-free: a fake AppContainerStore stands in for the store accessor, so the env-dict shape, the
-sandbox-facing base URL (KTD-2), the disabled-store {} path, and fail-first propagation are all
+sandbox-facing base URL, the disabled-store {} path, and fail-first propagation are all
 observable without Azure.
 """
 
@@ -85,7 +85,7 @@ async def test_returns_exactly_the_two_blob_vars(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_uses_sandbox_facing_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    # KTD-2: the injected URL must be a host the sandbox reaches (the docker-network Azurite
+    # The injected URL must be a host the sandbox reaches (the docker-network Azurite
     # address locally), NOT the control-plane's account_url.
     store = _FakeStore()
     _patch_store(monkeypatch, store)
@@ -99,7 +99,7 @@ async def test_uses_sandbox_facing_base_url(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_account_url_fallback_when_sandbox_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     # Store CONFIGURED but settings.sandbox is None — a real non-prod state, since object storage
     # and sandbox are independently-optional settings. The injected URL must fall back to the
-    # store's own account_url default (base_url=None), NOT a sandbox-facing host (the KTD-2 knob is
+    # store's own account_url default (base_url=None), NOT a sandbox-facing host (the knob is
     # simply absent here). Covers the `sandbox is None` side of the ternary.
     store = _FakeStore()
     _patch_store(monkeypatch, store)

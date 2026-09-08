@@ -142,12 +142,10 @@ describe('FeedbackModal', () => {
     const last = items[items.length - 1]
     expect(items.length).toBeGreaterThanOrEqual(2)
 
-    // Tab from the last focusable wraps to the first.
     act(() => last.focus())
     pressKey(last, 'Tab')
     expect(document.activeElement).toBe(first)
 
-    // Shift+Tab from the first focusable wraps to the last.
     act(() => first.focus())
     pressKey(first, 'Tab', true)
     expect(document.activeElement).toBe(last)

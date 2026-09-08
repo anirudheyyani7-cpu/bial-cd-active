@@ -1,20 +1,15 @@
 """CSRF — signed, session-bound double-submit token.
 
-The token lives in a NON-HttpOnly cookie (JS reads it) and must be echoed back in
-the `X-CSRF-Token` header on every state-changing request (refresh, logout). Two
-independent guarantees, both required to pass:
+Lives in a NON-HttpOnly cookie (JS reads it) and must be echoed in the `X-CSRF-Token` header on
+every state-changing request. Two guarantees, both required: DOUBLE-SUBMIT — cookie and header
+values must be byte-equal, since a cross-origin attacker can force a request but cannot read our
+cookie to populate the header (SameSite is a second line, not the only one); and SESSION BINDING —
+the token is `{nonce}.{hmac}`, HMAC (SHA-256, session-secret-keyed) over
+`user_id:token_version:nonce`, so it is unforgeable without the secret and dies with the session on
+a `token_version` bump (logout/revocation).
 
-1. Double-submit: the cookie value and the header value must be byte-equal — an
-   attacker on another origin can force a request but cannot read our cookie to
-   populate the header (SameSite is a second line, not the only one).
-2. Session binding: the token is `{nonce}.{hmac}` where the HMAC (SHA-256, keyed
-   by the session secret) covers `user_id:token_version:nonce`. So a token cannot
-   be forged without the secret, and one issued before a `token_version` bump
-   (logout / revocation) no longer verifies — CSRF tokens die with the session.
-
-`verify_csrf` is constant-time and fails CLOSED: any missing, malformed, or
-mismatched input returns False, never an exception the caller might miss.
-"""
+`verify_csrf` is constant-time and fails CLOSED: any missing/malformed/mismatched input returns
+False, never an exception."""
 
 from __future__ import annotations
 

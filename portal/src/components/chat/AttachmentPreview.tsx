@@ -1,42 +1,24 @@
 /**
- * AN ATTACHMENT, OPENED OVER THE CONVERSATION (R47, R50, R52, R64).
+ * AN ATTACHMENT, OPENED OVER THE CONVERSATION.
  *
- * ══ NOTHING HERE IS FRAMED, AND THE AUTHORITY ON THAT IS THE CONTROL PLANE ══
+ * WHY THIS EXISTS: nothing here is framed, and that is diagnosed, not stylistic. A same-origin
+ * `/api/attachments/{id}` frame was tried and called "diagnosed against the live configuration"
+ * — it wasn't diagnosed far enough. The control plane's middleware sets `X-Frame-Options: DENY`
+ * on every response, attachment downloads included (`backend/src/main.py`), and DENY forbids
+ * framing by any origin, same-origin included; nginx does not strip it. A staged file's `data:`
+ * URL is refused too, by `frame-src 'self'` in `nginx.conf`. A refused frame renders BLANK with
+ * no `error` event to explain it — the very defect the frame was meant to fix. So there is no
+ * frame: this dialog renders only what it can honestly build from bytes it already holds — an
+ * `<img>` (no directive restricts one), decoded text, or a plain "can't preview" sentence. A SENT
+ * document is `AttachmentChips`' job (fetch + new tab), never this component's; that's also why
+ * there's no stored-address branch — every caller already holds the URL to show.
  *
- * This file used to frame a same-origin `/api/attachments/{id}` address and said it had been
- * "diagnosed against the live configuration". It had not been diagnosed far enough. The control
- * plane's own middleware sets `X-Frame-Options: DENY` on EVERY response it makes, the attachment
- * download included (`backend/src/main.py`), and DENY forbids framing by any origin — same-origin
- * included. nginx does not strip it. So the one address that revision recommended is exactly the
- * one the browser refuses, and a refused frame renders BLANK with no `error` event to explain it:
- * the very defect the frame was introduced to fix. A staged file's `data:` URL is refused too, by
- * `frame-src 'self'` in `nginx.conf`.
+ * The old `AttachmentLightbox` (55 lines, images only, hand-rolled) had no focus trap, no
+ * `role="dialog"`, no scroll lock; the Radix Dialog here does, and the lightbox is gone.
  *
- * With both addresses refused there is no frame worth keeping, so there is none. What this dialog
- * shows is what it can honestly render from bytes it is already holding:
- *
- *   · AN IMAGE — no directive restricts an `<img>`, so `data:`, `blob:` and same-origin all work.
- *   · A TEXT FILE — decoded and shown as text. It only ever rode in a frame because everything
- *     that was not an image did, and showing the text is the better rendering regardless.
- *   · ANYTHING ELSE — a sentence saying so, where the defect drew an empty rectangle.
- *
- * A SENT DOCUMENT IS NOT THIS COMPONENT'S JOB. `AttachmentChips` fetches it and opens it in a new
- * tab, which is the one presentation the framing policy leaves available; this dialog is never
- * asked for one. That is also why there is no stored-address branch here: every caller hands over
- * a URL it already holds — the object URL the chip fetched, or the staged file's data URL.
- *
- * ══ WHAT THE DIALOG BRINGS THAT THE OLD LIGHTBOX LACKED ══
- *
- * `AttachmentLightbox` is 55 lines, images only, hand-rolled: no focus trap, no `role="dialog"`,
- * no `aria-modal`, no scroll lock, and it closes on a backdrop click with nothing returning focus.
- * The Radix Dialog brings all of that, and U17 deletes the lightbox.
- *
- * ══ R47 — NOTHING BUT THE READER DISMISSES IT ══
- *
- * `open` is NEVER derived from stream state. The transcript keeps streaming behind the dialog and
- * is not scrolled; closing returns the reader exactly where they were. `onInteractOutside` and
- * `onEscapeKeyDown` are left alone deliberately — those are the reader's two dismissals, and
- * overriding them is how a modal becomes a trap.
+ * `open` is never derived from stream state — the transcript keeps streaming behind the dialog,
+ * unscrolled, so closing returns the reader where they were. `onInteractOutside` and
+ * `onEscapeKeyDown` are left alone on purpose: those are the reader's own two dismissals.
  */
 import { useEffect, useState, type FC } from 'react'
 

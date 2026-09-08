@@ -1,44 +1,12 @@
 /**
- * STOP, MOVED TO WHERE THE COMPOSER IS (R55).
- *
- * Stop used to live inside `BuildProgress`, the pinned card this plan deleted. This component is
- * the same ability in a component of its own, mounted on the composer's chrome, and it shipped
- * BEFORE anything was removed so there was never a commit in which a build could be started and
- * not stopped. U10 gave it its permanent home on the composer; U17 asserts a running turn is
- * still stoppable now `BuildProgress.tsx` is gone.
- *
- * RELOCATED, NOT REDESIGNED. The better version of stop is its own work.
- *
- * ── THE TWO ARMS ARE NOT A MODE BRANCH ──
- *
- * They discriminate on whether a TURN ID EXISTS, which is a transport fact, not a kind of chat.
- * A turn build is stopped through the turn endpoint with its conversation and turn ids; a legacy
- * build session has no turn id and is stopped through the session. Nothing here asks what kind of
- * chat this is, and after this plan nothing on the surface does.
- *
- * FORCE-END DELIBERATELY DID NOT MOVE. `BuildProgress` recorded that a turn build has no
- * force-end equivalent, and a kill switch that confirms "this kills in-progress work" and then
- * does nothing is worse than no kill switch. It died with the card.
- *
- * ── `aria-disabled`, NEVER `disabled` (R64) ──
- *
- * The button in `BuildProgress` used a real `disabled={stopping}`. That is the bug R64 forbids:
- * `disabled` on the currently-focused element blurs it to `document.body`, so a keyboard
- * user who has just pressed Stop loses their place at the exact moment they were promised
- * feedback. This codebase recorded the mechanism twice before that (the old builder page's
- * textarea and its Send button) and it is not a style preference. Enforcement lives in the handler; the attribute
- * is affordance only.
- *
- * THE ACCESSIBLE NAME IS STABLE. The old button's label flips "Stop" → "Stopping…", which renames
- * the control mid-interaction — the same defect U15 avoids on the copy button. The word stays
- * "Stop" in every state; the in-flight state is carried by the glyph and by `title`, which is the
- * `aria-disabled`-plus-reason shape the composer's Send already uses.
- *
- * AUDIT-2026-09-03 · canvas-divergence: the Removals board removes "both Stop buttons" and says
- * stopping a response is being rebuilt on its own with nothing shipping in its place — this
- * control ships, is imported and rendered by `Composer.tsx`, and is reachable in both kinds of
- * chat — redrawing that board row to match what ships settles it and retires this marker with
- * the guard in `src/__tests__/audit-2026-09-03.test.ts`, which fails if the wiring is removed.
+ * STOP, MOVED TO WHERE THE COMPOSER IS. The two arms are not a mode branch — they discriminate on
+ * whether a TURN ID EXISTS (a transport fact): a turn build stops via the turn endpoint with its
+ * conversation/turn ids, a legacy build session (no turn id) stops via the session. Force-end
+ * deliberately did NOT move — a turn build has no force-end equivalent, and a kill switch that
+ * confirms "this kills in-progress work" and then does nothing is worse than none. The accessible
+ * name is stable: the old button flipped "Stop" → "Stopping…" mid-interaction; the word stays
+ * "Stop" in every state, with the in-flight state carried by the glyph and `title` instead. Mounted
+ * by `Composer`, so reachable in both kinds of chat.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Square } from 'lucide-react'
@@ -54,15 +22,12 @@ export interface StopTurnControlProps {
   /** A turn — or a legacy build session — is running. No run, no control: this renders `null`. */
   running: boolean
   /**
-   * Resolve the live turn AT PRESS TIME, returning `null` when there is no turn id — which means
-   * a legacy build session, not an error.
-   *
-   * A getter rather than a plain `turnId` prop, and that is not ceremony. The surface holds the
-   * live turn id in a REF, with a comment saying why: the stop handler is created once and would
-   * otherwise close over whichever turn was live at its first render. A prop read during render
-   * reintroduces exactly that staleness one layer up, and it would do so silently — stopping the
-   * previous turn, or falling to the session arm because the render happened to precede the frame
-   * that set the id. Reading at the moment of the press is the only version that cannot be stale.
+   * Resolve the live turn AT PRESS TIME, returning `null` when there is no turn id — a legacy
+   * build session, not an error. A getter rather than a plain `turnId` prop is not ceremony: the
+   * surface holds the live turn id in a ref because the stop handler is created once and would
+   * otherwise close over whichever turn was live at its first render — a prop read during render
+   * reintroduces that staleness one layer up, silently (stopping the previous turn, or falling to
+   * the session arm early). Reading at press time is the only version that cannot be stale.
    */
   resolveTarget: () => StopTarget | null
   /**
@@ -77,9 +42,9 @@ export interface StopTurnControlProps {
   /** Stop a legacy build session, which has no turn id. */
   onStopSession: () => Promise<unknown>
   /**
-   * A stop request failed. The caller decides where the sentence lands — U9 consolidates that
-   * onto the assertive slot. What this component guarantees is that a failure is never silent
-   * and never leaves a dead button.
+   * A stop request failed. The caller decides where the sentence lands — the surface
+   * consolidates those onto its assertive slot. What this component guarantees is that a
+   * failure is never silent and never leaves a dead button.
    */
   onStopFailed: (message: string) => void
 }
@@ -110,7 +75,7 @@ export default function StopTurnControl({
 
   const handleStop = useCallback(async () => {
     // The enforcement, and the whole of it. A second press while one is in flight is a no-op —
-    // `aria-disabled` on the button is what SAYS so, and says nothing else.
+    // `aria-disabled` only says so. `ComposerBox` owns why it is never a real `disabled`.
     if (stopping) return
     setStopping(true)
     try {

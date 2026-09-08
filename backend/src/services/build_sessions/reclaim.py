@@ -1,19 +1,24 @@
-"""The confidence-tier classifier — fleet + spare-list in, tiered verdicts out (U10, ADR-0029 §3).
+"""The confidence-tier classifier — fleet + spare-list in, tiered verdicts out.
 
-PURE AND I/O-FREE, the same shape as `appdb/reconcile.py::classify_databases` and for the same
-reason: this function is the safety argument for every destructive unit downstream, so every
-dangerous combination has to be provable against a synthetic fleet holding all of them at once,
-with no Azure, no Redis and no database in the way. The caller gathers the evidence; this decides.
+WHY THIS EXISTS
+Pure and I/O-free, like `appdb/reconcile.py::classify_databases`: this is the safety argument for
+every destructive unit downstream, so every dangerous combination must be provable against a
+synthetic fleet holding all of them at once, with no Azure, Redis, or database in the way. The
+caller gathers evidence; this decides.
 
-HOW LONG AN UNCLAIMED CONTAINER WAITS IS SET BY HOW MANY INDEPENDENT SIGNALS CONCUR (R5), not by a
-single duration. A lone age threshold defends only against "created but not yet recorded" — a
-window the provisioning retry policy already bounds at ~20 minutes — and longer thresholds buy no
-protection against a lost or wrong store while costing detection latency in the one signal that
-would have caught both past ghosts.
+How long an unclaimed container waits is set by how many signals concur, not a single duration — a
+lone age threshold only defends "created but not yet recorded" (a window the provisioning retry
+policy already bounds at ~20 minutes), not a lost or wrong store.
 
-A FACT YOU CANNOT READ DOES NOT BECOME TRUE BY WAITING (R4). Every path out of here that stands for
-a signal which could not be read leads to `ESCALATE`. None of them defaults to destroy. A timeout
-is not a death certificate.
+A fact you cannot read does not become true by waiting. Every unreadable signal leads to
+`ESCALATE`, never DESTROY — a timeout is not a death certificate.
+
+One workspace per user, and nobody takes it by force. The registry is keyed by user, so a live
+container belonging to another of that user's projects is why theirs is not up; reclaiming it is
+the citizen's call, never the platform's — a relaunch or turn that would displace it refuses with a
+409 (`manager.py::SandboxReclaimBlockedError`), and the portal offers to save the incumbent's work
+instead. The scheduled pass below applies the same principle in reverse: a container any signal
+still claims is spared, never collected.
 """
 
 from __future__ import annotations
@@ -28,29 +33,26 @@ from src.services.sandbox.base import KIND_BUILD_SANDBOX, FleetMember
 
 # --- the clocks -------------------------------------------------------------------------
 #
-# Plain module constants like their C3-frozen neighbours: these are protocol, not deployment
+# Plain module constants like their frozen neighbours: these are protocol, not deployment
 # config. Every one of them is a *floor* on how long the platform waits before touching somebody
-# else's container, so raising one is always safe and lowering one needs the ADR reopened.
+# else's container, so raising one is always safe and lowering one is a decision to reopen.
 
-#: A container younger than this is never a candidate, whatever else is true of it. `_start_locked`
-#: takes the per-user lock BEFORE provisioning the container that writes the registry hash, so a
-#: four-second-old sandbox legitimately presents as an unregistered orphan. Sized to the
-#: provisioning retry policy's own ceiling rather than guessed.
+#: A container younger than this is never a candidate, whatever else is true of it. A sandbox a
+#: few seconds old legitimately presents as an unregistered orphan — `inventory.py` documents that
+#: window — so this is sized to the provisioning retry policy's own ceiling rather than guessed.
 PROVISIONING_GRACE = dt.timedelta(minutes=20)
 
-#: THE RECLAMATION PASS'S OWN CADENCE, and the qualifier is the correction. This read five
-#: minutes, which is the cadence of the *sweep* (`SANDBOX_REAP_CRON`) — a different worker doing
-#: different work. The reclamation pass runs on `RECLAMATION_CRON`, every fifteen. Anything
-#: derived from "the cadence" was therefore derived from the wrong one, and the two-independent-
-#: reads rule below was the derivation that mattered.
+#: THE RECLAMATION PASS'S OWN CADENCE. Five minutes is the cadence of the *sweep*
+#: (`SANDBOX_REAP_CRON`) — a different worker doing different work. The reclamation pass runs on
+#: `RECLAMATION_CRON`, every fifteen.
 #:
 #: Load-bearing in three places at once: the minimum staging age, the effective lifetime of an
-#: abandoned container, and the unit of U11's staleness threshold. `pass_history` derives its
+#: abandoned container, and the unit of the staleness threshold. `pass_history` derives its
 #: window from the cron string directly and a test pins the two together, so this cannot drift
 #: back out of agreement without something going red.
 PASS_CADENCE = dt.timedelta(minutes=15)
 
-#: Two independent reads, a full interval apart (ADR-0029 §5). One pass's opinion is not evidence;
+#: Two independent reads, a full interval apart. One pass's opinion is not evidence;
 #: the `bial-reclaim-staged-at` tag is how the second pass learns the first one happened.
 #:
 #: ONE CONSTANT, NOT TWO. This was `MINIMUM_STAGING_AGE = PASS_CADENCE` (5m) sitting beside a
@@ -89,7 +91,7 @@ class Verdict(enum.StrEnum):
 
 
 class Tier(enum.StrEnum):
-    """Which row of ADR-0029 §3 this container matched."""
+    """Which confidence tier this container matched."""
 
     IN_USE = "in_use"
     HIGH_CONFIDENCE = "high_confidence"
@@ -118,33 +120,12 @@ class RegistryClaim:
     @property
     def spares_the_container(self) -> bool:
         """`(lock held AND heartbeat alive) OR stay current OR liveness lease held OR starting`.
-
-        The lock and the heartbeat are ONE signal, not two: a held lock whose owner stopped
-        breathing is the crashed builder the reaper exists for.
-
-        THE FOURTH DISJUNCT COVERS ONE NARROW INTERVAL, and it is worth naming exactly which.
-        A turn's life splits into three, and each needs a signal that can actually be held in it:
-
-          1. **the turn claims the workspace → a registry hash exists.** Nothing can be written
-             here and nothing needs to be: `reconcile_user` reads the registry first and returns
-             without reaping when there is none, so there is nothing to spare. Both write
-             primitives refuse in this window on purpose — a lease or a stay written for a user
-             with no record would spare whatever container that user gets NEXT.
-          2. **the registry hash is written → the container is adopted and its heartbeat seeded.**
-             THIS ONE. The lock/heartbeat disjunct above is an AND, so lock-held-with-no-heartbeat
-             is reapable, and the turn's door (`ensure_sandbox`) grants nothing across it. The
-             starting marker spans exactly this interval — it is written by `_holding_user_lock`,
-             which is the scope — so one predicate closes it rather than a second renewal loop.
-          3. **adopt → terminal.** The R10 liveness lease, renewed for the whole turn and honoured
-             unconditionally by the sweep.
-
-        AND IT IS A BOUNDED CLAIM, NOT A PARDON. The marker carries a mandatory wall-clock TTL, so
-        past it the container is reapable again exactly as if nothing had ever been written. That
-        is what keeps it from becoming the registry hash's mistake — "registered ⇒ spared" — under
-        a new name.
-
-        MUTATION-CHECKED. Reverting this to `True` silently disables essentially all reclamation
-        while every other test stays green, which is exactly the kind of regression that ships."""
+        Lock and heartbeat count as ONE signal: a held lock whose owner stopped breathing is the
+        crashed builder this exists to catch. `starting` covers the one narrow window nothing else
+        can: after a turn claims the workspace but before the registry hash and heartbeat are
+        written, when no lease or stay can exist yet. It is a BOUNDED claim, not a pardon — a
+        mandatory wall-clock TTL forces re-evaluation once it expires. MUTATION-CHECKED: reverting
+        this to `True` silently disables reclamation while every other test stays green."""
         return (
             (self.lock_held and self.heartbeat_alive)
             or self.stay_current
@@ -155,20 +136,12 @@ class RegistryClaim:
     def combined_with(self, other: RegistryClaim) -> RegistryClaim:
         """One container, two records naming it: the record that SPARES wins.
 
-        The claim map is keyed by CONTAINER NAME and the signals are keyed by USER, so two
-        records can name one container — a stale entry, or a crossed one. A plain assignment
-        makes the scan's last writer win, and an unrelated user's empty record then erases a live
-        builder's claim. Observed against a real fleet: a container holding a lock, a live
-        heartbeat and a valid liveness lease was classified `claimed_but_expired` and staged.
+        Claims are keyed by user while the claim map is keyed by container name, so two records
+        can name one container (a stale or crossed entry); a plain assignment lets the last
+        writer win and an unrelated user's empty record erase a live claim.
 
-        NOT A FIELD-WISE `or`. OR-ing would let one record's lock and another record's heartbeat
-        add up to a liveness nobody actually holds — a claim invented by the merge rather than
-        made by any record. Preferring the sparing record keeps every claim something a real
-        record really asserted, and points the ambiguity the same way every other gate here
-        points it: toward sparing.
-
-        When both spare or neither does, `self` stands. They can then differ only in which
-        signals are set, and both land in the same tier either way."""
+        NOT a field-wise `or` — that would invent a liveness no record asserts by combining one's
+        lock with another's heartbeat. Ties keep `self`; both land in the same tier regardless."""
         return other if other.spares_the_container and not self.spares_the_container else self
 
 
@@ -189,9 +162,8 @@ class ContainerVerdict:
 class ReclamationPlan:
     """What one pass would do, and — when the coordination store looks wrong — what it refused to.
 
-    THE BUCKETS SUM: `scanned == spared + staged + destroy + escalate + not_ours`. Not tidiness. A
-    container that silently vanishes from the accounting is a container nobody is deciding about,
-    which is how the first ghost survived nineteen days."""
+    THE BUCKETS SUM: `scanned == spared + staged + destroy + escalate + not_ours`. Not tidiness.
+    A container that silently vanishes from the accounting is nobody's to decide about."""
 
     verdicts: tuple[ContainerVerdict, ...]
     store_fault: bool
@@ -229,25 +201,14 @@ class ReclamationPlan:
 
 
 def _the_registry_looks_wrong(fleet_size: int, claim_count: int) -> bool:
-    """R6, and deliberately past its literal wording.
-
-    R6 asks for "empty spare-list against a live fleet", which catches a FLUSHED Redis. It does not
-    catch partial loss, and partial loss is the more dangerous shape: a live build presenting as
-    registered-but-lapsed routes into the fifth tier with every individual signal reading normal,
-    so a binary guard sees nothing wrong and stages it mid-build.
-
-    Proportional, therefore — the registry should account for a decent share of a live fleet — with
-    a floor under the fleet size, because a proportion needs a denominator and one unregistered
-    container is an orphan rather than evidence about Redis.
-
-    WRONG IN THE SAFE DIRECTION BY CONSTRUCTION: a false positive escalates to a human, and a
-    human is what the escalate tier is for.
-
-    HONEST LIMIT, worth stating rather than implying: this cannot catch the eviction shape where
-    the registry hash SURVIVES and only the lock, stay and lease evict (the registry is the one key
-    family with no TTL, so under `volatile-*` it is the last to go). Counts cannot tell that apart
-    from a quiet fleet where nobody happens to be building. What defends against it is the rest
-    of the chain — the staging interval, the durable-copy gate, the per-pass ceiling — not this."""
+    """The store-fault guard, deliberately past what a literal reading of the requirement would
+    need: "empty spare-list against a live fleet" catches a flushed Redis but not partial loss,
+    the more dangerous shape where a live build presenting as registered-but-lapsed reads normal
+    on every individual signal. So this is proportional instead (with a floor under fleet size
+    for a sane denominator) and wrong in the safe direction — a false positive only escalates to
+    a human. It cannot catch the registry hash surviving while lock, stay and lease evict (the
+    registry key alone has no TTL); the staging interval, the durable-copy gate and the per-pass
+    ceiling catch that instead."""
     if fleet_size < STORE_FAULT_MIN_FLEET:
         return False
     return claim_count < math.ceil(fleet_size * STORE_FAULT_MIN_CLAIM_RATIO)
@@ -277,7 +238,7 @@ def _judge_one(
             member.name, Tier.UNREADABLE, Verdict.ESCALATE, "the product database was unreadable"
         )
 
-    # Missing owner, app or age — or stamped by a different control plane (R22). Every one of those
+    # Missing owner, app or age — or stamped by a different control plane. Every one of those
     # is a signal that could not be read, and none of them expires into a decision.
     if identity.escalate_only:
         return ContainerVerdict(
@@ -336,14 +297,12 @@ def classify_fleet(
 ) -> ReclamationPlan:
     """Bucket every enumerated container.
 
-    `claims` maps app name → what the coordination store says. A name ABSENT from it is
-    unregistered; a name present with every signal lapsed is the fifth tier (F1), which runs
-    through the identical durable-copy → staging → ceiling → destroy chain rather than sitting
-    outside the gates. Porting F1 forward *outside* them would have left the code that does almost
-    all of the deleting subject to none of the new safety.
+    `claims` maps app name to what the coordination store says; an absent name is unregistered,
+    and a present name with every signal lapsed is the fifth tier — it runs the same
+    durable-copy → staging → ceiling → destroy chain, not a separate path.
 
     `known_app_names` is the set of container names with a matching app record, or `None` when the
-    product database could not be read — in which case the whole fleet escalates."""
+    product database could not be read, in which case the whole fleet escalates."""
     members = list(fleet)
     store_fault = _the_registry_looks_wrong(len(members), len(claims))
     if store_fault:

@@ -1,4 +1,4 @@
-"""U6 — C3 control ops: stop / status (cookie auth + CSRF, owner-scoping).
+"""Build-session control ops: stop / status (cookie auth + CSRF, owner-scoping).
 
 `start` is gone from the title and from this file. The bare `POST /v1/build-sessions` was
 deleted along with `SessionManager.start`, and every test whose subject was that route went with
@@ -66,7 +66,7 @@ async def test_status_of_another_users_session_is_404(
     s = await client.get(
         f"/v1/build-sessions/{session.session_id}", headers=auth_headers(intruder)
     )
-    assert s.status_code == 404  # non-leaking (ADR-0004)
+    assert s.status_code == 404  # non-leaking
 
 
 async def test_stop_is_idempotent(
@@ -128,11 +128,10 @@ async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
     to a user whose project was mid-build, and the server declined both halves — so the user
     got a choice, then an error, whichever button they pressed.
 
-    THE BARRIER MOVED WITH THE DESIGN. This used to assert `stopped: true` on the POST's own
-    response and treat that as "settled by the time it answered". The POST no longer waits — it
-    asks — so the release must sit below the status read, not below the ask, or it is measuring a
-    system that has not finished. The old assertion could not have caught this: the field it read
-    was hardcoded true on every path.
+    THE BARRIER SITS BELOW THE STATUS READ, NOT BELOW THE ASK. The POST does not wait for the
+    work to settle — it asks, and answers `still_running` while the stop is in flight — so an
+    assertion on its own response proves nothing about whether the system has finished. Only
+    the status read, polled until it stops saying "still running", can.
 
     WHAT PERFORMS THE UNWIND, re-fixtured. The live work is a TURN now, not a `run_build` task:
     `_stop_the_held_session` asks the turn engine to cancel and then reads whether a session
@@ -176,23 +175,17 @@ async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
 
 
 def test_the_published_api_names_the_stop_states_the_wire_actually_sends(app: FastAPI) -> None:
-    """★ WHAT AN INTEGRATOR READS AT `/docs` MUST BE WHAT THEY CAN BRANCH ON.
+    """FastAPI publishes a route's docstring as its OpenAPI description, so prose in a route is
+    API surface. `CamelModel` camelizes FIELD names only — `StopOutcome` values go out verbatim —
+    so a docstring saying `nothingWasRunning` tells a reader to branch on a value the wire never
+    sends. A client written from it falls through its own guard and, on the shape the portal
+    uses, reads every answer as "still running": a hand-over that can never complete.
 
-    FastAPI publishes a route's docstring as its OpenAPI description, so prose here is API
-    surface. `CamelModel` camelizes FIELD names and nothing else — `StopOutcome` is a plain
-    string enum whose values go out verbatim — so a docstring saying `nothingWasRunning` tells a
-    reader to branch on a value the wire never sends. A client written from it falls through its
-    own guard and, on the shape the portal uses, reads every answer as "still running": a
-    hand-over that can never complete.
-
-    SPELLING-BLIND rather than a list of the three known wrong spellings: any backticked token
-    that is one of the state names with its separators or casing changed is a token no client can
-    match, whichever way someone rewrites it later. The Python MEMBER names (`STILL_RUNNING`) are
-    allowed beside the values, because prose that names the enum member is talking about the
-    symbol and a reader can tell the two apart — `stillRunning` is neither.
-
-    Mutation check: put `nothingWasRunning` back in any of the stop docstrings and this goes
-    red."""
+    SPELLING-BLIND rather than a list of known wrong spellings: any backticked token shaped
+    like a state name with its separators or casing changed is unmatchable, however it gets
+    respelled later. Python MEMBER names (`STILL_RUNNING`) are allowed beside the values — that
+    prose names the symbol, not the wire value."""
+    # Mutation check: put `nothingWasRunning` back in any of the stop docstrings and this goes red.
     published = json.dumps(app.openapi())
     spellings = {outcome.value for outcome in StopOutcome} | {
         outcome.name for outcome in StopOutcome
@@ -203,8 +196,8 @@ def test_the_published_api_names_the_stop_states_the_wire_actually_sends(app: Fa
         for token in re.findall(r"`([A-Za-z_]+)`", published)
         if token.lower().replace("_", "") in flattened
     }
-    # LIVENESS: the states ARE documented. An empty set satisfies the loop below trivially, and
-    # would also be what a schema that failed to render its descriptions produces.
+    # LIVENESS: an empty set satisfies the loop below trivially, and is also what a schema that
+    # failed to render its descriptions produces.
     assert named, "no stop state is named anywhere in the published schema"
     for token in sorted(named):
         assert token in spellings, (
@@ -236,7 +229,7 @@ async def test_stopping_a_settled_project_says_nothing_was_running_not_an_error(
 async def test_stop_active_build_is_owner_scoped_and_csrf_guarded(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    """ADR-0004 + KTD-4 on a route that KILLS WORK IN PROGRESS. Another user's project is a
+    """Owner-scoping and CSRF on a route that KILLS WORK IN PROGRESS. Another user's project is a
     non-leaking 404, and a cookie without the CSRF header is refused — a forged cross-site POST
     here would destroy an unfinished build."""
     owner, project = await _user_project(db_session, "ctl-stop3@rvaiglobal.com")
@@ -249,7 +242,7 @@ async def test_stop_active_build_is_owner_scoped_and_csrf_guarded(
 async def test_the_stop_state_read_is_owner_scoped_and_needs_no_csrf(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    """ADR-0004 on the new half of the pair, and the reason it is a GET.
+    """Owner-scoping on the new half of the pair, and the reason it is a GET.
 
     It changes nothing — no cancel, no teardown, nothing written — so a CSRF header would be
     ceremony, and the browser polls it while it narrates. What it DOES leak if unscoped is
@@ -273,9 +266,9 @@ async def test_stop_active_build_answers_without_redis(
     Those two ask the registry what is live, so an absent coordination subsystem leaves them
     deciding nothing. This one asks "is this process running work for this user?", which lives
     in `_active_by_user` and is answerable regardless. Wrapping it in the seam produced a
-    trailing `_coordination_is_gone()` that could never execute — the dead-arm shape this PR's
-    review caught elsewhere — and would have refused on the one path that matters: a live
-    in-process build during a Redis outage is exactly when a user still needs to stop it.
+    trailing `_coordination_is_gone()` that could never execute — a dead arm — and would have
+    refused on the one path that matters: a live in-process build during a Redis outage is
+    exactly when a user still needs to stop it.
 
     Deliberately takes no `fake_redis` fixture: with the singleton unset `get_redis()` raises
     `RedisNotConfiguredError`, which is what a deployment with no Redis configured does."""

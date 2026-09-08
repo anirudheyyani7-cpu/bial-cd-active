@@ -1,11 +1,11 @@
-"""Redis coordination service (contract C5).
+"""Redis coordination service.
 
-`RedisConfig` (the typed config, U5), the async pool factory + lifecycle
-(`client.py`, U6), and the frozen C5 key namespace (`keys.py`, U6). Reaper /
-lock / registry LOGIC is SESSION-API's (Wave 1); Stage 0 freezes only the pool
+`RedisConfig` (the typed config), the async pool factory + lifecycle
+(`client.py`), and the frozen key namespace (`keys.py`). Reaper /
+lock / registry LOGIC lives in a separate service; this module freezes only the pool
 lifecycle and the key builders. Public surface is re-exported explicitly
 (`X as X`) so ty / mypy --strict / pyright read it as an intentional re-export —
-never an `__all__` list (`.claude/rules/modules.md`).
+never an `__all__` list.
 """
 
 from __future__ import annotations

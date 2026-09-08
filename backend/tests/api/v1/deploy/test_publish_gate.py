@@ -1,15 +1,14 @@
-"""The publish gate — the precedence ladder (U9).
+"""The publish gate — the precedence ladder.
 
-Every cell of the ladder's state table resolves to exactly one branch, and this file
-pins them one rung at a time, in ladder order, then the properties that hold across
-rungs (the declaration, the audit trail, the 503 that must NOT fire on a routed
-publish, and the impossibility of a browser-supplied review).
+Every cell of the ladder's state table resolves to exactly one branch; this file pins
+them one rung at a time, in ladder order, then the properties holding across rungs (the
+declaration, the audit trail, the 503 that must NOT fire on a routed publish, and the
+impossibility of a browser-supplied review).
 
-Two fixtures carry the load. `wire` binds the whole composition — a dict-backed store,
-a recording pipeline, and the REAL classification review service (no override): the
-ladder reads the stored row through the same singleton production resolves, so a mock
-returning what it was fed cannot green these tests. `_seed_review` writes rows through
-the real store, in the exact document shape U6's runner produces.
+Two fixtures carry the load. `wire` binds the whole composition with the REAL
+classification review service (no override), so a mock returning what it was fed cannot
+green these tests. `_seed_review` writes rows through the real store, in the exact
+document shape the review's runner produces.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ _OLDER_SHA = "cd" * 20
 class _RecordingPipeline:
     """The deploy service, recording instead of reaching Azure.
 
-    `expected_commit_sha` and `recheck` are U10's widening: the gate hands the pipeline the
+    `expected_commit_sha` and `recheck` are a later widening: the gate hands the pipeline the
     commit it decided about on EVERY branch, and the drift branch additionally hands it the
     order to re-check that version before packing."""
 
@@ -143,7 +142,7 @@ async def _owner_with_saved_app(db, store: FakeStorage, *, sha: str = _SHA, **ov
 
 
 def _verdicts(**by_key: str) -> dict[str, Any]:
-    """A stored verdicts document in U6's exact shape."""
+    """A stored verdicts document in the review's exact shape."""
     return {
         "source": "review",
         "questions": {
@@ -220,11 +219,11 @@ async def _gate_rows(db, app_id: uuid.UUID) -> list[AuditLog]:
     )
 
 
-# --- rule 7: nothing weighted anywhere publishes unattended (R14, AE8) ---------------
+# --- rule 7: nothing weighted anywhere publishes unattended ---------------
 
 
 async def test_no_yes_anywhere_publishes_with_no_queue_entry(wire, client, db_session) -> None:
-    """AE8 — the unattended path, unchanged by this feature: an all-No declaration over
+    """The unattended path, unchanged by this feature: an all-No declaration over
     an all-No review reaches the pipeline with no administrator and no queue entry."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -248,7 +247,7 @@ async def test_no_yes_anywhere_publishes_with_no_queue_entry(wire, client, db_se
 async def test_public_data_only_yes_publishes_and_needs_no_explanation(
     wire, client, db_session
 ) -> None:
-    """AE5d/ASM22 — Public Data carries weight zero, so it routes nothing and compels no
+    """Public Data carries weight zero, so it routes nothing and compels no
     explanation. The requirement is aligned to ROUTING, not to "any Yes"."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -263,13 +262,13 @@ async def test_public_data_only_yes_publishes_and_needs_no_explanation(
     assert len(wire.pipeline.started) == 1
 
 
-# --- rule 6: a weighted merged Yes routes (R9, AE3) ----------------------------------
+# --- rule 6: a weighted merged Yes routes ----------------------------------
 
 
 async def test_a_review_yes_routes_and_carries_both_answer_sets(wire, client, db_session) -> None:
-    """AE3 — the review found personal information the citizen declared absent. The Yes
+    """The review found personal information the citizen declared absent. The Yes
     stands, the app routes, and the queue item carries BOTH answer sets plus the named
-    disagreement, which is what the administrator's screen leads with (R15)."""
+    disagreement, which is what the administrator's screen leads with."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(
         db_session,
@@ -305,7 +304,7 @@ async def test_a_review_yes_routes_and_carries_both_answer_sets(wire, client, db
 async def test_the_citizens_own_yes_routes_on_a_question_the_review_left_unanswered(
     wire, client, db_session
 ) -> None:
-    """AE5c/R5 — where the review had no evidence, the citizen's answer is the only one
+    """Where the review had no evidence, the citizen's answer is the only one
     on record, and it routes on their word alone."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(
@@ -335,7 +334,7 @@ async def test_the_citizens_own_yes_routes_on_a_question_the_review_left_unanswe
 async def test_a_weighted_yes_without_an_explanation_is_a_422_not_a_refusal(
     wire, client, db_session
 ) -> None:
-    """R10/ASM22 — incomplete, not rejected: conflating the two would tell someone whose
+    """Incomplete, not rejected: conflating the two would tell someone whose
     answers are fine that they failed the gate. Enforced server-side, at the rung where
     the MERGED outcome exists (a schema validator could never see the review)."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
@@ -358,9 +357,9 @@ async def test_a_weighted_yes_without_an_explanation_is_a_422_not_a_refusal(
 async def test_the_explanation_is_obliged_by_the_merged_answers_not_the_citizens(
     wire, client, db_session
 ) -> None:
-    """The sharp edge of aligning R10 to routing: an all-No citizen declaration whose
-    REVIEW raises a weighted Yes still needs an explanation, because that merged set is
-    what routes. Nothing about the citizen's own answers could have predicted it."""
+    """The sharp edge of aligning the explanation requirement to routing: an all-No citizen
+    declaration whose REVIEW raises a weighted Yes still needs an explanation, because that merged
+    set is what routes. Nothing about the citizen's own answers could have predicted it."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(
         db_session, app_id=app_row.id, user_id=user.id, verdicts=_verdicts(health_data="yes")
@@ -374,11 +373,11 @@ async def test_the_explanation_is_obliged_by_the_merged_answers_not_the_citizens
     assert resp.json()["error"]["code"] == "explanation_required"
 
 
-# --- rule 4: no genuinely-COMPLETE review for H routes regardless (R20, AE6) ----------
+# --- rule 4: no genuinely-COMPLETE review for H routes regardless ----------
 
 
 async def test_no_review_at_all_routes_regardless_of_the_answers(wire, client, db_session) -> None:
-    """AE6/R20 — an app submitted without a review for the version being published is
+    """An app submitted without a review for the version being published is
     routed whatever was answered. All-No here: only rule 4 can explain the routing."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
 
@@ -396,7 +395,7 @@ async def test_no_review_at_all_routes_regardless_of_the_answers(wire, client, d
 
 
 async def test_a_failed_review_routes_regardless_of_the_answers(wire, client, db_session) -> None:
-    """A failure is never stored as an answer (R19) and never reads as six No's."""
+    """A failure is never stored as an answer and never reads as six No's."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id, status="failed")
 
@@ -430,9 +429,9 @@ async def test_a_review_still_running_routes_regardless_of_the_answers(
 async def test_a_complete_but_partial_review_routes_the_same_as_a_failed_one(
     wire, client, db_session
 ) -> None:
-    """The ladder reads the BUCKET, not the bare status word: U5 and U6 already class a
-    partial answer set as a failure, so a complete-but-flagged-partial row that published
-    would make the two disagree about the same row."""
+    """The ladder reads the BUCKET, not the bare status word: the review and the gate
+    already class a partial answer set as a failure, so a complete-but-flagged-partial row
+    that published would make the two disagree about the same row."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id, answers_complete=False)
 
@@ -446,7 +445,7 @@ async def test_a_complete_but_partial_review_routes_the_same_as_a_failed_one(
 
 
 async def test_a_review_stamped_an_older_commit_routes(wire, client, db_session) -> None:
-    """R6/R18 — a stored answer about an older version is not this version's answer. Any
+    """A stored answer about an older version is not this version's answer. Any
     later Save produces a version the earlier review does not cover."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id, sha=_OLDER_SHA)
@@ -479,13 +478,13 @@ async def test_an_aged_out_running_review_routes(wire, client, db_session) -> No
     assert resp.json()["outcome"] == "routed_for_review"
 
 
-# --- rule 5: a rejection is sticky (P4) ----------------------------------------------
+# --- rule 5: a rejection is sticky ----------------------------------------------
 
 
 async def test_a_rejected_app_routes_even_with_a_clean_review_and_clean_answers(
     wire, client, db_session
 ) -> None:
-    """P4 — a rejection is the only human signal in the system and the only one a re-roll
+    """A rejection is the only human signal in the system and the only one a re-roll
     could erase. It stands until an administrator lifts it, whatever a fresh review says."""
     user, app_row = await _owner_with_saved_app(
         db_session,
@@ -514,16 +513,14 @@ async def test_a_rejected_app_routes_even_with_a_clean_review_and_clean_answers(
 async def test_a_rejection_survives_the_publish_then_withdraw_round_trip(
     wire, client, db_session
 ) -> None:
-    """THE LAUNDERING CHAIN, end to end. Rule 5 used to read `status`, and two ordinary
-    citizen calls walked the row out of it: publishing a REJECTED app ROUTES it (the
-    submit service writes PENDING and nulls the note), and withdrawing a PENDING app
-    writes DRAFT. By the third call the row had forgotten the refusal and published
-    unattended — with a clean review and clean answers, exactly the state P4 says must
-    still route. The rejection now lives in a column no citizen path writes.
+    """THE LAUNDERING CHAIN, end to end: publishing a REJECTED app writes PENDING and
+    clears the note, then withdrawing a PENDING app writes DRAFT — by the third call
+    the row has forgotten the refusal, with a clean review and clean answers, exactly
+    the state rule 5 must still route.
 
-    Deliberately walks the REAL routes rather than seeding the intermediate states: the
-    bug lived in the seam between two handlers that were each correct alone, so a test
-    that seeds DRAFT directly would go green against the very code this pins."""
+    Walks the REAL routes rather than seeding the intermediate states: the bug lived
+    in the seam between two handlers that were each correct alone, so seeding DRAFT
+    directly would go green against the very code this pins."""
     user, app_row = await _owner_with_saved_app(
         db_session,
         wire.store,
@@ -557,7 +554,7 @@ async def test_a_rejection_survives_the_publish_then_withdraw_round_trip(
 
 
 async def test_an_approval_is_what_lifts_a_standing_rejection(wire, client, db_session) -> None:
-    """The other half of P4: it stands until an ADMINISTRATOR lifts it. `approve` is the
+    """The other half of rule 5: it stands until an ADMINISTRATOR lifts it. `approve` is the
     only writer that lowers the flag, so an approved app stops routing on rule 5."""
     user, app_row = await _owner_with_saved_app(
         db_session,
@@ -580,11 +577,11 @@ async def test_an_approval_is_what_lifts_a_standing_rejection(wire, client, db_s
     assert resp.json()["outcome"] == "started"  # publishes, no human needed
 
 
-# --- rule 3: the approval override (R17, P5) -----------------------------------------
+# --- rule 3: the approval override -----------------------------------------
 
 
 async def test_an_approval_pinning_this_exact_version_publishes(wire, client, db_session) -> None:
-    """AE5b — the citizen publishes the approved version themselves, and it goes live
+    """The citizen publishes the approved version themselves, and it goes live
     rather than routing back. Weighted-Yes answers, no fresh explanation, no review
     needed: the approval IS the decision for this commit."""
     user, app_row = await _owner_with_saved_app(
@@ -612,7 +609,7 @@ async def test_an_approval_pinning_this_exact_version_publishes(wire, client, db
 async def test_an_approval_of_an_earlier_version_does_not_cover_a_later_save(
     wire, client, db_session
 ) -> None:
-    """AE7/R18 — any later Save produces a version the earlier approval does not cover.
+    """Any later Save produces a version the earlier approval does not cover.
     The pin is compared to the commit ACTUALLY shipping, so a moved head routes."""
     user, app_row = await _owner_with_saved_app(
         db_session,
@@ -637,7 +634,7 @@ async def test_an_approval_of_an_earlier_version_does_not_cover_a_later_save(
 async def test_an_approval_predating_this_feature_is_inert_and_routes(
     wire, client, db_session
 ) -> None:
-    """P5/OD-D — a runbook-lineage approval was granted for an out-of-band code review,
+    """A runbook-lineage approval was granted for an out-of-band code review,
     which is a different decision. The 0030 backfill marked every pre-feature row
     `runbook`, and rule 3 requires `self_publish`, so those approvals authorise the
     manual go-live runbook and nothing here."""
@@ -659,16 +656,16 @@ async def test_an_approval_predating_this_feature_is_inert_and_routes(
     assert wire.pipeline.started == []
 
 
-# --- rule 3a: the save-and-publish defer (R13) ---------------------------------------
+# --- rule 3a: the save-and-publish defer ---------------------------------------
 
 
 async def test_save_and_publish_over_an_older_stamped_review_defers_to_the_pipeline(
     app, client, db_session
 ) -> None:
-    """AE5/R13 — the save mints a NEW commit, so the stored review is stamped the
+    """The save mints a NEW commit, so the stored review is stamped the
     previous one. Without rule 3a, rule 4 would route every single save-and-publish and
-    R13 would be unreachable. This branch neither routes nor refuses: it returns 202 and
-    lets the pipeline's own re-check (U10) decide."""
+    rule 3a would be unreachable. This branch neither routes nor refuses: it returns 202 and
+    lets the pipeline's own re-check decide."""
     store = FakeStorage()
     pipeline = _RecordingPipeline()
     saved: list[uuid.UUID] = []
@@ -682,7 +679,7 @@ async def test_save_and_publish_over_an_older_stamped_review_defers_to_the_pipel
     async def _save(self, db, user, project_id, *, sandbox_client) -> SaveOutcome:
         saved.append(project_id)
         # The save mints a new commit: the stamp moves to _SHA, off the review's _OLDER_SHA,
-        # and the save reports the commit it landed at (U10's expected commit).
+        # and the save reports the commit it landed at (the expected commit).
         return SaveOutcome(app_id=uuid.uuid4(), head_sha=_SHA)
 
     @contextlib.asynccontextmanager
@@ -724,7 +721,7 @@ async def test_save_and_publish_over_an_older_stamped_review_defers_to_the_pipel
     assert row.detail is not None
     assert row.detail["decision"] == "deferred_to_pipeline"
     assert row.detail["rule"] == "saved_over_stale_review"
-    # The U10 seam: the commit examined and the stale stamp are both on record, so the
+    # The recheck seam: the commit examined and the stale stamp are both on record, so the
     # in-pipeline review knows which version it must re-check and which it supersedes.
     assert row.detail["declaration"]["commits"]["shipping"] == _SHA
     assert row.detail["staleReviewSha"] == _OLDER_SHA
@@ -805,7 +802,7 @@ async def test_a_disabled_app_cannot_publish(wire, client, db_session) -> None:
 async def test_a_pending_app_is_refused_with_the_state_the_surfaces_must_render(
     wire, client, db_session
 ) -> None:
-    """R15b — while a version waits, the publish control says so and cannot submit again.
+    """While a version waits, the publish control says so and cannot submit again.
     The refusal carries the state, the submitted version and the rejection note when one
     exists, so BOTH citizen surfaces render it without a second call."""
     submitted_at = datetime.now(UTC)
@@ -837,10 +834,11 @@ async def test_a_pending_app_is_refused_with_the_state_the_surfaces_must_render(
 
 
 async def test_routing_works_with_the_deploy_service_unbound(app, client, db_session) -> None:
-    """ASM10 — the 503 moved DOWN. It used to be `deploy_project`'s first body statement,
-    which shut the door before the ladder ran and stranded exactly the citizens ASM10
-    says are not stranded: routing needs object storage and the queue, never the deploy
-    service. With the pipeline unbound, a weighted Yes still reaches the queue."""
+    """The 503 moved DOWN. It used to be `deploy_project`'s first body statement,
+    which shut the door before the ladder ran and stranded exactly the citizens who never
+    needed the deploy service to begin with: routing needs object storage and the queue,
+    never the deploy service. With the pipeline unbound, a weighted Yes still reaches the
+    queue."""
     store = FakeStorage()
 
     @contextlib.asynccontextmanager
@@ -907,7 +905,7 @@ async def test_publishing_still_503s_when_the_deploy_service_is_unbound(
 async def test_a_browser_supplied_review_cannot_influence_the_decision(
     wire, client, db_session
 ) -> None:
-    """R12 — the gate reads the STORED review, and the request schema has no review
+    """The gate reads the STORED review, and the request schema has no review
     field. Extra body keys are dropped at the boundary, so a caller cannot answer for
     the platform: the stored Yes still routes, whatever the body claims."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
@@ -935,7 +933,7 @@ async def test_a_browser_supplied_review_cannot_influence_the_decision(
 
 
 async def test_every_branch_writes_an_app_scoped_audit_row(wire, client, db_session) -> None:
-    """ASM7/R22 — today's refusal row was PROJECT-scoped with no app id anywhere, so it
+    """Today's refusal row was PROJECT-scoped with no app id anywhere, so it
     was invisible to the admin app drawer (which matches `resource_id` OR
     `detail->>'appId'`). Every gate outcome now satisfies both halves of that match, and
     carries both answer sets, the differences, review availability and the decision."""
@@ -973,7 +971,7 @@ async def test_every_branch_writes_an_app_scoped_audit_row(wire, client, db_sess
 
 
 async def test_the_published_outcome_is_audited_too(wire, client, db_session) -> None:
-    """R22 says EVERY publish and every routing decision, so the quiet successes are on
+    """Every publish and every routing decision is audited, so the quiet successes are on
     record as well — those are the ones nobody would think to look for later."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -990,7 +988,7 @@ async def test_the_published_outcome_is_audited_too(wire, client, db_session) ->
 
 
 async def test_the_explanation_is_redacted_before_it_is_stored(wire, client, db_session) -> None:
-    """ASM15 — the citizen's mandatory explanation lands in the same record the review's
+    """The citizen's mandatory explanation lands in the same record the review's
     own text is carefully kept clean of, so it passes the shared redactor first."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -1013,8 +1011,8 @@ async def test_the_explanation_is_redacted_before_it_is_stored(wire, client, db_
 
 
 async def test_the_gate_is_owner_scoped(wire, client, db_session) -> None:
-    """A dropped ownership predicate is a cross-user leak, not a style nit (ADR-0004),
-    and a stranger's probe must be a non-leaking 404 — never a 403 confirming the
+    """A dropped ownership predicate is a cross-user leak, not a style nit, and a
+    stranger's probe must be a non-leaking 404 — never a 403 confirming the
     project exists."""
     _owner, app_row = await _owner_with_saved_app(db_session, wire.store)
     stranger = await UserFactory.create(db_session, email="stranger@rvaiglobal.com")
@@ -1027,7 +1025,7 @@ async def test_the_gate_is_owner_scoped(wire, client, db_session) -> None:
     assert wire.pipeline.started == []
 
 
-# --- P8's two obligations, at the GATE rather than in the pure merge -------------------
+# --- Two obligations, met at the GATE rather than in the pure merge -------------------
 #
 # `test_merge.py` proves the truth table exhaustively, but it feeds `merge_question`
 # directly-constructed `ScanSignal` / `Verdict` values. Nothing proved that `gate.py` reads
@@ -1038,7 +1036,7 @@ async def test_the_gate_is_owner_scoped(wire, client, db_session) -> None:
 
 def _floor_verdicts() -> dict[str, Any]:
     """What the runner stores when the model never returned and the Tier A scan stood in
-    as the credentials answer (P8's floor) — a FAILED row carrying a verdicts document,
+    as the credentials answer (the floor) — a FAILED row carrying a verdicts document,
     which is the one shape `merge_inputs` consults outside a completed review."""
     doc = _verdicts(credentials_secrets="yes")
     doc["source"] = "scan_floor"
@@ -1057,7 +1055,7 @@ def _overruled_verdicts() -> dict[str, Any]:
 async def test_the_scan_floor_stands_in_as_the_credentials_answer_and_routes(
     wire, client, db_session
 ) -> None:
-    """P8's second obligation: the model never returned, so the high-confidence scan hit
+    """The second obligation: the model never returned, so the high-confidence scan hit
     IS the credentials answer. Routing is rule 4's doing here (no complete review), but
     what this pins is that the FAILED row's floor document still reaches the merge and
     lands in the record as the scan standing in — not as a blank the citizen decided."""
@@ -1095,14 +1093,14 @@ async def test_the_scan_floor_stands_in_as_the_credentials_answer_and_routes(
     # VERDICT instead made this branch unreachable and told the administrator "the
     # automatic check found this kind of data" on the one path where none ever ran.
     assert declaration["differences"]["credentials_secrets"] == ["scan_stood_in"]
-    # The floor answers ONLY credentials; every other question is the citizen's alone (R5).
+    # The floor answers ONLY credentials; every other question is the citizen's alone.
     assert "personal_information" not in declaration["differences"]
 
 
 async def test_a_tier_a_hit_the_review_overruled_routes_and_names_the_dispute(
     wire, client, db_session
 ) -> None:
-    """P8's first obligation, and the cell it was written for. Both sides answered No —
+    """The first obligation, and the cell it was written for. Both sides answered No —
     the review because it overruled the scan, the citizen on their own form — so before
     this the app published unattended and the recorded dispute rendered on a screen
     nobody would open for it. It routes, and the administrator is told why."""
@@ -1130,7 +1128,7 @@ async def test_a_clean_review_with_no_scan_hit_still_publishes_unattended(
     wire, client, db_session
 ) -> None:
     """The counterweight to the two above: routing is the DISPUTE's doing, not the
-    presence of a scan block. Same all-No review, no Tier A hit — AE8's unattended path
+    presence of a scan block. Same all-No review, no Tier A hit — the unattended path
     is untouched, which is what stops the fix from routing every app."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -1146,7 +1144,7 @@ async def test_a_clean_review_with_no_scan_hit_still_publishes_unattended(
 async def test_a_yes_discarded_for_bad_evidence_routes_through_the_real_gate(
     wire, client, db_session
 ) -> None:
-    """The R4-discard half, end to end. The runner turns a Yes whose every cited location
+    """The discard half, end to end. The runner turns a Yes whose every cited location
     was absent into UNANSWERED and records `downgraded_from_yes`; from the verdict alone
     that is indistinguishable from an honest abstention, so it used to fall to the
     citizen's No and publish. This pins that the stored flag survives `merge_inputs`."""

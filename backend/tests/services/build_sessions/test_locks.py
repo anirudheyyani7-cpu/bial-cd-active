@@ -1,4 +1,4 @@
-"""U3 — the C5 lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
+"""The lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
 
 from __future__ import annotations
 
@@ -30,17 +30,14 @@ async def test_acquire_is_exclusive_per_user(fake_redis: aioredis.Redis) -> None
     assert token is not None
     # A second acquire for the same user is refused (the NX one-per-user enforcement).
     assert await locks.acquire_lock(fake_redis, USER) is None
-    # A different user acquires independently.
     assert await locks.acquire_lock(fake_redis, OTHER) is not None
 
 
 async def test_holder_release_is_compare_and_delete(fake_redis: aioredis.Redis) -> None:
     token = await locks.acquire_lock(fake_redis, USER)
     assert token is not None
-    # A stale token never releases someone else's lock.
     assert await locks.release_lock_as_holder(fake_redis, USER, "not-the-token") is False
     assert await locks.lock_is_held(fake_redis, USER) is True
-    # The holder's own token releases.
     assert await locks.release_lock_as_holder(fake_redis, USER, token) is True
     assert await locks.lock_is_held(fake_redis, USER) is False
 
@@ -59,12 +56,11 @@ async def test_heartbeat_sets_ttl_and_reports_alive(fake_redis: aioredis.Redis) 
     assert await locks.heartbeat_is_alive(fake_redis, USER) is True
     ttl = await fake_redis.ttl(heartbeat_key(USER))
     assert 0 < ttl <= HEARTBEAT_TTL_SECONDS
-    assert expires > datetime.now(UTC)  # a future idle instant
+    assert expires > datetime.now(UTC)
 
 
 def test_lock_ttl_has_renew_headroom() -> None:
-    # The C3-frozen constants (900/300), NOT C5's proposed 300 s lock default: a renew
-    # always has head-room, so an active build never drops its lock at the cadence.
+    # A renew always has head-room, so an active build never drops its lock at the cadence.
     assert LOCK_TTL_SECONDS == 900
     assert LOCK_TTL_SECONDS > LOCK_RENEW_CADENCE_SECONDS
 
@@ -74,24 +70,21 @@ async def test_reap_lock_reclaims_a_drifted_lock(fake_redis: aioredis.Redis) -> 
     assert await locks.lock_is_held(fake_redis, USER) is True
     assert await locks.reap_lock(fake_redis, USER) is True  # value-guarded reclaim
     assert await locks.lock_is_held(fake_redis, USER) is False
-    # A second reap on an absent lock is a clean no-op.
     assert await locks.reap_lock(fake_redis, USER) is False
 
 
 async def test_acquire_fails_closed_on_redis_error(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U3 — fail CLOSED, but SAY WHICH KIND of closed.
+    """Fail CLOSED, but SAY WHICH KIND of closed.
 
-    The fail-closed half is unchanged and non-negotiable: a Redis error never hands out a
-    token. What changed is the signal. `None` is reserved for the one certain answer —
-    "the lock is genuinely held" — because the caller turns that into a 409 naming a live
-    build session. Folding an outage into the same `None` is what made every Redis blip
-    surface as "a build session is already active" for a user who had none.
-
-    `LockUnavailableError` SUBCLASSES `RedisError` (the additive `StorageUnconfiguredError`
-    shape), so a caller that only knows `except RedisError` still catches it.
-    """
+    The fail-closed half is non-negotiable: a Redis error never hands out a token. `None` is
+    reserved for the one certain answer — "the lock is genuinely held" — because the caller
+    turns that into a 409 naming a live build session. Folding an outage into the same `None`
+    is what made every Redis blip surface as "a build session is already active" for a user who
+    had none."""
+    # `LockUnavailableError` SUBCLASSES `RedisError` (the additive `StorageUnconfiguredError`
+    # shape), so a caller that only knows `except RedisError` still catches it.
 
     async def boom(*args: object, **kwargs: object) -> object:
         raise RedisError("redis is down")
@@ -106,7 +99,7 @@ async def test_acquire_fails_closed_on_redis_error(
 async def test_acquire_none_is_reserved_for_a_lock_that_is_genuinely_held(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The other half of the U3 split, pinned at the same seam: with a HEALTHY Redis, a
+    # The other half of the split, pinned at the same seam: with a HEALTHY Redis, a
     # refused acquire still returns `None` — so the 409 the manager builds from it always
     # describes a real holder. Without this, "raise on error" could be satisfied by raising
     # on everything.
@@ -157,19 +150,18 @@ async def test_every_primitive_but_acquire_still_surfaces_redis_errors(
     """`acquire_lock` is the ONLY primitive in this module that catches `RedisError`. This
     pins every other one bare, so no future guard can be added silently.
 
-    Two distinct reasons live in this one list. Most entries are ANSWER-BEARING, and a
-    swallow would manufacture a false answer out of an ambiguous store: `lock_is_held` False
-    is fail-OPEN, `read_registry` None is a phantom "no sandbox", `renew_lock` False is a
-    phantom "lock lost" that ends a healthy build, and a swallowed `mark_registry_ending`
-    lets a concurrent attach reconnect to a container the reaper is about to delete.
-
-    `release_lock_as_holder` and `write_heartbeat` are here for a DIFFERENT reason, and it
-    is the one that is easy to get wrong (it was, once): they look like compensation paths
-    that deserve a guard, but every caller that wants one already guards at the call site
-    (`manager.py:365`, `:1046`, `:873`), and at `manager.py:398` / `:554` the raise is
-    precisely what triggers the container teardown. See the two
-    `test_relaunch_tears_down_the_container_when_*` tests in `test_manager.py`, which pin
-    that behaviour end to end."""
+    Two distinct reasons live in this one list. Most entries are ANSWER-BEARING, and a swallow
+    would manufacture a false answer out of an ambiguous store: `lock_is_held` False is
+    fail-OPEN, `read_registry` None is a phantom "no sandbox", `renew_lock` False is a phantom
+    "lock lost" that ends a healthy build, and a swallowed `mark_registry_ending` lets a
+    concurrent attach reconnect to a container the reaper is about to delete."""
+    # `release_lock_as_holder` and `write_heartbeat` are here for a DIFFERENT reason, and it is
+    # the one that is easy to get wrong: they look like compensation paths that deserve a guard,
+    # but every caller that wants one already guards at the call site
+    # (`_compensate_lock_and_container`, `_pardon_the_container`, `_do_finalize`), and inside
+    # `_holding_user_lock` / `relaunch_preview` the raise is precisely what triggers that
+    # compensation. See the two `test_relaunch_spares_the_container_when_*` tests in
+    # `test_manager.py`, which pin that behaviour end to end.
     monkeypatch.setattr(fake_redis, method, _boom)
     with pytest.raises(RedisError):
         await call(fake_redis)
@@ -193,13 +185,12 @@ async def test_registry_state_helpers(fake_redis: aioredis.Redis) -> None:
     assert await locks.read_registry(fake_redis, USER) is None
 
 
-# --- U13: the start-in-flight marker ------------------------------------------------
+# --- the start-in-flight marker -----------------------------------------------------
 # `write_starting_marker` / `read_starting_marker` / `clear_starting_marker` are the
 # primitives `_holding_user_lock` (manager.py) builds the `starting` fact from; this section
 # pins them in isolation, the way `read_registry`/`mark_registry_ending` are pinned above.
-# The pipelined read `project_preview_state` actually calls is `test_preview_state.py`'s to
-# prove end to end — here it is pinned as a primitive: what it returns, and that it fails the
-# same way a bare `hgetall` would have.
+# The pipelined read `project_preview_state` actually calls is proven end to end in
+# `test_preview_state.py`; here it is pinned as a primitive only.
 
 PROJECT = uuid.uuid4()
 
@@ -207,8 +198,7 @@ PROJECT = uuid.uuid4()
 async def test_a_written_marker_names_the_project_and_carries_a_mandatory_ttl(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """The whole payload is the project id, and the TTL is not a default — a marker with none
-    would be the registry hash's own mistake (ADR-0029) repeated in a new key."""
+    """The whole payload is the project id, and the TTL is mandatory rather than a default."""
     await locks.write_starting_marker(fake_redis, USER, PROJECT)
 
     assert await locks.read_starting_marker(fake_redis, USER) == PROJECT
@@ -238,7 +228,7 @@ async def test_clearing_is_idempotent(fake_redis: aioredis.Redis) -> None:
 
     await locks.clear_starting_marker(fake_redis, USER)
     assert await locks.read_starting_marker(fake_redis, USER) is None
-    await locks.clear_starting_marker(fake_redis, USER)  # a second clear is a clean no-op
+    await locks.clear_starting_marker(fake_redis, USER)
     assert await locks.read_starting_marker(fake_redis, USER) is None
 
 
@@ -258,8 +248,8 @@ async def test_an_abandoned_marker_expires_on_its_own(fake_redis: aioredis.Redis
 async def test_the_pipelined_read_returns_both_the_registry_and_the_marker_in_one_round_trip(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """The exact pairing `project_preview_state` spends its one Redis round trip on (C3 §8.3):
-    two commands, not two round trips."""
+    """The exact pairing `project_preview_state` spends its one Redis round trip on: two
+    commands, not two round trips."""
     await fake_redis.hset(registry_key(USER), mapping={REGISTRY_FIELD_APP_NAME: "sbx-x"})
     await locks.write_starting_marker(fake_redis, USER, PROJECT)
 
@@ -281,8 +271,7 @@ async def test_the_pipelined_read_still_migrates_a_legacy_registry_record(
     fake_redis: aioredis.Redis,
 ) -> None:
     """The legacy-prefix adoption `read_registry` performs on a plain read must not be lost by
-    routing through the pipeline instead: a pre-R22 user starting a build for the first time
-    since the cutover still finds their record."""
+    routing through the pipeline instead."""
     from src.services.redis.keys import legacy_registry_key
 
     await fake_redis.hset(legacy_registry_key(USER), mapping={REGISTRY_FIELD_APP_NAME: "sbx-x"})

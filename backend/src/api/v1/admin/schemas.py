@@ -19,21 +19,20 @@ from src.schemas import CamelModel, clean_deletion_reason
 
 
 def _fits_the_column(url: AnyUrl) -> AnyUrl:
-    """Bound the SERIALIZED url, which is the value that reaches `varchar(MAX_DEPLOYED_URL)`.
+    """Bound the SERIALIZED url — the value that reaches `varchar(MAX_DEPLOYED_URL)`.
 
-    `UrlConstraints(max_length=…)` measures the INPUT string, but pydantic normalizes on parse —
-    a path-less `https://…` comes back with a trailing `/`. So a 2083-char path-less URL passed
-    the constraint and then `str(recorded_url)` handed 2084 chars to the column: an uncaught
-    asyncpg error, i.e. a 500 on mark-deployed where the admin deserves a 422. Re-measuring the
-    parse OUTPUT is what makes 0019's "a URL that parses at the schema boundary always fits"
-    true by validation rather than by luck.
+    `UrlConstraints(max_length=…)` measures the INPUT string, but pydantic normalizes a
+    path-less `https://…` with a trailing `/` on parse — so a 2083-char input could clear
+    the constraint and still hand 2084 chars to the column (an uncaught asyncpg 500 where
+    the admin deserves a 422). Re-measuring the parse OUTPUT is what makes 0019's "a URL
+    that parses at the boundary always fits" true by validation, not luck.
     """
     if len(str(url)) > MAX_DEPLOYED_URL:
         raise ValueError(f"URL must be at most {MAX_DEPLOYED_URL} characters")
     return url
 
 
-# The deployed-app address, parsed at the boundary (R5, "parse, don't validate"): a
+# The deployed-app address, parsed at the boundary ("parse, don't validate"): a
 # real URL, `https` ONLY. Rejecting `http` is not pedantry — the recorded URL becomes
 # a link the owner clicks, and this is the one place a typo'd or plaintext address can
 # be caught before it is handed to a user. `javascript:`/`data:` and free-text junk
@@ -51,7 +50,7 @@ HttpsUrl = Annotated[
 
 class AdminAppOut(CamelModel):
     """The admin projection — NEVER the code blobs, the app key, or a signed URL
-    (a bearer credential is minted only by the dedicated download endpoint, R15)."""
+    (a bearer credential is minted only by the dedicated download endpoint)."""
 
     app_id: uuid.UUID
     name: str
@@ -64,47 +63,46 @@ class AdminAppOut(CamelModel):
     # Derived from the approved pin (`approved_submission_id is not None`) — the old
     # JSX-snapshot derivation is gone with the column it read.
     has_approved_snapshot: bool
-    # The submission under review (R16): what the reviewer inspects, and the id
-    # approve must echo back (D5).
+    # The submission under review: what the reviewer inspects, and the id
+    # approve must echo back.
     submission_id: uuid.UUID | None
     commit_sha: str | None
     submitted_at: datetime | None
-    # The approved pin (R4): the artifact the runbook operator deploys — the SHA is
+    # The approved pin: the artifact the runbook operator deploys — the SHA is
     # their identity check after cloning the downloaded bundle.
     approved_submission_id: uuid.UUID | None
     approved_commit_sha: str | None
     approved_by: uuid.UUID | None
     approved_at: datetime | None
-    # The manual-runbook marker (R17, D7): `redeploy_needed` is exact —
+    # The manual-runbook marker: `redeploy_needed` is exact —
     # `approved_submission_id != deployed_submission_id` — so an approved-but-
     # undeployed app and a re-approved-since-deploy app both surface it.
     deployed_at: datetime | None
-    # The recorded live address (R5) — read back as a plain string, never re-parsed:
+    # The recorded live address — read back as a plain string, never re-parsed:
     # a value already in the column was parsed when it was written, and re-validating
     # it here would turn one bad legacy row into a 500 on the whole admin queue.
     deployed_url: str | None
-    # ALWAYS false for the self-publish lineage, whatever the pins say (R17a): the flag
+    # ALWAYS false for the self-publish lineage, whatever the pins say: the flag
     # is a runbook prompt, and a self-published app has no runbook step for anyone to
     # perform. For every other lineage it stays the exact id comparison above.
     redeploy_needed: bool
-    # Which lineage the current submission entered through (R17a/P5): `runbook`,
+    # Which lineage the current submission entered through: `runbook`,
     # `self_publish`, or null (never submitted, or an interim pre-publish-flow row —
     # null keeps today's behaviour everywhere). The admin SPA keys the runbook
     # affordances off this: a `self_publish` row renders neither "Deploy needed" nor
     # "Mark deployed" — and the server refuses the latter regardless.
     approval_route: ApprovalRoute | None
-    # What the publish flow attached at submit (R15): both answer sets, the
+    # What the publish flow attached at submit: both answer sets, the
     # per-question differences, and the citizen's REDACTED explanation — so the review
     # screen can lead with the disagreement without a second call. Shape is
     # deliberately untyped here (the questionnaire is expected to be reworded); null
     # for runbook-lineage and pre-feature rows, and the screen says so rather than
-    # rendering blanks. Never contains evidence locations (OD-B).
+    # rendering blanks. Never contains evidence locations.
     declaration: dict[str, Any] | None
-    # On-disk size of the project's own database (ADR-0028), or null when it has none —
+    # On-disk size of the project's own database, or null when it has none —
     # never provisioned, not yet ready, or the cluster was unreachable when the page
-    # rendered. STRICTLY ADVISORY: it replaced the retired `dataBytes` counter as an
-    # observation, and nothing anywhere reads it as a quota or a gate. Null means "no
-    # number to show", never "zero" and never "over limit".
+    # rendered. STRICTLY ADVISORY: nothing anywhere reads it as a quota or a gate. Null
+    # means "no number to show", never "zero" and never "over limit".
     database_bytes: int | None
     rejection_note: str | None
     created_at: datetime
@@ -114,13 +112,11 @@ class AdminAppOut(CamelModel):
 class AppListResponse(CamelModel):
     """One page of the registry listing, plus whether it IS the whole set.
 
-    `truncated` exists because the badge and this list are fed by two different queries:
-    the count is an uncapped `GROUP BY`, the listing stops at `LISTING_CAP`. Past the cap
-    the badge advertised a number the list refused to show, with nothing on the wire
-    saying so — and because the pending tab sorts OLDEST FIRST, the rows that vanished
-    were the NEWEST submissions. A citizen's app could sit in the queue, be counted, and
-    be invisible to every administrator who looked. Pagination stays deferred; making the
-    cap VISIBLE is what stops the two surfaces from silently disagreeing."""
+    `truncated` exists because the badge and list come from different queries: the count is
+    an uncapped `GROUP BY`, the listing stops at `LISTING_CAP`. Past the cap the badge advertised
+    a number the list refused to show — and since the pending tab sorts OLDEST FIRST, the rows
+    that vanished were the NEWEST submissions, invisible to every administrator who looked.
+    Pagination stays deferred; making the cap VISIBLE stops the two surfaces disagreeing."""
 
     apps: list[AdminAppOut]
     truncated: bool = False
@@ -129,14 +125,11 @@ class AppListResponse(CamelModel):
 class AppStatusCounts(CamelModel):
     """How many apps sit in each registry status, zero-filled.
 
-    Every status is a REQUIRED field rather than a free `dict[str, int]`: the badge that
-    reads this is the only thing telling an administrator a queue has items in it, and a
-    silently-absent key would render as "no number" — indistinguishable from zero on a
-    screen whose whole job is that distinction. The status vocabulary is closed
-    (`AppStatus`), so naming the five costs nothing and buys the client real narrowing.
-
-    Field names are single words, so the camel base is a no-op and the wire keys are the
-    `AppStatus` values verbatim.
+    Every status is REQUIRED rather than a free `dict[str, int]`: the badge that reads this
+    is the only thing telling an administrator a queue has items, and a silently-absent key
+    would render as "no number" — indistinguishable from zero on a screen whose whole job is
+    that distinction. The vocabulary is closed (`AppStatus`), so naming all five costs nothing.
+    Field names are single words, so the camel base is a no-op and wire keys match verbatim.
     """
 
     draft: int
@@ -147,7 +140,7 @@ class AppStatusCounts(CamelModel):
 
 
 class AppCountsResponse(CamelModel):
-    """The badge's whole payload (P1) — counts, and nothing else.
+    """The badge's whole payload — counts, and nothing else.
 
     Deliberately NOT the listing: `list_apps` returns up to 200 fully-projected rows AND
     runs a cluster size probe per page, so polling it for a number would pay for both and
@@ -164,7 +157,7 @@ class AdminAppStatusResponse(CamelModel):
 
 
 class ApproveRequest(CamelModel):
-    # The submission id the admin ACTUALLY reviewed (D5): the guarded UPDATE adds
+    # The submission id the admin ACTUALLY reviewed: the guarded UPDATE adds
     # `AND source_submission_id = :submission_id`, so a re-submit between the
     # admin's review and their click updates zero rows → 409, never a silent
     # promotion of an unreviewed bundle.
@@ -172,7 +165,7 @@ class ApproveRequest(CamelModel):
 
 
 class BundleUrlResponse(CamelModel):
-    """The audited out-of-band review download (R15). `url` is a short-TTL bearer
+    """The audited out-of-band review download. `url` is a short-TTL bearer
     credential — the SPA uses it immediately and never stores it; it is likewise
     never written to the audit trail."""
 
@@ -183,15 +176,14 @@ class BundleUrlResponse(CamelModel):
 
 
 class MarkDeployedRequest(CamelModel):
-    """The optional deployed-URL payload. The whole BODY is optional (the endpoint
-    shipped without one and the admin SPA already posts `{}`), and so is the field:
-    an admin who ran the runbook but has no URL to hand still records the marker.
+    """The optional deployed-URL payload. The whole BODY is optional (the admin SPA already
+    posts `{}`), and so is the field: an admin who ran the runbook but has no URL to hand
+    still records the marker.
 
-    OMITTING `deployedUrl` means "leave the recorded URL as it is" — a defined,
-    documented meaning (fail-first's optional-knob exception), and the right one: a
-    re-deploy of the same app keeps the same address, so a bare re-mark must not
-    silently blank out the Live link the owner is already using. Recording a
-    *different* URL is just passing the new one."""
+    OMITTING `deployedUrl` means "leave the recorded URL as it is" (fail-first's optional-knob
+    exception): a re-deploy of the same app keeps the same address, so a bare re-mark must not
+    blank out the Live link the owner is already using. Recording a *different* URL just passes
+    the new one."""
 
     deployed_url: HttpsUrl | None = None
 
@@ -207,7 +199,7 @@ class MarkDeployedResponse(CamelModel):
 
 class DeployCredentialResponse(CamelModel):
     """The long-lived per-app Blob credential the go-live runbook injects into the deployed
-    container as `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS` (U2/R2). `sas` is a 365-day bearer
+    container as `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS`. `sas` is a 365-day bearer
     credential: the admin pastes it straight into an ACA secret and it is NEVER logged, NEVER
     written to the audit trail (the audit row carries the expiry, not the token), and never part
     of any list projection. `expiresAt` comes from the app's stored access policy — deleting that
@@ -220,7 +212,7 @@ class DeployCredentialResponse(CamelModel):
 
 class DatabaseCredentialResponse(CamelModel):
     """The project database's connection string, for the go-live runbook's
-    `BIAL_DATABASE_URL` (ADR-0028). `dsn` embeds the app role's password, so it is the same
+    `BIAL_DATABASE_URL`. `dsn` embeds the app role's password, so it is the same
     kind of object as `DeployCredentialResponse.sas`: returned in this body and nowhere else
     — never logged, never in the audit `detail` (which records `roleName` + `host` instead),
     never in a list projection.
@@ -234,7 +226,7 @@ class DatabaseCredentialResponse(CamelModel):
     host: str
 
 
-# The rejection note's floor (U13/P3). A rejection is the only thing the citizen gets
+# The rejection note's floor. A rejection is the only thing the citizen gets
 # back, and an EMPTY note rendered as nothing at all — a bare red badge and no idea what
 # to change. The floor is a product decision in disguise (it decides how much an
 # administrator must write), so it is a named constant rather than a magic number
@@ -268,23 +260,23 @@ RejectionNote = Annotated[
 
 
 def _clean_app_delete_reason(value: str) -> str:
-    """The admin app-delete's binding of the shared 5-50 word deletion rule (U23)."""
+    """The admin app-delete's binding of the shared 5-50 word deletion rule."""
     return clean_deletion_reason(value, subject="app")
 
 
 class RejectRequest(CamelModel):
-    # REQUIRED since U13 (P3): "a rejection carries a note back" is the requirement, and an
+    # REQUIRED: "a rejection carries a note back" is the requirement, and an
     # optional field made that a suggestion. Omitting it is a 422 on the missing field, and
     # a too-short or whitespace-only one is a 422 on its content.
     note: RejectionNote
 
 
 class AppDeleteRequest(CamelModel):
-    """The body `DELETE /v1/admin/apps/{app_id}` requires (U23, R5).
+    """The body that `DELETE /v1/admin/apps/{app_id}` requires.
 
-    AN ADMINISTRATOR DESTROYING SOMEBODY ELSE'S APP MUST SAY WHY. The citizen deleting their
-    own project already has to (#158 §13.2); the harsher act — an administrator destroying work
-    that is not theirs, with no undo and no export — asked for nothing at all, and the browser
+    AN ADMINISTRATOR DESTROYING SOMEBODY ELSE'S APP MUST SAY WHY. The citizen deleting their own
+    project already has to; the harsher act — an administrator destroying work that is not
+    theirs, with no undo and no export — asked for nothing at all, and the browser
     `window.confirm` it went through could not have collected it.
 
     The reason rides the `app:delete` audit row this path already writes BEFORE destruction,
@@ -304,15 +296,15 @@ class AppDeleteRequest(CamelModel):
 
 
 class PatchAppRequest(CamelModel):
-    # The app display name is now sourced from the owning project (#48) — not settable here.
+    # The app display name is now sourced from the owning project — not settable here.
     # Only the login-required gate remains admin-patchable.
     login_required: bool | None = None
 
 
 class PrefixReconcileCounts(CamelModel):
-    """One object-store prefix's reconciliation tally (U10, R11/R13). Counts ONLY — never a key
-    list, which would leak the internal object layout. `scanned == owned + withinGrace +
-    eligible`; `deleted` is 0 on a report-only prefix (`submissions`, `apps`)."""
+    """One object-store prefix's reconciliation tally. Counts only, never a key list.
+    `scanned == owned + withinGrace + eligible`; `deleted` is 0 on a report-only prefix
+    (`submissions`, `apps`)."""
 
     scanned: int
     owned: int
@@ -322,10 +314,9 @@ class PrefixReconcileCounts(CamelModel):
 
 
 class AttachmentReclaimSummary(CamelModel):
-    """The aggregate never-sent-attachment reclaim tally folded into the operator sweep (U9/U10).
-    Counts ONLY (R13 posture, like `PrefixReconcileCounts`): rows reclaimed, quota bytes freed, and
-    object keys swept — summed across every owning user the pass touched. Never a key, a user id,
-    or any list, which would leak the internal layout / the roster."""
+    """The aggregate never-sent-attachment reclaim tally folded into the operator sweep: rows
+    reclaimed, quota bytes freed, and object keys swept, summed across every owning user the pass
+    touched. Counts only, like `PrefixReconcileCounts` — never a key, a user id or any list."""
 
     reclaimed: int
     freed_bytes: int
@@ -333,11 +324,11 @@ class AttachmentReclaimSummary(CamelModel):
 
 
 class StorageReconcileResponse(CamelModel):
-    """The operator-invoked reconciling sweep's report (U10). For the report-only prefixes the
+    """The operator-invoked reconciling sweep's report. For the report-only prefixes the
     report IS the whole product of the endpoint, so it reaches the caller as a typed body rather
     than a log line. `ownerlessSubmissions` names the `submissions/{app_id}/` bundles whose app row
-    is gone (past grace) — the set the D7 retention call must rule on. `attachmentReclaim` is the
-    U9 never-sent-upload reclaim the sweep now folds in (the quota leak it fixes finally runs in
+    is gone (past grace) — the set the retention call must rule on. `attachmentReclaim` is the
+    never-sent-upload reclaim the sweep now folds in (the quota leak it fixes finally runs in
     prod, not just in its unit test)."""
 
     attachments: PrefixReconcileCounts
@@ -354,9 +345,7 @@ class StorageReconcileResponse(CamelModel):
 
 
 class DatabaseReconcileCounts(CamelModel):
-    """The per-project-database half of the orphan sweep (U7, R10). Counts ONLY — never a
-    database name, which embeds the owning project's uuid and would turn this report into an
-    inventory of who has what (the exact posture `PrefixReconcileCounts` takes on keys).
+    """The per-project-database half of the orphan sweep. Counts only, never a database name.
 
     `scanned == notOurs + owned + orphaned + unknownAge`. `unknownAge` is its own bucket
     rather than a share of `orphaned` because `pg_database` has no creation timestamp: the
@@ -394,7 +383,7 @@ class RoleReconcileCounts(CamelModel):
 
 
 class DatabaseReconcileResponse(CamelModel):
-    """The operator-invoked per-project-database sweep's report (U7).
+    """The operator-invoked per-project-database sweep's report.
 
     A SIBLING of `StorageReconcileResponse`, deliberately not an extension of it: that shape
     is frozen around `scanned == owned + withinGrace + eligible`, and a 24h age grace keyed
@@ -407,22 +396,20 @@ class DatabaseReconcileResponse(CamelModel):
 
 
 class SandboxReconcileResponse(CamelModel):
-    """The operator-invoked sandbox-fleet sweep's report (#83 follow-up).
+    """The operator-invoked sandbox-fleet sweep's report.
 
     A SIBLING of the storage and database reports, and report-only for the same reason: the
     ambiguity between "orphaned" and "provisioned seconds ago, registry not written yet" is not
     something to hand an irreversible ARM delete.
 
-    Counts for the fleet, NAMES only for the gaps. The operator needs the names to act on;
-    everything else is a number, because a sandbox name embeds its app's uuid and a full list
-    would be an inventory of who is running what. The names travel in the RESPONSE and never in
-    the audit row — the same split the storage report makes for blob keys."""
+    Counts for the fleet, NAMES only for the gaps — the operator needs those to act on. The
+    names travel in the RESPONSE and never in the audit row."""
 
     live: int
     registered: int
     unregistered: list[str]
     registered_missing: list[str]
-    # --- R20: is the scheduled worker alive? ------------------------------------------
+    # --- Is the scheduled worker alive? ------------------------------------------
     # THE FLEET COUNT ABOVE CANNOT ANSWER THIS. Every alarm the reclamation pass raises is
     # emitted BY the pass, so a crashlooping scheduler emits nothing and reads exactly like a
     # healthy quiet fleet. The only detector of a dead worker is the ABSENCE of a pass record,
@@ -451,21 +438,14 @@ class ReclamationCandidate(CamelModel):
 
 
 class ReclamationReportResponse(CamelModel):
-    """What the reclamation pass would do RIGHT NOW, without doing any of it (R20).
+    """What the reclamation pass would do RIGHT NOW, without doing any of it.
 
-    THE QUESTION AN OPERATOR COULD NOT ASK. Before flipping `SANDBOX__RECLAIM_DESTROY` the only
-    ways to learn what a pass would delete were to read the worker's logs after the fact, or to
-    turn it on and find out. Both answer after the decision. This answers before it, on demand,
-    and touches nothing: it runs the same classifier over the same three sources and returns the
-    verdicts.
-
-    THE FLAGS COME BACK WITH THE VERDICTS because they change what those verdicts MEAN. The same
-    `destroy` list is a preview on a report-only deployment and a description of what is about to
-    happen on an armed one, and an operator must not have to go and look up which they are in.
-
-    COUNTS TO THE AUDIT ROW, NAMES ONLY TO THE RESPONSE — the split every sibling admin report
-    makes. A sandbox name embeds 28 hex characters of its app's uuid, so a name list in an audit
-    log is a durable inventory of who was running what."""
+    THE QUESTION AN OPERATOR COULD NOT ASK before: the only ways to learn what a pass would
+    delete were the worker's logs after the fact, or arming it to find out. This answers before
+    the decision, running the same classifier over the same three sources.
+    THE FLAGS TRAVEL WITH THE VERDICTS because they change what the verdicts MEAN: the same
+    `destroy` list is a preview off-armed, a description of what is about to happen once armed.
+    COUNTS TO THE AUDIT ROW, NAMES ONLY TO THE RESPONSE — the split every sibling report makes."""
 
     scanned: int
     spared: int
@@ -480,14 +460,15 @@ class ReclamationReportResponse(CamelModel):
     #: Destroy candidates AND escalations — everything a human has a decision to make about.
     #: Spared containers are the boring majority and are a count only.
     candidates: list[ReclamationCandidate]
-    #: What THIS PROCESS'S flags say right now — and that qualifier is the correction `#190`
-    #: bought. `reclaimEnabled` is read from the API's own `settings.sandbox`, while the scheduled
-    #: pass is gated on the WORKER's, loaded from a different env file in a different container.
+    #: What THIS PROCESS'S flags say right now — and that qualifier is the whole of the field's
+    #: meaning, because two processes read two different files. `reclaimEnabled` is read from the
+    #: API's own `settings.sandbox`, while the scheduled pass is gated on the WORKER's, loaded from
+    #: a different env file in a different container.
     #: An operator who set `SANDBOX__RECLAIM_ENABLED` in `.env` and not `.env.worker` — the
     #: ordinary mistake, since `.env` is the file everyone edits — got `reclaimEnabled: true`
     #: beside a worker declining every pass with `flag_off`. This field therefore answers "did my
     #: config change reach the API", never "is the pass running"; `lastPassOutcome` below is the
-    #: only field that can answer the second. Its meaning is deliberately UNCHANGED (R6): deriving
+    #: only field that can answer the second. Its meaning is deliberately UNCHANGED: deriving
     #: it from the worker would silently redefine a shipped field.
     #:
     #: `reclaimDestroy` false means a running pass reports rather than acts. This endpoint answers
@@ -500,7 +481,7 @@ class ReclamationReportResponse(CamelModel):
     #: whether the scheduled worker is alive.
     last_reclamation_pass_at: datetime | None = None
     reclamation_stale: bool = True
-    #: WHAT THE WORKER ACTUALLY DID, straight off the `worker_passes` row it wrote (`#190`).
+    #: WHAT THE WORKER ACTUALLY DID, straight off the `worker_passes` row it wrote.
     #:
     #: `lastReclamationPassAt` proves a pass HAPPENED; on its own it cannot say whether the pass
     #: looked at anything. `_record_pass` writes `declined`/`flag_off` deliberately — "reclamation
@@ -511,7 +492,7 @@ class ReclamationReportResponse(CamelModel):
     #: against, so a worker sweeping somebody else's subscription cannot read as ours.
     #:
     #: NO SUBSCRIPTION ID travels here, by construction — `workers/reclamation._enumerated_fleet`
-    #: keeps it in the server-side log (`.claude/rules/security.md`).
+    #: keeps it in the server-side log only.
     #:
     #: Both null when no pass has ever been recorded, which pairs with `reclamationStale: true`.
     #: THE WORKER'S OWN ENUM rather than a re-spelled `str`, the same call
@@ -522,31 +503,14 @@ class ReclamationReportResponse(CamelModel):
 
 
 class SandboxTagBackfillResponse(CamelModel):
-    """What one C10 identity backfill pass did to the pre-existing fleet (U8).
+    """What one identity backfill pass did to the pre-existing fleet.
 
-    THE BUCKETS SUM: `scanned == alreadyTagged + stamped + skippedNoRow + failed`, the
-    `reconcile-databases` shape. That is not tidiness — an operator reads this to decide whether
-    the fleet is ready for the destroy flag to be flipped, and a report whose numbers do not add up
-    cannot support that decision.
-
-    `skippedNoRow` is the one to read carefully, and its name understates it: those containers WERE
-    stamped, with `kind` and `backfilled_at` and nothing else, because no app row matches their
-    name (a sandbox name keeps only 28 of its app_id's 32 hex characters, so it is not invertible).
-    They carry no owner, and they are therefore escalate-forever — reported on every pass,
-    destroyed by nothing. A non-zero value here is not an error; it is the count of containers a
-    human has to decide about.
-
-    `unowned` IS THAT SAME POPULATION, COUNTED ON EVERY PASS, and it deliberately stands outside
-    the sum. The four summing buckets say what this pass DID; `unowned` says what the fleet IS.
-    They diverge immediately: a container stamped `kind`-only by pass 1 is `alreadyTagged` in
-    pass 2, so `skippedNoRow` drops to zero and `alreadyTagged == scanned` — which is exactly the
-    reading an operator takes as "the fleet is clean, flip the destroy flag". `unowned` is the
-    number that keeps saying otherwise.
-
-    COUNTS ONLY, unlike its sibling reports, and the asymmetry is deliberate: `reconcile-sandboxes`
-    returns names because an operator has to know WHICH container to go and delete, whereas this
-    endpoint has already acted on every container it found, so a name list would be an inventory of
-    who is running what with nothing to do about it. Failures travel to the logs by name."""
+    THE BUCKETS SUM: `scanned == alreadyTagged + stamped + skippedNoRow + failed`. `skippedNoRow`
+    containers WERE stamped (`kind` + `backfilled_at`) but match no app row — a sandbox name keeps
+    only 28 of 32 hex chars, so it is not invertible — and are therefore escalate-forever.
+    `unowned` is that same population, RECOUNTED EVERY PASS, deliberately outside the sum: a
+    container `alreadyTagged` on pass 2 makes `skippedNoRow` read zero and `scanned` look clean —
+    the trap `unowned` alone still catches. Counts only; failures travel to the logs by name."""
 
     scanned: int
     already_tagged: int
@@ -557,21 +521,14 @@ class SandboxTagBackfillResponse(CamelModel):
 
 
 class DeployReconcileResponse(CamelModel):
-    """The operator-invoked deploy-reconciliation report (U6).
+    """The operator-invoked deploy-reconciliation report.
 
-    ONE number, and that is the honest shape rather than a thin one.
-    `reconcile_stalled_deployments` returns how many abandoned rows it SETTLED; anything richer
-    would have to be assembled from a second read of a table the pass has just changed — a report
-    that contradicts itself the moment two reconcilers overlap, which is exactly the window this
-    endpoint runs in while the in-process loop is still alive (removed in U7).
+    ONE number — the honest shape, not a thin one. `resolved` counts abandoned rows this pass
+    SETTLED; anything richer needs a second read of a table the pass just changed, which
+    contradicts itself the moment the scheduled pass and the boot one-shot overlap.
 
-    A row ARM could not answer for is deliberately NOT in this count. It is not resolved, it is
-    DEFERRED — left exactly as it was for the next pass — because a throttled request that read
-    as "gone" would eventually mark a live app failed.
-
-    Counts only, like every sibling report: a deployment id or an app name would turn the
-    operator trail into an inventory of who deployed what (`.claude/rules/security.md`).
-    """
+    A row ARM could not answer for is DEFERRED, not resolved — left for the next pass, since a
+    throttled request read as "gone" would eventually mark a live app failed. Counts only."""
 
     resolved: int
 
@@ -609,14 +566,14 @@ class UserLimitsOut(CamelModel):
     email: str
     display_name: str | None
     role: str
-    # Local suspension marker (R10): null = active. Surfaced so the roster shows
+    # Local suspension marker: null = active. Surfaced so the roster shows
     # who is blocked without a per-user read.
     suspended_at: datetime | None
     # Today's folded BUILD token spend (all four classes, IST day) — the figure the
     # daily cap actually measures, via the same shared expression the gate reads.
-    # One page-wide aggregate feeds this, never a per-row query (R9).
+    # One page-wide aggregate feeds this, never a per-row query.
     usage_today: int
-    # Today's pre-publish-review spend (U15), as its OWN figure: metered against the
+    # Today's pre-publish-review spend, as its OWN figure: metered against the
     # citizen for attribution, never part of what the cap measures, and never folded
     # into `usage_today` — one number that means two things is how the ledger went
     # wrong before.
@@ -626,8 +583,8 @@ class UserLimitsOut(CamelModel):
 
 
 class UsersResponse(CamelModel):
-    """The roster page. Keyset envelope fields (KD-1) are additive next to the
-    original `{defaults, users}` shape — a called-out SPA contract change (U9)."""
+    """The roster page. Keyset envelope fields are additive next to the
+    original `{defaults, users}` shape — a called-out SPA contract change."""
 
     defaults: LimitFields
     users: list[UserLimitsOut]
@@ -699,7 +656,7 @@ class FeedbackResponse(CamelModel):
 
 
 class HarnessCounterRow(CamelModel):
-    """One counter's total, and when it was last seen (U25, R32)."""
+    """One counter's total, and when it was last seen."""
 
     name: str
     total: int
@@ -710,17 +667,12 @@ class HarnessCounterRow(CamelModel):
 class HarnessCountersResponse(CamelModel):
     """`GET /v1/admin/harness-counters` → 200 — the build-harness outcomes, totalled.
 
-    THE QUESTION THIS ANSWERS, in the words the plan's success criteria use: did the verdict block
-    a false claim, how often did we restore, and did any turn fail to reach a durable copy. After a
-    week in production those are answerable from this one response.
-
-    NO METRICS DEPENDENCY, deliberately. There is no metrics system in this deployment (this
-    module says so elsewhere at length), so the shape is a `GROUP BY` over a small append-only
-    table — the same trade `worker_passes` already makes.
-
-    Rows are whatever names have been WRITTEN, not the enum's members: the vocabulary is open by
-    design, and a counter the companion plan adds at the tool boundary shows up here with no
-    change to this file."""
+    THE QUESTION THIS ANSWERS: did the verdict block a false claim, how often did we restore,
+    and did any turn fail to reach a durable copy. NO METRICS DEPENDENCY, deliberately — this
+    deployment has none, so the shape is a `GROUP BY` over a small append-only table, the same
+    trade `worker_passes` makes.
+    Rows are whatever names have been WRITTEN, not the enum's members: a counter added at the
+    tool boundary shows up here with no change to this file."""
 
     counters: list[HarnessCounterRow]
     since: datetime

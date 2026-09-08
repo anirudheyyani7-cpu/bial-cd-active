@@ -1,42 +1,27 @@
 /**
- * THE POLITE ACTIVITY REGION (R65, R66).
+ * THE POLITE ACTIVITY REGION.
  *
- * ══ THREE CHANNELS, EACH WITH A DISTINCT JOB, AND NO NEW DEPENDENCY ══
+ * THREE CHANNELS, each with a distinct job, no new dependency: `Announcer` is polite and
+ * INVISIBLE (agent started working, a group sealed); `TurnBanner` is polite and VISIBLE (one
+ * value, newest wins — the app's current state); `SessionBanners` is ASSERTIVE (what genuinely
+ * interrupts: refusals, blocks, failures). `assertive` is reserved to `SessionBanners` alone,
+ * despite older plan text calling `TurnBanner` "the assertive slot".
  *
- *   `Announcer`      — polite and INVISIBLE. Activity: the agent started working, a group sealed.
- *   `TurnBanner`     — polite and VISIBLE. One value, newest wins: the state the app is in now.
- *   `SessionBanners` — ASSERTIVE. The things that genuinely interrupt: refusals, blocks, failures.
+ * WHY THIS EXISTS: `sonner` (recommended by the component research) renders exactly ONE live
+ * region for everything, with no way to make any toast assertive — it could never carry this
+ * region's urgent half, and the job didn't need it anyway: this surface's two toasts were the
+ * SAME VALUE (`usePendingAttachments`'s `attachToast`, one hook, one timer) rendered twice in
+ * two corners with two different a11y treatments — one composer rendering it once is the
+ * whole consolidation.
  *
- * Route urgent to the assertive slot; route incidental and activity to the polite pair. The plan
- * called `TurnBanner` "the assertive slot" in several places and that was simply wrong —
- * `TurnBanner`'s own docblock records that `assertive` is deliberately reserved, and only
- * `SessionBanners` uses it.
+ * THE RULE THAT ACTUALLY BREAKS: a live region must exist in the DOM, empty, before its text
+ * arrives, or it is frequently never announced — why this mounts unconditionally with an empty
+ * span rather than conditionally, and WRAPS rather than duplicates (a second `sr-only` copy of
+ * an on-screen sentence reads twice to the DOM; broke three tests the first time it shipped).
  *
- * ══ WHY `sonner` IS NOT ADOPTED, THOUGH THE COMPONENT RESEARCH RECOMMENDED IT ══
- *
- * It renders exactly ONE live region for everything (`aria-live="polite"`, `aria-atomic="false"`;
- * `ToasterProps` exposes only `containerAriaLabel`) with no way to make any toast assertive — not
- * even `toast.error()`. So it could never have carried R65's urgent half. And the job turns out not
- * to need it: this surface's two toasts were the SAME VALUE — `usePendingAttachments`'s
- * `attachToast`, one hook with one timer — rendered twice in two corners with two different a11y
- * treatments. One composer rendering it once is the whole consolidation.
- *
- * ══ THE RULE THAT ACTUALLY BREAKS ══
- *
- * A live region must ALREADY EXIST IN THE DOM, EMPTY, before its text arrives. A region injected
- * together with its text is frequently not announced at all. This portal states that rule in two
- * of its own files (`TurnBanner`, `LivePreview`) and it is the reason this component is mounted
- * unconditionally and renders an empty span rather than being conditionally rendered.
- *
- * It also WRAPS rather than duplicates: a second `sr-only` copy of a sentence already on screen is
- * that sentence rendered twice to anything reading the DOM, and writing it that way broke three
- * existing tests the first time.
- *
- * ══ R66 IS TWO ANNOUNCEMENTS AND NO MORE ══
- *
- * The agent started working, and what a group amounted to when it sealed. NOT every step as it
- * happens. The old sr-only mirror throttled to one change per ten seconds with a flush branch —
- * that throttle was solving the wrong problem, and R66 removes the problem rather than tuning it.
+ * TWO ANNOUNCEMENTS, NO MORE: the agent started working, and what a group amounted to when it
+ * sealed — not every step. The old mirror throttled to one change per ten seconds with a flush
+ * branch; that solved the wrong problem, so this hook removes the problem instead of tuning it.
  */
 import { useEffect, useRef, useState, type FC } from 'react'
 
@@ -68,7 +53,7 @@ const Announcer: FC<AnnouncerProps> = ({ message }) => (
 export default Announcer
 
 /**
- * What the activity region should currently be saying (R66's two announcements).
+ * What the activity region should currently be saying.
  *
  * Kept as a hook beside the region so the "two announcements and no more" rule is one piece of
  * code rather than a discipline spread across call sites. It deliberately does NOT announce each

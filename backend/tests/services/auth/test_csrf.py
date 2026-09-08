@@ -1,4 +1,4 @@
-"""CSRF signed double-submit — session-bound, fail-closed unit tests (U3)."""
+"""CSRF signed double-submit — session-bound, fail-closed unit tests."""
 
 from __future__ import annotations
 

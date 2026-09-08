@@ -2,26 +2,22 @@
 
 Real sandbox containers, real git, real Azurite, real Redis, real PostgreSQL. See conftest.
 
-ON `may_write` (read once, then every call site below reads itself):
+WHY THIS EXISTS — `may_write` is not a free knob:
 
-`may_write` is not a free knob — it MIRRORS THE TURN'S TOOLSET. `toolsets_for_kind` hands the
-mutating `sandbox_toolset` to `ChatKind.BUILD` and to nothing else, every
-`workspace_touched = True` lives inside that toolset, and `workspace_touched` is the only thing
-the engine derives `finish_turn_sandbox(touched=...)` from. So in production `may_write=False`
-implies `touched=False`, always; a read-only turn paired with `touched=True` is a turn that
-simultaneously cannot and did mutate the tree, and pinning behaviour to it pins nothing.
+`may_write` MIRRORS THE TURN'S TOOLSET. `toolsets_for_kind` hands the mutating
+`sandbox_toolset` to `ChatKind.BUILD` and nothing else, every `workspace_touched = True`
+lives inside that toolset, and `workspace_touched` is the only thing the engine derives
+`finish_turn_sandbox(touched=...)` from. So in production `may_write=False` implies
+`touched=False`, always; a read-only turn paired with `touched=True` pins nothing.
 
-Hence the shape used throughout: a mutating turn runs `may_write=True`, and a Save is taken
-BETWEEN turns — `finish_turn_sandbox` pops the build slot (and pardons the container, which
-stays up), after which `save_project_snapshot` is free to run. That is also the production
-sequence, which is why that method deliberately does not require an in-process session: the
-common Save is the one clicked after a reply has landed.
+Hence the shape used throughout: a mutating turn runs `may_write=True`, and a Save is
+taken BETWEEN turns — `finish_turn_sandbox` pops the build slot (and pardons the
+container, which stays up), after which `save_project_snapshot` is free to run. That is
+also the production sequence: the common Save is the one clicked after a reply lands.
 
-Three scenarios keep `may_write=False` while a Save runs against a LIVE session: `s3`, `s9`
-and `s12`. Each says why where it sits. None of them is an instance of the modelling problem
-the shape above avoids — all three end with `touched=False` or do not end the turn at all, so
-none declares a session that is read-only and mutating at once. `s8` is a plain read-only turn
-with `touched=False` and needs no explanation.
+Three scenarios keep `may_write=False` while a Save runs against a LIVE session: `s3`,
+`s9` and `s12`. Each says why where it sits — none is read-only-and-mutating at once.
+`s8` is a plain read-only turn with `touched=False` and needs no explanation.
 """
 
 from __future__ import annotations
@@ -437,17 +433,14 @@ async def test_s12_an_unreadable_bundle_is_a_typed_refusal_not_a_crash(
 async def test_s13_a_save_and_a_turn_in_the_same_second_still_resumes_the_newer_tree(
     db_session: AsyncSession, live_redis: aioredis.Redis, live_storage, sandbox
 ) -> None:
-    """★ THE RESOLUTION QUESTION. Azure (and Azurite) stamp `Last-Modified` in WHOLE SECONDS.
-    `newest_restore_source` orders the two bundles by that stamp, so when a Save and a
-    turn-boundary write land inside one second the comparison cannot separate them.
+    """★ THE RESOLUTION QUESTION. Azure (and Azurite) stamp `Last-Modified` in WHOLE
+    SECONDS, so a Save and a turn-boundary write landing in the same second are
+    indistinguishable to `newest_restore_source` — and `_restore_or_provision` uses that
+    same comparison, so a tie restores the older SAVED tree over newer work — the failure this
+    test guards against, reappearing inside a one-second window.
 
-    The stake is not a missing prompt: `_restore_or_provision` uses the same comparison, so a
-    tie means the older SAVED tree is restored and the newer work is gone — the exact P0 this
-    branch fixed, reappearing inside a one-second window. This drives it end to end.
-
-    It does NOT guarantee the collision — real container round trips decide that, and the run
-    that named S13B found the two stamps a second apart. The tie is FORCED in S13B; what this
-    one holds is the unforced sequence, and it prints which way the stamps actually fell."""
+    It does NOT guarantee the collision — S13B FORCES the tie instead; this one runs the
+    unforced sequence and prints which way the real stamps fell."""
     from src.services.redis import registry_key
 
     user, project_id = await _project(db_session, "e2e13@rvaiglobal.com")

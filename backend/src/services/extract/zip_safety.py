@@ -1,4 +1,4 @@
-"""Zip-bomb pre-filter for untrusted OOXML uploads (R17; ports `server/zip-safety.js`).
+"""Zip-bomb pre-filter for untrusted OOXML uploads, ported from the Express POC.
 
 A dependency-free central-directory scan that SUMS each entry's self-declared uncompressed size
 and rejects the archive before any parse if the total exceeds a cap — bounding the *actual*

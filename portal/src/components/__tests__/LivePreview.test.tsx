@@ -1,16 +1,13 @@
 /**
- * LivePreview — four states, not one boolean (R16, R17, R18 / C3 §8.3).
+ * LivePreview — four states, not one boolean.
  *
- * The pane used to take `previewReclaimed: boolean`, fed from `!alive`, which meant a Redis
- * blip, a sleeping workspace, a sibling project holding the one-per-user slot and a project
- * nobody ever built all arrived here identically and were all rendered as "Preview
- * unavailable" — a sentence that describes a platform fault for three situations that are not
- * one, and for a fourth that was only ever a failed question.
+ * The pane used to take `previewReclaimed: boolean`, fed from `!alive` — a Redis blip, a sleeping
+ * workspace, a sibling project holding the slot, and a project never built all rendered as the
+ * same "Preview unavailable", a platform-fault sentence wrong for three of the four.
  *
- * These tests drive the component through the SAME parser the browser uses
- * (`fetchPreviewState`), so a backend that stops sending `state`, or a parser that starts
- * coercing it, fails here rather than in production. That is the round trip this file can
- * honestly assert; the wire values themselves are pinned in
+ * These tests drive the component through the SAME parser the browser uses (`fetchPreviewState`),
+ * so a backend that stops sending `state`, or a parser that starts coercing it, fails here rather
+ * than in production. The wire values themselves are pinned in
  * `backend/tests/api/v1/build_sessions/test_preview_state.py`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
@@ -45,7 +42,7 @@ function paneFor(state: PreviewState, extra: Record<string, unknown> = {}) {
 }
 
 describe('LivePreview — the four states a workspace can be in', () => {
-  it('ASLEEP reads as sleep, not failure, and promises the work back (AE9)', async () => {
+  it('ASLEEP reads as sleep, not failure, and promises the work back', async () => {
     const verdict = await asTheBrowserSeesIt({
       state: 'asleep',
       alive: false,
@@ -178,7 +175,7 @@ describe('LivePreview — the four states a workspace can be in', () => {
     expect(screen.getByRole('status').textContent).toMatch(/could not check on your preview/i)
   })
 
-  it('STARTING (U13) parses as its own state, not a coerced "unknown", and is never treated as gone', async () => {
+  it('STARTING parses as its own state, not a coerced "unknown", and is never treated as gone', async () => {
     // The closed-list defect this state exists to catch: an unwidened `PREVIEW_LIFE_STATES`
     // would fall through `asPreviewLifeState`'s fallback straight to 'unknown' (`alive` is
     // false), which is a confident-sounding "nothing to report" for a fact the server DID
@@ -203,7 +200,7 @@ describe('LivePreview — the four states a workspace can be in', () => {
   })
 })
 
-describe('LivePreview — a reclaimed container is never an error (R17)', () => {
+describe('LivePreview — a reclaimed container is never an error', () => {
   it.each(['asleep', 'slot_taken', 'never_built'] as const)(
     'renders NO danger-styled alert for %s',
     async (state) => {
@@ -259,9 +256,9 @@ describe('LivePreview — a reclaimed container is never an error (R17)', () => 
   })
 })
 
-describe('LivePreview — the restore offer is driven by `restorable` (R18)', () => {
+describe('LivePreview — the restore offer is driven by `restorable`', () => {
   it('INERTNESS GUARD: the four start buttons are gone, and the explanation is not', async () => {
-    // AE10 used to be asserted here by pressing "Bring it back". That control moved — R3 says
+    // This used to be asserted here by pressing "Bring it back". That control moved — the rule is
     // exactly ONE control starts the app, and four scattered through this file's placeholder arms
     // is the same requirement satisfied five times over, in a vocabulary the client replaced
     // ("preview" is the developer's word; the person's word is their app).
@@ -346,11 +343,11 @@ describe('LivePreview — one persistent status region announces every state', (
   })
 
   it('routes a RESTORE through the labelled wait, announced — not through a terminal card', async () => {
-    // AE9's "behind a labelled wait, and at no point is an error shown", RE-POINTED. The wait it
+    // "Behind a labelled wait, and at no point is an error shown," RE-POINTED. The wait it
     // used to drive was `showRestoring`, keyed off a `relaunching` prop nothing could set — the
     // pane accepted `onRelaunch` and never read it, so no restore could ever have raised it. The
     // restore a citizen can actually run comes back as a `previewUrl`, and the wait that labels it
-    // is the frame's own load gate. AE9's claim is the same; the wait it is asserted against is
+    // is the frame's own load gate. The claim is the same; the wait it is asserted against is
     // the one a restore reaches.
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" hasSavedBuild />)
 
@@ -387,7 +384,7 @@ describe('LivePreview — one persistent status region announces every state', (
 
     const frame = view.container.querySelector('iframe')
     fireEvent.load(frame as HTMLIFrameElement)
-    // ★ AND THEN THE REGION FALLS SILENT (U3, `#199`) — because NOTHING HAS CHECKED THE APP.
+    // ★ AND THEN THE REGION FALLS SILENT — because NOTHING HAS CHECKED THE APP.
     // This asserted `/preview is live/i`, which the pane published from the framed document's
     // `load` alone: an event that fires for a 500 exactly as it does for a 200 on a frame whose
     // status code this pane cannot read. The wait ENDING is real and still asserted; what is no
@@ -400,7 +397,7 @@ describe('LivePreview — one persistent status region announces every state', (
   })
 
   /**
-   * The other half of `#199`, and the reason the claim was not simply deleted.
+   * The other half of the false "preview is live" claim, and why it was not simply deleted.
    *
    * Removing it outright left the SUCCESS path silent while the failure path spoke: a citizen
    * using a screen reader heard the wait end and then nothing, and could not tell "it worked"
@@ -423,8 +420,9 @@ describe('LivePreview — one persistent status region announces every state', (
     expect(screen.getByRole('status').textContent).toMatch(/preview is live/i)
 
     // ★ THE MUTANT THIS KILLS: `compileState !== 'failed'` instead of `=== 'clean'`. That is the
-    // three-into-two collapse R21a forbids, and it republishes `#199`'s false claim on exactly
-    // the reload where nothing has been verified. An unreadable verdict must assert NOTHING.
+    // three-into-two collapse this exact-match check forbids, and it republishes the same false
+    // claim on exactly the reload where nothing has been verified. An unreadable verdict must
+    // assert NOTHING.
     view.rerender(
       <LivePreview previewUrl={SANDBOX_URL} status="ended" serving previewState={alive.state} compileState="unknown" />,
     )
@@ -442,12 +440,12 @@ describe('LivePreview — one persistent status region announces every state', (
 })
 
 
-// U4/R7 — the retraction, on the surface the citizen is actually looking at.
+// The retraction, on the surface the citizen is actually looking at.
 describe('a workspace found reverted while the tab sat idle', () => {
   // ★ IT OUTRANKS EVERY OTHER COVER SENTENCE, running turn or not. It is the only one that is a
   // fact about the WORKSPACE rather than about a compile; the others all describe an app that is
   // still there. "Getting your app ready" over a workspace that has been wiped is the exact
-  // false-progress claim this plan exists to remove.
+  // false-progress claim this pane must never make.
   //
   // Mutation check: move `workspaceLost` below `turnRunning` in the cover's ternary and the
   // during-a-turn case goes red.
@@ -494,7 +492,7 @@ describe('a workspace found reverted while the tab sat idle', () => {
   })
 })
 
-describe('LivePreview — what Plan F removed, and what it deliberately did not', () => {
+describe('LivePreview — the start-affordance removal, and what it deliberately left untouched', () => {
   it('defines and exports no start affordance at all', async () => {
     // A STRUCTURAL guard, because the behavioural ones above can only see the states they set up.
     // Four render sites shared one component; deleting three and leaving the fourth is exactly the
@@ -518,8 +516,8 @@ describe('LivePreview — what Plan F removed, and what it deliberately did not'
     expect(source).toMatch(/e\.source/)          // the inbound-message gate, on origin AND source
     expect(source).toMatch(/sandbox=/)           // the sandbox token list
     expect(source).toMatch(/const frameKey =/)   // the frame's identity
-    // The device WIDTHS are still read here; the TABLE moved out with the control that picks them
-    // (plan 002, U2), so this asserts the import rather than the literal — two copies of it is the
+    // The device WIDTHS are still read here; the TABLE moved out with the control that picks them,
+    // so this asserts the import rather than the literal — two copies of it is the
     // drift this guard exists to prevent, not one copy in a new file.
     //
     // IT POINTS AT THE LEAF, not at the toolbar that draws the switcher. Importing the table from

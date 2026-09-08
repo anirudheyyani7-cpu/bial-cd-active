@@ -1,26 +1,20 @@
 /**
  * THE BROWSER'S "THIS CHAT IS GETTING LONG" WARNING.
  *
- * ══ IT WARNS. IT NEVER REFUSES. ══
+ * WHY THIS EXISTS. The hard boundary is the SERVER's (`enforce_context_limit` refuses the
+ * turn before anything persists) — the two-page portal once enforced the whole guardrail in
+ * the browser, so when `ChatPage.tsx` was deleted the boundary went with it: an administrator
+ * set a number nothing read, and a citizen's first news of the limit was a failed turn with
+ * no reason. A guard only the client holds is not a guard. So this file only warns EARLY
+ * ENOUGH to finish a thought and start a new chat, never refuses.
  *
- * The hard boundary is the SERVER's — `enforce_context_limit` refuses the turn at the route
- * with a sentence of its own, before anything is persisted. That is deliberate and it is the
- * lesson of what this file replaces: the two-page portal enforced the whole guardrail in the
- * browser, so when `ChatPage.tsx` was deleted the boundary went with it, an administrator was
- * left setting a number nothing read, and a citizen's first news of the limit was a failed turn
- * with no reason. A guard only the client holds is not a guard.
- *
- * So this file's job is smaller and honest: warn EARLY ENOUGH that the citizen can finish their
- * thought and start a new chat, rather than being stopped mid-sentence.
- *
- * ══ IT NO LONGER ESTIMATES ANYTHING, AND THAT IS THE POINT ══
- *
- * This file used to carry a declared twin of the server's estimator — four characters to the
- * token, a flat nominal for an image, another for a document — so that the meter a citizen
- * watched and the wall the server enforced were "two readings of one scale". They were two
- * readings of one GUESS, and the guess was wrong by 47x on a document: a 61-page upload really
- * cost 153,342 tokens and both sides recorded 1,600 (#194). Every one of those constants is
- * deleted, here and on the server, and nothing estimates in their place.
+ * IT NO LONGER ESTIMATES ANYTHING, AND THAT IS THE POINT. This file used to carry a declared
+ * twin of the server's estimator — four characters to the token, a flat nominal for an image,
+ * another for a document — so that the meter a citizen watched and the wall the server enforced
+ * were two readings of one scale. They were two readings of one GUESS, and the guess was wrong
+ * by 47x on a document: a 61-page upload really cost 153,342 tokens and both sides recorded
+ * 1,600. Every one of those constants is deleted, here and on the server, and nothing estimates
+ * in their place.
  *
  * What decides the warning now is the token count the PROVIDER reported for a completed turn —
  * the same number the server refuses on, so the two are the same number rather than two

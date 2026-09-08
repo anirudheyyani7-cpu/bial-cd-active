@@ -1,4 +1,4 @@
-"""U4 — app-row resolution + the base provision-env builder (`:5432` test DB)."""
+"""App-row resolution + the base provision-env builder (`:5432` test DB)."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ async def test_first_build_mints_row_and_builds_env(
     env = build_app_env(app_id)
     assert env["BIAL_APP_ID"] == str(app_id)
     # The retired shared data plane's two vars are GONE — injecting them again would hand a
-    # generated app a credential to a plane that no longer exists (U6).
+    # generated app a credential to a plane that no longer exists.
     assert "BIAL_APP_CREDENTIAL" not in env
     assert "BIAL_DATA_BASE_URL" not in env
 
@@ -77,7 +77,7 @@ async def test_cross_user_project_is_404(db_session: AsyncSession) -> None:
     project = await ProjectFactory.create(db_session, owner.id)
     with pytest.raises(AppApiError) as exc:
         await resolve_app_for_project(db_session, intruder.id, project.id)
-    assert exc.value.status_code == 404  # non-leaking (ADR-0004)
+    assert exc.value.status_code == 404  # non-leaking
 
 
 async def test_foreign_owned_app_is_409(db_session: AsyncSession) -> None:
@@ -137,12 +137,12 @@ async def test_unrelated_integrity_error_propagates(
         await resolve_app_for_project(db_session, user.id, project.id)
 
 
-# --- the switched-off gate (U31, R41a, #163) -------------------------------------------
+# --- the switched-off gate -------------------------------------------------------------
 #
-# ASSERTED HERE, AT THE SITE THAT DECIDES IT (`.claude/rules/testing.md`). This function is
-# the ONE gate: `relaunch_preview` (the explicit start control) and `ensure_sandbox` — which
-# the turn engine routes EVERY turn kind through — both resolve the project's app through it,
-# so one refusal here closes both doors. `test_manager.py` pins that they really do arrive
+# ASSERTED HERE, AT THE SITE THAT DECIDES IT. This function is the ONE gate:
+# `relaunch_preview` (the explicit start control) and `ensure_sandbox` — which the turn
+# engine routes EVERY turn kind through — both resolve the project's app through it, so
+# one refusal here closes both doors. `test_manager.py` pins that they really do arrive
 # here; these pin the decision itself.
 
 
@@ -159,8 +159,8 @@ async def test_a_switched_off_app_refuses_to_resolve(db_session: AsyncSession) -
     # with the workspace CONFLICTS and has a different cause and no remedy to retry.
     assert exc.value.code == APP_SWITCHED_OFF_CODE
     # The sentence the citizen reads says what they cannot do, and says it WITHOUT mentioning
-    # publishing — a never-published draft can be switched off too (#163), and its owner
-    # learns nothing from being told that publishing is blocked.
+    # publishing — a never-published draft can be switched off too, and its owner learns
+    # nothing from being told that publishing is blocked.
     assert "cannot make changes" in exc.value.message
     assert "publish" not in exc.value.message.lower()
 
@@ -218,9 +218,9 @@ def test_build_app_env_normalizes_portal_origin(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(settings, "sandbox", _sandbox_config())
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://portal.example.com/app/")
     env = build_app_env(uuid.uuid4())
-    # A FRONTEND_URL with a path / trailing slash is normalized to a bare origin (C8 §1).
+    # A FRONTEND_URL with a path / trailing slash is normalized to a bare origin.
     assert env["BIAL_PORTAL_ORIGIN"] == "https://portal.example.com"
-    # No name ends in a scrub-triggering suffix (they survive the C1 scrub).
+    # No name ends in a scrub-triggering suffix.
     for name in env:
         assert not name.endswith(("_TOKEN", "_SECRET", "_KEY"))
 

@@ -1,4 +1,4 @@
-"""Alembic round-trip for the shared-data-plane drop (0023, U6): head → 0022 → head
+"""Alembic round-trip for the shared-data-plane drop (0023): head → 0022 → head
 against the real test DB. Proves `upgrade` actually removes BOTH tables (`data_records`,
 `clear_data_tokens`) AND the four `app_registry` counter columns, and that `downgrade`
 recreates all six structures. Mirrors `test_app_files_drop_migration.py`: programmatic
@@ -69,14 +69,12 @@ def test_drop_data_records_round_trip() -> None:
     assert {"id", "app_key", "status", "project_id"} <= at_head["app_registry_columns"]
 
     try:
-        # Downgrade to just before the drop → both tables and all four columns reappear.
         command.downgrade(config, _PRE_DROP_REVISION)
         restored = _snapshot()
         assert restored["records"] is not None
         assert restored["tokens"] is not None
         assert _COUNTER_COLUMNS <= restored["app_registry_columns"]
     finally:
-        # ALWAYS return to head so the rest of the suite sees the dropped schema.
         command.upgrade(config, "head")
 
     final = _snapshot()

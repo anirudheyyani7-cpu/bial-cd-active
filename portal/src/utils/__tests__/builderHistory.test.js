@@ -3,16 +3,14 @@ import * as builderHistory from '../builderHistory'
 
 describe('builderHistory', () => {
   /**
-   * A GUARD, not deleted coverage (plan 001, unit 6). This file used to assert that `createBuild`
-   * POSTed `{ id, projectId, kind: 'build', title, context }` to `/api/conversations` a full round
-   * trip before the first turn. That route's only workspace awareness was a project-ownership
-   * check, so a first message the workspace then refused left a real, titled, empty build chat
-   * behind it. The row's parentage rides the turn itself now, and the wire assertion this file
-   * made — the create body carries `kind: 'build'` — lives in `turnStreamApi.test.ts`, against
-   * the request that actually carries it.
+   * A GUARD, not deleted coverage. `createBuild` used to POST a full round trip to
+   * `/api/conversations` before the first turn — but that route's only workspace check was
+   * project ownership, so a refused first message still left a titled, empty build chat behind.
+   * A build row's parentage rides its first turn now; the wire assertion this file made (the
+   * create body carries `kind: 'build'`) lives in `turnStreamApi.test.ts` instead.
    *
-   * What is left here is a READ store. Re-adding a create verb would rebuild the round trip
-   * R-18 removed, so its absence is asserted rather than left silent.
+   * What remains is a READ store — its absence is asserted so re-adding a create verb is a
+   * decision, not an accident.
    */
   it('exports no create verb — a build row is created by its first turn', () => {
     expect('createBuild' in builderHistory).toBe(false)

@@ -1,16 +1,14 @@
 """Symmetric at-rest encryption for app-role passwords (Fernet).
 
-One role serves both the sandbox (re-injected on every container birth) and the deployed
-app (an ACA secret set once at go-live), so the password cannot be reset on demand without
-cutting the live deployment off — it has to survive in the registry, encrypted. Fernet
-(AES-128-CBC + HMAC-SHA256, authenticated) is the whole primitive: `cryptography` is a
-declared dependency and there is no key-management story here beyond "one key from config".
+One role serves both the sandbox (re-injected on every container birth) and the deployed app
+(an ACA secret set once at go-live), so the password can't be reset on demand — it survives in
+the registry, encrypted. Fernet (AES-128-CBC + HMAC-SHA256, authenticated) is the whole
+primitive: `cryptography` is a declared dependency, no key-management story beyond "one key
+from config". Key rotation is a documented MANUAL story this phase (re-encrypt under a new
+key), not code — hence plain `Fernet`, not `MultiFernet`.
 
-Key rotation is a documented MANUAL story this phase (re-encrypt the registry column under
-a new key), not code — hence plain `Fernet`, not `MultiFernet`.
-
-The plaintext password is never logged, never put in an audit `detail`, and never
-interpolated into an exception message.
+The plaintext password is never logged, never in an audit `detail`, never interpolated into
+an exception message.
 """
 
 from __future__ import annotations

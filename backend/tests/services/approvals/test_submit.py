@@ -1,17 +1,18 @@
-"""The submit-into-queue service (U8: R15a, R15b, ASM9, ASM18).
+"""The submit-into-queue service.
 
+WHY THIS EXISTS
 The behavioural suite for what used to be `POST /apps/{app_id}/submit` — those route
 tests are flipped into route-is-gone guards (`tests/api/v1/apps/test_submit_retired.py`)
 and the behaviour they proved is re-proved HERE, against the service the body became.
-Ordering-critical properties carried over verbatim: blob FIRST, row second (D3); the
-fail-closed bundle read (D9); the guarded UPDATE with the ownership predicate
-(ADR-0004); the orphan-blob log when the guard refuses after the copy landed.
+Ordering-critical properties carried over verbatim: blob FIRST, row second; the
+fail-closed bundle read; the guarded UPDATE with the ownership predicate; the
+orphan-blob log when the guard refuses after the copy landed.
 
-New under U8, proved here and nowhere else:
+New behaviour, proved here and nowhere else:
 
-* PENDING is no longer a legal submit source (R15b) — the way out is withdrawal;
+* PENDING is no longer a legal submit source — the way out is withdrawal;
 * the row write carries the LINEAGE and the DECLARATION (the queue item can never
-  arrive without one — ASM18);
+  arrive without one);
 * the build-session guard is APP-scoped (the documented divergence): a live build on
   a DIFFERENT app of the same user no longer refuses this submit, a live build on
   THIS app still does.
@@ -35,10 +36,10 @@ from tests.factories import AppRegistryFactory, UserFactory
 from tests.fakes import FakeStorage
 
 _SHA = "ab" * 20  # 40 lowercase hex chars
-# The exact artifact shape `write_snapshot` ships: a raw v2 bundle (R5).
+# The exact artifact shape `write_snapshot` ships: a raw v2 bundle.
 _BUNDLE = b"# v2 git bundle\n" + _SHA.encode() + b" HEAD\n\nPACK-fake-bytes"
 
-# The shape the publish gate (U9) hands over — opaque to the service, so any dict
+# The shape the publish gate hands over — opaque to the service, so any dict
 # proves the pass-through; this one mirrors the governance suite's fixture.
 _DECLARATION: dict[str, Any] = {
     "citizen": {"personal_information": "no"},
@@ -49,7 +50,7 @@ _DECLARATION: dict[str, Any] = {
 
 
 class _ExplodingGetStorage(FakeStorage):
-    """A store whose reads fail TRANSIENTLY (not not-found) — the D9 seam."""
+    """A store whose reads fail TRANSIENTLY (not not-found) — the read seam."""
 
     async def get(self, key):
         raise StorageError("transient blip", provider="fake", key=key)
@@ -102,7 +103,7 @@ async def test_submit_copies_the_bundle_and_moves_draft_to_pending(db_session) -
     assert row.source_submission_id == receipt.submission_id
     assert row.source_commit_sha == _SHA
     assert row.submitted_at == receipt.submitted_at
-    # R1/R5: the immutable copy exists at the derived key, byte-identical to the
+    # The immutable copy exists at the derived key, byte-identical to the
     # snapshot, and is a RAW bundle — never base64.
     copied = store.objects[submission_key(row.id, receipt.submission_id)]
     assert copied == _BUNDLE
@@ -110,9 +111,7 @@ async def test_submit_copies_the_bundle_and_moves_draft_to_pending(db_session) -
 
 
 async def test_submit_records_the_lineage_and_the_declaration(db_session) -> None:
-    # ASM18's whole point: a queue item can no longer arrive without its declaration,
-    # and the row says WHICH route it entered through (U4's columns, this service's
-    # writes). The declaration is opaque — stored verbatim, never reshaped.
+    # The declaration is stored verbatim — opaque to this service, never reshaped.
     user, app_row = await _owned_app(db_session)
     store = _staged(app_row)
 
@@ -139,7 +138,7 @@ async def test_submit_writes_an_audit_row_with_artifact_and_route_detail(db_sess
     ).scalar_one()
     assert audit.action == "submit"
     assert audit.actor_id == user.id
-    # R14: the detail identifies the artifact — and now also the lineage, so the
+    # The detail identifies the artifact — and now also the lineage, so the
     # trail can tell a publish-flow entry from any future admin-initiated one.
     assert audit.detail == {
         "submissionId": str(receipt.submission_id),
@@ -168,11 +167,11 @@ async def test_submit_is_commitless_the_caller_owns_the_commit(db_session, monke
     assert commits == []  # every write is still pending in the caller's transaction
 
 
-# --- R15b: pending is no longer a submit source ------------------------------------
+# --- pending is no longer a submit source ------------------------------------
 
 
 async def test_submit_over_a_pending_item_is_refused(db_session) -> None:
-    # R15b/P6: the retired route treated this as a refresh; overwriting an item an
+    # The retired route treated this as a refresh; overwriting an item an
     # administrator may be mid-review on is now forbidden, and the copy points at
     # the way out (withdrawal) instead of a dead end.
     user, app_row = await _owned_app(
@@ -187,7 +186,6 @@ async def test_submit_over_a_pending_item_is_refused(db_session) -> None:
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "withdraw" in excinfo.value.message
-    # Nothing copied, nothing changed — the pending pin survives untouched.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     await db_session.refresh(row)
@@ -205,7 +203,7 @@ async def test_submit_from_disabled_is_refused(db_session) -> None:
 
 
 async def test_resubmit_from_approved_keeps_the_approved_pin(db_session) -> None:
-    # R6: a re-submit moves approved→pending but the approved pin survives (the
+    # A re-submit moves approved→pending but the approved pin survives (the
     # prior approved artifact keeps serving until re-approval).
     pinned = uuid.uuid4()
     user, app_row = await _owned_app(
@@ -225,9 +223,9 @@ async def test_resubmit_from_approved_keeps_the_approved_pin(db_session) -> None
 
 
 async def test_every_resubmit_mints_a_fresh_id_and_retains_the_prior_blob(db_session) -> None:
-    # R2: every submission is retained; ids are never reused. The second submit now
-    # travels through a rejection (R15b closed the pending-refresh path), and BOTH
-    # immutable copies still exist afterwards.
+    # Every submission is retained; ids are never reused. The second submit now
+    # travels through a rejection (since resubmitting directly over a pending item
+    # is now refused), and BOTH immutable copies still exist afterwards.
     user, app_row = await _owned_app(db_session)
     store = _staged(app_row)
 
@@ -288,7 +286,7 @@ async def test_a_live_build_on_a_different_app_does_not_block_the_submit(
 
 
 async def test_a_live_build_on_this_app_still_refuses_the_submit(db_session, fake_redis) -> None:
-    # D8 survives the narrowing: the session the lock represents IS this app's, so
+    # The guard survives the narrowing: the session the lock represents IS this app's, so
     # copying the snapshot would capture the previous build's bundle (valid bytes,
     # wrong tree) or torn bytes under a concurrent finalize.
     from src.services.build_sessions import app_name_for
@@ -303,7 +301,6 @@ async def test_a_live_build_on_this_app_still_refuses_the_submit(db_session, fak
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "build session" in excinfo.value.message
-    # No copy, no row change.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     await db_session.refresh(row)
@@ -313,7 +310,7 @@ async def test_a_live_build_on_this_app_still_refuses_the_submit(db_session, fak
 async def test_a_redis_error_during_the_lock_check_is_503_fail_closed(
     db_session, fake_redis, monkeypatch
 ) -> None:
-    # D8/fail-first: a Redis ERROR (as opposed to a HELD lock) during the
+    # Fail-first: a Redis ERROR (as opposed to a HELD lock) during the
     # build-session lock check is real ambiguity — the submit fails closed (503),
     # copies no bundle, and leaves the row untouched. (A held lock is 409; a
     # MISSING Redis proceeds.)
@@ -355,7 +352,7 @@ async def test_a_lock_that_names_no_app_fails_closed_and_refuses(db_session, fak
     assert list(store.objects) == [snapshot_key(app_row.id)]
 
 
-# --- the fail-closed bundle read (D9) ----------------------------------------------
+# --- the fail-closed bundle read ----------------------------------------------
 
 
 async def test_submit_without_a_bundle_is_409_and_writes_nothing(db_session) -> None:
@@ -373,7 +370,7 @@ async def test_submit_without_a_bundle_is_409_and_writes_nothing(db_session) -> 
 
 
 async def test_submit_on_transient_storage_error_is_503_not_409(db_session) -> None:
-    # D9/R9: a storage blip must NOT masquerade as "you have nothing to submit" —
+    # A storage blip must NOT masquerade as "you have nothing to submit" —
     # that message sends someone whose app is fully built off to rebuild it.
     user, app_row = await _owned_app(db_session)
     store = _staged(app_row, _ExplodingGetStorage())
@@ -382,7 +379,7 @@ async def test_submit_on_transient_storage_error_is_503_not_409(db_session) -> N
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 503
     row = await db_session.get(AppRegistry, app_row.id)
-    assert row.status is AppStatus.DRAFT  # nothing recorded
+    assert row.status is AppStatus.DRAFT
 
 
 async def test_submit_with_no_storage_configured_is_503(db_session) -> None:
@@ -398,7 +395,7 @@ async def test_submit_with_no_storage_configured_is_503(db_session) -> None:
 
 
 async def test_submit_corrupt_bundle_is_409_and_writes_nothing(db_session) -> None:
-    # R3: the snapshot bytes fail the git-bundle gate → refuse before any copy.
+    # The snapshot bytes fail the git-bundle gate → refuse before any copy.
     user, app_row = await _owned_app(db_session)
     store = FakeStorage()
     store.objects[snapshot_key(app_row.id)] = b"not a bundle at all"
@@ -407,19 +404,18 @@ async def test_submit_corrupt_bundle_is_409_and_writes_nothing(db_session) -> No
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "bundle" in excinfo.value.message
-    # Only the snapshot exists — no submission copy was written.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     assert row.status is AppStatus.DRAFT
     assert _submission_refs(row) == (None, None, None)
 
 
-# --- the blob-first-row-second ordering (D3) ---------------------------------------
+# --- the blob-first-row-second ordering ---------------------------------------
 
 
 async def test_a_put_failure_during_the_copy_leaves_no_row_change(db_session) -> None:
     # When the PUT explodes, the row must be untouched — no ref pointing at a blob
-    # that never landed (the exact failure D3's ordering exists to prevent).
+    # that never landed (the exact failure this ordering exists to prevent).
     user, app_row = await _owned_app(db_session)
     store = _staged(app_row, _ExplodingPutStorage())
 
@@ -432,7 +428,7 @@ async def test_a_put_failure_during_the_copy_leaves_no_row_change(db_session) ->
 
 
 async def test_the_guard_refusing_after_the_blob_landed_logs_the_orphan(db_session) -> None:
-    # The accepted D3 residual, end to end: the non-authoritative pre-check reads a
+    # The accepted residual of that ordering, end to end: the non-authoritative pre-check reads a
     # stale DRAFT while the authoritative row has moved to DISABLED — a concurrent
     # kill-switch, simulated by an UPDATE that deliberately skips identity-map
     # synchronization so the ORM instance keeps its stale view (the exact state a
@@ -465,7 +461,7 @@ async def test_the_guard_refusing_after_the_blob_landed_logs_the_orphan(db_sessi
     assert _submission_refs(row) == (None, None, None)
 
 
-# --- ownership (ADR-0004) ----------------------------------------------------------
+# --- ownership ----------------------------------------------------------
 
 
 async def test_a_caller_supplied_mismatched_user_is_a_non_leaking_404(db_session) -> None:

@@ -1,16 +1,12 @@
 /**
  * How a chat tells a write it can retry from one it cannot.
  *
- * WHAT THIS FILE USED TO GUARD, AND WHY THAT IS GONE. Its load-bearing assertions were the
- * append route's two opposite-meaning 409s and the order they were checked in — written after
- * the 409's meaning inverted underneath `describeSaveFailure` without a single test going red.
- * That route is retired on both sides now: no client calls it and the backend sends
- * `message_seq_conflict` nowhere, so there is no longer a distinction to get wrong. The copy
- * builder and its two private predicates went with it, as did `describeModeSwitchFailure` —
- * written for the composer's mode selector, which the `Removals` board retired ("a chat's kind
- * is fixed when it is created, so there is nothing to switch").
+ * The file used to guard the append route's two opposite-meaning 409s and the order they
+ * were checked in — until that route retired on both sides (no client calls it, the backend
+ * sends no `message_seq_conflict`), taking its copy builder with it. `describeModeSwitchFailure`
+ * retired too: a chat's kind is fixed at creation, so there is nothing left to switch.
  *
- * What is left is one predicate with one live caller, and the retirement guard below.
+ * What remains is one predicate with one live caller, and the retirement guard below.
  */
 import { describe, it, expect } from 'vitest'
 import * as chatErrors from '../chatErrors'
@@ -20,9 +16,7 @@ import { TurnStartError } from '../turnStreamApi'
 
 describe('isConversationGone', () => {
   // TWO TRANSPORTS, ASSERTED SEPARATELY. `TurnStartError` has no `ApiError` in its prototype
-  // chain — they are siblings — so one arm passing says nothing about the other. Until this
-  // file's copy builders were retired, both arms were only ever reached incidentally, through
-  // their 404 cases; the predicate is the whole module now, so it is asserted directly.
+  // chain — they are siblings — so one arm passing says nothing about the other.
   //
   // Mind the constructors: `ApiError(message, status)` and `TurnStartError(status, message)` take
   // their two arguments in OPPOSITE orders, and both accept a string and a number, so swapping
@@ -53,8 +47,8 @@ describe('isConversationGone', () => {
 
 // Inert guard against any of the three retired copy builders silently returning, paired with a
 // liveness check (same shape as the sibling in `buildSystemPrompt.test.js`) so it cannot
-// false-green on a broken import. `describeAppFailure` went with the JSX-era single-file build
-// (U27); `describeSaveFailure` with the client append route; `describeModeSwitchFailure` with
+// false-green on a broken import. `describeAppFailure` went with the JSX-era single-file build;
+// `describeSaveFailure` with the client append route; `describeModeSwitchFailure` with
 // the composer's mode selector. The cast (not `any`) mirrors `approvalApi.test.ts`'s retirement
 // idiom: a namespace import types a removed export as a compile error on plain property access,
 // not as `undefined`.

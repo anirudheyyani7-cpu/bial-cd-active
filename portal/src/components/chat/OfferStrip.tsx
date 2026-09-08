@@ -1,59 +1,28 @@
 /**
- * THE PLAN OFFER, AS A STRIP ON THE COMPOSER (R29, R29a, R45, R64, R51a).
+ * THE PLAN OFFER, AS A STRIP ON THE COMPOSER.
  *
- * The plan agent calls an offer tool when it judges the plan finished. The browser renders the
- * PENDING call as a strip on the composer with two buttons; pressing either supplies the tool
- * result.
+ * WHY THIS EXISTS, AND WHY SENDING WAITS FOR ONE OF TWO BUTTONS. The plan agent calls an offer
+ * tool when it judges the plan finished; the browser renders the PENDING call as a strip with
+ * two buttons, and pressing either supplies the tool result. A tool call must be answered
+ * before the conversation continues, so a typed message while this strip is pending would leave
+ * the call open and get the next request rejected. A single "Build this plan" would be a dead
+ * end for anyone who wanted to change something, so "Keep planning" answers the call too and
+ * hands the box back. Those labels name the mode the press puts you in, and the SAME words
+ * appear in the model-facing copy; this file owns only what is drawn. Resolution values stay
+ * `build`/`refine` (wire values, unrenamed).
  *
- * ══ THE COMPOSER IS MARKED UNAVAILABLE, NOT DISABLED (D1, R45, R64) ══
+ * THE BROWSER NEVER POSTS THE PLAN TEXT BACK: the server reads it from the offering tool call's
+ * own message, and the press sends only the conversation id, the tool call id, and a minted new-
+ * chat id. A browser-supplied body would let a stale second tab write stale requirements into the
+ * permanent first message.
  *
- * The canvas draws the message box greyed out and the origin document overrides it — a departure
- * recorded in the plan and named here at the point it happens. The box stays mounted, focusable
- * and typeable; only SEND carries `aria-disabled`, with the reason. A locked box behind a single
- * "Build this plan" is a dead end for anyone who wanted to change something, which is exactly why
- * there are two buttons.
- *
- * The reason is honest and worth stating in the copy: a tool call must be answered by a tool
- * result before the conversation can continue, so a typed message would leave the call open and
- * the next request would be rejected. "Keep planning" answers it too, and hands the box straight
- * back.
- *
- * ══ THE LABELS ══
- *
- * `Build this plan` and `Keep planning`. Client call, 2026-08-31 (R-15). NOT "Build it", NOT
- * "Keep refining" (which the client found confusing), and NOT the canvas's older
- * "Not yet — keep talking". Each names the mode the press puts you in, which is why they read as a
- * pair. The internal resolution values stay `build` and `refine` — wire values nobody reads, and
- * renaming them would be churn with a migration attached.
- *
- * The SAME two words appear in the model-facing copy, or the agent will tell a citizen to press a
- * button that does not exist: Plan B owns the tool docstring, Plan C the Plan segment and the two
- * reminders. This unit owns only what is drawn.
- *
- * ══ D2 — A SPENT STRIP STAYS, AND STAYS PRESSABLE ══
- *
- * The first press answers the tool call; that is unavoidable. The strip then renders in its spent
- * treatment but REMAINS A LIVE CONTROL. Pressing it again is an ordinary request that creates
- * another Build chat. Nothing is stored to record that a build happened. "Only one offer is live"
- * is about which one blocks the composer, not about which one is pressable.
- *
- * ══ D4 — IDEMPOTENCY WITHOUT STORAGE, AND ITS HONEST BOUNDARY ══
- *
- * The press names the chat it is creating: a UUIDv7 minted ONCE PER PRESS-SESSION, held in a ref,
- * sent as the new conversation's id. A double press and a retry carry the same id and collide on
- * the primary key, so the server returns the chat that already exists.
- *
- * A RELOAD IS OUT OF REACH, and the plan says so once, here: a ref dies with the page, and the
- * only thing that would survive it is a local record — which D2 forbids. So after a reload a fresh
- * press-session mints a new id and creates a second Build chat. That is R28's reload clause going
- * undelivered; it is asserted by a test rather than discovered in production, and closing it needs
- * storage, which is a decision nobody has taken.
- *
- * ══ D3 — THE BROWSER NEVER POSTS THE PLAN TEXT BACK ══
- *
- * The server reads it from the offering tool call's own message. The press sends the conversation
- * id, the tool call id and the minted new-chat id, and nothing else. A browser-supplied body would
- * let a stale second tab write stale requirements into a permanent first message.
+ * A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool call; the strip
+ * then renders spent but REMAINS LIVE, so pressing it again creates another Build chat.
+ * Idempotency is storage-free: the press names the chat it creates with a UUIDv7 minted ONCE
+ * PER PRESS-SESSION and held in a ref, so a double press or retry carries the same id, collides
+ * on the primary key, and the server returns the existing chat. A RELOAD IS OUT OF REACH — a ref
+ * dies with the page — so a reload's fresh press-session mints a new id and creates a second
+ * Build chat. Asserted by a test; closing it needs storage, a decision nobody has taken.
  */
 import { useCallback, useRef, useState, type FC } from 'react'
 import { Loader2, Wand2 } from 'lucide-react'
@@ -61,7 +30,7 @@ import { Loader2, Wand2 } from 'lucide-react'
 import { uuidv7 } from '../../utils/conversationApi'
 import { usePrefersReducedMotion } from './ToolActivityLine'
 
-/** What the press sends. No plan text — see D3. */
+/** What the press sends. No plan text: the server reads it from the offering tool call. */
 export interface BuildHandoff {
   conversationId: string
   toolCallId: string
@@ -73,29 +42,26 @@ export interface OfferStripProps {
   /** The pending call's id. A strip without one is not rendered — the card IS its tool-call id. */
   toolCallId: string | null
   conversationId: string | null
-  /** True once this offer has been answered — it stays on screen and stays pressable (D2). */
+  /** True once this offer has been answered — it stays on screen and stays pressable. */
   spent: boolean
   /** Answer the call with `build` and hand off. Resolves when the server has confirmed. */
   onBuild: (handoff: BuildHandoff) => Promise<void>
   /** Answer the call with `refine`, which hands the composer straight back. */
   onKeepPlanning: (toolCallId: string) => Promise<void>
-  /** A failed handoff. The reader stays where they are, told what happened (R29). */
+  /** A failed handoff. The reader stays where they are, told what happened. */
   onFailed: (message: string) => void
 }
 
 export const BUILD_LABEL = 'Build this plan'
 export const KEEP_PLANNING_LABEL = 'Keep planning'
-/** The canvas's wording for why sending waits. It sits INSIDE the box, where the placeholder would
- *  be — which is where `PlanReady` and `PlanRevised` both draw it. */
+/** The canvas's wording for why sending waits. `ComposerBox` draws it in place of the placeholder. */
 export const OFFER_GATE_NOTE = 'Choose one of the two above to carry on…'
 /**
  * THE LINE UNDER THE BOX WHILE THE OFFER WAITS, verbatim from `PlanReady` and `PlanRevised`.
  *
  * The boards draw TWO sentences, not one. The gate note above sits in the box and says the box is
  * not where the answer goes; this one sits under it, centred and in the strip's own teal, and says
- * that neither answer is the wrong answer. Only the first of the two had been written, as a small
- * grey note below the box, which put the "you cannot type here" half where the reassurance goes
- * and left the reassurance out — and reassurance is the half someone just handed a decision
+ * that neither answer is the wrong answer. Reassurance is the half someone just handed a decision
  * actually needs.
  */
 export const OFFER_LOCKED_NOTE =
@@ -103,12 +69,10 @@ export const OFFER_LOCKED_NOTE =
 /**
  * WHAT THE STRIP SAYS BEFORE ANYBODY PRESSES ANYTHING, verbatim from `PlanReady`.
  *
- * The board's annotation is the requirement, and it is about register rather than decoration:
- * "this teal strip is not text the agent typed — it is a control the interface draws". Two bare
- * buttons at the right of the box read as chrome; nothing distinguished them from Send, and
- * nothing said what pressing one would DO. A citizen pressed "Build this plan" with no statement
- * anywhere on the screen that it opens a second chat and leaves this one alone — which is the one
- * thing they would want to know before pressing it.
+ * The board's requirement is about register, not decoration: "this teal strip is not text the
+ * agent typed — it is a control the interface draws." Two bare buttons at the box's right read
+ * as chrome — nothing says pressing one opens a second chat and leaves this one alone, which is
+ * the one thing a citizen wants to know before pressing it.
  */
 export const OFFER_HEADLINE = 'This looks ready to build.'
 export const OFFER_EXPLANATION =
@@ -125,10 +89,10 @@ const OfferStrip: FC<OfferStripProps> = ({
   const [busy, setBusy] = useState<'build' | 'refine' | null>(null)
   const reducedMotion = usePrefersReducedMotion()
 
-  // D4. Minted once per PRESS-SESSION and held in a ref, so a double press and a retry carry the
+  // Minted once per PRESS-SESSION and held in a ref, so a double press and a retry carry the
   // same id. `ProjectBuilder` mints through the same shared `uuidv7` but does it INLINE inside
   // `navigate()` with no ref — that site mints on every press by design, which is the opposite of
-  // what this needs, so the lifetime here is new work rather than a pattern lifted from it.
+  // what this needs.
   const mintedRef = useRef<string | null>(null)
 
   const handleBuild = useCallback(async () => {

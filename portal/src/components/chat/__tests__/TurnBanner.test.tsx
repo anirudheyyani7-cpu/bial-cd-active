@@ -5,26 +5,22 @@ import TurnBanner, { withMailtoLinks } from '../TurnBanner'
 
 afterEach(cleanup)
 
-// The banner slot is where every sentence this plan says to a citizen lands: their app was
-// recovered, it could not be, the workspace could not be checked, the change did not come
-// together, today's allowance is used up. All five arrive at the same moment in the same place.
-describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
+// The banner slot is where every sentence the platform says to a citizen lands — recovered,
+// couldn't check, budget used up, and more — all at the same moment, in the same place.
+describe('TurnBanner — one banner, newest wins', () => {
   it('renders no visible box when there is nothing to say', () => {
     render(<TurnBanner text={null} />)
-    // NOT an empty bordered box. A permanent visual artefact above the composer reads as broken
-    // UI and steals a row from the conversation for the whole time nothing is wrong — which is
-    // nearly all of the time.
+    // NOT an empty bordered box: a permanent visual artefact above the composer reads as broken
+    // UI for nearly all of the banner's lifetime, since most of the time nothing is wrong.
     expect(screen.queryByTestId('turn-banner')).toBeNull()
     // LIVENESS for that absence, and the property it is paired with: the live region IS there.
     expect(document.querySelector('[role="status"]')).toBeTruthy()
   })
 
   it('keeps the live region mounted so the announcement actually lands', () => {
-    // ★ Inserting a region together with its text announces inconsistently — several reader and
-    // browser combinations miss it entirely — so the element has to be in the accessibility tree
-    // BEFORE the text arrives. The preview pane keeps a permanent region for exactly this
-    // reason, and a banner that rendered itself into existence with its sentence would have made
-    // this file's own promise quietly false.
+    // ★ Inserting a region together with its text announces inconsistently across screen readers,
+    // so the element must be in the accessibility tree BEFORE the text arrives — never rendered
+    // into existence alongside its own sentence.
     //
     // Mutation check: return `null` when there is no text and the first assertion goes red.
     const { rerender } = render(<TurnBanner text={null} />)
@@ -43,18 +39,16 @@ describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
 
   it('announces politely, never assertively', () => {
     render(<TurnBanner text="We brought your app back." />)
-    // These are endings with an action attached, not alarms. `assertive` is spent on this page
-    // for the two things that genuinely interrupt (a failed relaunch, a failed save), and using
-    // it here would make those stop cutting through.
+    // `assertive` is reserved for the two things that genuinely interrupt on this page (a failed
+    // relaunch, a failed save) — spending it here would drown those out.
     expect(document.querySelector('[role="status"]')?.getAttribute('aria-live')).toBe('polite')
     expect(document.querySelector('[aria-live="assertive"]')).toBeNull()
   })
 
   it('shows the newest sentence and nothing of the one it replaced', () => {
-    // The stacking risk U7 names is that two platform sentences about the same app are on screen
-    // together — the older one is not extra information, it is a contradiction. This asserts the
-    // OLD text is gone, which a component that appended would fail; asserting only "there is one
-    // banner" could not fail for a component with a single string prop.
+    // Two platform sentences about the same app on screen together is a contradiction, not extra
+    // information — so this asserts the OLD text is gone. "There is one banner" alone couldn't
+    // fail for a component that just takes a single string prop; an appending bug would still pass.
     const { rerender } = render(<TurnBanner text="We brought your app back." />)
     rerender(<TurnBanner text="That change didn’t come together." />)
 
@@ -70,13 +64,10 @@ describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
   })
 })
 
-// U24 — "who to ask for more" has to be CLICKABLE, or it is a string the citizen retypes.
+// "Who to ask for more" has to be CLICKABLE, or it is a string the citizen retypes.
 describe('an address in a platform sentence', () => {
-  // ★ THIS IS THE SURFACE THE SENTENCE ACTUALLY LANDS ON. The at-limit copy also renders inside
-  // the build-progress panel, but a plain Write turn never opens one — so the panel's own mailto
-  // rendering is unreachable for exactly the citizen who has just run out of budget. Testing the
-  // linkifier in isolation passes whether or not anything ever hands it the sentence; this fails
-  // if the banner stops doing so.
+  // The surface this sentence actually reaches: the isolated linkifier tests below would pass
+  // even if the banner stopped calling them — this is the one that actually fails.
   it('renders as a real mailto anchor', () => {
     render(
       <TurnBanner text="Today's budget is used up. If you need more before then, ask support@bial.example." />,
@@ -96,10 +87,8 @@ describe('an address in a platform sentence', () => {
   })
 })
 
-// The linkifier's own cases, moved here with the function (Plan D U17). They lived in
-// `BuildProgress.test.tsx`, which pinned a card this unit deleted; a relocated function keeps its
-// tests, or the move quietly costs the coverage. The two above assert the banner USES it — these
-// two assert what it does, which the surface-level pair cannot reach with a single address.
+// The linkifier's own cases. The two describes above assert the banner USES it — these assert
+// WHAT it does, which the surface-level pair can't reach with a single address.
 describe('withMailtoLinks', () => {
   it('linkifies every address in the sentence and never swallows a trailing full stop', () => {
     // A `mailto:` that carries the sentence's final "." into the mailbox name bounces, and the

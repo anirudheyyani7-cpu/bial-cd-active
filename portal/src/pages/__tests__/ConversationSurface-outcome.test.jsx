@@ -1,41 +1,14 @@
 /**
- * The build outcome, portal side (003-U5).
+ * The build outcome, portal side.
  *
- * The DURABLE write is the server's — builds take minutes and users close tabs, so a
- * portal-written record would be missing for exactly the users a permanent record serves. This
- * page renders the same outcome locally so a watching user sees it immediately.
+ * The durable record is the server's — builds run for minutes and users close tabs. This page
+ * renders the same outcome locally, off the `turn_ended` frame (`status`, `reason`, tri-state
+ * `snapshotCommitted`), and writes nothing itself.
  *
- * SEQ IS THE SERVER'S, NOT OURS. This page does not predict which slot the server's outcome took —
- * it cannot, because the server writes while this tab may be reloading or closed, and a wrong
- * guess is not a visible error but a lost message. It re-seeds `seqRef` from what each append
- * reports it actually stored; the allocation itself is pinned in
- * `backend/tests/api/v1/conversations/test_seq_allocation.py`.
- *
- * WHAT THE OUTCOME IS DERIVED FROM CHANGED (U5). A build is a Write TURN, so the terminal that
- * produces this card is a `turn_ended` FRAME — its `status`, `reason` and tri-state
- * `snapshotCommitted` — not a C7 `ended` envelope off a build session. The identity a record is
- * keyed by moved with it: a build IS its turn, so `turnId` is what distinguishes one record from
- * the next and what a reload's stored row has to be matched against.
- *
- * The test with teeth here is that DEDUPE: after a reload the transcript already holds the
- * server's row, and a replayed terminal would stack a second copy on top of it.
- *
- * CHAT-KIND MIGRATION (sfw-002). This page now renders ONLY a `build` chat, fixed at creation, so
- * `handleBuildIt`'s plan-options card no longer runs its build here — it creates a SECOND,
- * different build chat and navigates there. Every ordinary composer send on THIS page already
- * holds the write toolset (BuilderPage.tsx's routing-rule docblock), so `runBuild` below drives
- * the outcome through a plain send rather than a card confirm — simpler, and the honest route now
- * that the card can't be it.
- *
- * That migration briefly cost this file its whole subject: deleting the old Build-it watcher
- * (`watchBuildTurn`) took its `showBuildOutcome` call with it, and nothing on the new send path
- * replaced it — an ordinary send's terminal reached `sink.terminal`/`sink.reason`/
- * `sink.snapshotCommitted` and then just... stopped, never handing them to the card. Reported and
- * fixed in `BuilderPage.tsx`: both turn watchers on this page — `fireRelayTurn` (an ordinary
- * send) and `reattachToTurn` (a reload mid-turn, or the arrival after a Build-it handoff) — now
- * call `showBuildOutcome` once their stream settles, keyed on `sink.turnId` (set from the
- * `snapshot` frame's `turnId` first, the `turn_ended` frame's as a fallback). The tests below
- * assert that fixed behaviour directly.
+ * A build IS its turn, so `turnId` is the identity a record is keyed by, and the test with teeth
+ * here is that DEDUPE: after a reload the transcript already holds the server's row, and a
+ * replayed terminal would stack a second copy on top of it. Both turn watchers on this page,
+ * `fireRelayTurn` and `reattachToTurn`, call `showBuildOutcome` once their stream settles.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
@@ -95,23 +68,19 @@ async function send(text) {
   fireEvent.keyDown(composer(), { key: 'Enter' })
 }
 
-/** The consolidating snapshot every subscribe gets FIRST (`backend/.../turns.py`'s own docstring:
- *  "emit the first frame BEFORE any model byte — the snapshot serves that role"), carrying the
- *  `turnId` this page reads into `liveTurnIdRef` AND `sink.turnId` — the fact the Stop test below
- *  depends on (Stop needs `liveTurnIdRef` populated WHILE the turn is still running, not only at
- *  its terminal). */
+/** The consolidating snapshot every subscribe gets FIRST (`backend/src/api/v1/conversations/turns.py` owns that rule),
+ *  carrying the `turnId` this page reads into `liveTurnIdRef` AND `sink.turnId` — the fact the
+ *  Stop test below depends on (Stop needs `liveTurnIdRef` populated WHILE the turn is still
+ *  running, not only at its terminal). */
 const T_SNAPSHOT = (turnId, seq = 1) => ({
   type: 'snapshot', seq, turnId, turnStatus: 'running', items: [], parts: [], working: false,
 })
 
 /**
  * Script an ordinary send's own turn stream as an OPEN socket a test can push frames into by
- * hand. Not `_builderSession.jsx`'s `scriptBuildTurn` — that helper still branches on whether
- * `readTurnStream` was called WITH a `turnId`, which was how the old Build-it watch (subscribing
- * to a turn already known to be a build) told itself apart from an ordinary send (subscribing
- * with none, and getting back a streamed plan). That distinction is gone: `fireRelayTurn` never
- * passes a `turnId`, and never asks the chat's kind either — every send on this BUILD-chat page
- * opens the one plain subscription, and that IS the build.
+ * hand. Not `_builderSession.jsx`'s `scriptBuildTurn`, which branches on whether `readTurnStream`
+ * was called WITH a `turnId`: `fireRelayTurn` never passes one, and never asks the chat's kind
+ * either — every send on this page opens the one plain subscription, and that IS the build.
  */
 function scriptTurn(turnId, opening) {
   const live = { emit: null, close: null }
@@ -146,18 +115,15 @@ async function runBuild(turn, text = 'a visitor app') {
 }
 
 /**
- * THE OUTCOME AS A CITIZEN READS IT NOW — prose in the transcript, not a card (Plan D U17).
+ * THE OUTCOME AS A CITIZEN READS IT NOW — prose in the transcript, not a card.
  *
- * `BuildOutcome` is deleted. Its content did not go with it: the summary sentence it printed was
- * always the message's own TEXT (`outcomeSummary` on the surface, `outcome.py::_summary` on the
- * server — the two are written to match so a live render and a reloaded row read identically), and
- * that text is now simply rendered as the assistant's reply.
- *
- * So the queries below match the SENTENCE rather than a test id. That is a strictly better thing
- * to assert: the test id proved a box existed, and this proves the citizen was told.
+ * The summary sentence is the message's own TEXT (`outcomeSummary` on the surface,
+ * `outcome.py::_summary` on the server — the two are written to match so a live render and a
+ * reloaded row read identically), so the queries below match the SENTENCE rather than a test id:
+ * the test id proved a box existed, this proves the citizen was told.
  */
 /**
- * EXACT SENTENCES, NOT A LOOSE MATCHER (#204).
+ * EXACT SENTENCES, NOT A LOOSE MATCHER.
  *
  * This used to be `/build finished\.|the build failed|the build stopped/i`, and the substring
  * `the build failed` is what let the Stop test below pass on the WRONG copy for as long as the
@@ -194,19 +160,12 @@ async function buildEndingWith(over) {
 }
 
 /**
- * Everything the page actually PUT ON THE WIRE — one JSON string per send.
- *
- * THIS USED TO READ `h.createBuild.mock.calls` AND COULD NEVER HAVE FAILED. That wrapper's
- * second argument was a conversation HEADER (`{projectId, title?, context?}`), never a message,
- * so `message.parts` was always `undefined`, the `|| []` swallowed it, and the filter returned
- * an empty array for every possible run. The wrapper is now deleted (plan 001, unit 6), which
- * is what surfaced it — the spy went away and the vacuum showed.
- *
- * The send path makes exactly one server call now, `startTurn`, and it narrows the composer's
- * parts through `wireMessageFromParts` into `{text, attachmentTexts, attachmentIds}` — so a
- * build part cannot ride it by construction. Asserting on the serialized payload keeps the
- * claim honest against BOTH ways that could stop being true: a parts-carrying body coming back,
- * or an outcome sentence being written into `text`.
+ * Everything the page actually PUT ON THE WIRE — one JSON string per send. The send path makes
+ * exactly one server call, `startTurn`, and narrows the composer's parts through
+ * `wireMessageFromParts` into `{text, attachmentTexts, attachmentIds}`, so a build part cannot
+ * ride it by construction. Asserting on the serialized payload keeps the claim honest against
+ * both ways it could stop being true: a parts-carrying body coming back, or an outcome sentence
+ * written into `text`.
  */
 const wireSends = () => h.startTurn.mock.calls.map((call) => JSON.stringify(call))
 
@@ -224,7 +183,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('showing the outcome', () => {
-  it('does NOT present a dead preview link on the ended-build card (F4)', async () => {
+  it('does NOT present a dead preview link on the ended-build card', async () => {
     const turn = scriptTurn('t1')
     h.readTurnStream.mockImplementation(turn.impl)
     renderThread()
@@ -236,11 +195,9 @@ describe('showing the outcome', () => {
 
     const card = await findOutcome()
     expect(card.textContent).toMatch(/build finished/i)
-    // The per-build preview URL died with its sandbox the moment the build ended, so the record —
-    // permanent, and read again on every future open — must never surface it as a working link
-    // (F4). The live "Relaunch preview" affordance lives in the preview pane. The card that used
-    // to render this link conditionally is gone, so the guarantee is now structural: no link is
-    // rendered because no renderer exists to render one.
+    // The per-build preview URL died with its sandbox the moment the build ended, so the
+    // permanent record must never surface it as a working link. The guarantee is structural,
+    // not conditional: no renderer for this link exists on the card any more.
     expect(card.querySelector(`a[href="${PREVIEW_URL}"]`)).toBeNull()
   })
 
@@ -269,7 +226,7 @@ describe('showing the outcome', () => {
   })
 
   it('a genuine failure still reads as a failure — and still does not print its token', async () => {
-    // THE OTHER HALF OF #204's FIX, and the one it could most easily have broken. Teaching the
+    // THE OTHER HALF OF THAT FIX, and the one it could most easily have broken. Teaching the
     // surface that `stopped` is not a failure must not teach it that NOTHING is: a build that
     // really did fall over has to say so, or the fix has simply moved the lie.
     //
@@ -305,22 +262,15 @@ describe('showing the outcome', () => {
     await turn.end()
 
     // A build that did not save is not a success: the next build will not start from it, and the
-    // user has to know that before building on top of it.
-    //
-    // RE-POINTED AT THE BANNER (Plan D U17). This sentence used to live inside the outcome card;
-    // it is in the one banner slot above the composer now — derived from the newest build part, so
-    // it still survives a reload exactly as the card's version did, and it is now where the
-    // citizen is standing when they are about to build again on top of it.
+    // user has to know that before building on top of it. This lives in the banner slot above
+    // the composer now (moved from the outcome card), and it survives a reload the same way.
     expect((await screen.findByTestId('turn-banner')).textContent).toMatch(/wasn’t saved/i)
   })
 
   it('a terminal that never reports the save does not claim the code was thrown away', async () => {
-    // UNKNOWN IS NOT FALSE, and `snapshotCommitted` is deliberately tri-state on the wire for
-    // exactly this: `null`/absent means the terminal never reached the save (or never spoke about
-    // it), `false` means the save RAN and did not land. Collapsing the two told a citizen their
-    // work was binned about a build that almost certainly saved it. The server's durable row
-    // carries the real answer and replaces this card on reload; until then, saying nothing is the
-    // only honest option.
+    // UNKNOWN IS NOT FALSE: `null`/absent means the terminal never spoke about the save, `false`
+    // means the save ran and did not land. Saying nothing is the only honest render of the first,
+    // and the server's durable row replaces this one on reload anyway.
     const turn = scriptTurn('t1')
     h.readTurnStream.mockImplementation(turn.impl)
     renderThread()
@@ -344,32 +294,32 @@ describe('showing the outcome', () => {
     renderThread()
     await runBuild(turn)
 
-    // `stop-turn` is the RELOCATED control on the composer (R55, Plan D U3), not the one inside
-    // the build card. Both are on screen for now and both stop the same turn the same way; this
-    // one is addressed by test id because it is the one that survives the card's deletion, so
-    // this assertion keeps meaning the same thing afterwards.
+    // `stop-turn` is the RELOCATED control on the composer, not the one inside the build card.
+    // Both are on screen for now and both stop the same turn the same way; this one is addressed
+    // by test id because it is the one that survives the card's deletion, so this assertion keeps
+    // meaning the same thing afterwards.
     fireEvent.click(await screen.findByTestId('stop-turn'))
     await waitFor(() => expect(h.stopTurn).toHaveBeenCalledWith('thread-1', 't1'))
-    expect(h.stop).not.toHaveBeenCalled() // never the C3 session stop
+    expect(h.stop).not.toHaveBeenCalled() // never a session-level stop
 
     await turn.frame(T_BUILD_END({ turnId: 't1', status: 'stopped', reason: 'stopped_by_user' }))
     await turn.end('completed')
 
     // THE ASSERTION THIS TEST USED TO MAKE WAS `expect(await findOutcome()).toBeTruthy()`, and it
     // could not fail: `findOutcome`'s old matcher accepted `the build failed`, which is precisely
-    // the sentence the bug produced. The exact copy is asserted now, and the two things #204
-    // reported are rejected by name — the word "failed", and the raw token.
+    // the sentence the bug produced. The exact copy is asserted now, and the two things that bug
+    // let through are rejected by name — the word "failed", and the raw token.
     const card = await findOutcome()
     expect(card.textContent).toContain(OUTCOME_COPY.stopped_by_user)
     expect(card.textContent).not.toMatch(/failed/i)
     expect(card.textContent).not.toContain('stopped_by_user')
   })
 
-  it('the activity pill and the outcome sentence say the same true thing (#204)', async () => {
-    // The contradiction the issue photographed: the pill read "1 step · stopped before it
-    // finished" while the sentence directly beneath it read "The build failed: stopped_by_user".
-    // One view, one build, two answers. Asserted TOGETHER on one screen, because each half
-    // passing on its own is exactly the state the bug shipped in.
+  it('the activity pill and the outcome sentence say the same true thing', async () => {
+    // The contradiction this reproduces, exactly as it reached a citizen's screen: the pill read
+    // "1 step · stopped before it finished" while the sentence directly beneath it read "The
+    // build failed: stopped_by_user". One view, one build, two answers. Asserted TOGETHER on one
+    // screen, because each half passing on its own is exactly the state the bug shipped in.
     const turn = scriptTurn('t1')
     h.readTurnStream.mockImplementation(turn.impl)
     renderThread()
@@ -415,17 +365,16 @@ describe('showing the outcome', () => {
 
     await turn.frame(T_PREVIEW())
 
-    // LIVENESS, RE-POINTED (Plan D U17). It used to read the pane's "preview is live" copy; the
-    // pane's cover is driven by `turnPhase` off the frames now, and this harness mounts no pane at
-    // all. What the absence below needs is proof the build is genuinely still running, and the
-    // composer's stop control is present for exactly and only that.
+    // LIVENESS: the pane's cover is driven by `turnPhase` off the frames, and this harness mounts
+    // no pane at all. What the absence below needs is proof the build is genuinely still running,
+    // and the composer's stop control is present for exactly and only that.
     await waitFor(() => expect(screen.getByTestId('stop-turn')).toBeTruthy())
     expect(outcomeCards()).toHaveLength(0)
   })
 })
 
 /**
- * THE REASON → COPY TABLE (#204).
+ * THE REASON → COPY TABLE.
  *
  * The sentences are TYPED OUT HERE rather than read from the source, on purpose: importing them
  * and comparing them to themselves would pass whatever the source said, which is not a test of
@@ -433,7 +382,7 @@ describe('showing the outcome', () => {
  * the edit has to be deliberate.
  *
  * `outcomeSummary` is exercised directly for the table because two of the five reasons —
- * `force_ended` and `idle_teardown` — reach the browser on the LEGACY session path (the C7 `ended`
+ * `force_ended` and `idle_teardown` — reach the browser on the LEGACY session path (the `ended`
  * envelope) rather than on a turn terminal, and inventing a `turn_ended` frame carrying them would
  * pin a wire shape the server cannot produce. The three that DO ride a turn terminal are driven
  * through the real surface below, which is what proves the table is actually wired to the screen.
@@ -485,7 +434,7 @@ describe('the copy table', () => {
 describe('the table, on the screen', () => {
   it('a workspace restore is not announced as a failure', async () => {
     // The turn ends `failed` here because that is genuinely what `_WriteEndedError` finishes as —
-    // and the restore SUCCEEDED. This is the exact frame #204 saw rendered as
+    // and the restore SUCCEEDED. This is the exact frame that once rendered as
     // "The build failed: workspace_restored" after the platform had just saved the citizen's app.
     const card = await buildEndingWith({ status: 'failed', reason: 'workspace_restored' })
 
@@ -517,9 +466,9 @@ describe('the table, on the screen', () => {
 })
 
 /**
- * THE THIRD COLLAPSE SITE — the one #204 does not name.
+ * THE THIRD COLLAPSE SITE, not named by the fix above.
  *
- * The issue calls the fix "two lines". It is three: the reload path has its own fold, in
+ * The fix looks like two lines. It is three: the reload path has its own fold, in
  * `conversationApi`'s `banner` projection, and it folds the other way — a stopped build came back
  * from a reload as `ended`, i.e. as a build that finished normally, sitting directly beneath the
  * server's own stored sentence saying the citizen stopped it. Fixing only the live path would have
@@ -558,7 +507,7 @@ describe('the stored banner, on reload', () => {
   })
 })
 
-// (The 'seq follows the server' suite is retired with U7: the client persists nothing, so
+// (The 'seq follows the server' suite is retired: the client persists nothing, so
 // there is no seq to negotiate — the server owns transcript ordering outright.)
 
 describe('dedupe on the build TURN', () => {
@@ -578,8 +527,7 @@ describe('dedupe on the build TURN', () => {
 
   it('does not re-show after a reload, where the server’s row is already in the transcript', async () => {
     // The case an `_id`/seq guard cannot catch: both are fresh after a reload, so only matching on
-    // the BUILD TURN tells us this outcome is already recorded. (Under the session model this was
-    // `sessionId`; a build is its turn now, so that is the identity the stored row carries.)
+    // the BUILD TURN tells us this outcome is already recorded.
     //
     // Driven through the REATTACH path (`activeTurn`), not a second ordinary send — an ordinary
     // send always mints a brand-new turn id, so it can never reproduce the one case this guard

@@ -1,16 +1,12 @@
 /**
- * THE PARITY CHECKLIST, ASKED OF THE NEW HOST (R52).
+ * THE PARITY CHECKLIST, ASKED OF THE NEW HOST.
  *
- * `MessageContent.test.tsx` is the checklist R52 asks someone to write and it was already written —
- * 20 cases, 43 assertions. Not one line of its sanitisation pipeline has moved through the port;
- * the one case it has lost is `compact`, whose prop went when one surface absorbed the two pages
- * that used to size their rails differently, recorded as an amendment in that file's own docblock.
- * That file is the guarantee; this file is the mirror question L5 insists on afterwards — what
- * does the NEW host do that the old one could not?
- *
- * Three answers, each asserted below rather than reasoned about:
- *   - a model-authored `<img>` still cannot reach the DOM (there is no `img-src` CSP anywhere in
- *     this repo, so `disallowedElements` is the ONLY thing holding that refusal);
+ * `MessageContent.test.tsx` already covers the sanitisation pipeline (20 cases, 43 assertions) —
+ * none of it moved through the port, so it is not re-asserted here (the one loss, `compact`, is
+ * recorded as an amendment in that file's own docblock). This file only answers what the NEW
+ * host does that the old one could not:
+ *   - a model-authored `<img>` still cannot reach the DOM (no `img-src` CSP anywhere in this
+ *     repo, so `disallowedElements` is the ONLY thing holding that refusal);
  *   - user prose is still verbatim through the thread's own user-message path;
  *   - the thread introduces exactly one scroll container, where the old surface nested five.
  */
@@ -57,7 +53,7 @@ const assistant = (id: string, text: string, seq = 1): ChatMessage => ({
 })
 
 describe('ChatThread — what the new host must still guarantee', () => {
-  it('AE41: refuses a model-authored image, and fetches nothing from that host', () => {
+  it('refuses a model-authored image, and fetches nothing from that host', () => {
     const { container } = mount([
       assistant('a1', 'before ![alt text](https://attacker.example/x.png) after'),
     ])
@@ -84,10 +80,10 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(container.querySelectorAll('li')).toHaveLength(2)
   })
 
-  it('R49: the viewport is the ONLY scroll container in the thread', () => {
-    // The mechanical form of the requirement. The old surface nested five scrollers
-    // (ChatPage 639→642→644→655→700→719 plus BuilderPage's own); this asserts the new one adds
-    // exactly one, by querying the class rather than trusting the markup to stay put.
+  it('the viewport is the ONLY scroll container in the thread', () => {
+    // The old surface nested five scroll containers (ChatPage plus BuilderPage's own); this
+    // asserts the new one adds exactly one, by querying the class rather than trusting the
+    // markup to stay put.
     const { container } = mount([assistant('a1', 'hello'), assistant('a2', 'again', 2)])
 
     const scrollers = container.querySelectorAll('.overflow-y-auto, .overflow-y-scroll')
@@ -96,8 +92,8 @@ describe('ChatThread — what the new host must still guarantee', () => {
   })
 
   it('adds no calc(100vh …) anywhere', () => {
-    // The only one in the repo lived at ChatPage.tsx:642 and coupled the transcript to the
-    // navbar's height. Plan A owns the height model now.
+    // The only one in the repo lived on the retired chat page and coupled the transcript to
+    // the navbar's height. The workspace shell owns the height model now.
     const { container } = mount([assistant('a1', 'hello')])
     expect(container.innerHTML).not.toMatch(/100vh/)
   })
@@ -112,7 +108,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(container.querySelectorAll('p')).toHaveLength(0)
   })
 
-  it('AE43: the same reply renders identically in a Plan chat and a Build chat', () => {
+  it('the same reply renders identically in a Plan chat and a Build chat', () => {
     // Asserted on the rendered TREE, because nothing in the renderer may consult the kind — and
     // the only way to prove that is to render the same parts twice and diff the DOM.
     const parts: ChatMessage['parts'] = [
@@ -127,7 +123,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(second.container.innerHTML).toBe(planHtml)
   })
 
-  it('N1: an assistant message carries a copy action and only a copy action', () => {
+  it('an assistant message carries a copy action and only a copy action', () => {
     mount([assistant('a1', 'Here is your app.')])
 
     const bar = screen.getByTestId('assistant-action-bar')
@@ -141,7 +137,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(within(bar).queryByRole('button', { name: /more/i })).toBeNull()
   })
 
-  it('N1: a USER message carries no copy control', () => {
+  it('a USER message carries no copy control', () => {
     mount([{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hi' }], seq: 1 }])
 
     const message = screen.getByTestId('user-message')

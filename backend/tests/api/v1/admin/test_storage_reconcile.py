@@ -1,4 +1,4 @@
-"""POST /v1/admin/apps/reconcile-storage — the operator-invoked reconciling sweep (U10).
+"""POST /v1/admin/apps/reconcile-storage — the operator-invoked reconciling sweep.
 
 Superadmin-only, audited, report-only on `submissions/` + `apps/`. The pins that MUST run through
 the real upload path live here (`POST /attachments`): a hand-set `storage_key` hides the
@@ -101,7 +101,7 @@ async def test_owned_attachment_survives_any_age(client, app, db_session) -> Non
 
     assert (await _upload_image(client, citizen, "att_owned")).status_code == 201
     att = await _row(db_session, user.id, "att_owned")
-    store.mtimes[att.storage_key] = _past_grace()  # age it well past the grace
+    store.mtimes[att.storage_key] = _past_grace()
 
     resp = await client.post(_RECONCILE, headers=admin)
     assert resp.status_code == 200
@@ -184,11 +184,11 @@ async def test_deck_sibling_survives_via_pptx_path(client, app, db_session, monk
     assert await store.get(pdf_key) == b"%PDF-1.4 rendered deck"
 
 
-# --- U9: never-sent-upload reclaim folded into the sweep ------------------------
+# --- never-sent-upload reclaim folded into the sweep ---------------------------
 
 
 async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_session) -> None:
-    # U9/U10: a never-sent upload (row intact, referenced by NO sent message, past the 48h window)
+    # A never-sent upload (row intact, referenced by NO sent message, past the 48h window)
     # is reclaimed by the operator sweep. The blob-vs-row pass alone cannot close this — it treats
     # any still-rowed upload as OWNED — so this pins the reclaim fold that now runs in prod.
     store = _wire_shared_storage(app)
@@ -216,7 +216,6 @@ async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_sessi
         )
         is None
     )
-    # Tallies land in the audit trail (counts only, security.md).
     row = await db_session.scalar(select(AuditLog).where(AuditLog.action == "storage:reconcile"))
     assert row is not None and row.detail is not None
     assert row.detail["reclaimedAttachments"] == 1
@@ -264,7 +263,7 @@ async def test_submissions_reported_never_deleted_body(client, app, db_session) 
     body = (await client.post(_RECONCILE, headers=admin)).json()
     assert body["submissions"]["deleted"] == 0
     assert body["ownerlessSubmissions"] == 1
-    assert ownerless in store.objects  # immutable record — surfaced, never deleted (D7)
+    assert ownerless in store.objects  # immutable record — surfaced, never deleted
 
 
 async def test_clean_system_body_is_all_zero(client, app, db_session) -> None:
@@ -295,7 +294,7 @@ async def test_clean_system_body_is_all_zero(client, app, db_session) -> None:
 
 
 async def test_response_body_carries_no_key_list(client, app, db_session) -> None:
-    # R13 posture: counts only, no storage keys — dumping keys leaks the internal layout.
+    # Counts only, never keys — the rule lives in `services/audit/log.py`.
     store = _wire_shared_storage(app)
     admin = await _admin(db_session)
     stale = snapshot_key(uuid.uuid7())
@@ -355,11 +354,9 @@ async def test_storage_error_returns_retryable_503(client, app, db_session) -> N
 
 
 async def test_unconfigured_store_is_503_not_500(client, app, db_session) -> None:
-    # FIX 8 regression + the fixture-free store-off baseline (`.claude/rules/testing.md`): with NO
-    # store wired, `storage_or_none_dependency` resolves `get_storage()` →
-    # StorageUnconfiguredError → None, and the body maps None to the DOCUMENTED 503. An eager
-    # `Storage` dependency raised at solve time → an undocumented 500. Deliberately does not touch
-    # the accessor singleton.
+    # NO store fixture is wired, which is what makes the branch reachable: `get_storage()` raises
+    # StorageUnconfiguredError, `storage_or_none_dependency` resolves it to None, and the body
+    # maps None to the DOCUMENTED 503.
     from src.services.storage import accessor as _storage_accessor
 
     _storage_accessor._backend_singleton = None  # store off: no backend configured in .env.test

@@ -1,18 +1,18 @@
 /**
- * `ProjectRow` — round-4 review, finding 3: the clipped-text tooltip branch had ZERO
- * automated coverage, because jsdom reports `scrollWidth`/`clientWidth` as `0`/`0` for every
- * element, so `clipped` was always `false` under test and the `Tooltip` branch never
- * rendered. A mutant deleting the whole branch passed the entire suite.
+ * `ProjectRow` — the clipped-text tooltip branch had ZERO automated coverage, because jsdom
+ * reports `scrollWidth`/`clientWidth` as `0`/`0` for every element, so `clipped` was always
+ * `false` under test and the `Tooltip` branch never rendered. A mutant deleting the whole
+ * branch passed the entire suite.
  *
  * `scrollWidth`/`clientWidth` are stubbed per-element via `Object.defineProperty`, which is
  * the only way to force the measurement jsdom cannot produce on its own.
  *
- * THE DESCRIPTION'S TOOLTIP IS GONE (plan 001, U15, R37) and its tests went with it, in the
- * same change. What replaced them is the opposite assertion — that the description offers no
- * hover affordance and no pointer cursor, PAIRED with the row still opening by its name,
- * because an absence assertion on its own passes just as well on a render that crashed. The
- * NAME keeps its tooltip (§14): a clipped name has no other route to its full value, whereas
- * the description now reads two lines of itself and is complete in the DOM either way.
+ * THE DESCRIPTION'S TOOLTIP IS GONE and its tests went with it, in the same change. What
+ * replaced them is the opposite assertion — that the description offers no hover affordance
+ * and no pointer cursor, PAIRED with the row still opening by its name, because an absence
+ * assertion on its own passes just as well on a render that crashed. The NAME keeps its
+ * tooltip: a clipped name has no other route to its full value, whereas the description now
+ * reads two lines of itself and is complete in the DOM either way.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
@@ -41,7 +41,7 @@ function stubClip(clipped: boolean) {
 }
 
 /**
- * U15 / R37 — the description stops pretending to be clickable, and becomes readable.
+ * The description stops pretending to be clickable, and becomes readable.
  *
  * It carried a pointer cursor with no keyboard route and hid most of itself behind a hover
  * tooltip, which touch and keyboard readers never reach. What ships is the complete text in the
@@ -85,7 +85,7 @@ describe('ProjectRow — the description', () => {
   })
 
   it('is still part of the row\'s click target', () => {
-    // Round-4 finding 8's invariant, kept: the description sits above the name button's
+    // The dead-strip fix's invariant, kept: the description sits above the name button's
     // stretched ::after, so it wires `onOpen` back explicitly rather than relying on an
     // overlay jsdom cannot see.
     const onOpen = vi.fn()
@@ -99,8 +99,8 @@ describe('ProjectRow — the description', () => {
 
 describe('ProjectRow — the name keeps its tooltip', () => {
   it('opens on a really clipped NAME', async () => {
-    // §14, unchanged by U15: a clipped NAME has no other route to its full value, whereas the
-    // description now reads two lines of itself and is complete in the DOM regardless.
+    // A clipped NAME still has no other route to its full value, unlike the description, which
+    // now reads two lines of itself and is complete in the DOM regardless.
     stubClip(true)
     render(
       <ProjectRow
@@ -128,13 +128,13 @@ describe('ProjectRow — the name keeps its tooltip', () => {
 
 describe('ProjectRow — the ref never remounts across a clipped transition', () => {
   it('keeps the SAME DOM node whether or not the NAME is clipped', () => {
-    // Round-4 minor, now carried by the name (the description no longer measures anything).
-    // The old branch put the ref'd element at a DIFFERENT tree position depending on
-    // `clipped` — bare, versus nested inside TooltipProvider/Tooltip/TooltipTrigger — which
-    // React treats as a remount. The effect's deps ([measure, text]) do not change on that
-    // remount, so a real ResizeObserver (inert in this environment, which is why this checks
-    // node IDENTITY rather than the observer firing) never rebinds: false→true worked once,
-    // true→false never fired again.
+    // Now carried by the name (the description no longer measures anything). The old branch
+    // put the ref'd element at a DIFFERENT tree position depending on `clipped` — bare, versus
+    // nested inside TooltipProvider/Tooltip/TooltipTrigger — which React treats as a remount.
+    // The effect's deps ([measure, text]) do not change on that remount, so a real
+    // ResizeObserver (inert in this environment, which is why this checks node IDENTITY rather
+    // than the observer firing) never rebinds: false→true worked once, true→false never fired
+    // again.
     stubClip(true)
     const { rerender } = render(
       <ProjectRow project={project({ name: 'Clipped today' })} onOpen={vi.fn()} onDelete={vi.fn()} />,
@@ -152,9 +152,9 @@ describe('ProjectRow — the ref never remounts across a clipped transition', ()
 
 describe('ProjectRow — a project with no description', () => {
   it('opens the project when the "No description yet" strip is clicked', () => {
-    // Round-4 finding 8: this branch had `relative z-10` (to sit above the name button's
-    // stretched ::after) but no `onClick` — a dead strip across the newest, emptiest
-    // projects, the ones most likely to be clicked into.
+    // This branch had `relative z-10` (to sit above the name button's stretched ::after) but
+    // no `onClick` — a dead strip across the newest, emptiest projects, the ones most likely
+    // to be clicked into.
     const onOpen = vi.fn()
     render(<ProjectRow project={project({ description: null })} onOpen={onOpen} onDelete={vi.fn()} />)
 
@@ -164,10 +164,10 @@ describe('ProjectRow — a project with no description', () => {
   })
 })
 
-describe('ProjectRow — F-10, still', () => {
+describe('ProjectRow — no nested interactive elements, still', () => {
   it('keeps Delete out of the name button, even with the tooltip wrapper added', () => {
-    // The tooltip restructuring (round 4) wraps the name in TooltipProvider/Tooltip/
-    // TooltipTrigger — worth re-confirming the invariant survives the extra nesting.
+    // The tooltip restructuring wraps the name in TooltipProvider/Tooltip/TooltipTrigger —
+    // worth re-confirming the invariant survives the extra nesting.
     render(<ProjectRow project={project()} onOpen={vi.fn()} onDelete={vi.fn()} />)
 
     const del = screen.getByLabelText('Delete Visitor Log')

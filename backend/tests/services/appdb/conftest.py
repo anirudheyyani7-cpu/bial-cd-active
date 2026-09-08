@@ -1,10 +1,9 @@
 """Fixtures for the per-project-database suite.
 
 These tests create and destroy REAL databases and roles on the shared test cluster, on a
-separate AUTOCOMMIT engine. The `db_session` fixture's outer-transaction rollback cannot
-undo any of that, so every test that provisions must register the project with `salted`
-and let the fixture salt the earth afterwards — otherwise the cluster accumulates orphan
-databases across runs.
+separate AUTOCOMMIT engine that the `db_session` fixture's outer-transaction rollback cannot
+undo — so every test that provisions must register the project with `salted` and let the
+fixture salt the earth afterwards, or the cluster accumulates orphan databases across runs.
 """
 
 from __future__ import annotations
@@ -70,7 +69,6 @@ async def committed_project(test_engine: AsyncEngine) -> AsyncIterator[uuid.UUID
 
 @pytest.fixture
 async def maintenance() -> AsyncIterator[AsyncEngine]:
-    """The live maintenance engine, for catalog assertions."""
     engine = get_maintenance_engine()
     assert engine is not None, (
         "APP_DB__* must be configured in .env.test — see .env.test.example for the "

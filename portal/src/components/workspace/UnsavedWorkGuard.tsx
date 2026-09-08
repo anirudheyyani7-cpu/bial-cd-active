@@ -1,41 +1,24 @@
 /**
- * THE HALF `beforeunload` CANNOT COVER (Plan F, U8).
+ * WHY THIS EXISTS: the half `beforeunload` cannot cover.
  *
- * ═══ THE HONEST SCOPE, WHICH IS NARROWER THAN THE OBVIOUS FRAMING ═══
+ * Two guards already exist: a hoisted `beforeunload` for leaving the TAB, and the
+ * server-driven reclaim dialog for another project taking the workspace. Unguarded: an
+ * in-place navigation OUT of the workspace (navbar links, breadcrumb, opening another
+ * project) while unsaved work exists and no 409 is involved — a same-page navigation is
+ * not an unload, so `beforeunload` never fires for it.
  *
- * There are already two guards. Plan A's hoisted `beforeunload` handler covers leaving the TAB, and
- * the reclaim dialog covers another project taking the workspace — it is already an in-place guard,
- * and it is server-driven. What is genuinely unguarded is an in-place navigation OUT of the
- * workspace — the navbar's links, the breadcrumb, opening a different project — while the app holds
- * unsaved work and no 409 is involved. `beforeunload` cannot fire for those, because a single-page
- * navigation is not an unload.
+ * THE ARMING RULE. `beforeunload` stays armed only on a definite `true` — its prompt has
+ * fixed text, so arming it on "we could not check" trains people to dismiss prompts. This
+ * in-app dialog CAN carry a reason, so it also warns on `null` — but `null` has TWO causes:
+ * (1) the check ran and could not answer, or (2) it was NEVER ASKED, because `fetchSaveState`
+ * only runs on a live workspace, so a stopped/never-built project is permanently `null` with
+ * nothing to check. Warning on case 2 would fire on every exit from every stopped project —
+ * the exact prompt-with-nothing-behind-it the rule exists to avoid. So: warn on `true`; warn
+ * on `null` ONLY while alive; never on `false`; never when not running.
  *
- * ═══ THE ARMING RULE, AND THE FOURTH CASE THAT DECIDES WHETHER THIS IS A NUISANCE ═══
- *
- * `beforeunload` stays armed only on a definite `true`, and this unit does not change that: the
- * browser's prompt renders fixed text a page cannot supply a reason to, so arming it on "we could
- * not check" produces a prompt with nothing answerable behind it — which is how people learn to
- * dismiss prompts.
- *
- * An in-app dialog CAN carry a reason, so R62 changes the rule here and only here: it warns on
- * `null` too, saying the platform could not check. But `null` has TWO causes and they are not the
- * same:
- *
- *   1. the check ran and could not answer — a real "we could not tell";
- *   2. THE CHECK WAS NEVER ASKED. `fetchSaveState` compares the container's HEAD to the saved
- *      bundle's, and it may only be called on a live workspace — so on a stopped or never-built
- *      project the save state is permanently `null` because there is nothing to check.
- *
- * Warning on the second would fire "we could not tell whether you have unsaved work" on every exit
- * from every stopped project, which is exactly the prompt-with-nothing-behind-it the arming rule
- * exists to avoid. So: warn on `true`; warn on `null` ONLY while the workspace is alive; never on
- * `false`; never when the workspace is not running.
- *
- * ═══ WHY A CONFIRM-BEFORE-NAVIGATE AND NOT `useBlocker` ═══
- *
- * `useBlocker` needs a data router; the app is on `BrowserRouter`. Migrating the router to obtain
- * one hook is a large blast radius for the last plan in a set to ship, and the guard's real job —
- * the workspace's own exits — is served by an exit function the shell's chrome consults.
+ * Uses confirm-before-navigate, not `useBlocker`: that needs a data router and the app is on
+ * `BrowserRouter` — migrating for one hook is out of scope; the workspace's own exits are
+ * served by an exit function the shell's chrome consults instead.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Loader2 } from 'lucide-react'
@@ -59,7 +42,7 @@ export interface UnsavedWorkGuardOptions {
   /** The project a Save would write. `null` disables the save-then-leave arm, not the warning. */
   projectId: string | null
   /**
-   * WHOSE WORK IS AT RISK (plan 002, U11), or `null` when the caller cannot say.
+   * WHOSE WORK IS AT RISK, or `null` when the caller cannot say.
    *
    * "This app has changes that are not saved yet" is ambiguous the moment a citizen has more than
    * one project — and the two exits this dialog covers, the navbar and the back control, are
@@ -72,7 +55,7 @@ export interface UnsavedWorkGuardOptions {
 /** Is there anything a person could lose by leaving right now? */
 function worthWarningAbout(saveDirty: boolean | null, workspaceIsAlive: boolean): boolean {
   if (saveDirty === true) return true
-  // `null` while ALIVE is a check that ran and could not answer — R62 says the platform says so.
+  // `null` while ALIVE is a check that ran and could not answer, so the platform says so.
   // `null` while not alive is a check nobody asked, which is not the same claim at all.
   return saveDirty === null && workspaceIsAlive
 }
@@ -153,7 +136,7 @@ export function useUnsavedWorkGuard({
 interface DialogProps {
   /** Whose work is at risk, or `null` when the caller cannot say. */
   projectName: string | null
-  /** `true` = we know there are unsaved changes; `false` = we could not check and say so (R62). */
+  /** `true` = we know there are unsaved changes; `false` = we could not check and say so. */
   certain: boolean
   saving: boolean
   error: string | null
@@ -164,21 +147,12 @@ interface DialogProps {
 }
 
 /**
- * HAND-ROLLED, MATCHING `ReclaimWorkspaceDialog` — and the docblock says so because it used to
- * claim the opposite.
- *
- * What is actually here: `aria-modal` + `aria-labelledby`, Escape and overlay-click to stay (both
- * inert while a save is in flight, so nobody dismisses the dialog out from under their own write),
- * and initial focus parked on Stay. What is NOT here: a focus trap or a scroll lock, so Tab can
- * still walk out of the dialog into the page behind it.
- *
- * THAT GAP IS WORTH CLOSING and this is the guard it matters most on — it is the last thing
- * between somebody and their unsaved work, so it is the one that most has to be reliable under a
- * keyboard. `components/ui/dialog.tsx` (Radix) is the upgrade path and brings the trap and the
- * lock for free; `AttachmentPreview.tsx` is the worked example. Left as its own change because
- * swapping the primitive moves real behaviour, which is not what the commit introducing this note
- * was doing. `ReclaimWorkspaceDialog` stays the pattern for the COPY and the busy-window focus
- * park either way.
+ * HAND-ROLLED, MATCHING `ReclaimWorkspaceDialog`: has `aria-modal`/`aria-labelledby`,
+ * Escape/overlay-click to stay (inert mid-save), initial focus on Stay — but no focus trap or
+ * scroll lock, so Tab can walk out into the page behind it.
+ * Worth closing, since this is the last guard on someone's unsaved work; `components/ui/dialog.tsx`
+ * (Radix, see `AttachmentPreview.tsx`) is the upgrade path, left separate so this change doesn't
+ * also move real behaviour. `ReclaimWorkspaceDialog` stays the copy/focus-park pattern either way.
  */
 function UnsavedWorkDialog({
   certain,
@@ -221,13 +195,13 @@ function UnsavedWorkDialog({
         </div>
 
         <p className="mt-3 text-sm leading-relaxed text-neutral">
-          {/* NAMED WHERE THE CALLER KNOWS IT (plan 002, U11). "This app" is ambiguous the moment
+          {/* NAMED WHERE THE CALLER KNOWS IT. "This app" is ambiguous the moment
               somebody has more than one project, and both exits this dialog covers are taken
               while thinking about a different one. Falls back to the old phrasing rather than
               rendering an empty pair of quotes. */}
           {certain
             ? `${subject} has changes that are not saved yet. Save them and they come back exactly as you left them; leave without saving and they go.`
-            : // R62: say that the platform could not tell, rather than reporting there is nothing
+            : // Say that the platform could not tell, rather than reporting there is nothing
               // to lose. A wrong reassurance is the one answer that costs somebody their work.
               `We could not tell whether ${subjectLower} has unsaved changes. Saving first is the safe option.`}
         </p>
@@ -273,16 +247,12 @@ function UnsavedWorkDialog({
 }
 
 /**
- * THE ONE EXIT FUNCTION, provided by the shell and consulted by the workspace's chrome.
- *
- * A CONTEXT RATHER THAN A PROP, and for a reason that is structural rather than stylistic: the
- * exits are the navbar's links and the breadcrumb, which are not this guard's descendants by props
- * — the navbar is a sibling of the grid, and it is also rendered on pages that have no workspace at
- * all. Threading a prop would mean every one of those pages passing a guard it does not have.
- *
- * `null` OUTSIDE A WORKSPACE IS THE ORDINARY CASE, not an error. A navbar on the projects list has
- * nothing to guard, so `useWorkspaceExit` hands back a function that simply goes — which is what
- * keeps every other page's navigation unchanged by this unit.
+ * THE ONE EXIT FUNCTION, provided by the shell, consulted by the workspace's chrome. A
+ * CONTEXT, NOT A PROP — structural: navbar/breadcrumb exits aren't this guard's descendants
+ * (navbar is a sibling of the grid, and renders on workspace-less pages too), so a prop
+ * would force every such page to pass a guard it doesn't have. `null` OUTSIDE A WORKSPACE IS
+ * ORDINARY, not an error — `useWorkspaceExit` then hands back a function that just goes,
+ * leaving every other page's navigation unchanged.
  */
 const WorkspaceExitContext = createContext<((go: () => void) => void) | null>(null)
 

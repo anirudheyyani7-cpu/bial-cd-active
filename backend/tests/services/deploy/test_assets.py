@@ -1,15 +1,15 @@
 """The platform-owned build assets.
 
-The line-ending test is the reason this file exists. These assets ship inside the backend
-image, which is built on a Windows VM, and they are copied verbatim into every generated
-app's build context. A CRLF checkout would bake `\\r` into the app Dockerfile and the
-production migrator and break the build for every citizen at once — the exact failure mode
-that has taken this platform's container down twice before, and one that is invisible on a
-Mac. The root `.gitattributes` pins the directory to LF; this asserts the pin held.
+The line-ending test is the reason this file exists: these assets ship inside the
+Windows-built backend image and are copied verbatim into every generated app's build
+context, so a CRLF checkout bakes `\\r` into the app Dockerfile and migrator and breaks
+the build for every citizen at once — invisible on a Mac, and has taken this platform
+down twice before. The root `.gitattributes` pins the directory to LF; this asserts the
+pin held.
 
-The content assertions are narrow on purpose. They pin the handful of properties that are
-security or correctness decisions rather than style, so that removing one is a deliberate
-act with a failing test attached.
+The content assertions are narrow on purpose: they pin the properties that are security
+or correctness decisions rather than style, so removing one is a deliberate act with a
+failing test attached.
 """
 
 from __future__ import annotations
@@ -86,19 +86,14 @@ def test_migrations_gate_the_server_start() -> None:
 
 
 def test_the_config_default_and_the_dockerfile_arg_name_the_same_base() -> None:
-    """The two base-image defaults must not drift apart unnoticed.
+    """The two base-image defaults must not drift apart unnoticed: `config.py`'s value SHIPS
+    (sent as the NODE_IMAGE build arg on every platform build), while the Dockerfile's own
+    default only applies to a hand-run `docker build`, the go-live runbook path. Drift means
+    the operator-built artifact and the platform-built one differ in base image with nothing
+    reporting it.
 
-    They are two halves of one decision with different blast radii. `config.py`'s value is what
-    SHIPS — `images.py` sends it as the NODE_IMAGE build arg on every platform build, so it
-    always beats the ARG default below it. The Dockerfile's own default only applies to a
-    hand-run `docker build`, which is how the go-live runbook path works. Changing one and not
-    the other means the artifact an operator builds by hand and the artifact the platform builds
-    differ in their base image, and nothing anywhere reports it.
-
-    Read off `model_fields` rather than an instance: `DeployConfig` has ten required fields
-    (registry credentials, subscription, resource group, …), so constructing one here would mean
-    duplicating a ten-key fixture into this file just to read a default.
-    """
+    Read off `model_fields` rather than an instance — `DeployConfig` has ten required fields,
+    so constructing one here would mean duplicating a fixture just to read a default."""
     from src.services.deploy.config import DeployConfig
 
     arg_line = next(
@@ -110,7 +105,7 @@ def test_the_config_default_and_the_dockerfile_arg_name_the_same_base() -> None:
 
     assert arg_default == DeployConfig.model_fields["node_base_image"].default
 
-    # R5: the shipped base is pinned by digest, not by a tag that moves under us. A bare tag
+    # The shipped base is pinned by digest, not by a tag that moves under us. A bare tag
     # would still pass the equality above while quietly reintroducing the drift the pin exists
     # to stop — the same failure that let the portal's base go 16 months stale.
     assert "@sha256:" in arg_default
@@ -237,17 +232,13 @@ def test_the_wrapper_traces_the_migrator_and_its_sql() -> None:
 
 
 def test_the_wrapper_never_lists_node_modules_by_hand() -> None:
-    """The regression this exists to prevent shipped an image that died on start with
-    `Cannot find module 'xtend/mutable'`.
+    """`outputFileTracingIncludes` copies the files it is given and does NOT follow their
+    dependencies, so naming packages by hand promises a closure it cannot deliver —
+    `copy-runtime-deps.mjs` walks the real installed tree instead.
 
-    `outputFileTracingIncludes` copies the files it is given and does NOT follow their
-    dependencies, so naming `pg` and friends by hand promises a closure it cannot deliver.
-    The hand-written list was missing THREE packages (`xtend`, `pgpass`, `split2`) and
-    looked complete. `copy-runtime-deps.mjs` walks the real installed tree instead.
-
-    This asserts the absence rather than the presence, because the failure mode is someone
-    'helpfully' adding the one package a build complained about — which fixes that build and
-    leaves the next lockfile resolution to find the next hole."""
+    Asserts the absence rather than the presence: the failure mode is someone adding back
+    the one package a build complained about, leaving the next lockfile resolution to find
+    the next hole."""
     wrapper = _read("next.config.ts").decode()
     includes = wrapper[wrapper.index("outputFileTracingIncludes") :]
     assert "./node_modules/" not in includes

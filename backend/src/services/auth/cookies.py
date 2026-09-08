@@ -1,8 +1,8 @@
-"""Cookie names + the environment-aware Secure/prefix decision (KD-4).
+"""Cookie names + the environment-aware Secure/prefix decision.
 
 Shared by the auth router (which SETS/CLEARS the cookies on a Response) and the
 `current_user` dependency (which READS the session cookie off the Request) — the
-second consumer that earns this its own module (ADR-0010). The
+second consumer that earns this its own module. The
 `__Host-`/`__Secure-` prefixes require Secure + https, so a name carries its prefix
 only when Secure applies: prefixed in production, bare over plain http in dev.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from src.config import settings
 
 # External, browser-visible path the refresh cookie is scoped to. It carries the
-# /api prefix the edge adds (KD-8) and MUST match the path the SPA calls, so the
+# /api prefix the edge adds and MUST match the path the SPA calls, so the
 # cookie is sent ONLY on the refresh request — never on every API call.
 REFRESH_COOKIE_PATH = "/api/v1/auth/refresh"
 

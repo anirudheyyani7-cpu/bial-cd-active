@@ -1,48 +1,20 @@
 """What the container still holds, asked of the container itself.
 
-TWO QUESTIONS LIVE HERE, and they are asked by different callers for different reasons.
+Two questions live here: the baseline-identity probe (is the app still serving the seeded starter
+page?) and the workspace-integrity verdict (does this container still hold this app's work —
+asked before every turn, the only answer that can authorise replacing a live workspace).
 
-**The baseline-identity probe** (U6, R9) answers "is this app still serving the starter page the
-platform seeded at birth?" — the content half of the health verdict. On 2026-08-18 "Build complete
-— your app is live below" sat above the untouched golden template for nine minutes, in front of a
-client, because nothing in the platform ever asked.
+WHY THIS EXISTS. The baseline check compares blob shas against the repo's root commit rather than
+a template marker or a length heuristic: a marker misses apps restored from a pre-marker bundle,
+and a 255-vs-341 character gap once read as "template, not app" and fired a false top-severity
+alarm. Blob-sha-against-root needs no image rebuild and nothing beyond git itself (the slim Node
+base has neither `cmp` nor `diff`). Every unanswerable case — no root commit, more than one, a root
+that isn't the seeded template, a failed exec — returns `UNANSWERABLE`, never "unchanged"; the
+health verdict retries rather than guessing.
 
-WHY A GIT IDENTITY FACT AND NOT A MARKER IN THE TEMPLATE. A marker written into
-`sandbox/template/app/page.tsx` reaches only apps provisioned from a rebuilt image — and an
-EXISTING app restored from its own pre-marker bundle checks out a markerless `page.tsx` too, so
-for the whole fleet that exists today the false claim would stay live. The repository's ROOT
-COMMIT is the `bial: golden template baseline` the sandbox client seeds at provision, it survives
-a restore because bundles carry complete history, and comparing against it needs no image rebuild,
-no prompt coordination and no marker the agent could be tempted to preserve. It is also an
-explicit identity comparison rather than a heuristic, which is what
-`docs/solutions/best-practices/e2e-harness-measure-after-the-barrier-and-refuse-vacuous-passes-2026-08-02.md`
-requires after a 255-vs-341 character gap read as "template, not app" and produced a false P0.
-
-THE COMPARISON IS BLOB SHA AGAINST BLOB SHA, not a diff. `git rev-parse <root>:<path>` is what the
-root commit stored; `git hash-object <path>` is what is in the tree now. Equal means byte-identical
-by construction, it needs nothing on the image but git itself (no `cmp`, no `diff`, neither of
-which the slim Node base is guaranteed to carry), and both sides pass through the same filter
-mechanism so neither can be made to disagree by configuration the other did not see.
-
-**Everything unanswerable is `UNANSWERABLE`, never "unchanged".** No root commit, more than one
-root, a root commit that never held the file, an exec that failed: each of those is a question we
-could not answer, and answering it as "still the template" would fail a working app while
-answering it as "diverged" would re-open the very claim this exists to close. The health verdict
-reads `UNANSWERABLE` as `INDETERMINATE` and re-checks.
-
-**The workspace-integrity verdict** (U1, R1/R2) answers a different question with the same
-posture: "does this container still hold this app's work?" — asked before the agent runs, and the
-only question in the system whose answer can authorise replacing a live workspace. It lives beside
-the baseline probe because both are facts the CONTAINER holds about its own git repository, and
-because the container-state primitives they share had to leave `manager.py` to be reachable from
-the reaper without dragging the FastAPI app in behind them.
-
-IT REACHES BACK INTO NEITHER `manager` NOR THE ORCHESTRATOR, and that is a load-bearing
-property rather than tidiness. `manager` imports `reaper`, and both import this module at module
-level, so an import in the other direction is a cycle; `services.orchestrator` reaches
-`build_sessions` through `agent.agent`, which is why `selfheal` and `harness` defer THEIR imports
-of this module into their call sites. `test_the_integrity_verdict_carries_nothing_heavy_of_its_own`
-pins it, and states plainly what it does not claim.
+Neither half imports `manager` or the orchestrator: `manager` imports `reaper`, and both import
+this module at module level, so the reverse would cycle. `selfheal` and `harness` defer their own
+imports of this module for the same reason.
 """
 
 from __future__ import annotations
@@ -168,7 +140,7 @@ def parse_baseline_identity(stdout: str) -> BaselineIdentity:
 async def baseline_identity(
     sandbox_client: SandboxClient, handle: SandboxHandle
 ) -> BaselineIdentity:
-    """Ask one container whether its root route is still the seeded baseline (U6).
+    """Ask one container whether its root route is still the seeded baseline.
 
     One exec, bounded, and it never raises: every failure is `UNANSWERABLE`, because a probe that
     could throw would make the health verdict fail a build for a supervisor blip."""
@@ -184,7 +156,7 @@ async def baseline_identity(
     return parse_baseline_identity(result.stdout)
 
 
-# U9 — THE AGENT'S LAST CHANGE, as the container sees it (R15).
+# THE AGENT'S LAST CHANGE, as the container sees it.
 #
 # A MARKER FILE AND `find -newer`, NOT A TIMESTAMP COMPARISON. The obvious implementation reads
 # the newest mtime with `stat -c %Y` and compares two numbers — and `stat -c` is GNU coreutils,
@@ -221,13 +193,13 @@ _CHANGED_SINCE_GUARDED: Final = (
     # on empty input whatever `find` did. So a missing marker — a failed stamp, or a container
     # restarted with a fresh `/tmp` — produced an empty answer at exit 0, which reads as "nothing
     # changed" rather than "we could not tell". That is the wrong direction on a guard: it turns
-    # off U9's re-check silently, exactly when the container is misbehaving.
+    # the re-check off silently, exactly when the container is misbehaving.
     f"[ -f {_WATERMARK_PATH} ] || exit 1; " + _CHANGED_SINCE_SCRIPT
 )
 
 
 async def stamp_the_watermark(sandbox_client: SandboxClient, handle: SandboxHandle) -> bool:
-    """Mark "now" in the container, so a later question can ask what changed after it (U9).
+    """Mark "now" in the container, so a later question can ask what changed after it.
 
     Returns whether the mark was actually laid down. `False` is not an error and callers must not
     treat it as one — it means the follow-up question has no reference point, so the answer to
@@ -244,16 +216,14 @@ async def stamp_the_watermark(sandbox_client: SandboxClient, handle: SandboxHand
 async def anything_changed_since_the_watermark(
     sandbox_client: SandboxClient, handle: SandboxHandle
 ) -> bool | None:
-    """Has anything in the workspace been written since `stamp_the_watermark`? (U9, R15.)
+    """Has anything in the workspace been written since `stamp_the_watermark`?
 
-    THE OPEN SANDBOX IS WHY THIS ASKS THE FILESYSTEM. The agent edits through `run_command` as
-    readily as through the file tools, so a watermark counted from tool calls would miss every
-    `sed`, every install and every shell redirect — and U9's whole claim is that the loop acts only
-    on problems newer than the agent's most recent change.
+    Checks the filesystem, not tool calls: the agent edits via `run_command` as freely as via the
+    file tools, so a tool-call watermark would miss every `sed`, install, or shell redirect.
 
-    `None` means we could not find out, and it is deliberately NOT folded into `False`: the caller
-    reads `None` as "change nothing", which is today's behaviour, so a container that cannot answer
-    costs the improvement rather than the correctness."""
+    `None` (could not tell) is deliberately NOT folded into `False`: the caller treats `None` as
+    "change nothing" — today's behaviour — so an unreadable container costs the improvement, not
+    correctness."""
     run_command = sandbox_client.exec  # aliased to keep the call off the JS-oriented exec guard
     try:
         result = await run_command(handle, ["sh", "-c", _CHANGED_SINCE_GUARDED], timeout_s=30)
@@ -266,40 +236,13 @@ async def anything_changed_since_the_watermark(
 
 
 async def has_ever_been_built(app_id: uuid.UUID) -> bool:
-    """Has any turn on this app ever done real work? (U6's gating fact.)
+    """Has any turn on this app ever done real work? Meaningless pre-build — a fresh project is
+    *supposed* to show the starter page.
 
-    THE CONTENT CHECK IS ONLY MEANINGFUL FOR AN APP THAT HAS BEEN BUILT. A brand-new project is
-    *supposed* to be showing the starter page, and calling that unhealthy would fail every first
-    look at a project nobody has asked for anything yet.
-
-    The durable fact that answers it is the presence of a RECOVERY COPY. There is no `turns` model
-    — turns are `message` rows with a `TURN` entry kind, and a row scan per verdict is neither
-    cheap nor obviously correct — but `finish_turn_sandbox` writes a recovery copy on any turn that
-    touched files, which is exactly why `_nothing_to_lose` already uses its absence to mean "no
-    turn ever did". One HEAD request, and the integrity gate resolves it once per turn anyway.
-
-    A DELIBERATE NARROWING of what the plan specified, stated so it is a decision rather than a
-    drift: the plan says `newest_restore_source(app_id) is not None`, which is a different
-    question — that one answers "is the recovery copy NEWER than the saved bundle", and returns
-    `None` for an app whose Save happens to be more recent than its last turn. Plain presence is
-    the closer answer to "has any turn ever done real work", and unlike its sibling it cannot
-    raise on an unreadable store, which matters on a path that must never fail a turn.
-
-    ITS ONE BLIND SPOT, stated rather than hidden: an app whose building turns ALL failed to write
-    a recovery copy reads as never-built. That is precisely the failure U3's "recovery write did
-    not land" alarm exists to make visible; if it fires often, this wants a stronger source.
-
-    THE TWO "NO"s ARE NOT THE SAME, and they fail in opposite directions on purpose:
-
-    * Storage **unconfigured** is a fact about the DEPLOYMENT (KTD-2, and `durable_copy.py`
-      documents the same distinction). With no store there can be no recovery copy for anyone, so
-      this is a confirmed absent — `False`, and the content check is skipped.
-    * Storage **unreadable** is a transient blip, and it fails CLOSED — `True`, so the check runs.
-      The direction is deliberate: this plan exists because a completion claim appeared over an
-      untouched template, and the worst case of checking an app that turns out to be brand-new is
-      one honest sentence saying it is still the starter page. The worst case of NOT checking is
-      the 2026-08-18 lie, shipped again, during an outage nobody would connect it to.
-    """
+    Answered by RECOVERY-COPY presence (no `turns` model; `finish_turn_sandbox` writes one per
+    file-touching turn), not `newest_restore_source(...) is not None` (answers "newer than saved?",
+    a different question, and can raise). Unconfigured storage -> `False`; unreadable -> `True`,
+    fail-closed: a false "not built" beats a completion claim over an untouched template."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
@@ -312,15 +255,14 @@ async def has_ever_been_built(app_id: uuid.UUID) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# U1 — WHAT THE CONTAINER STILL HOLDS.
+# WHAT THE CONTAINER STILL HOLDS.
 #
-# The container-state primitives below were `manager.py`'s until this unit. They moved because
-# `_resolve_sandbox` now consults the workspace verdict before every turn, and a verdict that
+# `_resolve_sandbox` consults the workspace verdict before every turn, and a verdict that
 # imported `state_script` back from `manager` would be a module-level cycle — and broken
 # in-function it would still drag `api.v1.build_sessions.schemas` and `pydantic_ai` into
 # everything that asks, including the reaper, which goes out of its way not to load them
 # (`test_the_reaper_imports_without_the_fastapi_app`). `manager.py` and `reaper.py` import them
-# from here now.
+# from here.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 # One round trip for every half of the question. `|| true` keeps a repo-less tree from
@@ -333,8 +275,7 @@ async def has_ever_been_built(app_id: uuid.UUID) -> bool:
 # circuits the comparison rather than reasoning about a half-read list.
 #
 # ONE constant feeds both the shell cap and the truncation test. They were 200 and 400 in the
-# first cut, which made `porcelain_truncated` unreachable and quietly deleted the backstop
-# (#83 review, finding 6).
+# first cut, which made `porcelain_truncated` unreachable and quietly deleted the backstop.
 PORCELAIN_CAP_BYTES: Final = 200
 
 # Files the FRAMEWORK rewrites on its own, with no user or agent involved. `next dev`
@@ -363,7 +304,7 @@ _SHA_RE: Final = re.compile(r"^[0-9a-f]{7,40}$")
 def is_a_commit_sha(value: str | None) -> bool:
     """May this value be interpolated into the probe's shell string? (See `_SHA_RE`.)
 
-    Exposed rather than kept private because U3's guarded recovery write asks the same question
+    Exposed rather than kept private because the guarded recovery write asks the same question
     of the same metadata before composing the same script — and a second, subtly different
     spelling of "is this a sha" is how one of the two would eventually let something else
     through."""
@@ -379,22 +320,13 @@ _STATE_FIELDS: Final = (
 
 def state_script(reference_sha: str | None) -> str:
     """The container-state probe, optionally asking where HEAD sits relative to `reference_sha`.
+    Four `@@`-fields always: HEAD, capped porcelain, commit count, ancestry.
 
-    FOUR `@@`-SEPARATED FIELDS ALWAYS, even when no reference is supplied: HEAD, the capped
-    porcelain, the commit count, and the ancestry answer. The fourth is empty when nobody asked,
-    which the parse reads as `NOT_ASKED` — a distinct thing from "asked and could not tell", and
-    conflating them is how a probe that silently stopped running would keep reporting healthy.
-
-    ANCESTRY NEEDS A PRIMITIVE THIS CODEBASE DID NOT HAVE. Nothing in `src/` or `sandbox/`
-    computed merge-base or is-ancestor before this unit, so it is built into the same exec rather
-    than costing a second round trip. Two exit codes, space-separated: `git cat-file -e` first
-    (is the reference even in this repository?), then `git merge-base --is-ancestor` (was HEAD
-    built on top of it?). The order matters to the reader: `--is-ancestor` against an object the
-    repository does not contain fails for a reason that has nothing to do with the lineage, and
-    reading that as "diverged" would accuse a healthy workspace.
-
-    `reference_sha` is trusted to be `_SHA_RE`-shaped; callers validate before they get here, and
-    a caller that cannot pass `None` instead."""
+    Ancestry empty means `NOT_ASKED`, distinct from "asked, couldn't tell" — conflating them lets
+    a probe that silently stopped running read as healthy. It's two exit codes, in ORDER: `git
+    cat-file -e` (is the reference even here?) then `--is-ancestor` — reversed, a missing object
+    misreads as "diverged" for reasons unrelated to lineage. `reference_sha` is trusted
+    `_SHA_RE`-shaped; callers validate first, or pass `None`."""
     if reference_sha is None:
         return _STATE_FIELDS
     return (
@@ -427,18 +359,10 @@ class Ancestry(enum.StrEnum):
 class ContainerState:
     """What the container says about itself.
 
-    `head is None` means there is NO `.git` AT ALL — not "nobody has saved yet". A provisioned
-    container is never commit-less: `client._INIT_REPO_SCRIPT` seeds `bial: golden template
-    baseline` at birth so the agent's own commits cannot fail on "not a git repository", and
-    `_nothing_to_lose` says the same thing from the other side ("a check for 'no commits' is
-    dead code that never fires"). So the only thing that produces `head is None` on a container
-    this platform provisioned is a container running straight from its baked image — which is
-    the exact 2026-08-18 fingerprint this unit exists to recognise.
-
-    (The docstring this replaces said `head is None` was "the NORMAL state of a project nobody
-    has saved". That was stale, and contradicted three fields below by "A FRESH PROVISION IS
-    ALWAYS 1, never 0". Reading it as normal is what let a factory-reset container pass for a
-    new project.)"""
+    `head is None` means NO `.git` AT ALL, not "nobody has saved yet" — a provisioned container
+    is never commit-less (`client._INIT_REPO_SCRIPT` seeds a baseline commit at birth). So only a
+    container running straight from its baked image produces `head is None`; reading it as an
+    unsaved project's normal state is what lets a factory-reset container pass for a new one."""
 
     head: str | None
     uncommitted: bool
@@ -450,11 +374,10 @@ class ContainerState:
     # The porcelain is capped, so a very dirty tree comes back cut off. That is not a state
     # to reason about — it is unambiguous evidence of real work.
     porcelain_truncated: bool
-    # How many commits deep HEAD is. A FRESH PROVISION IS ALWAYS 1, never 0: the sandbox
-    # client seeds `bial: golden template baseline` so the agent's own commits never fail on
-    # "not a git repository" (`client.py`). So "no commit yet" is not a state that occurs on a
-    # provisioned container, and anything asking "is there work in here?" has to compare
-    # against the baseline rather than against nothing. 0 means we could not count.
+    # How many commits deep HEAD is. A FRESH PROVISION IS ALWAYS 1, never 0 (the seeded
+    # baseline commit above), so "no commit yet" is not a state that occurs on a provisioned
+    # container, and anything asking "is there work in here?" has to compare against the
+    # baseline rather than against nothing. 0 means we could not count.
     commits: int
     # Where HEAD sits relative to the reference sha the probe was given, or `NOT_ASKED`.
     ancestry: Ancestry = Ancestry.NOT_ASKED
@@ -539,11 +462,9 @@ async def container_state(
 ) -> ContainerState | None:
     """The container's commit AND whether its working tree has uncommitted changes.
 
-    BOTH halves are needed, and getting this wrong is a silent lie in either direction.
-    Comparing only commits would report "all changes saved" whenever the agent had written files
-    without committing them — which, since U19 deleted the agent's commit discipline, is the
-    shape of EVERY building turn until the turn-boundary bundle's own commit runs. The porcelain
-    is the only thing that can see that work.
+    BOTH halves are read because the sha alone cannot see uncommitted work: comparing commits
+    only would report "all changes saved" over a tree the agent had written and not committed,
+    and the porcelain is the only thing here that can see it.
 
     None means we could not ask at all, which is the only honest "unknown"."""
     run_command = sandbox_client.exec  # alias keeps the call off the JS-oriented exec guard
@@ -557,16 +478,11 @@ async def container_state(
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# U1 — THE WORKSPACE INTEGRITY VERDICT (R1, R2).
+# THE WORKSPACE INTEGRITY VERDICT.
 #
-# "Does this container still hold this app's work?" — asked before every turn, and the only
-# question in the system whose answer can authorise replacing a live workspace.
-#
-# ON 2026-08-18 THE PLATFORM DESTROYED A FINISHED APP TWICE. Nothing asked this question, so a
-# container that had factory-reset to its baked image looked, to every check the platform had,
-# exactly like a project nobody had built yet: a running dev server, a clean tree, one commit.
-# The agent then built on the wiped tree and the turn-end autosave stamped the empty tree in as
-# the newest copy of the user's work.
+# A CONTAINER THAT HAS FACTORY-RESET TO ITS BAKED IMAGE PRESENTS EXACTLY AS A PROJECT NOBODY HAS
+# BUILT YET: a running dev server, a clean tree, one commit. No single one of those signals can
+# tell the two apart, which is why the verdict below is built out of several that must agree.
 #
 # ONLY A POSITIVE CONFIRMATION OF LOSS AUTHORISES ANYTHING. `may_restore` is true for exactly
 # one state, and `REVERTED` requires THREE independent facts to agree: the lineage is broken,
@@ -581,10 +497,10 @@ async def container_state(
 class IntegrityVerdict:
     """The answer, plus the facts the callers and the alarm payload need.
 
-    `content_empty` is carried rather than recomputed because U2 gates the quarantine write on
-    it: in the headline factory-reset case the tree being set aside IS the baked template, and
-    bundling it costs a full `git bundle` + base64 + upload on the slowest path in the system to
-    preserve nothing."""
+    `content_empty` is carried rather than recomputed because the quarantine write is gated on
+    it: in the factory-reset case the tree being set aside IS the baked template, and bundling
+    it costs a full `git bundle` + base64 + upload on the slowest path in the system to preserve
+    nothing."""
 
     state: WorkspaceState
     reason: str
@@ -597,19 +513,19 @@ class IntegrityVerdict:
     #:
     #: A container with no `.git` at all reports an empty porcelain, so it satisfies
     #: `content_empty` whether its working directory holds the bare template or somebody's
-    #: finished app with the repository deleted out from under it. Gating U2's quarantine write
-    #: on `content_empty` — which is what the plan specified — would therefore do two bad things
-    #: at once: skip the write on EVERY reversion (since `REVERTED` requires `content_empty` by
-    #: construction, so the write would be unreachable code), and skip it precisely in the case
-    #: where the working tree is the only surviving copy of the user's app. Quarantine unless we
-    #: positively know there is nothing to quarantine.
+    #: finished app with the repository deleted out from under it. Gating the quarantine write
+    #: on `content_empty` would therefore do two bad things at once: skip the write on EVERY
+    #: reversion (since `REVERTED` requires `content_empty` by construction, so the write would
+    #: be unreachable code), and skip it precisely in the case where the working tree is the
+    #: only surviving copy of the user's app. Quarantine unless we positively know there is
+    #: nothing to quarantine.
     provably_bare: bool = False
     #: The container's HEAD at the moment of the verdict, for the alarm payload.
     head: str | None = None
     #: The bundle this verdict compared against — the one a restore would hand back.
     reference_key: str | None = None
     #: Whether ANY durable copy exists for this app (recovery OR saved). `False` under
-    #: `REVERTED` is U2's no-source arm: tell the user plainly, restore nothing.
+    #: `REVERTED` is the no-source arm: tell the user plainly, restore nothing.
     durable_copy_exists: bool = False
 
     @property
@@ -665,10 +581,7 @@ def judge_workspace(container: ContainerState, facts: _DurableFacts) -> Integrit
     """The four-state decision, as a pure function over facts already gathered.
 
     Split out for the reason `parse_state` was: this is the part with the edge cases, and every
-    one of them is testable without a container or a store. (The plan called this
-    `_parse_integrity`; the stdout parse it named already exists as `parse_state`, and a second
-    parse of the same bytes would be the duplication, so the pure function that earned its own
-    name is the JUDGEMENT rather than the parse.)"""
+    one of them is testable without a container or a store."""
     empty_tree = container.commits == 1 and clean_but_for_churn(container)
     content_empty = container.head is None or empty_tree
 
@@ -694,31 +607,30 @@ def judge_workspace(container: ContainerState, facts: _DurableFacts) -> Integrit
         return verdict(WorkspaceState.INTACT, "this project has never been built")
 
     if container.head is None:
-        # NO REPOSITORY AT ALL, and this is the 2026-08-18 fingerprint. A provisioned container
-        # is never repo-less: `client._INIT_REPO_SCRIPT` seeds a baseline commit at birth. So
-        # only a container running straight from its baked image answers this way — and it is
-        # the one shape where the lineage question needs no ancestry answer, because there is no
-        # lineage left to be a descendant of.
+        # NO REPOSITORY AT ALL. A provisioned container is never repo-less:
+        # `client._INIT_REPO_SCRIPT` seeds a baseline commit at birth. So only a container
+        # running straight from its baked image answers this way — and it is the one shape where
+        # the lineage question needs no ancestry answer, because there is no lineage left to be a
+        # descendant of.
         #
-        # DELIBERATELY AHEAD OF THE "no durable copy" ARM, and this ordering IS the P0 the unit
-        # exists to close (AE2(b)/AE3). A container whose turn-end autosave silently failed —
-        # ASM30 says that is a live state — and which then factory-resets has NO durable copy at
-        # all, and reading that as "nothing to compare against, carry on" is exactly how the
-        # agent came to build on a wiped tree and stamp it in as the newest copy of the work.
+        # DELIBERATELY AHEAD OF THE "no durable copy" ARM. A container whose turn-end autosave
+        # silently failed — a live state, not a hypothetical — and which then factory-resets has
+        # NO durable copy at all, so an ordering that reached the "nothing to compare against,
+        # carry on" arm first would let the agent build on the wiped tree.
         #
         # THE FALSE POSITIVE THIS ACCEPTS, stated rather than hidden. `_INIT_REPO_SCRIPT` is
         # best-effort: it logs and carries on when it fails. A BRAND-NEW project whose seed
         # failed is also repo-less with no durable copy, and it will be told its workspace was
-        # reset and could not be recovered — on its first message. That is wrong, and it is the
-        # trade the plan takes knowingly: nothing is destroyed on this arm (there is nothing to
-        # restore FROM, and the tree being set aside is a bare template), so the cost is one
-        # false sentence, against a silent, permanent loss of somebody's finished app.
+        # reset and could not be recovered — on its first message. That is wrong, and it is a
+        # knowing trade: nothing is destroyed on this arm (there is nothing to restore FROM, and
+        # the tree being set aside is a bare template), so the cost is one false sentence,
+        # against a silent, permanent loss of somebody's finished app.
         return verdict(WorkspaceState.REVERTED, "the workspace has no repository at all")
 
     if not facts.any_copy:
         # A repository exists and holds work, and there is nothing durable to compare it
-        # against. No loss to report and nothing to restore from — the turn proceeds, and U3
-        # writes this app's first recovery copy at the end of it.
+        # against. No loss to report and nothing to restore from — the turn proceeds, and the
+        # turn-end recovery write makes this app's first copy.
         return verdict(WorkspaceState.INTACT, "no durable copy exists to compare against")
 
     if facts.reference_sha_malformed:
@@ -745,8 +657,8 @@ def judge_workspace(container: ContainerState, facts: _DurableFacts) -> Integrit
         # and NOT `REVERTED`, deliberately, even though this reads like strong evidence of loss.
         # `--is-ancestor` never ran, so the "is the lineage broken" question was not answered by
         # git; it was answered by the object being missing, which has innocent explanations.
-        # The conservative arm still protects the user: no restore, an alarm, and U3 refuses the
-        # recovery write, so the good bundle survives for an operator to promote.
+        # The conservative arm still protects the user: no restore, an alarm, and the recovery
+        # write is refused, so the good bundle survives for an operator to promote.
         return verdict(
             WorkspaceState.UNVERIFIABLE, "the durable copy's tree is not in this repository"
         )
@@ -785,25 +697,19 @@ async def workspace_integrity(
     *,
     restore_source_key: str | None,
 ) -> IntegrityVerdict:
-    """Does this container still hold this app's work? (R1, R2.)
+    """Does this container still hold this app's work?
 
-    `restore_source_key` names the bundle to compare against — THE ONE THE CALLER WOULD ACTUALLY
-    RESTORE, so the question the verdict answers and the tree the user would get back are the
-    same tree. `None` means the saved bundle, matching `newest_restore_source`'s own convention
-    (it returns the recovery key or `None`), so U2 can pass its result through unchanged. For a
-    user who clicked Save between turns the two bundles can disagree and the answer changes —
-    which is why this is the caller's choice rather than a rule buried here.
-
-    NEVER RAISES on anything the container or the store does. Every failure is one of the two
-    unanswerable states, because a probe that could throw would fail a turn for a blip."""
+    `restore_source_key` names the bundle to compare against — the one the caller would actually
+    restore, so the verdict's answer matches the tree the user would get back. `None` means the
+    saved bundle (matches `newest_restore_source`'s convention, so its result passes straight
+    in); Save-between-turns can make the two bundles disagree, which is why this is the caller's
+    choice. Never raises: every failure is unanswerable, so a blip can't fail a turn."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
-        # A FACT ABOUT THE DEPLOYMENT, not about anybody's work (KTD-2; `durable_copy.py`
-        # documents the same distinction and the consequence of getting it backwards). With no
-        # store there can be no durable copy for anyone, so there is nothing to compare against
-        # and nothing to restore from — the turn proceeds, silently, which is what keeps local
-        # development working.
+        # With no store there can be no durable copy for anyone, so there is nothing to compare
+        # against and nothing to restore from — the turn proceeds, silently, which is what keeps
+        # local development working.
         return IntegrityVerdict(WorkspaceState.INTACT, "the object store is not configured")
 
     try:

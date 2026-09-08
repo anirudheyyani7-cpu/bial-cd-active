@@ -1,5 +1,5 @@
 /**
- * Admin-side registry client + the OWNER-SURFACE INERTNESS GUARD (flipped, APPROVAL R20).
+ * Admin-side registry client + the OWNER-SURFACE INERTNESS GUARD (flipped).
  *
  * The owner group (provisionApp / submitApp / getAppStatus / getAppSource) was retired
  * with the JSX-era submit flow: the open-sandbox submit lives in the typed
@@ -27,7 +27,7 @@ describe('owner-surface retirement (inertness guard)', () => {
 })
 
 describe('approveApp', () => {
-  it('POSTs the REVIEWED submission id (the D5 guard has something to check)', async () => {
+  it('POSTs the REVIEWED submission id', async () => {
     const fetchImpl = vi.fn(async () => ok({ appId: 'a1', status: 'approved' }))
     await registry.approveApp('a1', 'sub-1', deps(fetchImpl))
 
@@ -57,7 +57,7 @@ describe('markDeployed', () => {
     expect(opts.method).toBe('POST')
   })
 
-  it('sends the deployed URL when one is given (R5)', async () => {
+  it('sends the deployed URL when one is given', async () => {
     const live = 'https://apps.bial.example.com/gate-ops'
     const fetchImpl = vi.fn(async () => marked({ deployedUrl: live }))
     const body = await registry.markDeployed('a1', live, deps(fetchImpl))
@@ -68,7 +68,7 @@ describe('markDeployed', () => {
   it.each([['', 'blank'], [undefined, 'omitted']])(
     'sends NO deployedUrl key when the url is %s (%s) — the server keeps the recorded one',
     async (url) => {
-      // A bare `{}` is the pre-R5 wire shape AND the "leave the URL alone" signal.
+      // A bare `{}` is the wire shape AND the "leave the URL alone" signal.
       // Sending `deployedUrl: ''`/`null` instead would 422 (or blank a live link).
       const fetchImpl = vi.fn(async () => marked())
       await registry.markDeployed('a1', url, deps(fetchImpl))

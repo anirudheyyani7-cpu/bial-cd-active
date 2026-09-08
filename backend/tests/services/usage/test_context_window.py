@@ -11,7 +11,7 @@ place: what the provider reported is the number, and what nobody has measured is
 at all. The second one is the honest cost of the change and is asserted head-on: a conversation
 carrying a 30-page document the provider has not yet been asked about occupies nothing, and is
 admitted. The refusal for that conversation arrives on its next turn, from a measurement, rather
-than immediately from a guess that was wrong by 47x in the direction that hurts (#194).
+than immediately from a guess that was wrong by 47x in the direction that hurts.
 
 The gate at the ROUTES — nothing persisted, the pending card unburnt, both doors — is
 `tests/api/v1/conversations/test_context_gate.py`'s. What is here is the rule itself.
@@ -107,7 +107,7 @@ async def test_a_measured_conversation_well_inside_the_ceiling_is_admitted(db_se
 async def test_a_conversation_the_old_ceiling_would_have_refused_is_now_admitted(
     db_session,
 ) -> None:
-    """★ THE RAISE, ASSERTED AS THE ONE THING A CITIZEN NOTICES (R11).
+    """★ THE RAISE, ASSERTED AS THE ONE THING A CITIZEN NOTICES.
 
     300,000 tokens sits between the ceiling this platform used to enforce (200,000, inherited
     from the Express prototype and never checked against this deployment) and the one it
@@ -179,12 +179,12 @@ async def test_nothing_in_the_transcript_is_measured(db_session) -> None:
 
 
 async def test_a_document_occupies_nothing_until_the_provider_has_counted_it(db_session) -> None:
-    """AE3b, and the honest cost of the change stated as a test rather than left to be found.
+    """The honest cost of the change, stated as a test rather than left to be found.
 
     A thirty-page document — the longest the upload route admits — sits in the history of a
     conversation whose ceiling is 20,000 tokens. The platform computes NO token figure for it
     and stores none, so it is admitted. It used to be charged a flat 75,000 here, and before
-    that a flat 1,600 (#194): two guesses, one of them wrong by 47x. The refusal that matters
+    that a flat 1,600: two guesses, one of them wrong by 47x. The refusal that matters
     now arrives on the next turn, from what the provider actually counted."""
     user = await _user_with_ceiling(db_session, ceiling=20_000)
     document = BinaryContent(
@@ -227,7 +227,8 @@ async def test_the_largest_reported_prompt_wins_not_the_last(db_session) -> None
 
 
 async def test_the_window_is_not_the_bill_and_cache_is_the_reason(db_session) -> None:
-    """★ KTD-2, and it survives the change to a measured figure — with a new way to get it wrong.
+    """★ The window-is-not-the-bill distinction survives the change to a measured figure — with
+    a new way to get it wrong.
 
     A long conversation is served with almost all of its prompt read from cache. The BILL is
     tiny: `weighted_spend` discounts a cache read to a tenth, correctly, because that is what it

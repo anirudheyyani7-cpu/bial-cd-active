@@ -142,7 +142,7 @@ This is the spine of most journeys. Verbatim request/response shapes below.
 
 ### 3a. mint the app row — `resolve_app_for_project` (NOT an endpoint)
 
-`POST /v1/apps/provision` was **removed in U6** — it had zero production callers. The app row
+`POST /v1/apps/provision` was **removed** — it had zero production callers. The app row
 is minted by the build session, and a journey mints it the same way, in-process:
 
 ```python
@@ -162,10 +162,10 @@ returns the same id and the same key (`tests/services/build_sessions/test_appdat
 project owned by another user is a non-leaking **404**; a project whose app belongs to another
 user is a **409**.
 
-### 3b. submit — `submit_app_for_review` (NOT an endpoint; ASM18/U8)
+### 3b. submit — `submit_app_for_review` (NOT an endpoint)
 
-The citizen HTTP route (`POST /v1/apps/{app_id}/submit`) is **retired** — R15a allows
-exactly one route into the review queue, and it runs through the publish request
+The citizen HTTP route (`POST /v1/apps/{app_id}/submit`) is **retired** — exactly one route
+is allowed into the review queue, and it runs through the publish request
 (`POST /v1/projects/{project_id}/deploy`), which attaches both declaration answer sets.
 `tests/api/v1/apps/test_submit_retired.py` guards the old route 404/405 forever, even
 for the owner with a valid staged bundle. The behaviour it used to carry lives on as
@@ -206,13 +206,13 @@ the pending state back over the wire at `GET /v1/apps/{app_id}/status`.
 
 Rejections (raised as `AppApiError` from the call, not a response you assert against a
 `client` request): no snapshot blob → **409** `"Nothing to submit — generate an app
-first."`; corrupt (non-bundle) snapshot → **409**; a live build-session lock (D8) →
+first."`; corrupt (non-bundle) snapshot → **409**; a live build-session lock →
 **409**; transient storage error → **503**; cross-user `app.user_id` → **404**.
 
 ### 3c. approve (ADMIN cookie) — `POST /v1/admin/apps/{app_id}/approve`
 
 Approve requires the app be **PENDING**, takes the **reviewed submission id** in the
-body (the D5 guard), and verifies the blob exists (R11) — so the wired store must hold
+body, and verifies the blob exists — so the wired store must hold
 `submission_key(app_id, submission_id)` (`test_apps_governance.py`):
 
 ```python
@@ -241,7 +241,7 @@ for delete) (`test_apps_governance.py:139-175`):
 | `POST /v1/admin/apps/{id}/reject` | `{"note": "no good"}` | `status": "rejected"`, stores `rejection_note` |
 | `POST /v1/admin/apps/{id}/disable` | — | `status": "disabled"` (requires APPROVED, else **409**) |
 | `POST /v1/admin/apps/{id}/enable` | — | `status": "approved"` (requires DISABLED, else **409**) |
-| `PATCH /v1/admin/apps/{id}` | `{"loginRequired": true}` | loginRequired flip is audited (`config:loginRequired`); the app name is project-sourced (#48) and no longer settable — a stray `{"name": ...}` key is ignored |
+| `PATCH /v1/admin/apps/{id}` | `{"loginRequired": true}` | loginRequired flip is audited (`config:loginRequired`); the app name is project-sourced and no longer settable — a stray `{"name": ...}` key is ignored |
 | `GET /v1/admin/apps?status=approved` | — | `{"apps": [{"appId","status","hasApprovedSnapshot","submissionId","commitSha","redeployNeeded",...}]}` — never leaks `appKey` or a signed URL; `?status=pending` orders by `submittedAt` (review queue) |
 | `GET /v1/admin/apps/{id}/bundle-url` | — | `{"url","submissionId","commitSha","expiresInSeconds"}` — short-TTL signed download, audited `bundle:download` (needs a storage override, §6) |
 | `POST /v1/admin/apps/{id}/mark-deployed` | — | `{"appId","deployedSubmissionId","deployedAt"}` (requires APPROVED, else **409**), audited `mark-deployed` |
@@ -277,12 +277,12 @@ async def _approved_app(db, **overrides):
 
 ## 4. Data-plane calls — RETIRED
 
-There is no control-plane data API and no `X-App-Key` auth chain. Both were deleted in U6
+There is no control-plane data API and no `X-App-Key` auth chain. Both were deleted
 together with the `data_records` / `clear_data_tokens` tables, the `app_registry` counter
 columns, and the admin data-summary / clear-data endpoints (migration
 `0023_drop_data_records`).
 
-A generated app's data lives in **its project's own PostgreSQL database** (ADR-0028), reached
+A generated app's data lives in **its project's own PostgreSQL database**, reached
 with Drizzle from the app's own server code over the injected `BIAL_DATABASE_URL`. Nothing about
 that path passes through the control plane, so there is nothing to drive from a journey test:
 the platform-side surfaces are provisioning (`services/appdb/`), the kill-switch sever on admin
@@ -304,7 +304,7 @@ CSP builders in `src.services.appserving.csp`, `runner.py`, and `test_runner.py`
 with the open-sandbox pivot. A deployed app is served from the sandbox's own Caddy, NOT this
 control plane, so there is no in-process render assertion: the build→submit→approve pipeline now
 ends at `approved` (see `test_journey_build_deploy_render.py::test_build_submit_approve_pipeline`).
-`verify_runner_token` went with the app-key chain it guarded (U6); `decode_session_jwt` — the real
+`verify_runner_token` went with the app-key chain it guarded; `decode_session_jwt` — the real
 cookie-session primitive — stays. Tokens are minted inline via `mint_session_jwt`.
 
 ---
@@ -612,7 +612,7 @@ async def test_owner_builds_admin_approves(client, app, db_session):
     store.objects[snapshot_key(app_id)] = _BUNDLE
 
     # 2. owner submits: draft -> pending + an immutable per-submission copy. There is no
-    #    citizen HTTP route for this (§3b, ASM18) — call the service directly, the way the
+    #    citizen HTTP route for this (§3b) — call the service directly, the way the
     #    publish gate does.
     app_row = await db_session.get(AppRegistry, app_id)
     receipt = await submit_app_for_review(
@@ -663,7 +663,7 @@ async def test_owner_builds_admin_approves(client, app, db_session):
 - **Superadmin = email allowlist**, not a role. `admin@bial.com` / `superadmin@bial.com`
   (`.env.test`).
 - **One auth model: the session Cookie**, for owner and admin alike. The `X-App-Key` header
-  chain and the unauthenticated runner shell/frame are both GONE (U6 / the open-sandbox pivot);
+  chain and the unauthenticated runner shell/frame are both GONE (the open-sandbox pivot);
   `app.app_key` is a label that authorizes nothing.
 - **There is no in-process render assertion.** A deployed app is served by the sandbox's own
   Caddy, not this control plane — the pipeline a journey can drive ends at `approved`.

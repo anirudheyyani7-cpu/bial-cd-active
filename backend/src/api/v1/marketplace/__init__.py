@@ -1,1 +1,1 @@
-"""The cross-user catalog of published apps (#145)."""
+"""The cross-user catalog of published apps."""

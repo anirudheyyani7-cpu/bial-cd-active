@@ -56,7 +56,7 @@ function mountRuntime(options: Partial<ChatRuntimeOptions> = {}) {
     isRunning: false,
     onNew: vi.fn<(m: AppendMessage) => Promise<void>>().mockResolvedValue(undefined),
     onCancel: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    // REQUIRED SINCE PLAN 002's U5, and required rather than optional on purpose: the
+    // REQUIRED, and required rather than optional on purpose: the
     // `attachments` capability is DERIVED from this adapter's presence, so a caller that could
     // omit it would be a caller that silently turns the library's composer box off.
     attachments: createAttachmentAdapter({ accept: ACCEPT_ATTR, staged: () => [], onRefused: () => {} }),
@@ -92,7 +92,7 @@ describe('useChatRuntime — the server owns the transcript', () => {
     expect(state.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
   })
 
-  it('AE43: a reply of text plus a tool call renders identically live and from a reload', () => {
+  it('a reply of text plus a tool call renders identically live and from a reload', () => {
     // The same fixture supplied two ways — as a live assembly and as what the reload projection
     // produces. The assertion is on the converted messages, because that IS what the thread draws.
     const parts: ChatMessage['parts'] = [
@@ -187,7 +187,7 @@ describe('useChatRuntime — the library mints exactly one id, and we do not let
   })
 })
 
-describe('R51a — the capability list, pinned by exact equality', () => {
+describe('the capability list, pinned by exact equality', () => {
   it('registers exactly three capabilities: cancel, copy and attachments', () => {
     const { runtime } = mountRuntime()
 
@@ -197,9 +197,9 @@ describe('R51a — the capability list, pinned by exact equality', () => {
   it('the written list has THREE true entries, and each one is load-bearing', () => {
     // Stated separately because of a specific failure mode: anyone writing this test from a
     // shorter phrasing ("everything off except copy") gets a red suite, and the tempting fixes
-    // are both wrong — dropping `onCancel` silently deletes R55's stop path, and dropping the
+    // are both wrong — dropping `onCancel` silently deletes the stop path, and dropping the
     // attachments adapter silently turns the library's composer box off, since its add control,
-    // its chip list and its dropzone are ALL gated on that capability (plan 002, U5).
+    // its chip list and its dropzone are ALL gated on that capability.
     const trueOnes = Object.entries(EXPECTED_CAPABILITIES)
       .filter(([, v]) => v)
       .map(([k]) => k)

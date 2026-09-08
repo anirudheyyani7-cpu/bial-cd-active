@@ -1,21 +1,14 @@
 import { cn } from "@/lib/utils"
 
 /**
- * A pulsing placeholder block. DECORATIVE, and now says so (`#210`).
- *
- * Two reasons for `aria-hidden`. The block carries no text, so a reader gets an unlabelled group
- * of empty boxes out of it and learns nothing — and since `#210` the wait it belongs to states
- * itself in words, inside a polite region its caller owns (`ProjectsPage`). Leaving these in the
- * accessibility tree beside that sentence is the wait described twice, once in words and once as
- * a shape.
- *
- * The pulse itself is suppressed under `prefers-reduced-motion` by `index.css`, which is exactly
- * why the sentence had to exist: without it a citizen who asks for less motion gets a still grey
- * rectangle and no explanation. `aria-busy` belongs on the CONTAINER that is waiting, not on each
- * block, and lives at the call sites.
- *
- * `aria-hidden` is written before the spread so a caller that has a labelled use for one of these
- * can still override it.
+ * A pulsing placeholder block. DECORATIVE, hence `aria-hidden`: it carries no text, so a reader
+ * gets an unlabelled group of empty boxes out of it, and the wait it belongs to already states
+ * itself in words inside a polite region its caller owns (`ProjectsPage`) — leaving these in the
+ * tree beside that sentence is one wait said twice, once in words and once as a shape. That
+ * sentence has to exist because `index.css` suppresses the pulse under `prefers-reduced-motion`,
+ * leaving a citizen who asked for less motion a still grey rectangle and no explanation.
+ * `aria-busy` belongs on the waiting CONTAINER, not each block, and lives at the call sites;
+ * `aria-hidden` is written before the spread so a labelled caller can still override it.
  */
 function Skeleton({
   className,

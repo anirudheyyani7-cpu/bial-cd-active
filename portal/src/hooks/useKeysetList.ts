@@ -1,22 +1,14 @@
 /**
- * Forward-only cursor-list state for a keyset-paginated, searchable endpoint.
+ * Forward-only cursor-list state for a keyset-paginated, searchable endpoint. Keyset
+ * gives no total/offset, so pages aren't expressible — the hook holds `items` and
+ * appends; the caller adapts its envelope into `KeysetPage` inside `fetchPage` (the
+ * admin roster reuses this even though its wire key is `users`, not `items`).
  *
- * Keyset gives no total and no offset, so numbered pages are not expressible:
- * the hook holds `items` and appends. The CALLER adapts the envelope's item key
- * inside its `fetchPage`, which is how the admin roster (U10) reuses this hook
- * even though its wire key is `users`, not `items` — it maps that into
- * `KeysetPage` before resolving, and reads its sibling `defaults` off `lastPage`.
- *
- * Invariants:
- * - Changing `q` resets the cursor AND clears `items` — a cursor from a different
- *   filter is meaningless. The immediate query value is exposed as `q`; only the
- *   fetch is debounced (300ms).
- * - Out-of-order guard: a monotonically-increasing request id; a response whose id
- *   is not the latest is dropped, so a slow `loadMore` that lands after a `setQuery`
- *   never appends stale rows.
- * - `hasMore: false` disables further `loadMore` calls.
- * - A failed page surfaces in `error` and stops `loading`; `items` is left intact
- *   (never silently degrade to an empty list).
+ * Invariants: changing `q` resets the cursor AND clears `items` (a cursor from a
+ * different filter is meaningless) — `q` updates immediately, the fetch debounces
+ * 300ms. A monotonic request id drops any response that isn't the latest, so a slow
+ * `loadMore` can't append after a `setQuery`. `hasMore: false` disables `loadMore`.
+ * A failed page sets `error` and stops `loading` without clearing `items`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -150,16 +142,12 @@ export function useKeysetList<T, P extends KeysetPage<T> = KeysetPage<T>>(
   )
 
   const refresh = useCallback((): void => {
-    // Refetch the first page under the CURRENT filter. Distinct from `reset`, which also
-    // clears `q` — reconciling a failed delete must not throw away the search the user typed
-    // and is still reading.
-    //
-    // Do NOT pre-rewind cursorRef/hasMoreRef here. `runFetch(null, …)` is a page-1 load: on
-    // success it REPLACES items and rewrites both refs from the fresh page. On FAILURE it
-    // leaves items intact — and if we had already rewound the cursor to null, the next
-    // `loadMore` would take the `cursor === null` REPLACE branch and collapse the list back to
-    // page 1. Leaving the refs at their last-successful values keeps a following `loadMore`
-    // an append. So the success path is their sole writer (the same rule `loadMore` relies on).
+    // Refetches page 1 under the CURRENT filter (distinct from `reset`, which also clears `q`
+    // — a failed-delete reconcile must not throw away what the user is still searching for).
+    // Do NOT pre-rewind cursorRef/hasMoreRef: `runFetch(null, …)` replaces on SUCCESS and
+    // rewrites both refs from the fresh page, but leaves them untouched on FAILURE. Rewinding
+    // here would make a failed refresh's next `loadMore` see `cursor === null` and collapse
+    // the list back to page 1 — the success path must stay their sole writer.
     void runFetch(null, qRef.current)
   }, [runFetch])
 

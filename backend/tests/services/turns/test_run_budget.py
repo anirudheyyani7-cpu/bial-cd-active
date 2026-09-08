@@ -1,15 +1,14 @@
-"""U13 / R91 — a build turn is bounded by what it SPENDS, not only by requests and seconds.
+"""A build turn is bounded by what it SPENDS, not only by requests and seconds.
 
 THE THIRD BOUND ON ONE LOOP. `MODEL_TURN_CEILING` counts requests and
 `RUN_WALL_CLOCK_DEADLINE_S` counts seconds, and a build can sit comfortably inside both while
-spending a fortune — fifty requests carrying a large context are cheap in count, cheap in
-elapsed time and expensive in tokens. The citizen can see the meter; the agent cannot. That
-asymmetry is the whole argument for the platform holding this line, and for it being a NUMBER
-rather than a sentence in a prompt.
+spending a fortune — fifty requests carrying a large context are cheap in count and time, and
+expensive in tokens. The citizen can see the meter; the agent cannot — the whole argument for
+the platform holding this line as a NUMBER rather than a sentence in a prompt.
 
-The securing half — that this ending copies the citizen's tree before it composes a word, using
-the same function the daily budget uses — lives in `test_at_limit.py`, beside the ordering tests
-it has to keep intact. What is here is the bound's shape and its sentence.
+The securing half — that this ending copies the citizen's tree before composing a word, using
+the same function the daily budget uses — lives in `test_at_limit.py`. What is here is the
+bound's shape and its sentence.
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ from src.services.turns.copy import KEPT_A_COPY, SPENT_ENOUGH_TEXT
 
 
 def test_the_bound_is_a_number_the_platform_holds() -> None:
-    """★ R91's shape, asserted as a shape. The bound is a module constant beside the other two
-    ceilings — a property of how this loop is built, not a per-deployment knob, and not
+    """★ The bound's shape, asserted as a shape. The bound is a module constant beside the other
+    two ceilings — a property of how this loop is built, not a per-deployment knob, and not
     something the agent is asked to observe.
 
     THE THREE COEXIST. A reader arriving at any one of them has to find the other two, because
@@ -44,19 +43,11 @@ def test_the_bound_is_a_number_the_platform_holds() -> None:
 
 
 def test_the_ending_names_no_bound_and_no_limit_the_citizen_did_not_set() -> None:
-    """★ THREE BOUNDS, ONE ENDING.
-
-    Which internal ceiling fired is not something a citizen can act on differently — the next
-    move is the same message either way — and every word for it ("token budget", "request
-    limit", "wall clock") is a word for the platform's problem rather than theirs, which is
-    exactly what `copy.py`'s register rule exists to keep out. Which bound fired is in the
-    record and the logs, where the person who can act on it looks.
-
-    IT ALSO MUST NOT READ AS THE DAILY BUDGET. That ending says "you have used up your building
-    budget for today ... you can carry on after midnight". Telling someone to wait until
-    midnight when they can carry on immediately is the confusion this separation exists to
-    prevent, and it is the easy mistake to make once the two endings share a function.
-
+    """★ THREE BOUNDS, ONE ENDING. Which ceiling fired isn't actionable differently, so naming
+    it ("token budget", "wall clock", etc.) is the platform's word, not the citizen's — kept out
+    by `copy.py`'s register rule; it stays in the record and logs instead. It must also not read
+    as the DAILY budget, whose ending says "carry on after midnight" — wrong advice here, since
+    the citizen can carry on immediately, and the easy mistake once two endings share a function.
     Mutation check: pass `AT_LIMIT_TEXT` as the spend bound's sentence and this goes red on
     `midnight`."""
     rendered = SPENT_ENOUGH_TEXT.format(kept=KEPT_A_COPY)
@@ -78,13 +69,6 @@ def test_the_ending_carries_the_conditional_reassurance_rather_than_asserting_it
 
 
 # --- three bounds, one ending ---------------------------------------------------------------
-#
-# THE UNIFICATION IS THE REQUIREMENT, not a tidy-up. R91 asks that an exhausted bound end where
-# the app works AND say what remains, and it says it of the bound in general. Before this, only
-# the spend arm secured anything: the other two told the citizen "your changes are still in the
-# workspace — click Save to keep them" and then ended the turn having copied nothing, which is
-# verbatim the sentence `at_limit_ending`'s own docstring records as securing nothing and
-# asserting something nobody had checked.
 
 _BOUNDED_REASONS = {
     "wall_clock_deadline_exceeded",
@@ -119,17 +103,12 @@ def _bounded_raises() -> dict[str, ast.Raise]:
 
 
 def test_all_three_internal_bounds_end_through_the_one_securing_function() -> None:
-    """★ R91's "three bounds, one ending", asserted structurally rather than by reading copy.
+    """★ The "three bounds, one ending" rule, asserted structurally rather than by reading copy.
 
-    Each of the three ceilings that can end a run must hand its message to
-    `_bounded_run_ending`, which is the only thing on this path that secures the citizen's tree
-    before composing a word. A second securing call site is the failure this pins: a divergent
-    snapshot-then-teardown ordering here loses somebody's work, which is exactly why
-    `at_limit_ending` takes its sentence as a parameter instead of each arm growing a copy.
-
-    STRUCTURAL, BECAUSE THE COPY IS SHARED. All three now render the same sentence, so a test
-    that only read the message could not tell an arm that secures from one that does not.
-
+    Each ceiling must hand its message to `_bounded_run_ending`, the only thing here that
+    secures the tree before composing a word — a second call site means a divergent
+    snapshot-then-teardown order that loses someone's work. All three render the same sentence
+    now, so a test reading only the message couldn't tell a securing arm from one that doesn't.
     Mutation check: restore any one arm to a bare string literal and this goes red naming it."""
     raises = _bounded_raises()
     assert set(raises) == _BOUNDED_REASONS, (
@@ -151,31 +130,13 @@ def test_all_three_internal_bounds_end_through_the_one_securing_function() -> No
 
 
 def test_the_click_save_sentence_survives_only_where_it_is_still_true() -> None:
-    """★ THE REGRESSION THAT PROTECTS THE INCIDENT PATH.
-
-    "Your changes are still in the workspace — click Save to keep them" is the sentence
-    `at_limit_ending` was built to replace. On the three bounded endings it secured nothing:
-    whether the work survived depended on an exit-path autosave that is deliberately swallowed,
-    so on the day it failed the citizen had already been told it had not. Two of those three
-    still carried it, on the paths where a container is most likely to be wedged.
-
-    ONE SITE KEEPS IT, AND KEEPS IT HONESTLY. The self-heal budget arm
-    (`self_heal_budget_exhausted`) is a FOURTH bound that R91 does not name — it ends a repair
-    loop, not a run — and it secures nothing on purpose: KTD-5e says there is no autosave, so
-    on that path the changes really do sit in the workspace until the citizen clicks Save. The
-    sentence is accurate there. Unifying it would mean deciding something R91 never decided,
-    and would quietly add a container round trip to a path that never had one.
-
-    So this is an ALLOWLIST, not an absence: the phrase may appear in exactly one ending, and a
-    fifth copy — the way this comes back — fails naming its line. Whether that fourth arm should
-    also secure the tree is a real question, and it belongs to whoever owns the self-heal budget,
-    not to a test that would answer it by going green.
-
-    LITERALS, NOT RAW SOURCE. The arms that no longer carry the sentence now carry a comment
-    explaining why, and a substring scan cannot tell prose about a defect from the defect — it
-    flagged the very comment recording the fix. Module and function docstrings are skipped for
-    the same reason; nothing else is.
-
+    """★ THE REGRESSION THAT PROTECTS THE INCIDENT PATH. "...click Save to keep them" secured
+    nothing on the three bounded endings, so when the autosave it relied on failed, the citizen
+    had already been told the work was safe.
+    ALLOWLISTED, NOT ABSENT: `self_heal_budget_exhausted`, a fourth bound outside the
+    three-bounds rule with no autosave, is the one site where the sentence stays honestly true
+    — a fifth copy anywhere else fails naming its line. Docstrings are excluded from the scan
+    (a substring match once flagged the very comment recording this fix).
     Mutation check: paste the sentence into any other ending and this goes red on its line."""
     tree = ast.parse(_engine_source())
     docstrings = {
@@ -217,9 +178,9 @@ def test_the_click_save_sentence_survives_only_where_it_is_still_true() -> None:
 
 
 def test_which_bound_fired_stays_in_the_record_while_the_citizen_reads_one_sentence() -> None:
-    """R91 asks for one ending, not for the platform forgetting which ceiling fired. The three
-    reasons stay distinct in `end_reason` — that is where the person who can act on it looks —
-    while nothing distinguishes them in front of the citizen, whose next move is the same
+    """The requirement asks for one ending, not for the platform forgetting which ceiling fired.
+    The three reasons stay distinct in `end_reason` — that is where the person who can act on it
+    looks — while nothing distinguishes them in front of the citizen, whose next move is the same
     message either way."""
     raises = _bounded_raises()
     assert len(set(raises)) == 3, "the three bounds collapsed into one record value"
@@ -233,20 +194,13 @@ def test_which_bound_fired_stays_in_the_record_while_the_citizen_reads_one_sente
 
 
 def test_the_bound_does_not_price_a_cache_read_like_fresh_input() -> None:
-    """★★ THE 2026-07-30 INCIDENT, PREVENTED ON THE SECOND CEILING TOO.
-
-    Under pydantic-ai `input_tokens` is the grand-total prompt size and the cache buckets are
-    ALREADY INSIDE it — a request with 10 fresh tokens and a 90k cache read reports
-    `input_tokens == 90_010`, so `total_tokens` is 90_015. This loop re-sends the same
-    instructions and tool definitions behind a cache breakpoint on every step, so a bound
-    reading that raw number charges the whole prefix again per step.
-
-    That is not hypothetical: `billable_spend`'s docstring records one calculator build booking
-    956k of a 1M daily cap on 68 tokens of real fresh input, which is why the DAILY meter is
-    cost-weighted. A per-run ceiling reading the raw total would have reintroduced exactly that
-    on a second ceiling — ending honest builds early and measuring how many steps a build took
-    rather than how much work it did, which `RUN_TOKEN_BUDGET`'s own docstring says it must not.
-
+    """★★ Under pydantic-ai, `input_tokens` already includes the cache buckets — a request with
+    10 fresh tokens and a 90k cache read reports `input_tokens == 90_010`. This loop re-sends
+    the same instructions behind a cache breakpoint every step, so a bound reading the raw
+    total double-charges the prefix per step.
+    Not hypothetical: `billable_spend`'s docstring records the incident this repeats if the run
+    bound reads the same way the daily meter used to, which is why `RUN_TOKEN_BUDGET`'s own
+    docstring says a per-run ceiling must not end honest builds early by counting steps not work.
     Mutation check: return `usage.total_tokens` from `_run_spend` and this goes red."""
     from pydantic_ai.usage import RunUsage
 
@@ -267,18 +221,12 @@ def test_the_bound_does_not_price_a_cache_read_like_fresh_input() -> None:
 
 
 def test_the_platform_s_thinking_is_not_charged_to_the_citizen() -> None:
-    """★ THE OWNER'S RULING (2026-09-02): the meter shows what the citizen spent on their app,
-    not what the platform spent thinking about it.
-
-    Reasoning is a choice this platform made on their behalf. They did not ask for it, they
-    cannot see it, and they cannot turn it off — so a daily allowance that moved because the
-    platform thought harder would move for a reason the person has no way to act on.
-
-    THE SUBTRACTION IS SOUND BECAUSE THE PROVIDER BILLS THINKING *INSIDE* `output_tokens`
-    rather than beside it, so `thinking_tokens` is a readable subset of the output total. The
-    first assertion is what would catch someone "fixing" this by adding instead: adding would
-    make a reasoning turn cost MORE than its own output.
-
+    """★ THE OWNER'S RULING: the meter shows what the citizen spent on their app, not what the
+    platform spent thinking about it — reasoning is a choice made on their behalf, invisible
+    and un-disable-able, so it must not move a daily allowance for a reason they can't act on.
+    Sound because the provider bills thinking *inside* `output_tokens` rather than beside it,
+    so `thinking_tokens` is a readable subset of it — the first assertion below catches
+    "fixing" this by adding instead, which would make a reasoning turn cost MORE than output.
     Mutation check: pass `usage.output_tokens` straight through in `_citizen_output_tokens` and
     the second assertion goes red; add instead of subtract and the third does."""
     from pydantic_ai.usage import RunUsage

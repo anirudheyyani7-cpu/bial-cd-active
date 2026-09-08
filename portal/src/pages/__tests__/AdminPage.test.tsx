@@ -1,24 +1,12 @@
 /**
- * U15 — the admin console's message channel, which had NO test at all before this file:
- * the panel tests (AppRegistryPanel.test.jsx etc.) only ever assert that a panel calls
- * `onToast`, never what AdminPage itself does with the call. This is that missing half.
+ * THE ADMIN CONSOLE'S TOAST CHANNEL. `showToast`'s `severity` ('ok' | 'problem') drives the icon,
+ * the colour, and whether the dismiss timer runs — without that, an administrator can't tell a
+ * confirmation from a raw failure without reading the words, on the surface where being wrong
+ * costs the most.
  *
- * Before this unit, `AdminPage.showToast` took one string and rendered it inside one
- * white/blue-info card that always auto-dismissed after three seconds — the SAME
- * appearance whether `AppRegistryPanel.act()` had just sent a confirmation
- * (`"Gate Tool" approved`) or a raw failure (an approve that threw). An administrator
- * could not tell, without reading the words, whether the action they just took had
- * worked — "the surface where being wrong costs the most." The fix gives the channel a
- * `severity: 'ok' | 'problem'` that drives the icon, the colour, and whether the
- * dismiss timer runs at all; `AppRegistryPanel.act()`'s catch branch is the one call
- * site in the whole admin console that has ever needed 'problem'.
- *
- * `AppRegistryPanel` (the 'apps' tab, active by default) is rendered for REAL here, with
- * only its API module mocked — the fix under test is what AdminPage does with a callback
- * a real panel really invokes, not a synthetic one. The other three tabs' panels never
- * report a failure through this channel (their own catch blocks call `setActionError` /
- * `setApplyError` instead — see UsersLimitsPanel/GlobalLimitsPanel), so they are stubbed
- * out to keep this file's mock surface to what the fix actually touches.
+ * `AppRegistryPanel` (the 'apps' tab, default) renders for REAL here, only its API module mocked —
+ * this tests what AdminPage does with a callback a real panel actually invokes, not a synthetic
+ * one. The other three tabs are stubbed (see below for why).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
@@ -41,8 +29,8 @@ const h = vi.hoisted(() => ({
 vi.mock('../../utils/auth', () => ({ getStoredUser: h.getStoredUser }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../utils/appRegistryApi', () => h)
-// Not this unit's concern (see file docblock) — kept as no-op stand-ins so AdminPage's
-// static imports of them don't drag in their own, unrelated data-fetching.
+// Stubbed rather than exercised: they report their failures through their own state, not this
+// channel, and their real modules would pull unrelated data-fetching into this file.
 vi.mock('../../components/admin/UsersLimitsPanel', () => ({ default: () => null }))
 vi.mock('../../components/admin/GlobalLimitsPanel', () => ({ default: () => null }))
 vi.mock('../../components/admin/FeedbackPanel', () => ({ default: () => null }))
@@ -88,7 +76,7 @@ const openReviewAndApprove = () => {
   fireEvent.click(screen.getByTestId('approve-btn'))
 }
 
-describe('the admin toast channel — confirmation vs failure through the SAME callback (U15 integration)', () => {
+describe('the admin toast channel — confirmation vs failure through the SAME callback', () => {
   it('an action that succeeds renders the confirmation appearance', async () => {
     h.approveApp.mockResolvedValue({})
     renderAdmin()
@@ -114,7 +102,7 @@ describe('the admin toast channel — confirmation vs failure through the SAME c
   })
 })
 
-describe('a failure waits to be dismissed; a confirmation may fade (U15)', () => {
+describe('a failure waits to be dismissed; a confirmation may fade', () => {
   it('a confirmation auto-dismisses after 3 seconds', async () => {
     h.approveApp.mockResolvedValue({})
     vi.useFakeTimers()
@@ -147,7 +135,7 @@ describe('a failure waits to be dismissed; a confirmation may fade (U15)', () =>
       expect(screen.getByTestId('admin-toast').dataset.severity).toBe('problem')
 
       // The mistake THIS test exists to catch: reverting `showToast` to always start a
-      // 3s timer (the code as it existed before this unit) makes this go red.
+      // 3s timer makes this go red.
       await vi.advanceTimersByTimeAsync(10_000)
       expect(screen.getByTestId('admin-toast')).toBeTruthy()
     } finally {
@@ -181,7 +169,7 @@ describe('a confirmation and a failure are visually distinguishable without read
   })
 })
 
-describe('two messages in quick succession (U15 edge case)', () => {
+describe('two messages in quick succession', () => {
   it('the second message never leaves the first one’s text under the second’s styling', async () => {
     // Fail, then immediately retry and succeed — `act()`'s catch and success branches
     // each call `showToast` exactly once, and `showToast` replaces the whole

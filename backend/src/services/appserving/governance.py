@@ -1,14 +1,14 @@
-"""Admin danger ops (R27) — the destructive purge behind the super-admin governance
-surface. Internal symbols use the witty naming rule (`.claude/rules/naming.md`):
-`nuke_app` (hard-delete). Public API responses stay professional.
+"""Admin danger ops — the destructive purge behind the super-admin governance
+surface. Internal symbols use the witty naming rule: `nuke_app` (hard-delete).
+Public API responses stay professional.
 
-The old per-app file model (`app_files`, OPEN-SANDBOX) and the shared `data_records`
-plane (U6) are both retired, so what an app owns here is object-store blobs plus what it
-published: `nuke_app` sweeps the app's C4 snapshot bundle, its immutable submission bundles,
-its per-app Blob container, its published container app AND its container-registry repository
-before dropping the registry row. A residual blob is a storage orphan an operator must clear
-by hand — nothing on this path is on a timer — never a data loss. The project's own PostgreSQL
-database is a POST-COMMIT teardown owned by the caller, not by this module (D10).
+The old per-app file model (`app_files`) and the shared `data_records` plane are both
+retired, so what an app owns here is object-store blobs plus what it published: `nuke_app`
+sweeps the app's snapshot bundle, its immutable submission bundles, its per-app Blob
+container, its published container app AND its container-registry repository before
+dropping the registry row. A residual blob is a storage orphan an operator must clear by
+hand — nothing on this path is on a timer — never a data loss. The project's own PostgreSQL
+database is a POST-COMMIT teardown owned by the caller, not by this module.
 """
 
 from __future__ import annotations
@@ -42,31 +42,31 @@ async def nuke_app(
     app_id: uuid.UUID,
     container_store: AppContainerStore | None,
 ) -> list[tuple[str, str]]:
-    """Hard-delete an app: sweep its object-store artifacts — the C4 snapshot bundle, EVERY
-    immutable submission bundle under `submissions/{app_id}/` (R23 — this prefix sweep is also
-    the purge lever for the retained-forever submissions), AND its per-app Blob CONTAINER —
-    then drop the registry row. The sweeps go FIRST, while
-    the app id still resolves them; the admin danger-op accepts this inline ordering (unlike the
-    rollback-safe project cascade, KD-3). The sweeps themselves are best-effort and never
-    surface (a residual blob/container is a bounded, logged orphan) — but the submissions
-    ENUMERATION raises: proceeding past a failed listing would drop the row and strand blobs no
-    one can ever find again, so the admin's delete fails retryably instead (fail-first).
+    """Hard-delete an app: sweep its object-store artifacts — the snapshot bundle, EVERY
+    immutable submission bundle under `submissions/{app_id}/` (this prefix sweep is also the
+    purge lever for the retained-forever submissions), AND its per-app Blob CONTAINER — then drop
+    the registry row. The sweeps go FIRST, while the app id still resolves them; the admin
+    danger-op accepts this inline ordering (unlike the rollback-safe project cascade). The sweeps
+    themselves are best-effort and never surface (a residual blob/container is a bounded, logged
+    orphan) — but the submissions ENUMERATION raises: proceeding past a failed listing would drop
+    the row and strand blobs no one can ever find again, so the admin's delete fails retryably
+    instead (fail-first).
 
     Both stores are INJECTED (not resolved inline) so a test can swap fakes for each — `storage`
     for the blob sweep, `container_store` for the container sweep. `container_store` is `None` when
     object storage is unconfigured (dev/test), in which case the container sweep is a no-op.
 
-    IT ANSWERS WITH SURVIVORS (U22), in `record_what_survived`'s `(artefact, id)` shape, so the
-    caller can file the one audit row naming what outlived the delete. Every sweep below already
-    reports what it could not destroy and this only stops throwing those answers away: an admin
+    IT ANSWERS WITH SURVIVORS, in `record_what_survived`'s `(artefact, id)` shape, so the caller
+    can file the one audit row naming what outlived the delete. Every sweep below already reports
+    what it could not destroy and this only stops throwing those answers away: an admin
     hard-delete used to be the one destructive lever on the platform that kept no record of a
     leaked blob, container, published app or registry repository. Empty means nothing survived.
 
-    BLOB-ONLY, and staying that way (D10): the project's own PostgreSQL database and login role
-    are NOT torn down here. `DROP DATABASE` cannot run inside a transaction block and this
-    function deliberately runs inside its caller's, so the database teardown is the CALLER's
-    POST-COMMIT step — `salt_the_earth`, after `db.commit()` (see `admin.hard_delete`). Adding it
-    here would not merely be misplaced, it would fail."""
+    BLOB-ONLY, and staying that way: the project's own PostgreSQL database and login role are
+    NOT torn down here. `DROP DATABASE` cannot run inside a transaction block and this function
+    deliberately runs inside its caller's, so the database teardown is the CALLER's POST-COMMIT
+    step — `salt_the_earth`, after `db.commit()` (see `admin.hard_delete`). Adding it here would
+    not merely be misplaced, it would fail."""
     submission_keys = await all_keys_under(storage, submissions_prefix(app_id))
     survivors: list[tuple[str, str]] = []
     # `recovery_key` alongside `snapshot_key`: both carry the app's whole tree, and a hard
@@ -94,7 +94,7 @@ async def nuke_app(
     # about one that was costs a live container. Over-asking is the cheap direction here and the
     # expensive one below.
     survivors.extend(("published_app", str(i)) for i in await sweep_published_apps([app_id]))
-    # ...and the IMAGE it was built from (U21/U23). The citizen's own delete destroys the
+    # ...and the IMAGE it was built from. The citizen's own delete destroys the
     # registry repository; if this path did not, the admin lever — the one whose dialog says
     # "destroyed permanently" — would leave behind exactly what the softer path removes, and
     # the image still carries the app's compiled tree. Lazy import of `settings` because a

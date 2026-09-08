@@ -1,47 +1,26 @@
 /**
- * THE PROJECT SURFACE (Plan F, U1) — the rail's contents, and the project-scoped publisher.
+ * THE PROJECT SURFACE — the rail's contents, and the project-scoped publisher.
  *
- * ═══ THE HEADLINE BEHAVIOUR THIS FILE EXISTS FOR ═══
+ * WHY THIS EXISTS: the symmetric counterpart to the chat-scoped publisher — exactly one of the
+ * two is ever mounted for a given address, so there's no contest, only continuity across the
+ * hop, which the channel's per-payload rules already handle (`address`/`project` survive an
+ * unmount; `pane`, `visible` and the workspace report clear).
  *
- * Before this, the workspace channel had exactly ONE publisher in the whole tree: the conversation
- * surface, which mounts only when a chat is open. The project page subscribed and never published,
- * so on a fresh load of a bare `/projects/:id` the pane host hit its own "no pane and no address"
- * early return and rendered NOTHING. R3's whole point — the app is there, behind one deliberate
- * press, on the project screen — was unreachable, and no test could see it because the project
- * page had no pane to assert about.
+ * ONE READ, TWO CONSUMERS, NOT A SECOND POLL: `useWorkspaceState` owns the preview-state read
+ * and its cadence/visibility handling; the address is built from that SAME result, feeding only
+ * the project-scoped input. Precedence lives in `previewAddress.ts` and is not re-derived here —
+ * its resolver docblock and the conversation surface's `projectPreviewUrl: null` comment both
+ * name this caller as the one that needs a chat-less project address.
  *
- * This is the symmetric counterpart: the project-scoped publisher. Exactly one of the two is ever
- * mounted for a given address, so there is no contest — only continuity across the hop, which the
- * channel's per-payload rules already handle (`address` and `project` survive an unmount; `pane`,
- * `visible` and the workspace report clear).
+ * PUBLISH THROUGH THE HOOKS, NEVER A RAW CHANNEL SET: they carry the "nothing yet ≠ there is
+ * nothing" protection — a publisher abstains on its first renders until it has resolved
+ * something, which stops a remount from retiring a frame the departing surface left standing. A
+ * direct `channel.address.set` breaks that round trip silently, only on the return leg.
  *
- * ═══ ONE READ, TWO CONSUMERS — NOT A SECOND POLL ═══
- *
- * `useWorkspaceState` performs the preview-state read with its own cadence and visibility
- * handling. The address is built from THAT SAME RESULT, feeding only the project-scoped input and
- * leaving every chat-scoped one at rest. U2's rule that its pure map neither takes nor returns an
- * address is about the MAP's type; it is not a bar on the caller that already holds the read.
- *
- * THE PRECEDENCE IS `previewAddress.ts`'s AND IS NOT RE-DERIVED HERE. Its two comments already name
- * this caller: the conversation surface's `projectPreviewUrl: null` block says the populated arm
- * "exists for the caller that has a project and no chat — the project surface", and the resolver's
- * own docblock says that arm "is the only one that does not require a chat … without it the project
- * screen frames nothing." That gap is closed; both comments now describe a closed one.
- *
- * ═══ PUBLISH THROUGH THE HOOKS, NEVER A RAW CHANNEL SET ═══
- *
- * The hooks carry the "I have nothing yet is not the same as there is nothing" protection: a
- * publisher abstains on its first renders until it has resolved something, which is what stops a
- * remount from retiring a frame the departing surface left standing. Reimplementing that with a
- * direct `channel.address.set` is how the round trip breaks — silently, and only on the return leg.
- *
- * ═══ WHAT THIS FILE DELIBERATELY DOES NOT DO ═══
- *
- * It does NOT fire the project-opened beacon. `ProjectPage` does, from its successful-load branch,
- * and from exactly one place. This component independently needs `project.appId` for the rail's
- * status line, which is precisely the pull that would make somebody add a second tracker here —
- * and `observe.ts`'s per-project guard makes a repeated call a safe no-op, so the risk is not
- * defeating that guard but BYPASSING it with a second mechanism it does not cover.
+ * DOES NOT FIRE THE PROJECT-OPENED BEACON — `ProjectPage` does, from one place. This component
+ * needs `project.appId` for the rail's status line, which is exactly the pull that tempts a
+ * second tracker; `observe.ts`'s per-project guard makes a repeat call a no-op, so the risk is
+ * bypassing that guard with a second mechanism it doesn't cover.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import WorkspaceRail from './WorkspaceRail'
@@ -113,7 +92,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     // …AND IT IS ALSO THIS SCREEN'S WHOLE ANSWER ON LIVENESS. A non-null value here is the read
     // saying `alive`, which is what the resolver builds `serving` from — so the pardon that used to
     // be asserted as `completedLive: true` on the pane view below is now READ rather than claimed,
-    // and this screen no longer states anything about a build it never ran (`#199`).
+    // and this screen no longer states anything about a build it never ran.
     // The project predicate is trivially true here: these signals came from a read keyed on the
     // project this surface is showing. It is passed rather than assumed because the resolver's own
     // note says an arm must carry its predicate INTO the module — a gate that depends on where it
@@ -125,7 +104,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   })
 
   /**
-   * ═══ DID THE NEWEST BUILD COMPILE? — asked of the server, gated on liveness (U4, R20/R21a) ═══
+   * DID THE NEWEST BUILD COMPILE? — asked of the server, gated on liveness.
    *
    * THE MECHANISM IS NOT BUILT HERE; IT IS WIRED HERE. The route, the four-valued type whose
    * `unknown` means "hold the cover, never read as clean", the client and `LivePreview`'s
@@ -133,7 +112,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
    * some time. The project screen was the one call site that did not: it passed `compileState: null`
    * under a comment reasoning that this screen must not cause a container call.
    *
-   * THAT REASONING WAS NARROWER THAN IT READ. What R3 forbids is a screen that STARTS a stopped
+   * THAT REASONING WAS NARROWER THAN IT READ. What the ban forbids is a screen that STARTS a stopped
    * container to answer a question nobody asked — and the route already refuses to attach when
    * nothing is live, short-circuiting before the expensive part. So the ban is honoured by gating
    * the read on the same liveness the save read is gated on: no dark pane pays for this.
@@ -141,7 +120,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
    * WHAT IT COSTS WHEN IT DOES RUN: one `/dev/compile` read of an in-memory value inside a
    * container that is already up. It never touches the dev server.
    *
-   * ═══ THE ONE RULE THIS MUST NOT DEFEAT ═══
+   * THE ONE RULE THIS MUST NOT DEFEAT.
    *
    * `fetchCompileState` answers `unknown` for everything unanswerable — a refusal, an unreadable
    * body, a thrown request, a container image older than the signal — and never throws. `unknown`
@@ -252,16 +231,16 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       // NO TURN RUNS ON THIS SURFACE. Every one of these describes a build in flight, and there is
       // none: this screen starts no turn and owns no session.
       //
-      // `completedLive: true` USED TO SIT HERE, AND IT WAS THE `#199` DEFECT (U3). It was the pardon
-      // that let a frame outrank a terminal status — which an app reached from the project screen
-      // genuinely is — but the same flag also drew "Build complete — your app is live below", so a
-      // screen where a build can never run stated a build outcome on every cold load and after
-      // every restore. It could not simply be flipped to `false` either: that would have overridden
+      // `completedLive: true` USED TO SIT HERE, AND IT WAS THE FALSE-COMPLETION DEFECT. It was
+      // the pardon that let a frame outrank a terminal status — which an app reached from the
+      // project screen genuinely is — but the same flag also drew "Build complete — your app is
+      // live below", so a screen where a build can never run stated a build outcome on every
+      // cold load and after every restore. It could not simply be flipped to `false` either: that would have overridden
       // the value the pane host held across the chat→project hop and collapsed the iframe right
       // after a successful build.
       //
-      // BOTH PROBLEMS ARE GONE RATHER THAN TRADED. The claim went with the chip (U7a), and liveness
-      // went onto the address (U2), where this surface feeds it from the preview-state read instead
+      // BOTH PROBLEMS ARE GONE RATHER THAN TRADED. The claim went with the chip, and liveness
+      // went onto the address, where this surface feeds it from the preview-state read instead
       // of asserting it. Nothing is lost on the framing side: `previewAddress.ts` already resolves
       // this screen's status to `ready`, which is not terminal, so there is nothing for a pardon to
       // outrank here in the first place.
@@ -292,22 +271,12 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   /**
-   * PUSH THE WORKSPACE TO DURABLE STORAGE, from the project screen.
-   *
-   * The same call the conversation surface makes, and deliberately not shared with it: only ONE
-   * of the two is ever mounted for a given address, so there is no contest, and a hook whose whole
-   * body is three `useState`s and one request would be an abstraction over nothing.
-   *
-   * SURFACED, NEVER SWALLOWED. A save that silently fails leaves the citizen believing their work
-   * is stored, which is the one outcome worse than not offering the control at all. The server's
-   * own copy names the way out, so it is passed through rather than reworded.
-   *
-   * TWO READS ARE STALE AFTERWARDS, NOT ONE (#205). `workspace.refresh()` re-reads the workspace,
-   * which is what the save chip is drawn from — but the rail's LAST SAVED row and the toolbar's
-   * publish chip are drawn from the DEPLOYMENT read, whose `savedHead`/`savedAt` this save has
-   * just changed. Neither of those reads belongs to this surface, so it raises the nudge they
-   * both already listen to rather than growing a deployment fetch of its own here: one dispatch,
-   * every publish surface on the screen reconciled, no second reader of the same row.
+   * PUSH THE WORKSPACE TO DURABLE STORAGE from the project screen — the conversation surface's own
+   * call, unshared because only one is mounted per address. SURFACED, NEVER SWALLOWED: a silent
+   * failure leaves the citizen believing their work is stored, so the server's error copy is passed
+   * through. TWO READS GO STALE, NOT ONE — `workspace.refresh()` covers the save chip; the rail's
+   * last-saved row and the toolbar's publish chip come off the deployment read, whose `savedHead`
+   * and `savedAt` this save just changed — so it raises the shared nudge, never a second reader.
    */
   const save = useCallback(async () => {
     if (saving) return
@@ -325,7 +294,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   }, [project.id, saving, workspace])
 
   usePublishSaveState(workspace.save?.dirty ?? null)
-  // SAVE IS REACHABLE FROM THE PROJECT SCREEN (plan 002, U11), and it was not.
+  // SAVE IS REACHABLE FROM THE PROJECT SCREEN, and it was not.
   //
   // The only writer of the bundle lived on the conversation surface, so a citizen who had built
   // something, gone back to the project screen and then closed the tab lost it — with the rail

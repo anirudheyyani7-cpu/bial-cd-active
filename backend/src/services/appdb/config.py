@@ -1,8 +1,8 @@
 """Per-project database provisioning configuration (`APP_DB__*`).
 
 `Settings.app_db` is typed `AppDatabaseSettings | None` — the genuinely-optional
-integration shape (`.claude/rules/fail-first-python.md`): dev/test boot with no substrate
-at all and every project simply works without a database, while the single prod gate in
+integration shape: dev/test boot with no substrate at all and every project simply works
+without a database, while the single prod gate in
 `src.config` refuses to start production without one. Sibling of
 `services/storage/config.py` and `services/sandbox/config.py`.
 
@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, PositiveInt, SecretStr
 
 
 class AppDatabaseSettings(BaseModel):
-    """The maintenance identity + policy knobs for per-project databases (ADR-0028)."""
+    """The maintenance identity + policy knobs for per-project databases."""
 
     # `extra="forbid"` makes a mistyped APP_DB__* nested key fail at startup instead of
     # being silently ignored and falling back to a default (fail-first). Not inherited
@@ -42,7 +42,7 @@ class AppDatabaseSettings(BaseModel):
     # the maintenance DSN's own host, which is correct whenever the control plane and the
     # sandbox see the same address (real Azure). It is NOT correct for local dev, where the
     # control plane's `localhost:5432` resolves to the sandbox's OWN localhost — the exact
-    # class of bug `SandboxConfig.blob_base_url` (services/sandbox/config.py:69-76) exists
+    # class of bug `SandboxConfig.blob_base_url` (services/sandbox/config.py) exists
     # to solve, and this knob mirrors it deliberately. It lives here, not on
     # `SandboxConfig`, because the DSN is assembled in this package and splitting one
     # connection descriptor across two config blocks would be strictly worse.

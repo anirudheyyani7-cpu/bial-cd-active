@@ -1,20 +1,16 @@
-"""`FakeSandbox` — an in-memory `SandboxClient` honoring C2-OBSERVABLE semantics (U4).
-
-This is a C2 ABC double, NOT a C1 HTTP fake: C1's 400-vs-422 status split lives BELOW BRAIN's
-seam and is collapsed by C2 into an opaque `SandboxError` (open-Q E), so the fake raises a bare
-`SandboxError` with no status attribute — exactly what BRAIN sees. It backs the workspace with a
-flat dict, LF-normalizes writes, enforces the `str_replace` exactly-once rule (0 or N>1 → error),
-returns a non-zero command `exit` as a NORMAL `ExecResult` (never an exception), keeps `dev_start`
+"""`FakeSandbox` — an in-memory `SandboxClient` honoring the ABC's OBSERVABLE semantics, not the
+supervisor's HTTP API: its 400-vs-422 split is collapsed here into an opaque `SandboxError` with
+no status attribute, exactly what BRAIN sees. Backs the workspace with a flat dict,
+LF-normalizes writes, enforces the `str_replace` exactly-once rule (0 or N>1 → error), returns a
+non-zero command `exit` as a NORMAL `ExecResult` (never an exception), keeps `dev_start`
 idempotent, and tails `dev_logs` from a cursor.
 
-Programmable hooks let a test drive the self-heal loop: `queue_commands` scripts the results of
-the between-turn `tsc` (`selfheal.verify`'s, fail then pass), `become_ready_after` delays dev
-readiness, `push_dev_logs` injects a crash into the tail, and `attach_error` makes
-`attach_existing` raise. It also records
-`command_calls` / `dev_start_calls` / `teardown_calls` so a test can assert BRAIN never ran `git`,
-never restarted the dev server, and never tore down (KD-9/KD-11).
-
-Mirrors `tests/fakes.py:FakeStorage`.
+Programmable hooks drive the self-heal loop under test: `queue_commands` scripts the FIFO
+results of the between-turn `tsc` (`selfheal.verify`'s, fail then pass), `become_ready_after`
+delays dev readiness, `push_dev_logs` injects a crash into the tail, and `attach_error` makes
+`attach_existing` raise. Call counters (`command_calls`, `dev_start_calls`, `teardown_calls`)
+let a test assert BRAIN never ran `git`, restarted the dev server, or tore down. Mirrors
+`tests/fakes.py:FakeStorage`.
 """
 
 from __future__ import annotations
@@ -39,13 +35,13 @@ from src.services.sandbox import (
     ServedPage,
 )
 
-# U6's baseline-identity probe, matched on a fragment of the real script rather than the whole of
+# The baseline-identity probe, matched on a fragment of the real script rather than the whole of
 # it: the script is a private constant whose wording may change, and a fake that matched all of it
 # would go quietly inert the first time it did — answering the generic empty result, which parses
 # as UNANSWERABLE.
 _BASELINE_MARKER = "git rev-list --max-parents=0"
 
-# U9's watermark, matched the same way and for the same reason.
+# The watermark, matched the same way and for the same reason.
 _STAMP_MARKER = "touch /tmp/.bial-agent-watermark"  # noqa: S108 - a marker path, not a temp file
 _CHANGED_MARKER = "-newer /tmp/.bial-agent-watermark"  # noqa: S108 - same
 
@@ -62,17 +58,17 @@ BASELINE_DIVERGED_STDOUT = (
 BASELINE_UNTOUCHED_STDOUT = (
     f"{BASELINE_ROOT_SHA}@@{BASELINE_TEMPLATE_BLOB}@@{BASELINE_TEMPLATE_BLOB}@@{SEEDED_SUBJECT}"
 )
-"""THE 2026-08-18 SHAPE: every server-side check green, and `app/page.tsx` byte-identical to the
-golden template the workspace was born with."""
+"""Every server-side check green, and `app/page.tsx` byte-identical to the golden template the
+workspace was born with."""
 
 
 # A recognizable secret so a "no secret leak" test can assert it never surfaces in a tool result
-# or an error message (KD-9). Not a real credential — a test double.
+# or an error message. Not a real credential — a test double.
 FAKE_SUPERVISOR_TOKEN = "tok_supervisor_SECRET_never_leak_me"  # noqa: S105
 
 
 def _lf(text: str) -> str:
-    """LF-normalize like the C1 supervisor does before it touches a file."""
+    """LF-normalize like the supervisor does before it touches a file."""
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
@@ -110,38 +106,29 @@ class FakeSandbox(SandboxClient):
         self.dev_start_error: SandboxError | None = None  # raised by every dev_start when set
         self._exec_error_queue: deque[SandboxError] = deque()
         self._attach_error_queue: deque[SandboxError] = deque()
-        # The U3 warm request, and the thing that makes U4 possible: a Next compile error does
-        # not EXIST in `/dev/logs` until somebody actually requests the route. `tsc` passes, the
-        # log is empty, `/dev/status` says ready — and the build ships green over a blank page.
-        # `warm_emits_lines` is how a test reproduces that ordering instead of asserting it.
+        # The warm request; `compile_error_appears_on_first_request` below explains why it exists.
         self.warm_status: int | None = 200
         self.warm_emits_lines: list[str] = []
-        # U6/R9 — what the app's own root answers when the HEALTH VERDICT asks. The status is
-        # `warm_status`, shared deliberately: production makes ONE request for both jobs, and two
-        # independently scriptable statuses would let a test build a container that answers 200 to
-        # one caller and 500 to the other, which no real app can do.
+        # What the app's own root answers when the health verdict asks. Shares `warm_status`
+        # deliberately: production makes ONE request for both jobs, and no real app answers 200
+        # to one caller and 500 to the other.
         self.served_head = "<!DOCTYPE html><html><body>an app</body></html>"
         self.serving_calls = 0
-        # U6's baseline-identity probe. The default is a BUILT app — one root commit and a root
-        # route the agent has since rewritten — because the empty default parses as UNANSWERABLE,
-        # which would put every test that turns the content check on into the retry path.
+        # Defaults to a BUILT app (rewritten root route), not the empty/UNANSWERABLE default, so
+        # tests that turn the content check on don't land in the retry path.
         self.baseline_stdout = BASELINE_DIVERGED_STDOUT
-        # U9 — has anything in the workspace been written since the watermark was stamped? The
-        # DEFAULT IS FALSE, which is what keeps the stale-evidence re-check inert for every test
-        # that predates it: `find` printing nothing is "nothing changed", so no test written
-        # before U9 silently starts paying for a second verify pass.
+        # Has anything changed since the watermark was stamped? Defaults FALSE so tests written
+        # before this check existed don't silently start paying for a re-check pass.
         self.changed_since_watermark = False
         self.watermark_stamps = 0
-        # A container that cannot answer `selfheal`'s own `sh -c` probes at all — an image with
-        # no `find`, a shell that is not there. Every probe returns a non-zero exit, which each
-        # of them reads as "we could not find out" rather than as a fact about the workspace.
+        # A container that cannot answer `selfheal`'s own `sh -c` probes at all (no `find`, no
+        # shell) — every probe reads a non-zero exit as "could not find out," never as a fact.
         self.probes_fail = False
-        # The U9 marker file is missing — a stamp that failed, or a container restarted with a
-        # fresh `/tmp`. The real script's `[ -f … ] || exit 1` guard is what turns that into a
-        # non-zero exit rather than an empty answer at exit 0, so the fake models the exit.
+        # The marker file is missing (a failed stamp, or a fresh `/tmp`). Models the real script's
+        # `[ -f … ] || exit 1` guard: a non-zero exit, not an empty answer at exit 0.
         self.watermark_marker_missing = False
-        # A probe that RAISES rather than answering — a supervisor blip. Distinct from
-        # `probes_fail`, which is a container that answers "no" to the script itself.
+        # RAISES rather than answers — a supervisor blip, distinct from `probes_fail`
+        # (answers "no").
         self.probe_error: SandboxError | None = None
         # call records (assertions)
         self.command_calls: list[list[str]] = []
@@ -158,20 +145,18 @@ class FakeSandbox(SandboxClient):
         self._command_queue.extend(results)
 
     def become_ready_after(self, polls: int) -> None:
-        """The dev server reports `ready=False` for the next `polls` `dev_status` calls, then
-        flips ready (models a slow-but-healthy startup — open-Q F)."""
+        """Reports `ready=False` for the next `polls` `dev_status` calls, then flips (a
+        slow-but-healthy startup)."""
         self._ready_countdown = polls
 
     def queue_exec_errors(self, *errors: SandboxError) -> None:
-        """Script transient infra failures: each queued error is raised by ONE `exec` call (the
-        attempt is still recorded), then exec returns to normal — a supervisor blip, distinct
-        from a queued non-zero exit (which is a NORMAL return, never an exception)."""
+        """Each queued error is raised by ONE `exec` call, then exec returns to normal — a
+        supervisor blip, distinct from a queued non-zero exit (a NORMAL return, never raised)."""
         self._exec_error_queue.extend(errors)
 
     def queue_attach_errors(self, *errors: SandboxError) -> None:
-        """Script cold-start attach failures: each queued error is raised by ONE
-        `attach_existing` call, then attach succeeds (models cold-ACA ingress waking up).
-        `attach_error` stays the every-call persistent variant."""
+        """Each queued error is raised by ONE `attach_existing` call, then attach succeeds
+        (cold-ACA ingress waking up); `attach_error` is the every-call persistent variant."""
         self._attach_error_queue.extend(errors)
 
     def compile_error_appears_on_first_request(self, *lines: str) -> None:
@@ -187,9 +172,8 @@ class FakeSandbox(SandboxClient):
         self._dev_log_lines.extend(lines)
 
     def kill_dev(self, *, exit_code: int = 1) -> None:
-        """Model the dev child dying (an OOM kill, a startup crash): `running` False,
-        marker-`ready` False, and the exit code surfaced by `dev_status`. Lines already in the
-        ring stay readable — C1 keeps a dead child's output until a restart resets the ring."""
+        """Model the dev child dying (OOM kill, startup crash): `running`/`ready` False, exit
+        code surfaced by `dev_status`. Ring lines stay readable — a restart is what resets it."""
         self.dev_running = False
         self.dev_ready = False
         self.dev_exit_code = exit_code
@@ -198,7 +182,7 @@ class FakeSandbox(SandboxClient):
         """The current handle snapshot (for tests that need it directly)."""
         return self._handle
 
-    # --- C2 lifecycle --------------------------------------------------------
+    # --- lifecycle -----------------------------------------------------------
 
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
@@ -244,7 +228,7 @@ class FakeSandbox(SandboxClient):
     ) -> SandboxHandle:
         return await self.provision_new(user_id, app_name, app_env=app_env)
 
-    # --- C2 command / files --------------------------------------------------
+    # --- command / files -----------------------------------------------------
 
     async def exec(
         self,
@@ -254,14 +238,14 @@ class FakeSandbox(SandboxClient):
         cwd: str | None = None,
         timeout_s: int = 900,
     ) -> ExecResult:
-        # A non-zero exit is a NORMAL return (C1), never an exception.
+        # A non-zero exit is a NORMAL return, never an exception.
         self.command_calls.append(list(cmd))
         self.command_timeouts.append(timeout_s)
-        # `selfheal`'s OWN `sh -c` PROBES ANSWER FROM THEIR OWN FIELDS, ahead of both queues.
+        # `selfheal`'s own `sh -c` probes answer from their own fields, ahead of both queues.
         # `queue_commands` and `queue_exec_errors` script the between-turn `tsc` run — that is
         # what every caller means by them — and they are FIFO, so a probe consuming a queued entry
         # would hand the type-check the wrong answer while looking like it did nothing. A test that
-        # wants a probe to fail says so with `exec_handler`, which still sees everything.
+        # wants a probe to fail sets `probe_error`, which still sees every probe.
         scripted = self._answer_a_probe(cmd)
         if scripted is not None:
             return scripted
@@ -285,13 +269,13 @@ class FakeSandbox(SandboxClient):
             return ExecResult(stdout="", stderr="sh: not found", exit=127)
         if _CHANGED_MARKER in script and self.watermark_marker_missing:
             return ExecResult(stdout="", stderr="", exit=1)
-        if _STAMP_MARKER in script:  # U9 — mark "now" before the agent runs
+        if _STAMP_MARKER in script:  # mark "now" before the agent runs
             self.watermark_stamps += 1
             return ExecResult(stdout="", stderr="", exit=0)
-        if _CHANGED_MARKER in script:  # U9 — `find -newer` prints ONE path, then stops
+        if _CHANGED_MARKER in script:  # `find -newer` prints ONE path, then stops
             printed = "./app/page.tsx\n" if self.changed_since_watermark else ""
             return ExecResult(stdout=printed, stderr="", exit=0)
-        if _BASELINE_MARKER in script:  # U6 — is the root route still the seeded baseline?
+        if _BASELINE_MARKER in script:  # is the root route still the seeded baseline?
             return ExecResult(stdout=self.baseline_stdout, stderr="", exit=0)
         return None
 
@@ -330,7 +314,7 @@ class FakeSandbox(SandboxClient):
         needle = _lf(op.old_str)
         count = content.count(needle)
         if count != 1:
-            # C1 422 (0 or N>1 matches) → opaque C2 SandboxError, no status attribute.
+            # The supervisor's 422 (0 or N>1 matches) → opaque SandboxError, no status attribute.
             raise SandboxError(f"str_replace found {count} matches for old_str (need exactly 1)")
         self.workspace[op.path] = content.replace(needle, _lf(op.new_str), 1)
         return FileResult(ok=True, detail={"replacements": 1})
@@ -349,23 +333,23 @@ class FakeSandbox(SandboxClient):
 
     @staticmethod
     def _guard_escape(path: str) -> None:
-        # C1 400-on-escape → opaque SandboxError. BRAIN's write guard denies these above the seam,
-        # but the fake still models the client-side rejection for completeness.
+        # The supervisor's 400-on-escape → opaque SandboxError. BRAIN's write guard denies
+        # these above the seam, but the fake still models the client-side rejection.
         if path.startswith("/") or ".." in path.split("/"):
             raise SandboxError(f"path escapes the workspace: {path}")
 
-    # --- C2 dev server -------------------------------------------------------
+    # --- dev server ----------------------------------------------------------
 
     async def dev_start(
         self, handle: SandboxHandle, *, cmd: list[str] | None = None, cwd: str | None = None
     ) -> int:
-        # Idempotent: a C1 409 "already running" is success. Always returns the same pid.
+        # Idempotent: the supervisor's 409 "already running" is success. Same pid every time.
         self.dev_start_calls += 1
         if self.dev_start_error is not None:
             raise self.dev_start_error
         if self.dev_exit_code is not None:
-            # A restart after a death mirrors C1: `/dev/start` resets the log ring, so old
-            # cursors point past it (`verify` re-reads from 0).
+            # A restart after a death mirrors the supervisor: `/dev/start` resets the log
+            # ring, so old cursors point past it (`selfheal.verify` re-reads from 0).
             self._dev_log_lines = []
             self.dev_exit_code = None
         self.dev_running = True
@@ -394,7 +378,7 @@ class FakeSandbox(SandboxClient):
         return self.warm_status
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
-        """U6's serving probe — the same GET, made by the health verdict rather than the preview.
+        """The serving probe — the same GET, made by the health verdict rather than the preview.
 
         `warm_calls` counts this TOO, and that is the point rather than an oversight: every
         existing assertion here asks "was the route actually requested before we went looking for
@@ -410,7 +394,7 @@ class FakeSandbox(SandboxClient):
         return ServedPage(status=self.warm_status, head=self.served_head)
 
     async def teardown(self, handle: SandboxHandle) -> None:
-        # BRAIN must NEVER call this (KD-11); recorded so a test can assert it stayed 0.
+        # BRAIN must NEVER call this; recorded so a test can assert it stayed 0.
         self.teardown_calls += 1
 
     # --- helpers -------------------------------------------------------------

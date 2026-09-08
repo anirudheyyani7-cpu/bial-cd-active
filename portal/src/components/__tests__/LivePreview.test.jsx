@@ -4,7 +4,7 @@ import LivePreview from '../LivePreview.jsx'
 
 afterEach(cleanup)
 
-// The Phase-2 preview is a genuinely CROSS-ORIGIN sandbox frame (C8). `previewUrl` is the
+// The Phase-2 preview is a genuinely CROSS-ORIGIN sandbox frame. `previewUrl` is the
 // sandbox FQDN root; `previewOrigin` is what the inbound origin guard validates.
 const SANDBOX_URL = 'https://app-xyz.example.azurecontainerapps.io/'
 const SANDBOX_ORIGIN = 'https://app-xyz.example.azurecontainerapps.io'
@@ -21,21 +21,21 @@ function card(container) {
   return container.querySelector('[data-testid="device-card"]')
 }
 
-// A message that passes BOTH halves of the C8 §3 guard: the sandbox origin AND the window of the
+// A message that passes BOTH halves of the guard: the sandbox origin AND the window of the
 // frame this pane actually rendered. Origin alone stopped being sufficient once every generated
 // app began sharing one hostname, so `source` is no longer optional decoration on these events.
 function fromSandbox(data, source) {
   return new MessageEvent('message', { data, origin: SANDBOX_ORIGIN, source })
 }
 
-describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
+describe('LivePreview — cross-origin sandbox preview frame', () => {
   it('frames the cross-origin previewUrl (not the retired same-origin /preview)', () => {
     const { iframe } = setup()
     expect(iframe).toBeTruthy()
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
   })
 
-  it('uses the C8 sandbox token list — allow-same-origin for the cross-origin next dev app, top-nav/popups withheld', () => {
+  it('uses the sandbox token list — allow-same-origin for the cross-origin next dev app, top-nav/popups withheld', () => {
     const { iframe } = setup()
     const sandbox = iframe.getAttribute('sandbox')
     expect(sandbox).toBe('allow-scripts allow-same-origin allow-forms allow-downloads')
@@ -43,14 +43,14 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(sandbox).not.toContain('allow-popups') // withheld: no popup-phishing of the portal tab
   })
 
-  it('REJECTS a message from a wrong origin — forwards nothing (C8 §3 origin guard, pinned)', () => {
+  it('REJECTS a message from a wrong origin — forwards nothing (origin guard, pinned)', () => {
     const onFrameMessage = vi.fn()
     setup({ onFrameMessage })
     window.dispatchEvent(new MessageEvent('message', { data: { hello: true }, origin: 'https://evil.example' }))
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  it('forwards a message from the framed app’s OWN window to the Wave-1 receiver seam', () => {
+  it('forwards a message from the framed app’s OWN window to the receiver seam', () => {
     const onFrameMessage = vi.fn()
     const { iframe } = setup({ onFrameMessage })
     window.dispatchEvent(fromSandbox({ kind: 'client_error' }, iframe.contentWindow))
@@ -103,14 +103,12 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  // PR #93 review, security finding 4: new URL(url).origin is the STRING "null" for an
-  // opaque-origin URL (a data: URL, about:blank, a sandboxed iframe without
-  // allow-same-origin) — not the actual value null. That string is truthy, so without
-  // originOf() specifically folding it to null, it would pass the `!previewOriginRef.current`
-  // guard, and every opaque-origin document's postMessage (whose real e.origin is also the
-  // string "null") would be trusted as if it were the sandbox. Not reachable via the real
-  // control-plane today (it only ever returns an https sandbox FQDN) — pinned as a contract,
-  // not a currently-exploitable path.
+  // `new URL(url).origin` is the STRING "null" for an opaque-origin URL (a data: URL,
+  // about:blank, a sandboxed iframe without allow-same-origin) — not the value null, and that
+  // string is truthy. Without `originOf()` folding it to null, it would pass the
+  // `!previewOriginRef.current` guard and trust any opaque sender (whose real `e.origin` is also
+  // the string "null") as the sandbox. Not reachable via the real control-plane today (it only
+  // returns an https FQDN) — pinned as a contract, not a currently-exploitable path.
   it('REJECTS messages even from the literal origin "null" — an opaque previewUrl must not trust opaque senders', () => {
     const onFrameMessage = vi.fn()
     // data: is a genuinely opaque-origin URL; new URL(...).origin for it is the string "null".
@@ -119,18 +117,18 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  it('the single-file relay is INERT — no outbound postMessage of code/config/token occurs (ORIG-§3-a)', () => {
+  it('the single-file relay is INERT — no outbound postMessage of code/config/token occurs', () => {
     const { iframe } = setup({ status: 'ready' })
     const post = vi.spyOn(iframe.contentWindow, 'postMessage')
     // A previewReady-style message that USED to round-trip code back must now do nothing. Sent
-    // from the frame's own window on purpose: source-less, it would be dropped by the C8 §3 gate
+    // from the frame's own window on purpose: source-less, it would be dropped by the gate
     // before reaching any code, and this test would assert inertness over a message nothing read.
     window.dispatchEvent(fromSandbox({ previewReady: true }, iframe.contentWindow))
     expect(post).not.toHaveBeenCalled()
   })
 })
 
-describe('LivePreview — reload semantics (ORIG-§3-f, no HMR-socket leak)', () => {
+describe('LivePreview — reload semantics (no HMR-socket leak)', () => {
   it('a NEW previewUrl (a fresh preview_ready) remounts and reloads the frame', () => {
     const { container, rerender } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
     const first = container.querySelector('iframe')
@@ -153,7 +151,7 @@ describe('LivePreview — reload semantics (ORIG-§3-f, no HMR-socket leak)', ()
   })
 })
 
-describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
+describe('LivePreview — status-driven visuals, all five statuses', () => {
   it('provisioning / building show the loading state (no iframe, no spinner-forever terminal)', () => {
     for (const status of ['provisioning', 'building']) {
       const { container, unmount } = render(<LivePreview previewUrl={null} status={status} />)
@@ -184,15 +182,14 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
     expect(container.textContent).toMatch(/no longer running|ended/i)
   })
 
-  // U4 (Plan F) — `showEmpty` IS GONE, and the empty-state copy this test used to look for
-  // ("...will appear here") went with it: it moved to `AppPane`'s `NoFrame`, which is also the
-  // ONLY thing that can put a citizen in this exact state now — `AppPane` mounts this component
-  // at all ONLY when the address resolver has a URL, and renders `NoFrame` instead when it does
-  // not (`AppPane.tsx`: `address.url ? <AppPaneHost /> : <NoFrame .../>`). So the honest claim
-  // left to make here is not "here is the copy" (there is none) but "this component genuinely
-  // has nothing left to say for it" — proven below by checking every kind of chrome it knows how
-  // to draw, not merely the one sentence that used to live here. `workspaceState.test.ts` covers
-  // the state map that now owns this copy.
+  // `showEmpty` IS GONE, and the empty-state copy this test used to look for ("...will appear
+  // here") went with it: it moved to `AppPane`'s `NoFrame`, which is also the ONLY thing that can
+  // put a citizen in this exact state now — `AppPane` mounts this component at all ONLY when the
+  // address resolver has a URL, and renders `NoFrame` instead when it does not (`AppPane.tsx`:
+  // `address.url ? <AppPaneHost /> : <NoFrame .../>`). So the honest claim left to make here is
+  // not "here is the copy" (there is none) but "this component genuinely has nothing left to say
+  // for it" — proven below by checking every kind of chrome it knows how to draw, not merely a
+  // single sentence of copy. `workspaceState.test.ts` covers the state map that now owns it.
   it('renders NOTHING for the no-previewUrl/no-status combination — the empty-state copy moved to AppPane', () => {
     const { container } = render(<LivePreview previewUrl={null} status={null} />)
     expect(container.querySelector('iframe')).toBeNull()
@@ -204,10 +201,10 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toBe('')
   })
 
-  // ★ R24/`#195` — THE THREE OVERLAYS ARE GONE FROM THE APP'S CANVAS, and this is the guard that
-  // keeps them from coming back. It used to assert the "Still working…" chip APPEARED while a turn
-  // kept refining a live preview; the chip sat at `absolute top-3 left-1/2`, which is where every
-  // generated app draws its own navigation, so the platform was writing across the citizen's app.
+  // ★ THE THREE OVERLAYS ARE GONE FROM THE APP'S CANVAS, and this is the guard that
+  // keeps them from coming back: no platform-drawn chip may sit at `absolute top-3 left-1/2`
+  // while a turn keeps refining a live preview, because that is where every generated app draws
+  // its own navigation — a chip there writes across the citizen's app.
   //
   // ASSERT-ABSENCE, PAIRED WITH LIVENESS — an empty pane would satisfy the absence on its own, so
   // the frame has to be found in the same breath. `iterating` is still a live prop (it drives the
@@ -223,16 +220,15 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
   })
 })
 
-describe('LivePreview — the pardoned preview: a finished turn leaves the app framed (#13/R2)', () => {
+describe('LivePreview — the pardoned preview: a finished turn leaves the app framed', () => {
   it('ended + serving + previewUrl KEEPS the frame — and claims nothing about the build', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" serving />)
     const iframe = container.querySelector('iframe')
     expect(iframe).toBeTruthy() // the server pardoned the container; the URL is genuinely live
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
     expect(container.textContent).not.toMatch(/no longer running/i)
-    // ★ AND THE CLAIM IS GONE WITH THE CHIP (U7a/R24). This used to assert `/build complete/i` was
-    // on screen. The pane frames a live app; it does not also state a build outcome — which is
-    // what let a route where no build ever runs publish one (`#199`).
+    // ★ AND THE CLAIM IS GONE WITH THE CHIP. The pane frames a live app; it does not also state a
+    // build outcome — claiming one let a route where no build ever runs publish one.
     expect(container.textContent).not.toMatch(/build complete/i)
   })
 
@@ -243,7 +239,7 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
   })
 
   it('★ the terminal sentence is UNREACHABLE while the container is serving, in both nodes', () => {
-    // The whole point of U2, stated as the sentence a citizen actually reads. "The preview is no
+    // The rule, stated as the sentence a citizen actually reads. "The preview is no
     // longer running" is a claim about the container, and it must not be derivable from the turn
     // being over — a turn ending is not an app ending.
     //
@@ -264,10 +260,10 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
   })
 
   it('★ a FAILED build stays framed when its container serves — and is never called complete', () => {
-    // `#96`'s third acceptance criterion, at the pane. Widening liveness must not turn a failed
-    // build into a successful-looking one: the frame stays because the container is up, and what
-    // the pane SAYS about the build comes from the compile state, which covers the frame and names
-    // the failure. Two questions, two answers, neither borrowed from the other.
+    // Widening liveness must not turn a failed build into a successful-looking one: the frame
+    // stays because the container is up, and what the pane SAYS about the build comes from the
+    // compile state, which covers the frame and names the failure. Two questions, two answers,
+    // neither borrowed from the other.
     render(
       <LivePreview
         previewUrl={SANDBOX_URL}
@@ -286,7 +282,7 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
   })
 
   it('★ ended with NOTHING SERVING collapses — a reclaimed or torn-down container, not a stop', () => {
-    // ★ THE NAME AND ITS PARENTHETICAL WERE CORRECTED (R26a, `#96`). It read
+    // ★ THE NAME AND ITS PARENTHETICAL WERE CORRECTED. It read
     // "ended WITHOUT completedLive still collapses (stop / force-end / failure tore the container
     // down)", and the parenthetical is FACTUALLY WRONG for a stop: `finish_turn_sandbox` pardons
     // the container with no branch on how the turn ended, and the stopped arm is reached precisely
@@ -316,13 +312,15 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     expect(container.textContent).not.toMatch(/no longer running/i)
   })
 
-  // ★ U18 — THE RETRACTION REGRESSION. U18 changed what the completion message IS (the harness
-  // renders the agent's `done_summary` instead of its trailing prose); this pane's half of the same
-  // claim was a chip reading "Build complete — your app is live below", which the cover hid
-  // visually while leaving it in the DOM, where a screen reader lives. A pane covered by the
-  // retraction announced "your app stopped running" and "Build complete" in the same breath.
+  // THE RETRACTION REGRESSION. The harness now renders the agent's `done_summary` instead of its
+  // trailing prose; this pane's chip was the other half of that claim — the frame plus "Build
+  // complete — your app is live below" — which the cover hid visually while leaving it in the
+  // DOM, where a screen reader lives, so a pane covered by the retraction announced "your app
+  // stopped running" and "Build complete" in the same breath. The retraction is content-agnostic
+  // by design, so it survives the rendering change on its own, but only if the claim it retracts
+  // actually goes quiet — a fact about THIS file that nothing tested.
   //
-  // THE CHIP IS DELETED NOW (U7a/R24), so the claim cannot be made from this pane at all and the
+  // THE CHIP IS DELETED NOW, so the claim cannot be made from this pane at all and the
   // guard it needed is moot. The scenario survives as the ANNOUNCEMENT test it always really was:
   // the live region must carry the retraction, and must not be carrying a liveness claim instead.
   //
@@ -367,7 +365,7 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     // The reveal is earned by the framed document's own `load`, never by the status.
     fireEvent.load(iframe)
     expect(container.querySelector('[data-testid="device-card"]').className).toMatch(/opacity-100/)
-    // ★ THE CHIP IS GONE AND THE SPOKEN CLAIM IS EARNED (U3/U4/U7a, `#199`).
+    // ★ THE CHIP IS GONE AND THE SPOKEN CLAIM IS EARNED.
     //
     // The chip said "Build complete — your app is live below" and is DELETED: it was drawn over
     // the citizen's own app, and it rested on a cross-origin `load` that fires for a 500 exactly
@@ -382,10 +380,10 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
   })
 })
 
-describe('LivePreview — relaunch a torn-down preview (#43)', () => {
-  // R3/U4 (Plan F) — INERTNESS GUARD. This used to press "Relaunch preview" on the terminal
-  // placeholder; that control moved to `components/workspace/StartAppControl.tsx`, rendered by
-  // `AppPane` from the one computed workspace state (R3: exactly ONE control starts the app). The
+describe('LivePreview — relaunch a torn-down preview', () => {
+  // INERTNESS GUARD. This used to press "Relaunch preview" on the terminal placeholder; that
+  // control moved to `components/workspace/StartAppControl.tsx`, rendered by
+  // `AppPane` from the one computed workspace state (exactly ONE control starts the app). The
   // copy this placeholder still owns is what LIVENESS checks below — the button is what INERTNESS
   // checks.
   it('INERTNESS GUARD: the terminal placeholder still explains an ended session with a saved build, but offers no button', () => {
@@ -395,7 +393,7 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
     )
     // LIVENESS: the placeholder still says what happened.
     expect(container.textContent).toMatch(/no longer running/i)
-    // INERTNESS: no button under any retired label, and the prop it used to fire is never called.
+    // INERTNESS: no button under any retired label, and the relaunch prop is never called.
     expect(screen.queryByRole('button', { name: /relaunch|bring it back/i })).toBeNull()
     expect(onRelaunch).not.toHaveBeenCalled()
   })
@@ -417,16 +415,14 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
   })
 
   // THE "RESTORING…" WAIT AND ITS SLOW LABEL ARE GONE, and the three tests that drove them with
-  // them. They rendered `relaunching`, a prop no production caller could set: it came from the
-  // session hook's `relaunch()`, whose only caller hung off `onRelaunch` — accepted here and never
-  // read. So the wait could never appear, and a 20-second label on a wait that cannot start is not
-  // coverage of anything.
+  // it. They rendered `relaunching`, a prop no production caller could set — it came from the
+  // session hook's `relaunch()`, reachable only through `onRelaunch`, which is accepted here and
+  // never read — so the wait could never appear, and its 20-second label covered nothing.
   //
-  // SL-20's FINDING SURVIVES, which is why this is a note and not a silent deletion: "the one wait
-  // that can legitimately run for minutes must label itself" is enforced on the wait a citizen
-  // actually reaches — the frame's own load cap — in "a frame that never loads still degrades to a
-  // LABELLED state" and "the capped state keeps the frame MOUNTED" below. The shared sentence is
-  // the same one, for the reason SL-20 gave.
+  // THE FINDING SURVIVES: "the one wait that can legitimately run for minutes must label itself"
+  // is enforced on the wait a citizen actually reaches — the frame's own load cap — in "a frame
+  // that never loads still degrades to a LABELLED state" and "the capped state keeps the frame
+  // MOUNTED" below. Same requirement, same sentence.
   it('RETIREMENT GUARD: no prop this pane accepts renders a Restoring wait any more', () => {
     vi.useFakeTimers()
     try {
@@ -444,11 +440,11 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
     }
   })
 
-  it('re-requests the SAME url after a repair turn ends (review #5)', () => {
-    // U1's attach arm makes "same container, same url" the common case, so a repair turn ends
+  it('re-requests the SAME url after a repair turn ends', () => {
+    // The attach arm makes "same container, same url" the common case, so a repair turn ends
     // with previewUrl byte-identical. Keyed on the url alone React kept the same DOM node, the
     // browser never re-requested, and the citizen kept staring at the broken render of an app
-    // the server had already fixed. SL-16 measured it as `iframe loads 1 -> 1`.
+    // the server had already fixed. This was measured as `iframe loads 1 -> 1`.
     const view = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />)
     const before = view.container.querySelector('iframe')
 
@@ -464,9 +460,9 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
 
   it('remounts the frame when the shell asks it to reload', () => {
     // "What I see is out of date" is a judgement only the person looking can make — a dev-server
-    // restart, an HMR socket that died quietly. The CONTROL is in the toolbar row now (plan 002,
-    // U2); what this pins is the half this component owns, that a change in the signal produces a
-    // genuinely new frame rather than a re-render of the same one.
+    // restart, an HMR socket that died quietly. The CONTROL is in the toolbar row now; what this
+    // pins is the half this component owns, that a change in the signal produces a genuinely new
+    // frame rather than a re-render of the same one.
     const view = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" reloadNonce={0} />)
     const before = view.container.querySelector('iframe')
 
@@ -487,39 +483,30 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
   })
 
   it('frames the restored preview once relaunch resolves (a fresh ready URL)', () => {
-    // BuilderPage feeds the relaunched URL back with status "ready" → the pane frames it.
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" onRelaunch={vi.fn()} />)
     expect(container.querySelector('iframe')?.getAttribute('src')).toBe(SANDBOX_URL_2)
   })
 })
 
-// U4 (Plan F) — THIS WHOLE DESCRIBE BLOCK TESTED THE `showEmpty` ARM, and that arm is gone. Every
-// test here rendered `<LivePreview hasSavedBuild=... onRelaunch=... relaunchError=... />` with
-// NEITHER a previewUrl NOR a status — the exact no-frame, nothing-built condition `AppPane` now
-// owns outright. Two things moved together, not just the button:
+// THIS WHOLE DESCRIBE BLOCK TESTED THE `showEmpty` ARM, and that arm is gone — the exact
+// no-frame, nothing-built condition `AppPane` now owns outright. Two things moved with it, not
+// just the button:
 //
-//   1. THE COPY. "This project already has a saved build" / "Submit a prompt to start a build" /
-//      the N7 tri-state wording (a `hasSavedBuild === null` answer claiming nothing) all lived in
-//      this component's empty-state placeholder. That placeholder, and the state map that drives
-//      it, moved to `AppPane`'s `NoFrame` — and the map itself is `resolveWorkspaceState` in
-//      `workspaceState.ts`: its `atRest()` resolves the identical `restorable ?? projectHasSavedBuild`
-//      tri-state this block exercised (see `workspaceState.test.ts`).
-//   2. THE 404-SAID-AND-NOT-SWALLOWED DISCIPLINE (N7's other half). A failed start now surfaces
-//      through `StartAppControl`'s own outcome handling (`StartAppControl.test.tsx`), not through
-//      this component's old `relaunchError` prop — no `AppPane`-driven pane populates that prop
-//      for this arm any more.
+//   1. THE COPY. The empty-state placeholder and the tri-state wording it exercised
+//      (`hasSavedBuild === null` claiming nothing) moved to `AppPane`'s `NoFrame`, driven by
+//      `resolveWorkspaceState`'s `atRest()` in `workspaceState.ts` (see `workspaceState.test.ts`).
+//   2. THE 404-SAID-AND-NOT-SWALLOWED DISCIPLINE. A failed start now surfaces through
+//      `StartAppControl`'s own outcome handling (`StartAppControl.test.tsx`), not this
+//      component's old `relaunchError` prop — no `AppPane`-driven pane populates it any more.
 //
-// `AppPane` also structurally forecloses this exact prop combination from ever reaching
-// `LivePreview` in the product: it mounts `AppPaneHost` (and hence this component) only when the
-// address resolver has a URL, and renders `NoFrame` instead when it does not — so a real citizen
-// can no longer land on the state this whole block constructed by hand.
+// `AppPane` also structurally forecloses this prop combination from reaching `LivePreview` in the
+// product: it mounts this component only when the address resolver has a URL, and renders
+// `NoFrame` otherwise — so a real citizen can no longer land on the state this block hand-built.
 //
-// ONE test replaces the five that were here, because all five failed for the identical reason
-// (asserting a button/copy pair that no longer exists on this component) and a second, third and
-// fourth copy of the same "this is gone, and moved to X" finding would not prove anything the
-// first did not.
+// ONE test replaces the five that were here: all five failed for the identical reason, and a
+// second, third and fourth copy of the same finding would not prove anything the first did not.
 describe('LivePreview — the no-previewUrl/no-status combination (formerly "relaunch from PROJECT state")', () => {
-  it('stays inert across the whole former N7/U6 matrix — hasSavedBuild and relaunchError no longer reach any render here', () => {
+  it('stays inert across the whole former relaunch matrix — hasSavedBuild and relaunchError no longer reach any render here', () => {
     for (const props of [
       { hasSavedBuild: true },
       { hasSavedBuild: false },
@@ -537,13 +524,12 @@ describe('LivePreview — the no-previewUrl/no-status combination (formerly "rel
   })
 })
 
-describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
-  // THE `not_found` ARM WENT WITH THE PROP. It was the last of the three `relaunchError` reads to
-  // survive U4's sweep, and it selected a `role="alert"` sentence on three placeholders. Its
-  // producer was the session hook's `relaunch()` — unreachable — so the alert could not fire; what
-  // a citizen sees today is the `hasSavedBuild` sentence the placeholder resolves on its own, and
-  // the live 404 ("nothing saved to bring back") is answered by `StartAppControl`'s own outcome
-  // handling instead (`StartAppControl.test.tsx`).
+describe('LivePreview — the relaunch response matrix', () => {
+  // THE `not_found` ARM WENT WITH THE PROP — the last of the three `relaunchError` reads to
+  // survive, selecting a `role="alert"` sentence on three placeholders. Its producer, the session
+  // hook's `relaunch()`, was unreachable, so the alert could never fire; a citizen today sees the
+  // `hasSavedBuild` sentence the placeholder resolves on its own, and the live 404 is answered by
+  // `StartAppControl`'s own outcome handling instead (`StartAppControl.test.tsx`).
   it('RETIREMENT GUARD: a not_found relaunch error selects nothing — the placeholder answers from hasSavedBuild alone', () => {
     const { container } = render(
       <LivePreview
@@ -560,19 +546,14 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 
-  // U4 (Plan F) — INERTNESS GUARD, AND A DOCUMENTED FINDING, NOT JUST A RE-POINT. This test used
-  // to assert the transient `unavailable` copy inside `screen.getByRole('alert')` — but tracing
-  // the current render arms shows `relaunchError` is read in exactly THREE places in
-  // `LivePreview.tsx`, and every one of them special-cases ONLY `kind === 'not_found'`
-  // (`grep -n 'relaunchError' src/components/LivePreview.tsx`). The `unavailable`/`failed` kinds
-  // fall through to the generic hasSavedBuild-only sentence below, and their own `.message` is
-  // never read anywhere — no `role="alert"`, no "try again later". The component's own docblock
-  // (`LivePreviewProps.relaunchError`) still SAYS "`unavailable`/`failed` show their copy with the
-  // button restored for a retry", which no longer matches what renders: this looks like the U4
-  // sweep took the message along with the button for these two kinds, not just the button, and
-  // the docblock was never updated to match. Filed as a finding rather than silently reasserted as
-  // correct — see the session report. What is left to pin honestly is that the generic
-  // saved-build sentence still renders and still makes no button.
+  // INERTNESS GUARD, AND A DOCUMENTED FINDING, NOT JUST A RE-POINT. `relaunchError` is read in
+  // exactly THREE places in `LivePreview.tsx`, all special-casing ONLY `kind === 'not_found'`; the
+  // `unavailable`/`failed` kinds fall through to the generic hasSavedBuild-only sentence, and
+  // their own `.message` is never read anywhere. The component's own docblock
+  // (`LivePreviewProps.relaunchError`) still claims these two kinds "show their copy with the
+  // button restored for a retry" — stale now, filed as a finding rather than silently reasserted.
+  // What is left to pin honestly is that the generic saved-build sentence still renders, with no
+  // button.
   it('INERTNESS GUARD: an `unavailable` relaunch error no longer gets its own alert copy — only the generic saved-build sentence survives', () => {
     const { container } = render(
       <LivePreview
@@ -608,7 +589,7 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 
-  // R3/U4 — INERTNESS GUARD. `lastBuildFailed` used to pick between two button labels ("Relaunch
+  // INERTNESS GUARD. `lastBuildFailed` used to pick between two button labels ("Relaunch
   // preview" vs "Relaunch last saved version"); `LivePreview`'s own docblock records that the prop
   // is now accepted and DELIBERATELY UNREAD — the distinction it drew belongs to
   // `restoredFromFailedBuild` now, which says the same thing on a FRAMED pane where a citizen can
@@ -621,15 +602,15 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 
-  // ★ R24/`#195`, THE THIRD OVERLAY. This asserted the "Showing your last saved version — the most
+  // ★ THE THIRD OVERLAY. This asserted the "Showing your last saved version — the most
   // recent build failed" notice appeared on a frame restored after a failed build. It shared the
   // exact rectangle the other two did, and it is the one a citizen can least afford to have half
   // covered — or to have covering their app's own nav.
   //
   // ITS PROP IS DELETED, NOT JUST ITS MARKUP, and that is stated rather than left to be inferred:
   // both publishers hardcoded `restoredFromFailedBuild: false`, so nothing could ever produce this
-  // notice. `#75` stays open knowingly and needs a NEW home for it (the toolbar row, or a
-  // transcript line) — which is why there is no replacement assertion here to write.
+  // notice. Finding it a NEW home (the toolbar row, or a transcript line) stays open knowingly
+  // — which is why there is no replacement assertion here to write.
   it('★ says nothing over the app about a restore — the notice has no renderer on this pane', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
     expect(container.textContent).not.toMatch(/last saved version/i)
@@ -638,7 +619,7 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
   })
 })
 
-describe('LivePreview — dev-server crash: reconnecting is distinct from building (F8/U5)', () => {
+describe('LivePreview — dev-server crash: reconnecting is distinct from building', () => {
   it('shows a distinct "Reconnecting…" state (NOT the "Building…" loading copy, NOT the live frame)', () => {
     // A dev-process crash after framing: the port is dead, so the pane must not keep framing a
     // now-broken URL, and must not read as "building" (a different, in-progress meaning).
@@ -667,12 +648,12 @@ describe('LivePreview — dev-server crash: reconnecting is distinct from buildi
   })
 })
 
-// --- U5: the reveal is gated on the framed document's own `load` ---------------------------
+// --- the reveal is gated on the framed document's own `load` ------------------------------
 //
 // What this replaces: `FRAME_GRACE_MS = 400` revealed the iframe on a TIMER, and `showLoading`
 // was destroyed the instant `previewUrl` arrived. A timer can only prove that time passed, so
 // the citizen got an UNLABELLED BLANK WHITE CARD for the 5-7s the sandbox spent compiling its
-// first Turbopack route — at exactly the moment they had been told their app was ready (R3).
+// first Turbopack route — at exactly the moment they had been told their app was ready.
 //
 // The device card is queried by data-testid rather than `iframe.parentElement` for the reason
 // the device-toggle block gives below: an element inserted between the card and the iframe
@@ -680,7 +661,7 @@ describe('LivePreview — dev-server crash: reconnecting is distinct from buildi
 
 const FRAME_LOAD_CAP_MS = 20000 // mirrors LivePreview's own cap; the tests step over it deliberately
 
-describe('LivePreview — R104\u2019s stop-clock: `onRevealed` (U4)', () => {
+describe('LivePreview — the stop-clock instant: `onRevealed`', () => {
   it('\u2605 fires when the citizen is actually LOOKING at the app, and not a moment before', () => {
     // The mark has to mean "the app is on screen". A `load` alone does not: it fires for a 500,
     // and it fires under a raised cover. Only `revealed` \u2014 frame loaded AND cover down \u2014 is the
@@ -718,7 +699,7 @@ describe('LivePreview — R104\u2019s stop-clock: `onRevealed` (U4)', () => {
   })
 
   it('\u2605 fires ONCE for one document, even when the reveal is retracted and re-earned', () => {
-    // The reveal is not monotonic: a verdict that flips to failed RETRACTS it (R4), and a later
+    // The reveal is not monotonic: a verdict that flips to failed RETRACTS it, and a later
     // clean verdict earns it back on the SAME document. That is one first-view, not two \u2014 and it
     // is the only path that re-enters this effect with the same frame key, so it is the one that
     // pins the guard. Mutation check: drop the per-frame-key guard and this goes red.
@@ -779,7 +760,7 @@ describe('LivePreview — R104\u2019s stop-clock: `onRevealed` (U4)', () => {
   })
 })
 
-describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3)', () => {
+describe('LivePreview — the frame is revealed on load, never on a timer', () => {
   it('keeps the labelled wait up when previewUrl arrives, and swaps it for the frame on load', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
     const iframe = container.querySelector('iframe')
@@ -808,9 +789,9 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
     }
   })
 
-  // R3/U4 — INERTNESS GUARD. The stall card still degrades to a LABELLED state (never a bare
-  // white card — that half of the unit is untouched); what it no longer does is offer its own
-  // Relaunch button, because R3 says exactly one control starts the app and this is not it.
+  // INERTNESS GUARD. The stall card still degrades to a LABELLED state (never a bare white
+  // card — that half of the unit is untouched); what it no longer does is offer its own
+  // Relaunch button, because the rule is exactly one control starts the app and this is not it.
   it('INERTNESS GUARD: a frame that never loads still degrades to a LABELLED state — never a bare white card, and never a button', () => {
     vi.useFakeTimers()
     try {
@@ -822,7 +803,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
       // LIVENESS: still nothing painted, so still not revealed, and still labelled.
       expect(card(container).className).toMatch(/opacity-0/)
       expect(container.textContent).toMatch(/taking longer than usual/i)
-      // INERTNESS: no button, under any label, and the prop it used to fire is never called.
+      // INERTNESS: no button, under any label, and the relaunch prop is never called.
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
       expect(onRelaunch).not.toHaveBeenCalled()
     } finally {
@@ -848,9 +829,9 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
     }
   })
 
-  it('the capped state inherits the R5/N7 discipline: no relaunch offered, and none PROMISED, without a confirmed build', () => {
-    // The same trap n7-terminal-branch-20260730.png captured on the terminal branch: copy that
-    // says "relaunch it" is a claim about a saved build, so it is gated exactly like the button.
+  it('the capped state inherits the relaunch discipline: no relaunch offered, and none PROMISED, without a confirmed build', () => {
+    // The same trap the terminal placeholder fell into: copy that says "relaunch it" is a claim
+    // about a saved build, so it is gated exactly like the button.
     vi.useFakeTimers()
     try {
       for (const hasSavedBuild of [false, null]) {
@@ -918,7 +899,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
   })
 
   it('reveals on the load of an ERROR response — a broken app must look broken, not pending forever', () => {
-    // The frame is genuinely cross-origin (C8): `load` fires for a 500 exactly as it does for a
+    // The frame is genuinely cross-origin: `load` fires for a 500 exactly as it does for a
     // 200 and the portal cannot read the status. Revealing therefore claims "a document arrived",
     // never "the app is healthy" — the seam a future previewHealth prop would hang off.
     vi.useFakeTimers()
@@ -964,9 +945,9 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
   })
 })
 
-describe('LivePreview — the reconnecting state is BOUNDED after a completed build (F8/U5)', () => {
-  // R3/U4 — INERTNESS GUARD. The bound itself (never a forever spinner) is untouched and stays
-  // asserted; only the button half — this pane's own way to act on the collapse — moved off it.
+describe('LivePreview — the reconnecting state is BOUNDED after a completed build', () => {
+  // INERTNESS GUARD. The bound itself (never a forever spinner) is untouched and stays asserted;
+  // only the button half — this pane's own way to act on the collapse — moved off it.
   it('INERTNESS GUARD: after the cap with no recovery, still collapses to "preview unavailable" (no forever spinner), with no button of its own', () => {
     vi.useFakeTimers()
     try {
@@ -979,7 +960,7 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
       // LIVENESS: the bounded terminal still fires.
       expect(container.textContent).toMatch(/preview unavailable/i)
       expect(container.textContent).not.toMatch(/reconnecting to your preview/i)
-      // INERTNESS: no button, and the prop it used to fire is never called.
+      // INERTNESS: no button, and the relaunch prop is never called.
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
       expect(onRelaunch).not.toHaveBeenCalled()
     } finally {
@@ -990,8 +971,8 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
   it('★ does NOT bound while the build is still ACTIVE — the loop owns recovery, and LIVENESS does not change that', () => {
     // ★ `serving` IS PASSED HERE ON PURPOSE, and that is the mutant this scenario now catches.
     //
-    // The cap used to read `reconnecting && completedLive`, which meant "the build is over" only
-    // because that flag was set by a turn ENDING. Liveness is true DURING a running build as well —
+    // Reading `reconnecting && completedLive` alone would mean "the build is over" only
+    // because that flag is set by a turn ENDING. Liveness is true DURING a running build as well —
     // the preview-state read says so — so substituting it one-for-one would arm this timer
     // mid-build and answer a recovery the loop was about to make with "preview unavailable".
     // The cap keys on the TERMINAL status instead; `status="ready"` is what holds it off.
@@ -1009,28 +990,16 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
   })
 })
 
-// --- the save control (U5b / KTD-5e) -------------------------------------------------------
-//
-// Nothing writes the git bundle to storage except this button: the turn terminal used to
-// snapshot on every message, which quietly made each message a new saved version, so there was
-// no such thing as trying something and walking away from it.
-//
-// The subtlety worth testing is the TRI-STATE. `saveDirty` is true / false / null, and null
-// means UNKNOWN — no live workspace, or a bundle the server could not compare. Rendering
-// unknown as "Saved" tells the user their work is safe when nothing actually checked.
+// THE SAVE CONTROL LEFT THIS COMPONENT — it drew in the toolbar row this pane owned, so a
+// project with nothing built had no Save at all. It reads the channel's own save cell from the
+// shell's row now; every one of the six scenarios that were here, including the one that matters
+// most (`null` is UNKNOWN and hides the control rather than claiming the work is saved), is in
+// `WorkspaceToolbar.test.tsx`. Named rather than deleted quietly, because a guard that vanishes
+// with its markup is how the claim stops being checked.
 
-/* THE SAVE CONTROL LEFT THIS COMPONENT (plan 002, U2). It lived in the toolbar row this pane
-   drew inside itself, which meant it only existed once something was framed — so a project with
-   nothing built had no Save at all. It is in the shell's row now, reading the channel's own save
-   cell, and every one of the six scenarios that were here is in `WorkspaceToolbar.test.tsx`,
-   including the one that matters most: `null` is UNKNOWN and hides the control rather than
-   claiming the work is saved. Named rather than deleted quietly, because a guard that vanishes
-   with its markup is how the claim stops being checked. */
-
-describe('LivePreview — the preview only claims a build that exists (R5)', () => {
-  // The exact screen n7-terminal-branch-20260730.png captured: a fresh, never-built project
-  // opened on the terminal placeholder promised "restore your saved app" and offered a
-  // Relaunch that could only 404.
+describe('LivePreview — the preview only claims a build that exists', () => {
+  // The exact bug this closes: a fresh, never-built project opened on the terminal placeholder
+  // promised "restore your saved app" and offered a Relaunch that could only 404.
   it('terminal + hasSavedBuild=false: no affordance, no saved-app promise (mutation: ungate the render and this goes red)', () => {
     const { container } = render(
       <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild={false} />,
@@ -1063,7 +1032,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
     }
   })
 
-  // R5/R3 — INERTNESS GUARD, and the interesting half is what SURVIVES. R5 was never about the
+  // INERTNESS GUARD, and the interesting half is what SURVIVES. This was never about the
   // button; it was about not promising a restore where none exists. That promise is still made —
   // in the copy — in both branches; only the button that used to accompany it is gone.
   it('INERTNESS GUARD: both branches with hasSavedBuild=true still MAKE the saved-app claim in copy, but neither offers its own button', () => {
@@ -1130,7 +1099,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
   })
 
   it('RETIREMENT GUARD: the terminal branch has no not-found alert left — its selector was a dead prop', () => {
-    // "A 404 after the click is said out loud, never a silently vanished button" was the R5
+    // "A 404 after the click is said out loud, never a silently vanished button" was the
     // discipline this pinned, and it still holds where a click can happen: the pane's one start
     // control reports its own 404 (`StartAppControl.test.tsx`). What went is this branch's copy of
     // it, which only `relaunchError` could select and only `relaunch()` could produce.
@@ -1144,10 +1113,10 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
   })
 })
 
-describe('LivePreview — the device width it is told to frame at (#42)', () => {
-  // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE (plan 002, U2). It is in the shell's toolbar
-  // row, above both columns, so the three `aria-pressed` scenarios that used to live here are in
-  // `WorkspaceToolbar.test.tsx` — where the control is. What stays here is the half this
+describe('LivePreview — the device width it is told to frame at', () => {
+  // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE. It is in the shell's toolbar row, above both
+  // columns, so the three `aria-pressed` scenarios live in `WorkspaceToolbar.test.tsx` — where
+  // the control is. What stays here is the half this
   // component still owns: that the width it is TOLD reaches the card's inline style.
   //
   // The iframe itself is plain `w-full`: it always matches the card's width exactly, with no
@@ -1179,7 +1148,7 @@ describe('LivePreview — the device width it is told to frame at (#42)', () => 
     }
   })
 
-  it('the card keeps relative + overflow-hidden in every mode — anchors/clips the C8 overlays', () => {
+  it('the card keeps relative + overflow-hidden in every mode — anchors/clips the overlays', () => {
     for (const device of ['Desktop', 'Tablet', 'Mobile']) {
       const { container } = setup({ device })
       expect(deviceCard(container).className).toMatch(/relative/)
@@ -1189,7 +1158,7 @@ describe('LivePreview — the device width it is told to frame at (#42)', () => 
   })
 })
 
-describe('LivePreview — compact ended-state card (#42 F3)', () => {
+describe('LivePreview — compact ended-state card', () => {
   it('renders the terminal state as a small bounded card, not a full-pane block', () => {
     // Under the new hasSavedBuild gating, onRelaunch alone no longer renders the button —
     // pass hasSavedBuild explicitly so this exercises the button-present path.
@@ -1201,8 +1170,8 @@ describe('LivePreview — compact ended-state card (#42 F3)', () => {
     expect(card.className).not.toMatch(/flex-1/)
   })
 
-  // R3/U4 — INERTNESS GUARD. The compact card itself (#42 F3) is untouched; what it no longer
-  // contains is a button of its own.
+  // INERTNESS GUARD. The compact card itself is untouched; what it no longer contains is a
+  // button of its own.
   it('INERTNESS GUARD: the compact ended-state card contains no button of its own', () => {
     const onRelaunch = vi.fn()
     const { container } = render(<LivePreview previewUrl={null} status="ended" onRelaunch={onRelaunch} hasSavedBuild />)
@@ -1214,7 +1183,7 @@ describe('LivePreview — compact ended-state card (#42 F3)', () => {
   })
 })
 
-describe('LivePreview — compact unavailable-state card (#42 F3)', () => {
+describe('LivePreview — compact unavailable-state card', () => {
   it('renders the bounded reconnect-cap-expired state as a small card, distinct from the ended card', () => {
     vi.useFakeTimers()
     try {
@@ -1231,8 +1200,8 @@ describe('LivePreview — compact unavailable-state card (#42 F3)', () => {
     }
   })
 
-  // R3/U4 — INERTNESS GUARD. Same story as the ended-state card above: the compact unavailable
-  // card (#42 F3) is untouched, its button is not.
+  // INERTNESS GUARD. Same story as the ended-state card above: the compact unavailable card is
+  // untouched, its button is not.
   it('INERTNESS GUARD: the compact unavailable card contains no button of its own', () => {
     vi.useFakeTimers()
     try {
@@ -1266,12 +1235,12 @@ describe('LivePreview — a live preview is left alone', () => {
 })
 
 // ---------------------------------------------------------------------------------------
-// R16 / R18 — THE COVER (U12)
+// THE COVER
 //
-// On 2026-08-18 a full-screen framework compile-error screen filled this pane for ~66 seconds
-// in each of three builds, in front of a client. This is the fix, and it is a fix that reaches
-// apps ALREADY BUILT: the pane covers its own frame from the outside, so nothing about the
-// app — its Next version, its files, its image — is consulted or changed.
+// A full-screen framework compile-error screen once filled this pane for over a minute in each
+// of three consecutive builds, in front of a client. This is the fix, and it is a fix that
+// reaches apps ALREADY BUILT: the pane covers its own frame from the outside, so nothing about
+// the app — its Next version, its files, its image — is consulted or changed.
 //
 // Every absence assertion below is paired with a liveness assertion in the same test. A
 // `queryBy(...).toBeNull()` also passes when the component threw, and this file is exactly the
@@ -1285,7 +1254,7 @@ const HOLDING_SLOW = /taking longer than usual — it will appear here/i
 const ESCALATE_MS = 20000
 
 // …and what the cover says when no turn is running, so the holding wording cannot outlive the
-// work it describes (U7/R13). TWO sentences, because the cover's two idle causes are opposites:
+// work it describes. TWO sentences, because the cover's two idle causes are opposites:
 // `failed` means the app is not usable, `building` means it is compiling a route right now —
 // which a perfectly healthy completed app does on demand.
 const IDLE_BROKEN = /Your app isn.t running right now/i
@@ -1308,8 +1277,8 @@ function coverEl(container) {
   )
 }
 
-describe('LivePreview — the cover (R16/R18): the framework error screen is never seen', () => {
-  it('covers the frame when the app fails to compile, and shows the holding state (AE10)', () => {
+describe('LivePreview — the cover: the framework error screen is never seen', () => {
+  it('covers the frame when the app fails to compile, and shows the holding state', () => {
     const { container } = setup({ turnRunning: true,  compileState: 'failed' })
 
     const cover = coverEl(container)
@@ -1324,7 +1293,7 @@ describe('LivePreview — the cover (R16/R18): the framework error screen is nev
     expect(container.textContent).not.toMatch(/unhandled runtime error|module not found|\.tsx/i)
   })
 
-  it('covers an app built before any of this shipped — no version is ever consulted (AE14)', () => {
+  it('covers an app built before any of this shipped — no version is ever consulted', () => {
     // THE FLEET ASSERTION. The cover takes no prop describing the app, its framework version or
     // its image; it is driven purely by a signal about compilation. That is what makes it the
     // only mechanism that reaches the apps already out there, and this test fails the moment
@@ -1532,8 +1501,8 @@ describe('LivePreview — the cover (R16/R18): the framework error screen is nev
 })
 
 // ---------------------------------------------------------------------------------------
-// U7 (R13) — the holding state stops when the work does
-// U10 (R11) — the frame is revealed on the verdict AND the load, never on the load alone
+// The holding state stops when the work does
+// The frame is revealed on the verdict AND the load, never on the load alone
 // ---------------------------------------------------------------------------------------
 
 /** The device card carries the reveal. `opacity-100` is the revealed state; `opacity-0` is
@@ -1549,12 +1518,12 @@ function loadTheFrame(container) {
   })
 }
 
-describe('LivePreview — the holding state stops when the turn does (U7/R13)', () => {
+describe('LivePreview — the holding state stops when the turn does', () => {
   it('says the app is not running once no turn is in flight, and stops claiming progress', () => {
     // THE FAILURE THIS CLOSES. "Putting the latest change together…" is true for exactly as long
     // as a turn is running. Left up after one ends it becomes a progress state that never
     // resolves — the citizen's only way to learn the build was over is to wait long enough to
-    // stop believing it, which is the shape of the nine-minute false success inverted.
+    // stop believing it.
     const { container } = setup({ compileState: 'failed', turnRunning: false })
 
     const cover = coverEl(container)
@@ -1601,7 +1570,7 @@ describe('LivePreview — the holding state stops when the turn does (U7/R13)', 
     }
   })
 
-  it('★ says NOTHING on an unreadable verdict — no failure sentence, and no announcement (U5)', () => {
+  it('★ says NOTHING on an unreadable verdict — no failure sentence, and no announcement', () => {
     // ★ THE THIRD VALUE IS THE LOAD-BEARING ONE. Without it the natural implementation reads "not
     // failure" as success, and republishes a claim about a build nothing verified — on exactly the
     // reload where nothing was serving. `unknown` is what the client answers for a refusal, an
@@ -1657,7 +1626,7 @@ describe('LivePreview — the holding state stops when the turn does (U7/R13)', 
   })
 })
 
-describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
+describe('LivePreview — the reveal is earned twice over', () => {
   it('reveals when the verdict passes AND the frame loads', () => {
     const { container } = setup({ compileState: 'clean' })
     expect(deviceCard(container).className).toMatch(/opacity-0/)
@@ -1686,7 +1655,7 @@ describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
     expect(deviceCard(container).className).toMatch(/opacity-0/)
   })
 
-  it('RETRACTS a reveal when the verdict flips to failed (R4), and the cover explains', () => {
+  it('RETRACTS a reveal when the verdict flips to failed, and the cover explains', () => {
     const { container, rerender } = setup({ compileState: 'clean' })
     loadTheFrame(container)
     expect(deviceCard(container).className).toMatch(/opacity-100/)
@@ -1699,7 +1668,7 @@ describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
     expect(coverEl(container).textContent).toMatch(HOLDING)
   })
 
-  it('does NOT retract a reveal on an unanswerable verdict (AE8)', () => {
+  it('does NOT retract a reveal on an unanswerable verdict', () => {
     // `unknown` HOLDS whatever is showing rather than moving it — the same fail-closed rule that
     // stops an absent signal uncovering a broken app stops it hiding a working one.
     const { container, rerender } = setup({ compileState: 'clean' })
@@ -1734,15 +1703,14 @@ describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
 
   it('documents the null/unknown concession rather than leaving it to be discovered', () => {
     // ★ WHAT THIS UNIT DOES NOT CLOSE, pinned so it cannot drift silently. `covered` moves on
-    // building/failed/clean and HOLDS on `unknown` and `null` — so with no compile verdict ever
-    // reported, the load still reveals on its own, exactly as it did before this unit. That is
-    // every container on an image older than the compile endpoint, and the opening moments of
-    // every turn.
+    // building/failed/clean and HOLDS on `unknown` and `null`, so with no compile verdict ever
+    // reported the load still reveals on its own, exactly as before this unit — true of every
+    // container on an image older than the compile endpoint, and the opening moments of every turn.
     //
-    // It is a deliberate compatibility concession: gating on a POSITIVE verdict would leave the
-    // whole existing fleet's preview permanently blank, which is worse than the failure being
-    // fixed. If someone later decides to close it, this test is what tells them they are
-    // changing a decision rather than fixing an oversight.
+    // A deliberate compatibility concession: gating on a POSITIVE verdict would leave the whole
+    // existing fleet's preview permanently blank, worse than the failure being fixed. If someone
+    // later closes it, this test is what tells them they are changing a decision, not fixing an
+    // oversight.
     for (const compileState of [null, 'unknown']) {
       const view = render(
         <LivePreview previewUrl={SANDBOX_URL} status="ready" compileState={compileState} />,

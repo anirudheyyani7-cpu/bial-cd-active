@@ -1,24 +1,15 @@
-"""C4 snapshot write (KTD-7): commit the working tree → `git bundle` it →
-base64 it over the C1 `/exec` endpoint → `put` to Blob.
+"""Snapshot write: commit the working tree → `git bundle` it → base64 it over the
+`/exec` endpoint → `put` to Blob.
 
-`git bundle create <file> HEAD` CARRIES COMPLETE HISTORY, not just the current tree, and this
-docstring used to say the opposite. A bundle names HEAD as the ref to include and git walks its
-ancestry, so every commit reachable from HEAD is in the file — which `manager.py` already says
-from the other side. This matters beyond tidiness: the health verdict's baseline comparison (U6)
-identifies an app by its ROOT COMMIT, and that only survives a restore because the history does.
-WRITTEN only by the session API (C4), but no longer session-API-only on
-READ: `submit` (APPROVAL) copies the snapshot to an immutable per-submission key, which
-changes what a swallowed `write_snapshot` failure means — it is no longer just "you lose
-resume", it is "you cannot submit your latest build" (the citizen submits the PREVIOUS
-snapshot instead, and nothing tells them). The failure is still caught-and-logged at the
-finalize call site by design; this note exists so that trade-off is re-weighed rather than
-rediscovered.
+`git bundle create <file> HEAD` CARRIES COMPLETE HISTORY, not just the current tree — it names
+HEAD and git walks its ancestry — and the health verdict identifies an app by its ROOT COMMIT,
+which only survives a restore because that history does. WRITTEN by the session API; READ also
+by `submit`, which copies the snapshot to an immutable per-submission key, so a swallowed
+`write_snapshot` failure costs the citizen their latest build, not just their resume, silently.
 
-CONCURRENCY: two snapshots of one app can overlap (Save is not gated on an in-flight session —
-see `manager.save_project_snapshot`), so this module owns both halves of making that safe: a
-per-call bundle path, and a per-app lock. Neither is optional; see `_BUNDLE_PREFIX` and
-`_serialized_per_app` for what each one prevents.
-"""
+CONCURRENCY: two snapshots of one app can overlap (Save is not gated on an in-flight session), so
+this module owns both halves — a per-call bundle path and a per-app lock (`_BUNDLE_PREFIX`,
+`_serialized_per_app`)."""
 
 from __future__ import annotations
 
@@ -58,6 +49,11 @@ from src.services.storage.bundle import BUNDLE_CONTENT_TYPE, parse_bundle_head_s
 
 _log = structlog.get_logger()
 
+# THE AGENT DOES NOT COMMIT AS IT WORKS — this script is the platform's single commit, taken at
+# the turn boundary as step one of every bundle. So "HEAD unchanged + a dirty tree" is the normal
+# shape of a building turn, and any reader that decides from a sha taken before this script runs
+# is reading the previous turn's.
+#
 # The baked image ships /workspace/app WITHOUT a `.git` (git identity, `init.defaultBranch`,
 # and `safe.directory` are baked system-wide in Dockerfile.sandbox), so the FIRST snapshot must
 # `git init` — idempotent on every later snapshot (mirrors sandbox/scripts/snapshot.sh). Commit
@@ -137,10 +133,7 @@ class Destination:
     or divert key carries the instant it was taken, so it cannot be a bare constant. Keeping the
     key-building here (rather than exposing `_write_snapshot_locked`, which is private for a
     reason) means every writer in the system names its destination in the same vocabulary, and
-    nothing outside this module has to know that a key is a string at all.
-
-    This replaces a two-way `recovery: bool`. That boolean was fine while there were two answers;
-    with four, the next reader of `write_snapshot(..., True)` would have had to guess which."""
+    nothing outside this module has to know that a key is a string at all."""
 
     key: str
 
@@ -152,18 +145,19 @@ class Destination:
     @classmethod
     def recovery(cls, app_id: uuid.UUID) -> Destination:
         """The platform's autosave. Prefer `write_recovery_copy`, which guards the promotion —
-        this is the raw destination, for the operator promote path (U25) that has already
+        this is the raw destination, for the operator promote path that has already
         decided."""
         return cls(recovery_key(app_id))
 
     @classmethod
     def quarantine(cls, app_id: uuid.UUID, taken_at: datetime) -> Destination:
-        """A tree U2 is about to restore over. Never overwritten by a later occurrence."""
+        """A tree a restore is about to write over. Never overwritten by a later occurrence."""
         return cls(quarantine_key(app_id, taken_at))
 
     @classmethod
     def divert(cls, app_id: uuid.UUID, taken_at: datetime) -> Destination:
-        """A tree U3 refused to promote. Never overwritten by a later occurrence."""
+        """A tree the recovery guard refused to promote. Never overwritten by a later
+        occurrence."""
         return cls(divert_key(app_id, taken_at))
 
 
@@ -208,20 +202,13 @@ async def write_snapshot(
     destination: Destination | None = None,
 ) -> str:
     """Snapshot the sandbox's current tree to Blob and return its HEAD sha.
-    Step 1 of the ordered end (C4) — the caller runs teardown + release AFTER this returns.
 
-    `destination` defaults to the user's SAVED bundle, which is what every caller of this
-    function means. The platform's own autosave does not come through here: it goes through
-    `write_recovery_copy`, which is the same write with a guard in front of it.
-
-    RETURNS THE BUNDLED TREE'S HEAD SHA, which is also stamped into the object's metadata.
-    Callers compare that rather than `last_modified` to decide which of two bundles is newer:
-    Azure stamps modification times in WHOLE SECONDS, so a Save and an autosave inside one second
-    are indistinguishable by time, and resolving that tie toward the saved bundle silently
-    restores an older tree over the user's newer work.
-
-    Serialized per app: concurrent callers queue rather than racing each other's bundle file
-    and each other's git index (see `_serialized_per_app`)."""
+    Step 1 of the ordered end — the caller runs teardown + release AFTER this returns.
+    `destination` defaults to the user's SAVED bundle; the autosave goes through
+    `write_recovery_copy`, the same write with a guard in front. The head sha is stamped into the
+    object's metadata and callers compare THAT, not `last_modified`: Azure stamps mtimes in whole
+    seconds, so a Save and an autosave in the same second cannot be told apart by time, and the tie
+    would restore an older tree over newer work. Serialized per app: callers queue, never race."""
     key = (destination or Destination.saved(app_id)).key
     async with _serialized_per_app(app_id):
         store = _the_store_first()
@@ -230,17 +217,9 @@ async def write_snapshot(
         return tree.head_sha
 
 
-# HOW MANY TIMES IN A ROW THIS APP'S RECOVERY WRITE HAS BEEN REFUSED.
-#
-# U2 reads it to bound the refusal loop, and the reason is a shape the 2026-08-18 Summary
-# describes: once the recovery slot has been overwritten with a bad tree, `recoverable_work` ranks
-# the two bundles by `last_modified`, not by ancestry — so a poisoned-but-newer recovery copy
-# outranks a perfectly good saved one, and every restore afterwards hands back the poison. Two
-# consecutive refusals for one app is the signal that the slot itself is the problem rather than
-# this turn, and U2 restores from the SAVED bundle instead.
-#
-# Process-local like the snapshot locks, and self-pruning: any outcome that is not a refusal drops
-# the entry.
+# HOW MANY TIMES IN A ROW THIS APP'S RECOVERY WRITE HAS BEEN REFUSED. Process-local like the
+# snapshot locks, and self-pruning: any outcome that is not a refusal drops the entry, so a streak
+# only ever means consecutive refusals seen by this process.
 _consecutive_diverts: dict[uuid.UUID, int] = {}
 
 
@@ -263,25 +242,12 @@ async def write_recovery_copy(
 ) -> RecoveryWrite:
     """The turn-end autosave, with a guard that will not overwrite a good copy with a bad tree.
 
-    THE PROBLEM THIS CLOSES (U3, R8, AE4). The old write was gated on `touched` alone — "a
-    mutating tool ran", not "the tree changed" — and the `put` was unconditional. So a container
-    that reverted midway through a turn had its empty tree stamped in as the newest copy of the
-    user's work, over a perfectly good bundle, with nothing recorded anywhere. That is one half of
-    what happened on 2026-08-18, and the swallowed failure is why nobody could prove it afterwards.
-
     THE NO-OP SKIP IS DECIDED ON THE BUNDLED SHA, AND THAT ORDERING IS THE WHOLE TRICK.
-    `_COMMIT_SCRIPT` runs `git add -A && git commit` as step ONE inside the bundle below, so by
-    the time there is a sha to compare, any uncommitted work has already become a commit. A naive
-    "skip when HEAD has not moved" reads the sha BEFORE that step, and today the agent's own
-    commits mask the difference — but once agent-side commits go away, "HEAD unchanged + dirty
-    tree" becomes the normal shape of EVERY building turn, and that version would silently discard
-    every turn's recovery copy. Data loss plus (per ASM24) containers nothing would ever reclaim,
-    both reading green to every health check. `test_a_dirty_tree_at_unchanged_head_still_writes_a_
-    recovery_copy` is the standing contract across that plan boundary.
-
-    NEVER RAISES FOR A REFUSAL, and never fails the turn. A caller still has to catch the bundle
-    or upload failing — that case is `failed`, and it is raised from the call site because only
-    the call site knows the write threw."""
+    `_COMMIT_SCRIPT` commits as step ONE inside the bundle, so a naive "skip when HEAD has not
+    moved" reading the sha BEFORE it would discard every turn's recovery copy: the agent does not
+    commit as it works, so "HEAD unchanged + dirty tree" is the normal shape of a building turn
+    (`test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy`). NEVER RAISES FOR A
+    REFUSAL — only bundle/upload failure is raised, at the call site that saw it throw."""
     async with _serialized_per_app(app_id):
         store = _the_store_first()
         meta = await store.head(recovery_key(app_id))
@@ -298,20 +264,14 @@ async def write_recovery_copy(
             )
 
         if recorded is None:
-            # AN OBJECT IS THERE AND WE CANNOT COMPARE AGAINST IT — a bundle written before the
-            # head stamp existed, which `durable_copy.py` documents as a live population.
-            #
-            # THIS USED TO WRITE, and that was a data-loss path an adversarial review reproduced.
-            # A bundle we cannot compare against is not a licence to overwrite it: an app whose
-            # container has reverted has exactly this shape, so the unguarded write stamped the
-            # reverted tree over the user's only durable copy — into a store with no versioning
-            # and no soft delete. Worse, U5's reaper reads a WRITTEN as proof the work is safe and
-            # deletes the container in the same call, so the guard written to stop 2026-08-18
-            # reproduced it.
-            #
-            # Diverted, so the tree is kept and an operator can promote it (U25) once they can
-            # see which of the two is the real one. Same reasoning `_where_head_sits_relative_to`
-            # already applies to a `recorded` that is not sha-shaped.
+            # AN OBJECT IS THERE AND WE CANNOT COMPARE AGAINST IT — a bundle predating the head
+            # stamp. That is not a licence to overwrite it: an app whose container has reverted
+            # has exactly this shape, so writing would stamp the reverted tree over the user's
+            # only durable copy, into a store with neither versioning nor soft delete — and the
+            # reaper reads a WRITTEN as proof the work is safe and deletes the container in the
+            # same call. Diverted instead, so the bytes are kept for an operator to promote. Same
+            # reasoning `_where_head_sits_relative_to` applies to a `recorded` that is not
+            # sha-shaped.
             where = divert_key(app_id, taken_at)
             await _store_it(store, where, tree)
             _consecutive_diverts[app_id] = _consecutive_diverts.get(app_id, 0) + 1
@@ -393,7 +353,7 @@ async def _where_head_sits_relative_to(
 
 
 def _the_store_first() -> ObjectStorage:
-    """Resolve the store BEFORE doing any work. On a storage-disabled deployment (KTD-2) this
+    """Resolve the store BEFORE doing any work. On a storage-disabled deployment this
     raises here, so the turn does not commit, bundle and base64 a whole tree over `/exec` only to
     discover at the upload that there is nowhere to put it."""
     return get_storage()
@@ -417,7 +377,7 @@ async def _bundle_the_tree(sandbox_client: SandboxClient, handle: SandboxHandle)
     """Commit whatever is in the worktree, bundle it, and read it back out of the container."""
     bundle_name = f"{_BUNDLE_PREFIX}.{secrets.token_hex(8)}"
     run_command = sandbox_client.exec  # aliased to keep the call off the JS-oriented exec guard
-    # Every step's exit code is checked (a non-zero exit is a NORMAL ExecResult, C1): a failed
+    # Every step's exit code is checked (a non-zero exit is a NORMAL ExecResult): a failed
     # commit or bundle must abort HERE, never fall through to base64-ing whatever happens to be
     # on disk and uploading it as "latest".
     commit = await run_command(
@@ -470,7 +430,7 @@ class ParkedTreeNotOursError(Exception):
 
 @dataclass(frozen=True)
 class ParkedTree:
-    """One bundle this plan set aside, as an operator needs to see it."""
+    """One bundle the recovery guard set aside, as an operator needs to see it."""
 
     key: str
     kind: Literal["quarantine", "divert"]
@@ -486,16 +446,12 @@ class Promotion:
 
 
 async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
-    """Every quarantine and divert object for one app, newest first (U25).
-
-    NEWEST FIRST because the useful one is almost always the last one, and an operator scrolling
-    to the bottom of a list to find the tree they are looking for is an operator who will
-    eventually promote the wrong one.
+    """Every quarantine and divert object for one app, newest first — the useful one is almost
+    always the last, and scrolling to the bottom is how an operator promotes the wrong one.
 
     Returns an empty list rather than raising on an unconfigured or unreadable store: this is a
-    read for a human who is already dealing with an incident, and a 500 in the middle of one is
-    not help. The empty case is indistinguishable from "nothing parked", which is the honest
-    reading — an operator who sees nothing and expected something will look at the store."""
+    read for a human already dealing with an incident, and a 500 mid-incident is not help. The
+    empty case reads honestly as "nothing parked" either way."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
@@ -536,22 +492,14 @@ async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
 
 
 async def promote_parked(app_id: uuid.UUID, *, key: str) -> Promotion:
-    """Copy one parked tree into the recovery slot, THROUGH the guard (U25).
+    """Copy one parked tree into the recovery slot, THROUGH the guard — not a two-line blob copy.
 
-    THE GUARD IS THE WHOLE POINT and it is why this is not a two-line blob copy. A promotion whose
-    tree is not a descendant of what the recovery slot already holds is exactly the shape U3
-    refuses at the end of every turn — an operator asking for it is not evidence that the tree is
-    the right one, and forcing it would destroy the newest copy of somebody's work in the name of
-    recovering it.
-
-    THE ANCESTRY QUESTION CANNOT BE ASKED HERE, and that changes what the guard can be. U3 asks a
-    live container `git merge-base --is-ancestor`; this runs against two objects in a store with
-    no container in sight. So the check is the one that IS answerable: refuse when the slot
-    already holds the same tree (nothing to do), and otherwise require the promotion to be
-    explicit about replacing it — which the audit row records, with the operator's name on it.
-    That is weaker than U3's guard and it is stated rather than dressed up: the compensating
-    control is that this route is superadmin-only, audited, and per-occurrence keys mean the
-    replaced object is still there."""
+    THE ANCESTRY QUESTION CANNOT BE ASKED HERE: the turn-end guard asks a live container `git
+    merge-base --is-ancestor`, but this runs against two store objects with no container in sight.
+    So the check is the one that IS answerable — refuse when the slot already holds the same tree,
+    otherwise require an explicit promotion — which is weaker than the turn-end guard, stated
+    rather than dressed up. The compensating control is that this route is superadmin-only,
+    audited, and per-occurrence keys mean the replaced object is still there."""
     store = get_storage()
     if not key.startswith((quarantine_prefix(app_id), divert_prefix(app_id))):
         # THE KEY COMES FROM A REQUEST BODY. It names an object to READ and an app to write it

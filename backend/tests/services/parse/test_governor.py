@@ -1,4 +1,4 @@
-"""Parse governor (U7, R26): the killable subprocess (timeout/OOM → 413) and the bounds
+"""Parse governor: the killable subprocess (timeout/OOM → 413) and the bounds
 the dispatch runs around the chat office→Markdown extract — zip-bomb pre-filter, OPC
 structural gate, and the refusal of kinds the dispatch does not serve.
 
@@ -63,7 +63,7 @@ def _lying_zip(entries: dict[str, bytes], declared_uncompressed: int) -> bytes:
 
 @pytest.mark.parametrize("kind", ["xlsx", "xls", "csv", "word", "pdf"])
 def test_retired_and_unknown_kinds_are_415(kind: str) -> None:
-    # The structured-row kinds went with the per-app parse endpoint (#37). The dispatch must
+    # The structured-row kinds went with the per-app parse endpoint. The dispatch must
     # REFUSE them, not fall through to something that half-works: re-adding a branch for any
     # of them turns this red rather than quietly reviving a surface with no consumer.
     with pytest.raises(FileParseError) as exc:
@@ -122,7 +122,7 @@ async def test_governor_contained_crash_is_413() -> None:
     assert exc.value.code == "FILE_TOO_LARGE"
 
 
-# --- the PDF page count (U6 / D4) ----------------------------------------------
+# --- the PDF page count -----------------------------------------------------
 #
 # A fourth kind rides the same governor, for the same reason the office extracts do: a PDF is
 # the worst-behaved thing the upload route accepts, and the two bounds that already exist —
@@ -146,16 +146,14 @@ def test_an_unreadable_pdf_is_a_clean_400_not_a_governor_500() -> None:
 
 
 def test_the_deck_byte_scan_would_have_under_counted_this_document() -> None:
-    """★ WHY D4 REFUSED TO REUSE `extract/deck.py::count_pdf_pages`.
+    """★ WHY THE PDF PAGE COUNT DOES NOT REUSE `extract/deck.py::count_pdf_pages`.
 
-    Its raw-byte `/Type /Page` scan is documented as reliable for LibreOffice/Gotenberg output.
-    Every modern producer writes page objects into a COMPRESSED object stream instead, where
-    no such bytes appear anywhere in the file — so the scan reports zero pages for a 31-page
-    document and would wave it straight past a 30-page cap.
-
-    Under-counting is the only direction that matters here: it admits the document the window
-    charge cannot honestly cover, which is the whole of #194. Swap the new kind for the deck
-    scan and this test is what goes red."""
+    Its raw-byte `/Type /Page` scan is reliable only for LibreOffice/Gotenberg output: modern
+    producers write page objects into a COMPRESSED object stream instead, so no such bytes
+    appear and the scan reports zero pages for a 31-page document — enough to wave it straight
+    past a 30-page cap. Under-counting is the dangerous direction here, since it admits a
+    document the window charge cannot honestly cover. Swap the new kind for the deck scan and
+    this test goes red."""
     document = objstm_pdf(31)
 
     assert deck_byte_scan(document) == 0
@@ -172,14 +170,12 @@ async def test_the_pdf_count_runs_in_the_subprocess() -> None:
 async def test_a_cross_reference_bomb_is_killed_at_the_deadline() -> None:
     """★ THE FILE THE GOVERNOR EXISTS FOR, in the PDF kind's own shape.
 
-    Eight kilobytes: a Flate-compressed cross-reference stream declaring two million entries,
-    every one of which a reader must materialise before it can resolve the catalog. It is
-    inside the 4 MB size cap and inside the memory ceiling, and it costs seven to twelve
-    seconds — unbounded in the only axis neither bound watches.
-
-    The control below is what stops this passing for the wrong reason: given time, the same
-    bytes parse to a one-page document, so the deadline is what refused it and not a
-    malformation. Move the count into the request handler and there is no deadline to hit."""
+    Eight kilobytes: a Flate-compressed cross-reference stream declaring two million entries, every
+    one of which a reader must materialise before it can resolve the catalog. It sits inside the 4
+    MB size cap and inside the memory ceiling, yet costs seven to twelve seconds — unbounded in the
+    only axis neither bound watches. Given time the same bytes parse to a one-page document, so
+    what stops this test passing for the wrong reason is the deadline, not a malformation; move the
+    count into the request handler and there is no deadline to hit."""
     bomb = xref_bomb_pdf()
 
     with pytest.raises(FileParseError) as exc:
@@ -191,9 +187,9 @@ async def test_a_cross_reference_bomb_is_killed_at_the_deadline() -> None:
     assert parse_dispatch(bomb, "count_pdf_pages", "doc.pdf", None) == {"pageCount": 1}
 
 
-# --- the count is walked, ENCRYPTED OR NOT (U28 / R12, R12a) ---------------------
+# --- the count is walked, ENCRYPTED OR NOT ------------------------------------
 #
-# ★ THE 30-PAGE CAP WAS WALKABLE PAST BY ANY ENCRYPTED FILE (#194). `len(reader.pages)` reaches
+# ★ THE 30-PAGE CAP WAS WALKABLE PAST BY ANY ENCRYPTED FILE. `len(reader.pages)` reaches
 # pypdf's `get_num_pages()`, which returns the catalog's DECLARED `/Count` unwalked whenever
 # `is_encrypted` is set — and `is_encrypted` is `"/Encrypt" in trailer`, which stays true after
 # a successful decryption, forever. So the shortcut was permanent, and since pypdf opens a
@@ -206,9 +202,9 @@ def test_an_encrypted_pdf_cannot_lie_its_way_under_the_cap() -> None:
 
     Two files of the same shape — one page object listed in `/Kids` twenty thousand times, a
     catalog declaring one — differing only in whether an encryption dictionary is attached.
-    Before U28 the plain one counted 20,000 and the encrypted one counted 1, which is the whole
-    defect: not that PDFs were mis-counted, but that adding `/Encrypt` to a file switched the
-    count from the tree to the attacker's own number. Both must now answer 20,000.
+    Before the fix, the plain one counted 20,000 and the encrypted one counted 1, which is
+    the whole defect: not that PDFs were mis-counted, but that adding `/Encrypt` to a file
+    switched the count from the tree to the attacker's own number. Both must now answer 20,000.
 
     Revert `_flatten` to `len(reader.pages)` and only the second assertion goes red — which is
     why the plain twin is asserted first and in the same test rather than trusted from a
@@ -272,9 +268,9 @@ def test_a_page_tree_that_eats_its_own_tail_raises_instead_of_running_forever() 
     never returns. pypdf carries the ancestor path and raises; the dispatch maps that to the
     same 400 a truncated file gets, and the citizen is told nothing about page trees.
 
-    Encrypted on purpose. Before U28 this file was never walked at all — the declared `/Count`
-    of 1 was handed straight back — so a cycle only became reachable on the encrypted path when
-    the count started being taken honestly, and this is the test that pays for it."""
+    Encrypted on purpose. Before the fix, this file was never walked at all — the declared
+    `/Count` of 1 was handed straight back — so a cycle only became reachable on the encrypted
+    path when the count started being taken honestly, and this is the test that pays for it."""
     with pytest.raises(FileParseError) as exc:
         parse_dispatch(ouroboros_pdf(), "count_pdf_pages", "doc.pdf", None)
     assert exc.value.status == 400

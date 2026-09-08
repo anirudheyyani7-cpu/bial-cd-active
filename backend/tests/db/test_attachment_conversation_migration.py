@@ -1,14 +1,12 @@
-"""The attachment→conversation link + its `ON DELETE SET NULL` FK, against the REAL
-migrated schema (0021_attachment_conv_link).
-
-The test DB carries the `attachments.conversation_id` column + FK from `alembic upgrade
-head`, so these exercise the actual PostgreSQL DDL — the nullable column and, crucially,
-the `SET NULL` behaviour that distinguishes this FK from the `CASCADE` used by
-`conversations.project_id` — inside the rolled-back per-test transaction (ORM-only, no
+"""The attachment→conversation link + its `ON DELETE SET NULL` FK, against the REAL migrated
+schema (0021_attachment_conv_link). The test DB carries the `attachments.conversation_id` column
++ FK from `alembic upgrade head`, so these exercise the actual PostgreSQL DDL — the nullable
+column and, crucially, the `SET NULL` behaviour that distinguishes this FK from the `CASCADE`
+used by `conversations.project_id` — inside the rolled-back per-test transaction (ORM-only, no
 DDL here, so no `pg_attribute` slot burn).
 
-The upgrade/downgrade round-trip itself is verified out-of-band via `alembic upgrade head`
-/ `downgrade` (U9 Verification) and guarded against a second head by
+The upgrade/downgrade round-trip is verified out-of-band via `alembic upgrade head` /
+`downgrade` and guarded against a second head by
 `tests/test_alembic_single_head.py`; here we prove the shape the migration produced.
 """
 

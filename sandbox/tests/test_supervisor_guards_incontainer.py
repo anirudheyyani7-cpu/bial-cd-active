@@ -1,10 +1,10 @@
-"""In-container C1 guard-regression + spawning-surface suite (U14, integration lane).
+"""In-container guard-regression + spawning-surface suite (integration lane).
 
 The scenarios the offline lane cannot cover, because every `/exec` + `/dev/*` path spawns through
 `_DEMOTE` (`user=`/`group=`/`extra_groups=` -> `setgroups()`), which needs root: the three
 supervisor guards (UID demotion to appuser uid 10001, token isolation, the workspace-escape guard)
 and the spawning `/exec` / `/dev/*` surface, all against the REAL image where the supervisor is
-root and can demote children. Requirement R4.
+root and can demote children.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ from _docker import Sandbox, run_sandbox
 
 pytestmark = pytest.mark.integration
 
-# The per-app Blob vars injected into the guarded container (C9 §6). The SAS is a SECRET (redacted
+# The per-app Blob vars injected into the guarded container. The SAS is a SECRET (redacted
 # from observable output); the container URL is NOT (logs freely). A distinctive sig token so a
 # redaction test can assert the value is gone.
 _BLOB_SAS = "sv=2021-08-06&sr=c&sp=rwdl&sig=REDACTMESIGNATUREVALUE"
 _BLOB_URL = "http://127.0.0.1:10000/devstoreaccount1/app-guard"
-# The per-project database DSN (ADR-0028). SECRET as a whole AND as its password sub-token — two
+# The per-project database DSN. SECRET as a whole AND as its password sub-token — two
 # distinct redaction registrations, so each gets its own distinctive token to assert on.
 _DB_PASSWORD = "REDACTMEROLEPASSWORD"  # noqa: S105 — a fixture value, not a real credential
 _DB_DSN = f"postgresql://bialrole_guard:{_DB_PASSWORD}@db-guard.invalid:5432/bialapp_guard"
@@ -83,7 +83,7 @@ def test_appuser_child_cannot_read_supervisor_token(guarded: Sandbox) -> None:
     assert "IDENTITY_HEADER" not in out["stdout"]
     assert "APP_DB_DSN" not in out["stdout"]
     assert "SOME_PASSWORD" not in out["stdout"]
-    # ...while exactly the injected identity vars — and the ADR-0028 DSN — survive.
+    # ...while exactly the injected identity vars — and the DSN — survive.
     for k in (
         "BIAL_APP_ID",
         "BIAL_PORTAL_ORIGIN",
@@ -100,7 +100,7 @@ def test_appuser_child_cannot_read_pid1_environ(guarded: Sandbox) -> None:
     assert "SUPERVISOR_TOKEN" not in out["stdout"]
 
 
-# --- U8: per-app Blob env — both vars reach the child; the SAS is redacted from output ---------
+# --- per-app Blob env — both vars reach the child; the SAS is redacted from output -------------
 def test_exec_redacts_the_blob_sas_but_logs_the_container_url(guarded: Sandbox) -> None:
     out = _ok(guarded, ["printenv"])
     # Both blob vars reach the child (allowlisted by name), so their NAMES appear...
@@ -108,16 +108,16 @@ def test_exec_redacts_the_blob_sas_but_logs_the_container_url(guarded: Sandbox) 
     assert "BIAL_BLOB_SAS" in out["stdout"]
     # ...the non-secret container URL VALUE logs freely...
     assert "devstoreaccount1" in out["stdout"]
-    # ...but the SECRET SAS value is REDACTED from the /exec output (C9 §6.4 / KTD-8).
+    # ...but the SECRET SAS value is REDACTED from the /exec output.
     assert "REDACTMESIGNATUREVALUE" not in out["stdout"]
     assert "***" in out["stdout"]
 
 
-# --- ADR-0028: the DSN reaches the child but neither it NOR its password survives any surface ---
+# --- the DSN reaches the child but neither it NOR its password survives any surface ------------
 def test_exec_redacts_the_whole_dsn_and_its_password_sub_token(guarded: Sandbox) -> None:
     # `printenv` prints `BIAL_DATABASE_URL=<dsn>` — the NAME is there (it reached the child), the
     # VALUE is not. Then a line carrying ONLY the password: the whole-value registration cannot
-    # cover it, so this is what proves the sub-token registration exists (D18).
+    # cover it, so this is what proves the sub-token registration exists.
     out = _ok(guarded, ["printenv"])
     assert "BIAL_DATABASE_URL" in out["stdout"]
     assert _DB_PASSWORD not in out["stdout"]
@@ -196,7 +196,7 @@ def test_exec_cwd_escape_returns_400(guarded: Sandbox) -> None:
 
 
 def test_exec_closes_stdin_so_a_stdin_reader_eofs_instead_of_hanging(guarded: Sandbox) -> None:
-    # F4: exec_cmd runs every command with stdin=DEVNULL. `cat` with no file argument reads stdin
+    # exec_cmd runs every command with stdin=DEVNULL. `cat` with no file argument reads stdin
     # until EOF — with an OPEN/TTY stdin it would block forever (and burn the full timeout); with a
     # CLOSED stdin it EOFs instantly and exits 0. A short timeout proves the fast-fail: if stdin
     # were still inherited from the supervisor, this would 504, not return promptly. This is the
@@ -209,11 +209,11 @@ def test_exec_closes_stdin_so_a_stdin_reader_eofs_instead_of_hanging(guarded: Sa
     assert body["exit"] == 0, body.get("stderr", "")[:400]
 
 
-# --- U13: runtime `npm install` as appuser succeeds on the built image -------------------------
+# --- runtime `npm install` as appuser succeeds on the built image ------------------------------
 def test_appuser_owns_node_modules_and_npm_cache(guarded: Sandbox) -> None:
     # The open-sandbox runtime `npm install` (and the restore reconcile) run as appuser and must
     # write node_modules + the npm cache without EACCES — the appuser-owned bake + appuser-owned
-    # cache invariants (U13, re-established at install time by U7 rather than by a later chown).
+    # cache invariants, re-established at install time rather than by a later chown.
     # A pure write-probe, so it holds even with NO registry egress.
     script = 'touch node_modules/.bial-probe && mkdir -p "$npm_config_cache/_p" && echo OK'
     probe = _ok(guarded, ["sh", "-c", script])
@@ -223,7 +223,7 @@ def test_appuser_owns_node_modules_and_npm_cache(guarded: Sandbox) -> None:
 
 def test_appuser_npm_install_writes_node_modules(guarded: Sandbox) -> None:
     # The end-to-end open-sandbox install path: a real on-demand `npm install` as appuser writes
-    # node_modules with exit 0, no EACCES (U13 / R8). Needs registry egress in the integration
+    # node_modules with exit 0, no EACCES. Needs registry egress in the integration
     # lane; this is the load-bearing proof — a local same-arch build is NOT verification.
     out = guarded.exec_cmd(
         ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error", "left-pad@1.3.0"],
@@ -236,18 +236,18 @@ def test_appuser_npm_install_writes_node_modules(guarded: Sandbox) -> None:
     assert listing["exit"] == 0
 
 
-# --- U7: the IMAGE as built, with entrypoint.sh BYPASSED --------------------------------------
-# The two U13 tests above are write-probes against an ALREADY-BOOTED container, so any boot-time
+# --- the IMAGE as built, with entrypoint.sh BYPASSED -------------------------------------------
+# The two tests above are write-probes against an ALREADY-BOOTED container, so any boot-time
 # repair of the workspace — entrypoint.sh `chown -R`'d it on every boot — masks the very
 # regression they exist to catch: they pass even when the IMAGE leaves node_modules root-owned.
 # These run `docker run --entrypoint sh` on a throwaway container, so nothing has booted: they
 # pin the ARTIFACT, which is what an ACA node actually pulls and starts.
 
 # `.Size` is the compressed content size — the bytes a cold pull moves, and the input to the
-# measured real-ACA fit `t = 5.3s + 0.0077 s/MB`. The pre-U7 image was 718.9 MB; U7 removes root's
-# ~175 MB build-time npm cache and the ~196 MB duplicate layer the trailing `chown -R` wrote. This
-# bound sits far below the old size yet far above the post-U7 figure, so re-adding EITHER payload
-# trips it while ordinary template/dependency growth does not.
+# measured real-ACA fit `t = 5.3s + 0.0077 s/MB`. The image was 718.9 MB before this cleanup, which
+# removes root's ~175 MB build-time npm cache and the ~196 MB duplicate layer the trailing
+# `chown -R` wrote. This bound sits far below the old size yet far above the cleaned-up figure, so
+# re-adding EITHER payload trips it while ordinary template/dependency growth does not.
 _MAX_IMAGE_BYTES = 450_000_000
 
 
@@ -269,7 +269,7 @@ def test_image_workspace_is_appuser_owned_before_the_entrypoint_runs(
 ) -> None:
     # The build must leave the workspace appuser-owned ON ITS OWN — ownership is established at
     # COPY/install time, never repaired at boot. If this regresses, the runtime `npm install`
-    # EACCESes (R8/R13) with nothing left to paper over it.
+    # EACCESes with nothing left to paper over it.
     out = _image_sh(
         sandbox_image,
         "stat -c %U /workspace/app /workspace/app/node_modules /home/appuser/.npm && "
@@ -296,7 +296,7 @@ def test_image_carries_no_build_time_npm_cache(sandbox_image: str) -> None:
         assert int(kib) < 1024, f"{path} still carries {kib} KiB of build cache"
 
 
-def test_image_size_is_far_below_the_pre_u7_baseline(sandbox_image: str) -> None:
+def test_image_size_is_far_below_the_original_baseline(sandbox_image: str) -> None:
     # This is ALSO the same-layer proof for the cache removal: deleting the build cache in a LATER
     # layer would leave the merged filesystem clean — so the test above would still pass — while
     # the image kept shipping every byte. Only the total size tells the two apart.
@@ -309,8 +309,8 @@ def test_image_size_is_far_below_the_pre_u7_baseline(sandbox_image: str) -> None
     size = int(proc.stdout.strip())
     print(f"\nsandbox image {sandbox_image}: {size / 1_000_000:.1f} MB compressed content")
     assert size < _MAX_IMAGE_BYTES, (
-        f"{size / 1_000_000:.1f} MB — the pre-U7 image was 718.9 MB. A size at or near that means "
-        "the duplicate chown layer or root's npm cache is back in the shipped artifact."
+        f"{size / 1_000_000:.1f} MB — the pre-cleanup image was 718.9 MB. A size at or near that "
+        "means the duplicate chown layer or root's npm cache is back in the shipped artifact."
     )
 
 

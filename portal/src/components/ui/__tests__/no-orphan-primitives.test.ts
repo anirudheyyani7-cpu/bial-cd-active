@@ -1,23 +1,14 @@
 /**
- * Guard: every vendored shadcn/ui primitive is REACHED by something.
+ * Guard: every vendored shadcn/ui primitive is REACHED by something. `npx shadcn add` pulls a
+ * component and its Radix dependency together; if nothing ever imports it, nothing goes red, so
+ * it ships forever (see also `smoke.test.tsx`, an earlier pass at the same problem).
  *
- * This directory is where speculative vendoring accumulates. `npx shadcn add` pulls a
- * component and its Radix dependency in one command, the component is never wired to a
- * surface, and nothing ever goes red — so it ships forever. It has now happened twice:
- * U27 removed two zero-reference primitives (see `smoke.test.tsx`), and this change
- * removed five more (avatar/skeleton/tooltip added speculatively by #170, plus
- * collapsible and dropdown-menu orphaned since #82) along with four Radix packages that
- * were direct dependencies of nothing.
+ * A comment citing a component does NOT count as reaching it, so this matches IMPORT SPECIFIERS
+ * only — a stray "see also" citation was once the only surviving mention of an orphan.
  *
- * A comment mentioning a component does NOT count as reaching it — `popover.tsx` cites
- * `dropdown-menu.tsx` as its style precedent, and that citation was the only surviving
- * mention of a component nothing imported. So this matches IMPORT SPECIFIERS only.
- *
- * KNOWN LIMIT, stated rather than papered over: reachability here is one hop, not
- * transitive from the app's entry point. If A imports B and nothing imports A, this
- * catches A and not B — the next run, after A is deleted, catches B. That is a slower
- * guard than a real reachability walk, and a far simpler one; the failure mode is
- * "removes the pile one layer per sweep", never "lets a new orphan in unnoticed".
+ * KNOWN LIMIT: reachability is one hop, not transitive. If A imports B and nothing imports A,
+ * this catches A, then B on the next run after A is deleted — slower than a real reachability
+ * walk, but it never lets a new orphan in unnoticed.
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -64,15 +55,13 @@ function importersOf(name: string, files: string[]): string[] {
 
 describe('vendored ui primitives', () => {
   it('the primitives removed as orphans are gone from disk, not merely unimported', () => {
-    // A file still on disk is a file someone can import back — and an unused Radix
-    // dependency is the half of the removal that a source-only sweep leaves behind.
+    // A file still on disk can be imported back, and an unused Radix dependency is the half
+    // of a removal a source-only sweep misses — hence checking both disk and package.json.
     //
-    // `skeleton` and `tooltip` LEFT THIS LIST, and the distinction is the whole point of
-    // the guard rather than an exception to it. They were removed for having no consumer;
-    // #158 gave them one — the projects list's loading state and the row's
-    // clipped-description tooltip — so they are vendored deliberately now. What this
-    // asserts is "nothing sits here unused", not "these five names are banned forever";
-    // the second test below is what actually enforces that, and it covers them too.
+    // `skeleton` and `tooltip` are deliberately NOT in this list: removed once for having no
+    // consumer, they gained one later (projects-list loading state; row tooltip) and are
+    // vendored again on purpose. The second test below is what actually enforces "no
+    // orphans", and covers them too.
     const removed = ['avatar', 'collapsible', 'dropdown-menu']
     expect(primitives().filter((name) => removed.includes(name))).toEqual([])
 
@@ -80,7 +69,6 @@ describe('vendored ui primitives', () => {
       readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'),
     ) as { dependencies: Record<string, string> }
     const stillDeclared = removed.filter((name) => `@radix-ui/react-${name}` in manifest.dependencies)
-    // Every name left in the list has a Radix package of its own.
     expect(stillDeclared).toEqual([])
   })
 

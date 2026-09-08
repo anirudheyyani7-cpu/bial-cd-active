@@ -1,20 +1,14 @@
 /**
- * One project in the `/projects` grid: name, a description snippet (or a muted
- * "No description yet" when the field is null), the status in the shared vocabulary, and
- * when the details were last updated — the same two facts the list row shows, so the two
- * views cannot describe one project differently.
+ * One project in the `/projects` grid: name, description (or muted "No description yet"),
+ * status in the shared vocabulary, and last-updated — the same facts the list row shows, so
+ * the two views cannot describe one project differently.
  *
- * The status is NOT the "App / No app yet" binary this file used to draw. That reasoning
- * (lifecycle belongs to the admin registry) stopped being true when publishing moved onto
- * the citizen's own surfaces; `AppStatusBadge` below carries the current argument.
+ * A name too long for its tile gets an ellipsis AND a tooltip, gated on the span being
+ * MEASURED as clipped (like the list's) — the 8-word cap is not retroactive, so stored
+ * 120-character names are exactly the ones that clip.
  *
- * A NAME TOO LONG FOR ITS TILE gets an ellipsis AND a tooltip (§14). The 8-word cap is not
- * retroactive, so stored 120-character names are exactly the ones that clip, and the tooltip
- * is the only way to read them. Gated on the span being MEASURED as clipped, like the list's.
- *
- * Purely presentational: the page owns navigation and deletion and injects them as
- * `onOpen` / `onDelete`, so this component is trivial to render in a test with no
- * router.
+ * Purely presentational: the page owns navigation/deletion and injects them as
+ * `onOpen`/`onDelete`, so this renders trivially in a test with no router.
  */
 import { Trash2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -26,14 +20,14 @@ import { Card } from '../ui/card'
 
 /**
  * The tile's name: clipped with an ellipsis, and revealed in full on hover ONLY when it is
- * really clipped (§14). Measured on the inner span rather than the button, because that is
+ * really clipped. Measured on the inner span rather than the button, because that is
  * the element `truncate` acts on — the button is as wide as the tile either way.
  *
  * The span, not the button, also keeps `overflow:hidden` off the button so its stretched
  * `::after` still covers the tile.
  */
 function NameButton({ name, onOpen }: { name: string; onOpen: () => void }): React.JSX.Element {
-  // Shared with `ProjectRow` (round-4 review: this used to be a byte-identical copy).
+  // Shared with `ProjectRow`.
   // Measured on the inner span rather than the button, because that is the element
   // `truncate` acts on — the button is as wide as the tile either way.
   const { ref, clipped } = useClipped<HTMLSpanElement>(name)
@@ -41,8 +35,8 @@ function NameButton({ name, onOpen }: { name: string; onOpen: () => void }): Rea
   // ALWAYS MOUNTED; only `TooltipContent` is conditional. Swapping the tooltip subtree in
   // and out by branch put the ref'd `<span>` at a different tree position depending on
   // `clipped`, which React treats as a remount — the `ResizeObserver` never rebinds to the
-  // new node, so a tile widening past its clip point kept a stale tooltip armed forever
-  // (round-4). One stable position keeps one observer working for the tile's lifetime.
+  // new node, so a tile widening past its clip point kept a stale tooltip armed forever.
+  // One stable position keeps one observer working for the tile's lifetime.
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
@@ -70,13 +64,11 @@ function NameButton({ name, onOpen }: { name: string; onOpen: () => void }): Rea
 }
 
 /**
- * The status pill, in the SHARED vocabulary (#158 §10).
+ * The status pill, in the SHARED vocabulary.
  *
- * It used to read "App" or "No app yet" — a binary, on the reasoning that lifecycle belonged
- * to the admin registry. The publishing work moved that lifecycle onto the citizen's own
- * surfaces, so the card now says the same words the project page's chip does, via
- * `appStatusLabel`. The list row reads the identical helper: two views of one list must not
- * describe the same project differently.
+ * The card says the same words the project page's chip does, via `appStatusLabel`. The list
+ * row reads the identical helper: two views of one list must not describe the same project
+ * differently.
  */
 export function AppStatusBadge({
   project,
@@ -101,13 +93,13 @@ export interface ProjectCardProps {
 
 export default function ProjectCard({ project, onOpen, onDelete }: ProjectCardProps): React.JSX.Element {
   const hasDescription = typeof project.description === 'string' && project.description.trim().length > 0
-  // F-10: the card is a plain container (no role="button"). The primary open affordance is a
+  // The card is a plain container (no role="button"). The primary open affordance is a
   // real <button> on the title whose stretched ::after covers the whole card, so the card stays
   // clickable — but Delete is a SIBLING button layered above it (z-10), never an interactive
   // descendant of another interactive element. Native buttons carry keyboard activation for free
-  // (Enter/Space), so the old onKeyDown handler is gone too.
+  // (Enter/Space), so no onKeyDown handler is needed.
   return (
-    // shadcn `Card` is the tile, per §12 — the surface (border, radius, background) comes
+    // shadcn `Card` is the tile — the surface (border, radius, background) comes
     // from the primitive so a grid tile here and a card anywhere else cannot drift apart.
     // The layout and hover behaviour stay local, because they belong to THIS tile.
     <Card data-testid="project-card" className="group relative flex flex-col gap-3 rounded-2xl px-5 py-4 hover:border-primary/40 hover:shadow-sm transition font-manrope">

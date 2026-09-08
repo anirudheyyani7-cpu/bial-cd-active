@@ -1,69 +1,29 @@
 /**
- * THE ONE CONTROL THAT STARTS THE APP (Plan F, U3).
+ * THE ONE CONTROL THAT STARTS THE APP. Four action members exist — start, retry, go to the project
+ * holding the workspace, and take it back — and this renders whichever it is handed; there is no
+ * fifth, so no unreadable signal reaches a teardown or a restore from here. What the press does
+ * once it lands is the server's, and has its own tests.
  *
- * ═══ IT RENDERS THE MAP'S ACTION, AND THE MAP REACHES NOTHING DESTRUCTIVE UNASKED ═══
+ * WHY THIS EXISTS
  *
- * Four action members exist — start, retry, go to the project that holds the workspace, and take
- * the workspace back from it — and this component renders whichever one it is handed. There is no
- * fifth, so no unreadable signal can reach a teardown or a restore FROM HERE. That is a fact about
- * the client's vocabulary and this file will not claim more: what `POST /relaunch` does when the
- * word is pressed is the server's, proved in
- * `backend/tests/api/v1/build_sessions/test_preview_state.py`.
+ * `useTakeBack` is exported for `AppPane` rather than handled here, for three reasons: this
+ * component unmounts the moment a start reaches the map, long before the up-to-two-minute modal
+ * wait ends; the held arm and this one are siblings that must go inert together, which siblings
+ * sharing no state cannot do; and its busy flag stays local, because reporting it through
+ * `onStartPending` puts the map in `gettingReady()`, which offers no action — so the control would
+ * unmount its own button and un-frame the pane it is trying to fill.
  *
- * ═══ THE TAKE-BACK (`#196`, D1/D2) — WHY THE SEQUENCE IS A HOOK AND NOT A HANDLER IN HERE ═══
+ * `relaunchPreview` reaches a two-armed endpoint. ATTACH is safe: it reuses the live container and
+ * fails open on a readiness timeout. RESTORE tears the container down before pulling the last saved
+ * bundle, so a guard keeps an unreadable attach — the recorded data-loss path — out of it. A stale
+ * `asleep` read stays reachable, the registry hash having no TTL, and this control answers it with
+ * one start and whatever comes back, refusals included, never a retry or an invented recovery verb.
  *
- * `useTakeBack` is exported for `AppPane` to call, and the button below is only its trigger. Three
- * reasons, and each is a defect that shape avoids:
- *
- *  1. THIS COMPONENT UNMOUNTS ROUTINELY MID-FLIGHT. The moment a start reaches the map the state
- *     stops offering an action, and the button that fired the request is gone before the request
- *     comes back. A take-back has a wait of up to two minutes with a MODAL standing on it — a
- *     dialog owned by a component that can vanish mid-sequence is a dialog that vanishes
- *     mid-sequence. `#210`'s rule, stated for a live region, is the same rule: the thing that
- *     outlasts the wait must be mounted in a parent that outlasts the wait.
- *  2. TWO CONTROLS, ONE PIECE OF WORK. The held arm draws `Open “<holder>”` and this, as two
- *     sibling mounts of this component, and D2 requires BOTH to go inert while the take-back runs.
- *     Siblings cannot share a `useState`; their parent can.
- *  3. IT MUST NOT REPORT `onStartPending`. `resolveWorkspaceState` answers `gettingReady()` on an
- *     in-flight press, `gettingReady()` offers no action, and `AppPane` renders a control only
- *     where there is one — so a take-back that used the ordinary in-flight channel would unmount
- *     its own button and un-frame the pane it is trying to fill. The in-flight state lives on the
- *     held arm, which is to say: here, in local state, and nowhere near the map.
- *
- * ═══ KNOW WHAT IS ON THE OTHER END OF THIS BUTTON ═══
- *
- * `relaunchPreview` → `POST /v1/build-sessions/relaunch` → `relaunch_preview`, which has two arms.
- * The ATTACH arm is safe: it reuses the live container, and since the SL-20 fix it fails open on a
- * readiness timeout rather than marking the registry `ending`. The RESTORE arm is not: it tears the
- * live container down before pulling the last saved bundle. This plan added the guard that keeps an
- * unreadable attach OUT of the restore arm, because that is the arm this control enters and it was
- * the recorded data-loss path with the guard missing.
- *
- * A stale-registry read of `asleep` against a container that is in fact live is still reachable —
- * the registry hash has no TTL, so an API restart orphans live containers. This control's job there
- * is to issue one ordinary start and surface whatever the server answers, INCLUDING a refusal. It
- * does not retry on its own, escalate, or offer a recovery verb: the container's survival in that
- * case is the server's to guarantee, and a client that invented a remedy would be guessing.
- *
- * ═══ MARKED UNAVAILABLE, NEVER DISABLED ═══
- *
- * `aria-disabled`, not `disabled`. Disabling a control that currently has focus blurs it to
- * `document.body`, which drops a keyboard user out of the interface at the exact moment something
- * is happening. The name and the reason stay on it throughout.
- *
- * ═══ THE VISIBLE LABEL IS THE REASON NOW (`#210`) ═══
- *
- * It used to be that only the `aria-label` changed while a start was in flight: the words on the
- * button read "Launch Application" whether it had been pressed or not, and the only moving part
- * was a spinning glyph — which `index.css` suppresses outright for a citizen who asks for less
- * motion. Pressed and unpressed were then indistinguishable on screen. The visible label carries
- * the state instead, and the `aria-label` that used to carry it alone is GONE rather than left
- * beside it: an override that restates the visible text is a second name for one control, and
- * WCAG's label-in-name rule wants the accessible name to BE the visible words.
- *
- * NO LIVE REGION HERE, deliberately. The pane this button starts already owns one persistent
- * polite region that speaks for every one of its states (`LivePreview`), and a second region
- * describing the same start announces it twice.
+ * `aria-disabled`, never `disabled`: disabling a focused control blurs it to `document.body` and
+ * takes its name and reason with it. The VISIBLE label carries the state, where once only the
+ * `aria-label` did over words reading "Launch Application" either way; that override is gone
+ * rather than kept beside them, because a second name for one control is what WCAG's label-in-name
+ * rule forbids. No live region: `LivePreview` owns one polite region for every pane state.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -87,7 +47,7 @@ export interface StartAppControlProps {
   action: WorkspaceAction
   report: WorkspaceReport
   /**
-   * A TAKE-BACK IS IN FLIGHT ON THIS PANE, so every control on it is inert (D2).
+   * A TAKE-BACK IS IN FLIGHT ON THIS PANE, so every control on it is inert.
    *
    * It is a prop rather than local state because the two controls the held arm draws are SIBLING
    * mounts of this component, and "both go inert while one of them works" is a fact neither of them
@@ -109,8 +69,8 @@ export default function StartAppControl({ action, report, inert = false, takeBac
   const [pending, setPending] = useState(false)
   // TWO GUARDS, AND THEY ARE NOT THE SAME GUARD. The ref is synchronous, so two presses in one
   // tick collapse to one request — state would not have committed between them. `mounted` is what
-  // keeps every `await` below from writing into a component the citizen has already navigated away
-  // from, which is L6's rule for a start sequence.
+  // keeps every `await` below from writing into a component the citizen has already navigated
+  // away from.
   const inFlight = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
@@ -214,9 +174,10 @@ export default function StartAppControl({ action, report, inert = false, takeBac
         <Control
           label={action.label}
           pending={false}
-          // UNCHANGED IN LABEL AND BEHAVIOUR, per the owner's decision on `#196` — the only thing
-          // `#196` adds to it is that it goes inert while its neighbour works, which is not a
-          // change to what it does.
+          // UNCHANGED IN LABEL AND BEHAVIOUR, by decision: opening the holder is the remedy the
+          // product leads with, and it keeps its own words. The only thing the take-back adds to
+          // it is that it goes inert while its neighbour works, which is not a change to what it
+          // does.
           inert={inert}
           pendingLabel=""
           icon={<ArrowRight size={15} />}
@@ -248,7 +209,7 @@ export default function StartAppControl({ action, report, inert = false, takeBac
   }
 }
 
-// ─── THE TAKE-BACK (`#196`, D1/D2) ────────────────────────────────────────────────────────────
+// ─── the take-back ───────────────────────────────────────────────────────────────────────────
 
 /**
  * What a pane needs in order to draw the take-back and the question behind it.
@@ -271,9 +232,9 @@ export interface TakeBack {
   /** Close the question. Nothing has been stopped, saved or released. */
   cancel: () => void
   /**
-   * WHAT A TAKE-BACK THAT WORKED DID — the ending that used to report nothing (R44c, U11).
+   * WHAT A TAKE-BACK THAT WORKED DID — the ending that used to report nothing.
    *
-   * D2 gave every FAILING ending a sentence, and gave the succeeding one none: the dialog closed,
+   * Every FAILING ending has a sentence; the succeeding one had none: the dialog closed,
    * the pane framed an app, and the citizen who had just stopped somebody else's work was told
    * nothing about it. The other four endings still come through `onStartOutcome` and the map's
    * `note`, and they are deliberately NOT duplicated here — a second producer for a sentence the
@@ -290,7 +251,7 @@ export interface TakeBack {
 /**
  * TAKE THE ONE WORKSPACE BACK — the whole sequence, and every way it can end.
  *
- * ═══ THE PRESS ASKS FOR THE WORKSPACE; IT DOES NOT REACH FOR THE HOLDER ═══
+ * THE PRESS ASKS FOR THE WORKSPACE; IT DOES NOT REACH FOR THE HOLDER
  *
  * The first thing a press does is `relaunchPreview` for THIS project — the same call the start
  * control makes, unchanged. The server is what refuses, with `sandbox_reclaim_blocked`, and that
@@ -300,23 +261,25 @@ export interface TakeBack {
  *  - THE DIALOG GETS REAL DATA. Its three copy arms are chosen from `dirty`, and it withholds the
  *    Save button entirely on a confirmed-clean holder. A `PreviewState` carries no `dirty`, no
  *    `building` and no `agentWorking`, so a synthesised refusal could only ever say "may have
- *    unsaved changes" — the exact hedge R94 removed, in front of somebody whose work is safe.
+ *    unsaved changes" — the exact hedge already banned from this copy, wrong in front of somebody
+ *    whose work is safe.
  *  - THE READING CAN BE STALE. If the slot was freed since the last poll, the ask simply succeeds
  *    and the app comes up: one press, no dialog, nothing stopped.
  *  - THE SAME CALL CLOSES THE SEQUENCE. What runs after the hand-over is this same function, so
  *    another tab taking the slot mid-sequence lands on the same refusal handling and re-asks the
- *    question with the NEW holder in it (D2's fifth ending) instead of needing an arm of its own.
+ *    question with the NEW holder in it — the take-back's fifth ending — instead of needing an
+ *    arm of its own.
  *
- * ═══ THE HANDLERS RESOLVE. THEY DO NOT REJECT (D1) ═══
+ * THE HANDLERS RESOLVE, THEY DO NOT REJECT
  *
  * `ReclaimWorkspaceDialog` owns `busy` and `error` itself, and its `run()` catches EVERY rejection
  * into its own "That did not work. Please try again." alert while staying mounted. A take-back
- * whose handlers rejected would therefore report every failure through that one sentence, and D2's
- * five endings — which are pane states, with different copy and different remedies — would be
- * unreachable. So every ending here resolves, and the caller dismisses the dialog on all of them.
- * The pane is the single reporting surface.
+ * whose handlers rejected would therefore report every failure through that one sentence, and the
+ * take-back's five endings — which are pane states, with different copy and different remedies —
+ * would be unreachable. So every ending here resolves, and the caller dismisses the dialog on all
+ * of them. The pane is the single reporting surface.
  *
- * ═══ AND IT NEVER TOUCHES `captureReclaim` ═══
+ * AND IT NEVER TOUCHES `captureReclaim`
  *
  * On `/chat/{id}` the surface already owns a reclaim slot, and it is single-use, first-refusal-wins,
  * and its `resolve` awaits `retry()` — `fireRelayTurn(rawText, …)` for a refused send. Routing the
@@ -332,14 +295,14 @@ export interface TakeBack {
  * saying precisely: they never share the reclaim SLOT, so neither can swallow the other's
  * refusal. Two dialogs is a presentation problem; one swallowed refusal is a lost answer.
  *
- * ═══ WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT ═══
+ * WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT
  *
  * State writes only. The report's handlers are called regardless, exactly as the start path calls
  * them: they write into the SURFACE, which outlives this pane's controls and needs the answer. So a
  * citizen who clicks away during the two-minute stop wait produces no state update and no crash,
  * and the server sequence — which is running server-side anyway — still completes.
  *
- * ═══ `mounted` IS NOT ENOUGH, BECAUSE THE PANE DOES NOT UNMOUNT ═══
+ * `mounted` IS NOT ENOUGH, BECAUSE THE PANE DOES NOT UNMOUNT
  *
  * `AppPane` is a SIBLING of the Outlet, not a child of it — that is the whole point of the shell,
  * and it is why leaving a build chat for the project screen does not reload the running app. The
@@ -369,7 +332,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
   const [working, setWorking] = useState(false)
   const [asking, setAsking] = useState<ReclaimBlocked | null>(null)
   const [step, setStep] = useState<HandoverStep | null>(null)
-  // THE SUCCESS ENDING'S SENTENCE (R44c). See `TakeBack.outcome` — every other ending travels on
+  // THE SUCCESS ENDING'S SENTENCE. See `TakeBack.outcome` — every other ending travels on
   // `onStartOutcome` and is said by the map, and only this one had nowhere to be said at all.
   const [outcome, setOutcome] = useState<string | null>(null)
   // Synchronous, so two presses in one tick collapse to one sequence — state would not have
@@ -434,15 +397,14 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
    *
    * `stoppedHolder` is what this sequence has ALREADY done to the other project before getting
    * here — `null` on the opening ask, the holder's name once it has been stopped — and it travels
-   * into the outcome untouched, because D2's rule is that any ending which stopped the holder says
-   * so.
+   * into the outcome untouched: any ending which stopped the holder says so.
    *
-   * IT RETURNS WHICH OF THE THREE THINGS HAPPENED, and the reason is R44c. Every ending except one
-   * writes itself into the report on its way past, so the caller never had to ask; the succeeding
-   * one writes only `onStartOutcome(null)`, which is indistinguishable from "no attempt has been
-   * made". `resolve` needs to tell a start that WORKED from a start that was refused again by a new
-   * holder, because only the first has an outcome sentence to say. Reading `askingRef` afterwards
-   * would be guessing from a side effect; this answers directly.
+   * IT RETURNS WHICH OF THE THREE THINGS HAPPENED. Every ending except one writes itself into the
+   * report on its way past, so the caller never had to ask; the succeeding one writes only
+   * `onStartOutcome(null)`, which is indistinguishable from "no attempt has been made". `resolve`
+   * needs to tell a start that WORKED from a start that was refused again by a new holder, because
+   * only the first has an outcome sentence to say. Reading `askingRef` afterwards would be
+   * guessing from a side effect; this answers directly.
    */
   const askForTheWorkspace = async (
     rep: WorkspaceReport,
@@ -461,10 +423,10 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       const blocked = asReclaimBlocked(err)
       if (blocked) {
         // THE QUESTION, WITH WHOEVER IS HOLDING IT NOW. On the opening ask this is the dialog
-        // appearing; after a hand-over it is D2's fifth ending — another tab took the freed slot —
-        // and it is a return to the CHOICE screen with new data, never the dialog's generic caught
-        // error. The caller force-remounts on the holder's id, so the copy and the focus move
-        // together.
+        // appearing; after a hand-over it is the take-back's fifth ending — another tab took the
+        // freed slot — and it is a return to the CHOICE screen with new data, never the dialog's
+        // generic caught error. The caller force-remounts on the holder's id, so the copy and the
+        // focus move together.
         ifStillOurs(projectId, () => setAsking(blocked))
         return 'blocked'
       }
@@ -513,12 +475,12 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     inFlight.current = true
     setWorking(true)
     setOutcome(null)
-    // HOW FAR THE HAND-OVER GOT, and it is the ONLY thing that tells D2's endings apart. The order
-    // is `handOverWorkspace`'s and lives there: stop, wait for the stop to genuinely finish, save,
-    // release. A rejection while the step is still `stopping` therefore means nothing was stopped
-    // — the holder is untouched and its own ceiling sentence says so — while a rejection at
-    // `saving` or `releasing` means the holder is down and the slot is still held, which is a pair
-    // of facts the pane has to state.
+    // HOW FAR THE HAND-OVER GOT, and it is the ONLY thing that tells the take-back's endings
+    // apart. The order is `handOverWorkspace`'s and lives there: stop, wait for the stop to
+    // genuinely finish, save, release. A rejection while the step is still `stopping` therefore
+    // means nothing was stopped — the holder is untouched and its own ceiling sentence says so —
+    // while a rejection at `saving` or `releasing` means the holder is down and the slot is still
+    // held, which is a pair of facts the pane has to state.
     let reached: HandoverStep = 'stopping'
     try {
       try {
@@ -540,7 +502,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       }
       ifStillOurs(projectId, () => setStep('starting'))
       const ended = await askForTheWorkspace(rep, projectId, holder.projectName)
-      // ═══ THE ENDING THAT WORKED, SAID OUT LOUD (R44c, U11) ═══
+      // THE ENDING THAT WORKED, SAID OUT LOUD.
       //
       // The other four endings are already sentences on the pane, written by the map from
       // `onStartOutcome`. This one wrote only `onStartOutcome(null)` and then framed an app, so the
@@ -552,8 +514,8 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       // that the workspace is now this project's. Neither is recoverable from the reading that
       // follows.
       //
-      // ONLY ON `started`. A refusal from a NEW holder is D2's fifth ending — the question reopens
-      // and nothing has concluded — and a failure already has its own sentence.
+      // ONLY ON `started`. A refusal from a NEW holder is the take-back's fifth ending — the
+      // question reopens and nothing has concluded — and a failure already has its own sentence.
       if (ended === 'started') {
         ifStillOurs(projectId, () =>
           setOutcome(
@@ -600,7 +562,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
  * One function rather than two, because the two callers used to make this judgement separately
  * with identical code, and "what counts as the server having answered" is exactly the kind of rule
  * that drifts when it is stated twice. What they still decide for themselves is what to SAY when
- * the answer is `null` — and those two sentences are deliberately different (R4b).
+ * the answer is `null` — and those two sentences are deliberately different.
  */
 function serverMessage(err: unknown): string | null {
   return err instanceof ApiError && err.message ? err.message : null
@@ -614,8 +576,8 @@ function reasonFor(err: unknown): string {
 /**
  * Anything the server named, carried verbatim; anything it did not, called a timeout.
  *
- * The distinction is R4b's: a start that does not end in a running app says WHICH WAY it ended, and
- * "we waited and nothing came back" is a different sentence from "the server said why".
+ * A start that does not end in a running app says WHICH WAY it ended: "we waited and nothing came
+ * back" is a different sentence from "the server said why".
  */
 function outcomeFor(err: unknown): StartOutcome {
   const reason = serverMessage(err)

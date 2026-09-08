@@ -16,7 +16,7 @@ portal/*.conf text eol=lf
 *.pptx      binary
 
 # --- sandbox/ (the golden template + pre-baked base image; built on the Windows VM) ---------
-# The image is BUILT+DEPLOYED from a Windows VM (ADR-0015 / D9). A Windows checkout with
+# The image is BUILT+DEPLOYED from a Windows VM. A Windows checkout with
 # core.autocrlf=true would otherwise ship CRLF into shell scripts / Dockerfile / Caddyfile and
 # break the container at start (`#!/bin/sh\r` → "no such file or directory"). Force LF across the
 # whole tree; lockfiles are text; images/fonts are binary so they are never normalized.

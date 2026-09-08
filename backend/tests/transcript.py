@@ -1,24 +1,22 @@
 """Reading a live turn's prose in a test, the way the citizen reads it.
 
-A turn's state holds its content as ORDERED PARTS — blocks of prose interleaved with the
-steps that ran between them — because the live feed and a reloaded transcript have to put
-them in the same order. Most assertions here care about one of two things:
+WHY THIS EXISTS
+A turn's state holds its content as ORDERED PARTS — prose interleaved with the steps that ran
+between them — because the live feed and a reloaded transcript must agree on that order. Most
+assertions here care about one of two things:
 
-* WHAT was said, in which case `rendered_text` gives the blocks joined the way the browser
-  draws them, and a substring check reads naturally; or
-* WHERE it was said, in which case `state.text_blocks()` is the list to compare against
-  directly — an equality on the list is what pins the order this plan exists to fix, and a
-  joined string would pass whether or not the blocks were interleaved correctly.
+* WHAT was said — `rendered_text` joins the blocks the way the browser draws them, so a
+  substring check reads naturally; or
+* WHERE it was said — `state.text_blocks()` is the list to compare against directly, since an
+  equality on the list is what pins the correct order (a joined string would pass either way).
 
-Joined with the engine's own separator rather than an empty string: the blocks are separate
-paragraphs, and concatenating them raw runs the last sentence of one into the first word of
-the next — which is the defect that constant exists to prevent.
+Joined with the engine's own separator, not an empty string: concatenating raw paragraphs runs
+the last sentence of one into the first word of the next.
 
 `live_shape` and `reload_shape` answer the third question — whether a WATCHING tab and a
-RELOADED one end up reading the same thing. They live together here because the only way that
-comparison means anything is if both sides are reduced by one pair of functions that agree on
-what "on the screen" is; two files each keeping their own copy is how the two orders drift
-apart in the first place.
+RELOADED one read the same thing. They live together because the comparison only means
+something if both sides are reduced by functions that agree on what "on the screen" is; two
+files each keeping their own copy is how the two orders would drift apart.
 """
 
 from __future__ import annotations
@@ -50,19 +48,14 @@ def rendered_text(state: _HasTextBlocks) -> str:
 
 
 def live_shape(state: _HasRing) -> list[str]:
-    """The live feed reduced to what a watching tab still shows, in order.
+    """The live feed reduced to what a watching tab still shows, in order. Text and steps
+    only, so the shape is comparable across frame types only one side has (workspace,
+    compile, preview, the reasoning working status).
 
-    Text and steps only: this is the sequence a reload has to reproduce, and comparing shapes
-    rather than raw frames keeps the two comparable across the frame types only one side has
-    (workspace, compile, preview, and the working status that reasoning raises).
-
-    REDUCED THE WAY THE BROWSER REDUCES IT, which is the half that makes the comparison mean
-    anything. A step arrives more than once on the same `tool_call_id` and the later frame
-    REPLACES the earlier one in place, so the last frame for an id is what the tab is showing
-    when the turn ends — and a step whose last frame is hidden has left the screen. Counting
-    `started` frames alone would report a row as present however it was later withdrawn, which
-    is exactly the drift between a watching tab and a reloaded transcript these comparisons
-    exist to catch."""
+    REDUCED THE WAY THE BROWSER REDUCES IT: a step arriving again on the same `tool_call_id`
+    REPLACES the earlier frame, so the LAST frame for an id decides whether it's on screen
+    when the turn ends — counting `started` frames alone would report a row as present
+    however it was later withdrawn, the exact drift these comparisons exist to catch."""
     order: list[tuple[str, str]] = []  # ("text", the words) | ("step", the tool_call_id)
     steps: dict[str, StepItem] = {}
     for frame in state.ring:

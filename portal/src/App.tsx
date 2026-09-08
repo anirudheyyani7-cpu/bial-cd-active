@@ -11,7 +11,7 @@ import WorkspaceShell from './components/workspace/WorkspaceShell'
 import { isAuthenticated, bootstrapSession } from './utils/auth'
 
 /**
- * The boot / silent-refresh wait — WORDS, not only a spinner (`#210`).
+ * The boot / silent-refresh wait — WORDS, not only a spinner.
  *
  * `index.css`'s reduced-motion block suppresses `.animate-spin` outright, so for a citizen who
  * asks for less motion this screen was a stationary circle and nothing else: a full-bleed white
@@ -38,12 +38,9 @@ function AuthLoading() {
 }
 
 /**
- * Route guard. Auth state derives from a ONCE-CACHED GET /auth/me (the session
- * context): the session JWT lives in an HttpOnly cookie the SPA cannot read, so
- * the server is the source of truth. bootstrapSession() resolves it once —
- * transparently attempting a silent cookie refresh if the session JWT has
- * expired — and every later navigation reuses the cache with no refetch and no
- * spinner:
+ * Route guard. Auth state derives from a ONCE-CACHED GET /auth/me: the session JWT lives in an
+ * HttpOnly cookie the SPA cannot read, so the server is the source of truth. bootstrapSession()
+ * resolves it once, silently refreshing an expired JWT, and later navigations reuse the cache:
  *   - session cached           → render immediately (no async, no flicker)
  *   - first visit / bootstrap  → spinner while /auth/me resolves; render on hit
  *   - no valid session         → redirect to /login
@@ -76,7 +73,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   if (status === 'redirect') return <Navigate to="/login" replace />
 
-  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT (ASM5).
+  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT.
   //
   // A live region inserted together with its text is missed entirely by several reader-and-browser
   // combinations — `TurnBanner` and `LivePreview` both record it — and this wait has no leaf of its
@@ -105,21 +102,21 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        {/* THE PROJECT LIST IS THE LANDING SCREEN (#158 §7). `/dashboard` used to be a
+        {/* THE PROJECT LIST IS THE LANDING SCREEN. `/dashboard` used to be a
             welcome page whose only job was a button to `/projects`; once the project list
             carries the summary numbers, that hop has nothing left to do. Both addresses
             still resolve so existing links, bookmarks and the navbar keep working — the
             welcome page is what went, not the URL. */}
         <Route path="/dashboard" element={<Navigate to="/projects" replace />} />
-        {/* Enterprise Space + Team Space were POC features, removed long ago. These
-            redirects outlived the welcome page they pointed at; they now land on the list
-            like everything else. Worth deleting once nothing links to them. */}
+        {/* Enterprise Space and Team Space are not features of this product. These two
+            addresses resolve only so old links and bookmarks land on the list rather than
+            on nothing; they are safe to delete once nothing points at them. */}
         <Route path="/enterprise" element={<Navigate to="/projects" replace />} />
         <Route path="/teamspace" element={<Navigate to="/projects" replace />} />
 
         {/* Project-first: a project is the thing you open, name, and return to. */}
         <Route path="/projects" element={<RequireAuth><ProjectsPage /></RequireAuth>} />
-        {/* Cross-user by design (#145): every signed-in BIAL user sees the same catalog. */}
+        {/* Cross-user by design: every signed-in BIAL user sees the same catalog. */}
         <Route path="/marketplace" element={<RequireAuth><MarketplacePage /></RequireAuth>} />
         {/* THE WORKSPACE. A pathless layout route wrapping both addresses inside a project, so
             the shell — and above all the running app it holds — is preserved across a move
@@ -141,12 +138,9 @@ export default function App() {
             reached on the apps hostname at `/a/<key>/` (nginx SITE 2), never from here. */}
         <Route element={<RequireAuth><WorkspaceShell /></RequireAuth>}>
           <Route path="/projects/:projectId" element={<ProjectPage />} />
-          {/* One flat chat URL for both kinds, and ONE surface behind it: `ChatRoute` renders
-              `ConversationSurface` whatever the conversation's `kind` is — the kind changes the
-              tools a turn is handed on the server, never which component mounts here. (This
-              used to fork between two pages, which is exactly the branch the unified surface
-              removed.) The project is a breadcrumb resolved from the chat, never a path
-              segment. */}
+          {/* One flat chat URL for both kinds: `ChatRoute` mounts the same surface whatever the
+              conversation is, and the project is a breadcrumb resolved from the chat rather than
+              a path segment. */}
           <Route path="/chat/:chatId" element={<ChatRoute />} />
         </Route>
 

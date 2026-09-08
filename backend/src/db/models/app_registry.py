@@ -1,37 +1,11 @@
-"""The `app_registry` table — the app-lifecycle spine for generated apps
-(R18, R4; ADR-0004, ADR-0006, ADR-0008).
+"""The `app_registry` table — the app-lifecycle spine for generated apps.
 
-One row per generated app. The row's `id` IS the appId (`AE3` identifier
-preservation): a new app gets a UUIDv7 PK; the later one-time Cosmos→Postgres
-backfill inserts a migrated app carrying its *existing* appId directly as the PK —
-no `legacy_id`, no dual-lookup — so already-deployed apps and previously-issued
-URLs keep resolving. `app_key` is a `secrets.token_urlsafe` label, NEVER a raw
-UUID (ADR-0006); it is a publishable scoping key (the Stripe publishable-key
-model), not a secret — the real wall is the IP-restricted network.
+One row per generated app, and the row's `id` IS the appId: a new app gets a UUIDv7 PK, and the
+one-time Cosmos→Postgres backfill inserts a migrated app carrying its *existing* appId directly
+as the PK, so already-deployed apps and previously-issued URLs keep resolving.
 
-Ownership is the single-tenant boundary (`OwnedByUserMixin` → `user_id`, ADR-0004):
-every query over an app is scoped by the owning `user_id`. The app is **project-scoped**
-(KD-4): `project_id` is a NOT NULL FK and `uq_app_registry_project` enforces exactly
-ONE app per project (a project is one tool = one codebase). `conversation_id` is
-repurposed from the old 1:1 `id == conversation_id` identity into a SOFT head pointer
-to the LAST builder session that touched the app — a plain indexed UUID with no FK;
-the ownership/isolation predicate is `user_id`, never the conversation.
-
-`status` is a native PG enum (ADR-0008). The registry records artifact *references*,
-never artifact bytes (APPROVAL D1): `source_submission_id` + `source_commit_sha` point
-at the immutable per-submission git bundle `submit` copies into Blob, and
-`approved_submission_id` pins the exact submission an admin reviewed. The blob key is
-derivable from `(app_id, submission_id)` via `submission_key`, so it is not stored.
-`deployed_url` is the one field a human types: the address the manual go-live runbook
-produced, recorded at mark-deployed so the owner sees a Live link (R5).
-
-`approval_route` records which LINEAGE the current submission entered through (R17a):
-`runbook` approvals authorise the manual go-live runbook and nothing else, while
-`self_publish` approvals let the owner publish the pinned version themselves — and the
-runbook levers (deploy-needed, mark-deployed) are refused for that lineage. `declaration`
-carries what the publish flow attached at submit: both answer sets, the differences, and
-the redacted explanation the administrator's review screen leads with (R15).
-"""
+The registry records artifact *references*, never bytes and never a blob key — the key derives
+from `(app_id, submission_id)` via `submission_key`."""
 
 from __future__ import annotations
 
@@ -72,23 +46,14 @@ app_status_enum = sa.Enum(
 
 
 class ApprovalRoute(StrEnum):
-    """How the CURRENT submission entered the approval queue (R17a, P5). Values are
-    the native PG enum labels.
+    """How the CURRENT submission entered the approval queue. Values are native PG enum labels.
 
-    An EXPLICIT column, not a derivation tweak (ASM8): `redeploy_needed` derives from
-    two columns a self-published app never sets, so without this a self-published app
-    would read "Deploy needed" forever and prompt an administrator to run a runbook
-    that must not be run. The two lineages authorise DIFFERENT things:
+    An EXPLICIT column, not a derivation: `redeploy_needed` derives from two columns a
+    self-published app never sets, so without it such an app would read "Deploy needed" forever
+    and prompt an administrator to run a runbook that must not be run.
 
-    * `runbook` — the retired citizen submit route, plus every pre-feature row the
-      0030 backfill marked. Approval authorises the manual go-live runbook only; it
-      never satisfies the publish gate's self-publish rule (P5). This lineage gets no
-      new entrants — a runbook-lineage PENDING item cannot even be approved anymore
-      (the citizen must re-submit through the publish flow).
-    * `self_publish` — the publish flow routed the app here with its declaration.
-      Approval pins the version the citizen may publish THEMSELVES; the runbook
-      levers (deploy-needed, mark-deployed) are suppressed and refused.
-    """
+    `runbook` authorises the manual go-live runbook only and takes no new entrants; `self_publish`
+    pins the version the citizen may publish THEMSELVES, and its runbook levers are refused."""
 
     RUNBOOK = "runbook"
     SELF_PUBLISH = "self_publish"
@@ -104,16 +69,15 @@ approval_route_enum = sa.Enum(
 )
 
 
-# The lifecycle state machine (Express `ALLOWED_FROM` heritage): target status →
-# the set of source statuses a transition INTO it is allowed from. `draft` is minted
-# by provision AND is the withdrawal target (U8: P6) — an owner pulling their own
-# pending submission back OUT of the queue moves pending→draft, clearing the
-# submission pin, the declaration and the lineage as it goes. No other status
-# reaches draft: approve/reject/disable all move forward, never back to unsubmitted.
-# A transition is applied as an atomic `UPDATE ... WHERE status = ANY(allowed)`;
+# The lifecycle state machine (Express `ALLOWED_FROM` heritage): the KEY is the target
+# status and the value is the set of sources a transition INTO it may start from — read
+# the other way round the map says the opposite of what it means. `DRAFT: {PENDING}` is
+# the one backwards-looking entry, and it is withdrawal rather than a rollback of a
+# decision: remove it and an owner can no longer pull their own pending submission out of
+# the queue. A transition is applied as an atomic `UPDATE ... WHERE status = ANY(allowed)`;
 # zero rows updated is a rejected (illegal) transition (→ 409), never a silent no-op.
 #
-# `DISABLED` accepts DRAFT and REJECTED as well as APPROVED (#163). The kill switch used
+# `DISABLED` accepts DRAFT and REJECTED as well as APPROVED. The kill switch used
 # to reach approved apps ONLY, and the ORDINARY member of the marketplace catalog is a
 # DRAFT — one-click deploy never writes a status (`deployment.py`: "a self-deployed app is
 # still `draft`") — so the two categories most likely to need switching off could only be
@@ -136,10 +100,10 @@ STATUS_TRANSITIONS: dict[AppStatus, frozenset[AppStatus]] = {
 
 # Publishable app-key shape (Express `bial_${randomBytes(24).base64url}`): the
 # `bial_` prefix + 32 url-safe chars. token_urlsafe(24) yields the identical shape
-# (base64url of 24 bytes, no padding). NEVER a raw UUID (ADR-0006).
+# (base64url of 24 bytes, no padding). NEVER a raw UUID.
 _APP_KEY_PREFIX = "bial_"
 
-# The recorded deployed-app URL cap (R5). 2083 is the historical IE address-bar
+# The recorded deployed-app URL cap. 2083 is the historical IE address-bar
 # ceiling that pydantic's own `HttpUrl` adopts as `max_length` — reusing the number
 # keeps the schema boundary and the column exactly the same width, so a URL that
 # parses can never overflow the column.
@@ -156,17 +120,15 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     __tablename__ = "app_registry"
 
     __table_args__ = (
-        # ONE app per project (KD-4): a project IS one tool = one codebase, so the app
-        # is now project-scoped, not conversation-scoped. This replaces the old
-        # `(user_id, conversation_id)` uniqueness — provision reuses the project's
-        # single app (the continuity case) rather than minting one per builder session.
+        # ONE app per project: a project IS one tool = one codebase, so the app is
+        # project-scoped, not conversation-scoped. Provision reuses the project's single app
+        # (the continuity case) rather than minting one per builder session.
         sa.UniqueConstraint("project_id", name="uq_app_registry_project"),
     )
 
-    # The parent project (R2/R22, KD-4). Every app belongs to exactly one project; the
-    # cascade is a row-integrity backstop only — a raw delete that bypasses the U6
-    # blob-aware cascade orphans object-store blobs (KD-3a). `user_id` stays the
-    # isolation predicate (ADR-0004); `project_id` is organizational, not tenancy.
+    # The parent project. Every app belongs to exactly one project; this DB cascade is a
+    # row-integrity backstop only — a raw delete that bypasses the blob-aware project cascade
+    # orphans the app's object-store blobs, because a DB cascade never reaches the store.
     # No `index=True`: `uq_app_registry_project`'s unique index covers lookups.
     project_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid,
@@ -174,17 +136,16 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
         nullable=False,
     )
 
-    # The publishable scoping key, surfaced by `GET /apps/{id}/status` and consumed by
-    # the portal's approval view. Unique + indexed. (The per-request app-key chain that
-    # once point-read this column died with the shared data plane; the key itself and
-    # its uniqueness guarantee did not.)
+    # The publishable scoping key, surfaced by `GET /apps/{id}/status` and consumed by the
+    # portal's approval view. A label, not a secret — the wall in front of a deployed app is
+    # the IP-restricted network — so nothing may treat holding this key as authorisation.
     app_key: Mapped[str] = mapped_column(sa.String(64), unique=True, index=True, nullable=False)
 
-    # Head pointer to the LAST builder session that touched this app (KD-4). Repurposed
-    # from the old 1:1 `id == conversation_id` app↔conversation identity: the app is now
-    # project-scoped, and many sessions build against it over its life, so this tracks
-    # the most recent builder session. Still a plain indexed UUID with NO ForeignKey
-    # (soft link); ownership/isolation is `user_id`, never this column.
+    # Head pointer to the LAST builder session that touched this app. The app is
+    # project-scoped and many sessions build against it over its life, so this tracks the
+    # most recent one.
+    # A plain indexed UUID with NO ForeignKey — a soft link, and deleting a conversation
+    # does not clear it, so a reader must tolerate an id whose row is gone.
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True, nullable=True)
 
     # Admin-owned gate on the deployed app (login can't be "prompted away" by app
@@ -197,9 +158,9 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
         app_status_enum, server_default=AppStatus.DRAFT.value, nullable=False
     )
 
-    # WHAT THE APP WAS BEFORE THE KILL SWITCH (#163, R42). `disable` writes the pre-disable
-    # status here — from the column itself, inside the same guarded UPDATE, so it can never
-    # record a status the row had stopped holding — and `enable` restores from it.
+    # WHAT THE APP WAS BEFORE THE KILL SWITCH. `disable` writes the pre-disable status here —
+    # from the column itself, inside the same guarded UPDATE, so it can never record a status
+    # the row had stopped holding — and `enable` restores from it.
     #
     # IT EXISTS BECAUSE `disable` NOW REACHES DRAFT AND REJECTED APPS. Enable used to resolve
     # to the literal APPROVED, which on a never-approved app invents an approval nobody gave;
@@ -216,7 +177,7 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     # for the same reason, because that is what the code before it resolved them to.
     previous_status: Mapped[AppStatus | None] = mapped_column(app_status_enum, nullable=True)
 
-    # Code continuity's original store (KD-9, R21) — same shape as the retired
+    # Code continuity's original store — same shape as the retired
     # `conversations.code`'s `{current: {source, entry, ...}}`. IT HAS NO WRITER ANY MORE:
     # the seed-on-open / write-back-on-build pair this was built for died with the
     # `conversations.code` column (0024), and code truth moved to the sandbox's file tree
@@ -226,18 +187,14 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     # It is READ, which is why the column stays: `services/projects/describe.py` pulls the
     # source out of it for the project-description generator, which 409s on a NULL. So a
     # project that predates the move still describes itself, and one that does not, cannot.
-    #
-    # AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see
-    # the audit record.
     current_code: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
-    # The submission under review (APPROVAL R1/R4): `submit` copies the app's
-    # mutable snapshot bundle to the immutable `submission_key(app_id,
-    # source_submission_id)` blob and records the ref + the bundle's HEAD commit
-    # SHA here. NULL until the first submit; every re-submit mints a FRESH
-    # submission id (ids are never reused, R2). `submitted_at` is the admin
-    # queue's order axis (R16). Approve is guarded on `source_submission_id`
-    # (D5), so a re-submit between review and approval updates zero rows → 409.
+    # The submission under review: `submit` copies the app's mutable snapshot bundle to
+    # the immutable `submission_key(app_id, source_submission_id)` blob and records the
+    # ref + the bundle's HEAD commit SHA here. NULL until the first submit; every
+    # re-submit mints a FRESH submission id (ids are never reused). `submitted_at` is the
+    # admin queue's order axis. Approve is guarded on `source_submission_id`, so a
+    # re-submit between review and approval updates zero rows → 409.
     source_submission_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
     source_commit_sha: Mapped[str | None] = mapped_column(sa.String(40), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(
@@ -251,19 +208,17 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     approved_submission_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
     approved_commit_sha: Mapped[str | None] = mapped_column(sa.String(40), nullable=True)
 
-    # The manual-runbook marker (D7): a marker, NOT a status — `mark-deployed`
+    # The manual-runbook marker: a marker, NOT a status — `mark-deployed`
     # records that a human ran the go-live runbook for this exact submission.
     # `redeploy_needed` is derived as `approved_submission_id !=
     # deployed_submission_id` (exact, clock-skew-free).
     deployed_submission_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
     deployed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
-    # Where the deployed app actually lives — DATA, not automation (R5): the admin
-    # pastes the URL the manual go-live runbook produced, and the owner gets a Live
-    # link. NULL until an admin records one; mark-deployed with no URL LEAVES this
-    # alone (a re-deploy of the same app keeps the same address), so the owner's
-    # link survives every redeploy. Length matches the `MAX_DEPLOYED_URL` boundary
-    # cap, so a value that parses at the schema always fits the column.
+    # Where the deployed app actually lives — DATA, not automation: the admin pastes the
+    # URL the manual go-live runbook produced, and the owner gets a Live link. NULL until an
+    # admin records one; mark-deployed with no URL LEAVES this alone (a re-deploy of the same
+    # app keeps the same address), so the owner's link survives every redeploy.
     deployed_url: Mapped[str | None] = mapped_column(sa.String(MAX_DEPLOYED_URL), nullable=True)
 
     # Governance metadata (set by the admin surface).
@@ -271,7 +226,7 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     approved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
     rejection_note: Mapped[str | None] = mapped_column(sa.String(1000), nullable=True)
 
-    # P4's durable half. `status` answers "where is this app in its lifecycle" and a
+    # The durable half of a refusal. `status` answers "where is this app in its lifecycle" and a
     # citizen may legitimately move it (publish routes REJECTED->PENDING, withdraw moves
     # PENDING->DRAFT); this answers "has a human refused it", and ONLY an administrator
     # clears it — `reject` raises it, `approve` lowers it, nothing on the citizen's side
@@ -282,25 +237,24 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
         sa.Boolean, nullable=False, server_default=sa.false()
     )
 
-    # The submission's lineage (R17a, P5 — see `ApprovalRoute`). NULLABLE, and NULL is a
-    # real state, not sloppiness: a never-submitted draft has no lineage, and a row the
-    # interim submit path wrote between 0030 and the publish-flow submit service (U8)
-    # carries NULL and keeps today's behaviour everywhere — the projection treats only
-    # an explicit `self_publish` as suppressing the runbook levers, and approve refuses
-    # only an explicit `runbook`. The 0030 backfill marked every pre-feature row with an
-    # approval AND every then-outstanding pending row as `runbook`, which is what makes
-    # "approvals granted before this shipped do not authorise self-publishing" true.
+    # The submission's lineage (see `ApprovalRoute`). NULLABLE, and NULL is a real state,
+    # not sloppiness: a never-submitted draft has no lineage, and a row the interim submit
+    # path wrote before the publish-flow submit service landed carries NULL and keeps today's
+    # behaviour everywhere — the projection treats only an explicit `self_publish` as
+    # suppressing the runbook levers, and approve refuses only an explicit `runbook`. The
+    # 0030 backfill marked every pre-feature row with an approval AND every then-outstanding
+    # pending row as `runbook`, which is what makes "approvals granted before this shipped do
+    # not authorise self-publishing" true.
     approval_route: Mapped[ApprovalRoute | None] = mapped_column(
         approval_route_enum, nullable=True
     )
 
-    # What the publish flow attached at submit (R15): both answer sets (the citizen's and
-    # the review's), the per-question differences, and the citizen's REDACTED explanation
-    # — the payload the administrator's review screen leads with. JSONB for the same
-    # reason `deployments.classification` is: the questionnaire is expected to be
-    # reworded and reweighted, and a typed shape would make that a migration every time.
-    # Written by the publish-flow submit (U8), cleared by withdraw; NULL for every
-    # runbook-lineage and pre-feature row (the review screen says so rather than
-    # rendering blanks). Never contains evidence locations — internal evidence stays
-    # internal (OD-B).
+    # What the publish flow attached at submit: both answer sets (the citizen's and the
+    # review's), the per-question differences, and the citizen's REDACTED explanation — the
+    # payload the administrator's review screen leads with. JSONB for the same reason
+    # `deployments.classification` is: the questionnaire is expected to be reworded and
+    # reweighted, and a typed shape would make that a migration every time. Written by the
+    # publish-flow submit, cleared by withdraw; NULL for every runbook-lineage and
+    # pre-feature row (the review screen says so rather than rendering blanks). Never
+    # contains evidence locations — internal evidence stays internal.
     declaration: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

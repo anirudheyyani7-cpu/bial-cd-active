@@ -1,6 +1,7 @@
 """The pre-publish classification review — the AI check that pre-fills the six
 data-classification questions from an app's last saved code.
 
+WHY THIS EXISTS
 Module map (mirrors `services/deploy`'s layout; consumers import the module they need,
 `from src.services.classification import store`):
 
@@ -15,8 +16,8 @@ Module map (mirrors `services/deploy`'s layout; consumers import the module they
 * `scan` — the model-free credential sweep over the extracted tree: the read-tools
   jail applied to its own walk, per-file truncation surfacing as an INCOMPLETE sweep.
 * `merge` — the PURE per-question merge (three sources, one effective answer): the
-  truth table U9's stricter-of gate consumes, with the recorded disagreement kinds.
+  truth table the stricter-of gate consumes, with the recorded disagreement kinds.
 * `service` — the runner: the two-verb contract (start / read), the detached run with
   its throwaway extraction, the scan-first prompt, the guided truncation retry, the
-  failure taxonomy, the Tier A floor, and the per-run usage + P7 audit records.
+  failure taxonomy, the Tier A floor, and the per-run usage and audit records.
 """

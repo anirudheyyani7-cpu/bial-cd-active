@@ -1,25 +1,4 @@
-"""The scheduled reclamation pass — report-only until somebody flips a second flag (U11).
-
-WHAT THIS DOES TODAY: enumerates Azure (U9), reads the coordination store as a spare-list, runs the
-confidence-tier classifier (U10), **stamps the staging tag on first-sighting candidates**, writes a
-pass record, and logs what it would destroy. It destroys nothing unless the second flag is on, and
-that flag is off in every environment.
-
-STAGING IS NOT DESTRUCTION AND IS NOT GATED LIKE IT. The tag is how one pass tells the next that it
-saw this container — the mechanism behind the two-independent-reads rule — and a container carrying
-it stays fully attachable, so a citizen coming back clears it and is spared. Gating the stamp on
-the destroy flag would have made `Verdict.DESTROY` unreachable by construction.
-
-TWO FLAGS, NOT ONE. `reclaim_enabled` turns the pass on; `reclaim_destroy` lets it act. One switch
-would mean the only way to learn what reclamation would do is to let it do it, and there would be
-no state in which an operator reads a candidate list before agreeing to it.
-
-THE PASS RECORD IS THE POINT OF THE OBSERVABILITY HALF. Every alarm this pass raises is emitted BY
-the pass, so a crashlooping scheduler emits nothing and reads exactly like a healthy quiet fleet —
-the origin incident's epistemic failure moved one layer out. The only detector of a dead worker is
-the ABSENCE of a record, so a record is written on EVERY outcome, including a zero-candidate pass
-and a failed one. A pass that fails every time must not look like a pass that never runs.
-"""
+"""The scheduled reclamation pass — report-only until somebody flips its destroy flag."""
 
 from __future__ import annotations
 
@@ -36,28 +15,21 @@ _log = structlog.get_logger()
 
 #: The task's own name, and the `task_name` its pass records carry.
 RECLAMATION_TASK_NAME: Final = "sandbox_reclamation"
-#: Pinned, not minted — `LabelScheduleSource` generates a fresh id for any schedule that omits one,
-#: so an unpinned id changes on every process start and the scheduler cannot dedupe across a
-#: restart (the same trap `deploy_reconcile` documents).
 RECLAMATION_SCHEDULE_ID: Final = "sandbox-reclamation-every-15m"
 
-#: Every fifteen minutes. Slower than deploy-reconcile because a pass enumerates the whole fleet
-#: over ARM, and because the staging interval (U10) is fifteen minutes — a cadence faster than the
-#: interval would let two "independent" reads land inside one window, which is exactly the
-#: independence the two-pass rule buys.
+#: Every fifteen minutes, and it must not be sped up: the staging interval is fifteen minutes
+#: too, so a faster cadence would let two "independent" reads land inside one window — exactly
+#: the independence the two-pass rule buys.
 RECLAMATION_CRON: Final = "*/15 * * * *"
 
-# --- the two event constants R20 asks an alert rule to grep for ---------------------------
-#
-# DISTINCT NAMES ON PURPOSE. One says "the fleet is bigger than anyone intended" and is emitted by
-# a pass that ran; the other says "a pass ran at all". An alert rule keyed on the first cannot
-# detect a dead worker, because a dead worker never emits it — which is the whole reason the
-# second exists and why its ABSENCE is the alarm.
+# Named constants because an alert rule greps for exactly these strings, and distinct because they
+# answer different questions: the fleet alarm is only ever emitted by a pass that RAN, so a rule
+# keyed on it cannot tell a quiet fleet from a worker that has stopped.
 FLEET_THRESHOLD_EVENT: Final = "sandbox_fleet_over_threshold"
 PASS_COMPLETED_EVENT: Final = "sandbox_reclamation_pass_completed"
 
 #: A THIRD NAME, because it answers a third question: WHICH FLEET was any of that about? The two
-#: events above describe a fleet without ever naming one, and `#190` found a worker configured
+#: events above describe a fleet without ever naming one, and a worker has been found configured
 #: against a subscription retired two rotations earlier — it would have reported an empty fleet,
 #: truthfully, about somebody else's subscription. Nothing in the platform said so. This is the
 #: line an operator greps to confirm the worker they are looking at is judging the containers
@@ -75,10 +47,10 @@ def _enumerated_fleet() -> str | None:
     """The fleet this pass answers about — `resource_group/managed_environment` — or `None`.
 
     NO SUBSCRIPTION ID, EVER. This string is written to `WorkerPass.detail`, which an admin
-    endpoint reads back into a response body; a subscription id is an Azure account identifier and
-    belongs in the server-side log beside it (`.claude/rules/security.md`, C10 §3.6). The resource
-    group and the managed environment are what distinguish one deployment's fleet from another's,
-    which is the whole question `#190` could not answer.
+    endpoint reads back into a response body; a subscription id is an Azure account identifier, so
+    it belongs in the server-side log beside it and never in a response. The resource group and the
+    managed environment are what distinguish one deployment's fleet from another's, which is the
+    question a bare count could not answer.
     """
     sandbox = settings.sandbox
     if sandbox is None:
@@ -91,7 +63,7 @@ def _enumerated_fleet() -> str | None:
 def _detail_with_fleet(detail: str | None) -> str | None:
     """The pass's own reason, plus the fleet it was a reason ABOUT.
 
-    `scanned: 0` READ WITHOUT A FLEET IS UNFALSIFIABLE (`#190`). A pass that declined and a pass
+    `scanned: 0` READ WITHOUT A FLEET IS UNFALSIFIABLE. A pass that declined and a pass
     that swept the wrong subscription both report zero, and an operator holding only the count
     cannot tell which they are in — so every record says which fleet the number describes.
     """
@@ -101,20 +73,14 @@ def _detail_with_fleet(detail: str | None) -> str | None:
 
 
 def _log_the_fleet() -> None:
-    """Name the fleet this tick is about, once, before anything decides whether to look at it.
+    """Name the fleet this tick is about, before anything decides whether to look at it.
 
-    BEFORE THE FLAG GATE, DELIBERATELY, and that ordering is the whole fix. The worker in `#190`
-    was misconfigured in both halves at once — the flag was off AND the subscription was a dead
-    one — so a line emitted only on a pass that RUNS would never have been emitted at all, on the
-    exact deployment that needed it. A declined pass is still a worker asserting an opinion about
-    a fleet; it should have to say which.
-
-    AND THE SUBSCRIPTION ID GOES HERE, WHICH IS THE OTHER HALF OF THE SPLIT. `_enumerated_fleet`
-    keeps it out of `WorkerPass.detail` because an admin endpoint reads that column back into a
-    response body; this is the server-side log, where an Azure account identifier belongs and
-    where it is the only field precise enough to settle "which subscription is this worker on".
-
-    Costs structlog and a settings read — nothing the flag gate was protecting the process from.
+    Runs BEFORE THE FLAG GATE on purpose: the worker that exposed this bug had the flag off AND a
+    dead subscription at once, so logging only on a pass that runs would have stayed silent on the
+    exact deployment that needed it — a declined pass is still an opinion about a fleet, and must
+    say which. THE SUBSCRIPTION ID GOES HERE rather than in `WorkerPass.detail`, which an admin
+    endpoint returns verbatim, because this log is the only place precise enough to name which
+    subscription a worker is judging. Only a settings read either way.
     """
     sandbox = settings.sandbox
     if sandbox is None:
@@ -134,9 +100,10 @@ def _log_the_fleet() -> None:
 def _off_duty_because() -> str | None:
     """Why this pass must not run, or `None` when it may.
 
-    Reported separately because they mean different things to whoever reads the log: `unconfigured`
-    is "this deployment has no ARM access at all", the ordinary local posture; `flag_off` is "it
-    does, and reclamation has not been switched on" — the state every environment ships in."""
+    Two strings rather than a bool, because they mean different things to whoever reads the log:
+    `unconfigured` is "this deployment has no ARM access at all", the ordinary local posture;
+    `flag_off` is "it does, and reclamation has not been switched on" — the state every
+    environment ships in."""
     sandbox = settings.sandbox
     if sandbox is None:
         return "unconfigured"
@@ -150,17 +117,16 @@ def _off_duty_because() -> str | None:
     schedule=[{"cron": RECLAMATION_CRON, "schedule_id": RECLAMATION_SCHEDULE_ID}],
 )
 async def reclaim_abandoned_sandboxes() -> None:
-    """One reclamation pass. Reports; destroys nothing until U15 and a second flag.
-
-    THE FLAG GATE COMES FIRST, before a single heavy import — the same contract
-    `deploy_reconcile` set. A disabled task costs structlog, the broker and the settings profile
-    and nothing else, so adding a passenger never taxes a deployment that has not turned it on.
-
-    NOTHING IS SWALLOWED. A raise is caught by the receiver, logged with a traceback, recorded as
-    a failed pass, and re-driven by the next tick. Swallowing would buy nothing and hide the one
-    signal that distinguishes a broken pass from an absent one."""
+    """One reclamation pass. Reports; destroys nothing until `reclaim_enabled` and
+    `reclaim_destroy` are both on. THE FLAG GATE COMES FIRST, before any heavy import — the same
+    contract `deploy_reconcile` set, so a disabled task costs only structlog, the broker and the
+    settings profile. NOTHING IS SWALLOWED: a raise is caught by the receiver, logged with a
+    traceback, recorded as a failed pass, and re-driven next tick — swallowing would hide the one
+    signal that tells a broken pass from an absent one."""
     # FIRST, AND OUTSIDE THE GATE. A worker that declines every tick still has a fleet it is
-    # declining ABOUT, and `#190` is what it costs when nothing says which one.
+    # declining ABOUT — reporting nothing without naming it is what let a worker pointed at a
+    # retired subscription read as a healthy quiet fleet, with nothing on record to say which
+    # subscription it was judging.
     _log_the_fleet()
     off_duty = _off_duty_because()
     if off_duty is not None:
@@ -168,8 +134,6 @@ async def reclaim_abandoned_sandboxes() -> None:
         await _record_pass(outcome="declined", counts={}, detail=off_duty)
         return
 
-    # Imported inside the flag gate, deliberately: the ARM SDK, the ORM and the classifier are all
-    # heavy, and a deployment with reclamation off must not pay for them.
     from src.services.build_sessions.reclamation_pass import run_reclamation_pass
 
     try:
@@ -190,8 +154,8 @@ async def reclaim_abandoned_sandboxes() -> None:
         "not_ours": report.not_ours,
     }
     if report.store_fault:
-        # The classifier refused to judge. Reported as an alarm, not as a quiet zero — a pass that
-        # declined and a pass that found nothing are different facts about the world.
+        # A refusal to judge, reported as an alarm rather than a quiet zero: a pass that declined
+        # and a pass that found nothing are different facts about the world.
         _log.error(
             "sandbox_reclamation_store_fault",
             detail="the coordination store accounts for too little of the live fleet",
@@ -201,8 +165,8 @@ async def reclaim_abandoned_sandboxes() -> None:
         _log.warning(FLEET_THRESHOLD_EVENT, fleet=report.scanned, threshold=_threshold())
 
     for verdict in report.candidates:
-        # THE EVIDENCE, not just the verdict. An operator reading this at 2am has to be able to
-        # agree or disagree with the decision, which needs the tier and the reason behind it.
+        # THE EVIDENCE, not just the verdict: an operator has to be able to disagree with the
+        # decision, which needs the tier and the reason behind it.
         _log.info(
             "sandbox_reclamation_candidate",
             app_name=verdict.name,
@@ -213,13 +177,11 @@ async def reclaim_abandoned_sandboxes() -> None:
         )
 
     if not report.store_fault:
-        # THE STAGING ARM, and it runs on `reclaim_enabled` ALONE. Stamping a tag destroys
-        # nothing; what it does is let the NEXT pass know this one happened, which is the entire
-        # mechanism behind the two-independent-reads rule. Gating it on `reclaim_destroy` too
-        # would mean nothing ever writes the tag on a report-only deployment, `reclaim_staged_at`
-        # stays `None` forever, and every candidate re-stages on every pass — `Verdict.DESTROY`
-        # would be unreachable by construction and the destroy arm below would be dead code
-        # nobody could tell was dead.
+        # THE STAGING ARM, and it runs on `reclaim_enabled` ALONE. Gating the stamp on
+        # `reclaim_destroy` too would leave `reclaim_staged_at` `None` forever on a report-only
+        # deployment and re-stage every candidate on every pass — `Verdict.DESTROY` would be
+        # unreachable by construction and the destroy arm below dead code nobody could tell
+        # was dead.
         try:
             counts["stamped"] = await _stage_the_candidates(report)
         except Exception:
@@ -230,21 +192,15 @@ async def reclaim_abandoned_sandboxes() -> None:
                 detail="the staging arm raised; see the traceback",
             )
             raise
-        # THE DESTROY ARM. Everything above ran regardless of the second flag; this is the only
-        # place a container is ever removed, and it is behind `reclaim_destroy` AND a
-        # production-only allowlist AND a single-flight lock AND per-container re-validation AND
-        # a per-pass ceiling. A store fault skips it entirely: a pass that does not trust its own
-        # inputs does not get to act on them.
+        # THE DESTROY ARM, and the only place a container is ever removed. A store fault skips
+        # it entirely: a pass that does not trust its own inputs does not get to act on them.
         try:
             counts["destroyed"] = await _destroy_the_confirmed(report)
         except Exception:
-            # THE SAME CONTRACT THE PASS ABOVE KEEPS, and it has to be kept here too. An ARM
-            # throttle during the mandatory per-candidate re-validation is the expected shape of
-            # a raise on this arm, and an absent row is precisely how this system says "the
-            # worker is dead" — so a pass that died in its destructive half would otherwise
-            # impersonate a crashlooping scheduler and send an operator hunting the wrong thing.
-            # The counts gathered before the raise go in: the record still says what the pass
-            # SAW, and only `destroyed` is missing, which is honest — we do not know.
+            # RECORD BEFORE RE-RAISING, with the counts gathered so far. An absent row is how
+            # this system says the worker is dead, so a pass that died in its destructive half
+            # must not impersonate one that never ran. Only `destroyed` is missing, which is
+            # honest — we do not know.
             _log.exception("sandbox_reclamation_destroy_failed")
             await _record_pass(
                 outcome="failed",
@@ -264,16 +220,11 @@ async def reclaim_abandoned_sandboxes() -> None:
 async def _stage_the_candidates(report: PassReport) -> int:
     """Stamp `bial-reclaim-staged-at` on every STAGE verdict. Returns how many took.
 
-    NOTHING ELSE WRITES THIS TAG, and until this existed nothing did — `staging_tags` was defined,
-    unit-tested and never called, so `identity.reclaim_staged_at` was `None` on every container on
-    every pass. The classifier reads exactly that field to decide STAGE versus DESTROY, so the
-    whole confidence chain terminated one step short: candidates were re-staged forever and the
-    destroy arm, its ceiling, its lock and its re-validation had no reachable input.
-
-    ONE CONTAINER'S REFUSED PATCH IS ONE CONTAINER'S PROBLEM. The stamp is idempotent and the next
-    pass retries it, so a throttled or vanished container is logged and stepped over; aborting the
-    sweep on the first failure would leave the fleet part-staged with no report of what remains —
-    the same rule the C10 backfill follows for the same reason."""
+    NOTHING ELSE WRITES THIS TAG, and the classifier reads exactly `reclaim_staged_at` to decide
+    STAGE versus DESTROY — so if this stops running, the destroy arm has no reachable input.
+    ONE CONTAINER'S REFUSED PATCH IS ONE CONTAINER'S PROBLEM: the stamp is idempotent and
+    retried next pass, so a throttled/vanished container is logged and stepped over rather
+    than aborting the whole sweep."""
     from src.services.build_sessions.destroy import staging_tags
     from src.services.build_sessions.inventory import FleetTagger
     from src.services.build_sessions.reclaim import Verdict
@@ -281,8 +232,8 @@ async def _stage_the_candidates(report: PassReport) -> int:
 
     staging = tuple(v for v in report.candidates if v.verdict is Verdict.STAGE)
     if not staging:
-        # Before touching the control plane at all: a pass with nothing to stage must not make an
-        # ARM client appear, and the report-only tests drive exactly that shape.
+        # Before touching the control plane at all: a pass with nothing to stage must not make
+        # an ARM client appear.
         return 0
 
     control_plane = get_sandbox()
@@ -308,18 +259,7 @@ async def _stage_the_candidates(report: PassReport) -> int:
 
 
 async def _destroy_the_confirmed(report: PassReport) -> int:
-    """Act on the candidates the classifier confirmed. Returns how many were CONFIRMED destroyed.
-
-    THE JANITOR PASSES `app_id`, AND THAT IS HALF THE POINT OF THIS FUNCTION EXISTING. The
-    durable-copy gate is opt-in — the callers that reap a user's own stale state may pass nothing,
-    because a builder standing right there is about to be handed a fresh container. This caller is
-    the one with no human watching it, so it passes the id and cannot skip the gate. An ungated
-    janitor is precisely the regression U14 exists to prevent, and no test of the reaper alone
-    would catch it, which is why the assertion lives on this seam.
-
-    THE OTHER HALF IS THAT IT REAPS BY CONTAINER, NOT BY USER. `reap_the_container_we_judged`
-    exists because those two stopped being the same thing the moment this ran out of process: see
-    its docstring for both divergences and what each one costs."""
+    """Act on the candidates the classifier confirmed. Returns how many it CONFIRMED destroyed."""
     from src.services.build_sessions.destroy import destroy_candidates
     from src.services.build_sessions.inventory import FleetDestroyer
     from src.services.build_sessions.reaper import reap_the_container_we_judged
@@ -342,14 +282,11 @@ async def _destroy_the_confirmed(report: PassReport) -> int:
         return 0
 
     async def _revalidate(name: str) -> dict[str, str] | None:
-        """Re-read THIS container's tags, right now. Not the enumeration snapshot — the whole
-        point is that the snapshot may be stale by the time we reach this container."""
+        """Re-read THIS container's tags, right now — never the enumeration snapshot."""
         return await control_plane.get_app_tags(name=name)
 
     async def _claim_now(name: str) -> RegistryClaim | None:
-        """Rebuild THIS container's spare-list entry, right now. The tag re-read above cannot
-        see a builder who simply came back: resuming writes a lock, a heartbeat, a stay or a
-        lease, and leaves every ARM tag exactly as the classifier found it.
+        """Rebuild THIS container's spare-list entry, right now.
 
         Asks by CONTAINER, not by the owner the ARM tags name — the same question the classifier
         asked, so the two reads cannot disagree about what "claimed" means."""
@@ -357,17 +294,12 @@ async def _destroy_the_confirmed(report: PassReport) -> int:
 
     async def _teardown(name: str) -> bool:
         """Destroy THE CONTAINER WE JUDGED — by name, never by whatever the owner's record
-        currently points at. Reaping by user would delete a sandbox the builder started since
-        enumeration and leave the orphan standing, and would silently no-op on the unregistered
-        orphans this whole feature exists to collect while the pass counted them destroyed."""
+        currently points at."""
         user_id, app_id = report.owners[name]
         return await reap_the_container_we_judged(
             get_redis(), control_plane, app_name=name, user_uuid=user_id, app_id=app_id
         )
 
-    # NO SESSION HELD ACROSS THE PASS. The single-flight lock owns its own connection now
-    # (`destroy._the_lock_engine`), so this arm no longer has to keep an application-pool session
-    # open for the whole walk just to keep a lock alive on it.
     outcome = await destroy_candidates(
         confirmed,
         revalidate=_revalidate,
@@ -380,9 +312,9 @@ async def _destroy_the_confirmed(report: PassReport) -> int:
     if outcome.aborted:
         _log.info("sandbox_reclamation_aborted_on_revalidation", count=len(outcome.aborted))
     if outcome.refused:
-        # NOT an abort and not a destruction: the teardown ran and declined. A durable-copy gate
-        # sparing the same container every pass is a container whose work nothing is preserving,
-        # which is a report worth reading rather than a number quietly missing from `destroyed`.
+        # NOT an abort and not a destruction: the teardown ran and declined. A gate sparing the
+        # same container every pass is a container whose work nothing is preserving — worth
+        # reading, rather than a number quietly missing from `destroyed`.
         _log.warning("sandbox_reclamation_teardown_refused", names=list(outcome.refused))
     return len(outcome.destroyed)
 
@@ -395,19 +327,12 @@ def _threshold() -> int:
 async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | None) -> None:
     """Write the pass record. EVERY outcome, including the boring ones.
 
-    A zero-candidate pass still writes, because a healthy quiet fleet and a dead worker are
-    otherwise the same observation. A declined pass writes, because "reclamation is switched off"
-    is a thing an operator should be able to see rather than infer from silence. A failed pass
-    writes, because a pass that raises every tick leaves no `ok` row and would otherwise be
-    indistinguishable from one that never ran.
-
-    AND EVERY RECORD NAMES ITS FLEET (`#190`). The `detail` an admin endpoint reads back says both
-    what the pass did and which resource group and managed environment it did it about — because
-    `scanned: 0` is a fact about a subscription, and a report that omits which one lets a pass that
-    swept somebody else's fleet read exactly like a clean sweep of ours.
-
-    ITS OWN SESSION, not the caller's: this runs outside any request, and it must land even when
-    the pass it is describing has just failed."""
+    A zero-candidate pass still writes (quiet fleet vs. dead worker read the same); a declined pass
+    writes (so "off" is visible, not inferred); a failed pass writes (a pass that raises every tick
+    must not read as one that never ran). EVERY RECORD NAMES ITS FLEET too: `detail` says which
+    resource group and environment the counts describe, since omitting it would let a
+    wrong-subscription sweep read as a clean one. ITS OWN SESSION, not the caller's: runs outside
+    any request and must land even when the pass it describes has just failed."""
     from src.db.base import async_session_factory
     from src.db.models.worker_pass import PassOutcome, WorkerPass
 

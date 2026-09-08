@@ -1,15 +1,13 @@
-"""AzureBlobStorage — Azure Blob Storage via `azure-storage-blob.aio` +
-`azure-identity.aio`. The sole backend behind the `ObjectStorage` interface.
+"""AzureBlobStorage — Azure Blob Storage via `azure-storage-blob.aio` + `azure-identity.aio`.
+The sole backend behind the `ObjectStorage` interface.
 
-No vendor type crosses the port: `BlobProperties`, `ContentSettings`, the page
-iterator, and the `upload_blob` `dict[str, Any]` are consumed only here; every
-method returns the common `ObjectMeta`/`ListPage`/`bytes`.
+No vendor type crosses the port: `BlobProperties`, `ContentSettings`, the page iterator, and
+the `upload_blob` `dict[str, Any]` are consumed only here; every method returns the common
+`ObjectMeta`/`ListPage`/`bytes`.
 
-Lifecycle: one long-lived `BlobServiceClient` (and, for managed identity, one
-credential) per process per config, lazily built into a module-level cache.
-`aclose` closes BOTH the client and the credential — an unclosed credential leaks
-its own aiohttp session. `close_all_clients()` is the hook `aclose_storage()`
-calls on shutdown.
+Lifecycle: one long-lived `BlobServiceClient` (and, for managed identity, one credential) per
+process per config, lazily cached. `aclose` closes BOTH — an unclosed credential leaks its own
+aiohttp session. `close_all_clients()` is the hook `aclose_storage()` calls on shutdown.
 """
 
 from __future__ import annotations
@@ -91,13 +89,11 @@ def _error_code(exc: HttpResponseError) -> str | None:
 def _is_confirmed_absent(exc: ResourceNotFoundError) -> bool:
     """True only when Azure NAMED the object as missing — never merely because a 404 arrived.
 
-    The store answers in THREE states, not two: present, absent, and cannot-tell. A
-    `ResourceNotFoundError` is evidence of the third by default: `_error_code` is None for any 404
-    Azure did not label (a proxy/WAF blip in front of the account raises the same type), so reading
-    the type alone as absence turns "I could not ask" into "the store positively answered: no
-    bundle". `_restore_or_provision` trusts that answer and provisions a blank template, which
-    finalize then snapshots over the user's saved app — the whole reason absence is claimed only on
-    Azure's own word for it.
+    The store answers in THREE states: present, absent, cannot-tell. A bare
+    `ResourceNotFoundError` defaults to cannot-tell (`_error_code` is None for an unlabeled 404 —
+    e.g. a proxy/WAF blip), so treating the type alone as absence turns "I could not ask" into a
+    false "no bundle." `_restore_or_provision` trusts this answer and provisions a blank template
+    over the user's saved app — the reason absence is claimed only on Azure's own word.
     """
     return _error_code(exc) == _BLOB_NOT_FOUND
 
@@ -205,7 +201,7 @@ _client_cache: dict[str, _AzureClient] = {}
 async def get_client_state(config: AzureStorageConfig) -> _AzureClient:
     """Module-level get-or-build of the cached per-config client state. Shared by
     `AzureBlobStorage._state` and the account-level `AppContainerStore` — which owns no
-    client of its own and resolves the shared client per-op from this cache (KTD-1), so it
+    client of its own and resolves the shared client per-op from this cache, so it
     never captures a stale client and never closes the client out from under the backend."""
     fingerprint = _fingerprint(config)
     cached = _client_cache.get(fingerprint)
@@ -254,7 +250,7 @@ _READ_TIMEOUT_S: Final = 120.0
 
 
 def _build_state(config: AzureStorageConfig) -> _AzureClient:
-    # Secrets unwrapped only here, at the SDK boundary (security.md).
+    # Secrets unwrapped only here, at the SDK boundary.
     if config.connection_string is not None:
         bsc = BlobServiceClient.from_connection_string(
             config.connection_string.get_secret_value(),
@@ -292,7 +288,7 @@ async def _close_state(fingerprint: str) -> None:
 async def close_all_clients() -> None:
     """Close every cached Azure client + credential. Called by `aclose_storage()`
     on shutdown. Each per-fingerprint close is isolated: a single failure is
-    logged (fail-first.md — never a silent swallow) and the loop continues so one
+    logged — never a silent swallow — and the loop continues so one
     bad client never leaves the rest open."""
     for fingerprint in list(_client_cache):
         try:

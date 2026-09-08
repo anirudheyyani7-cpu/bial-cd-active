@@ -1,44 +1,27 @@
 /**
- * The shared `parts[]` message-content model — the one thing every producer and
- * consumer of a chat message (the `conversationApi` reload projection, the live
- * turn stream, `MessageContent`'s render, `attachmentStore`'s transforms) agrees
- * on the shape of. This did NOT exist as a type anywhere before this file — it is derived
- * from the real construction/consumption sites, not invented:
- *
- *   - `TextPart`/`FilePart` (all three `file` sub-shapes) come verbatim from the
- *     JSDoc contract at the top of `attachmentStore.js`, the module that owns
- *     the parts<->wire transform.
- *   - `PlanOptionsPart`/`StepPart` wrap the already-typed `PlanOptionsItem`/
- *     `StepItem` from `turnStreamApi.ts` rather than re-declaring them — both
- *     are constructed ONLY by `conversationApi.js`'s `messagesFromProjection`
- *     (the reload path); the live path never builds these two part kinds
- *     directly.
+ * WHY THIS EXISTS: the shared `parts[]` message-content model every producer/consumer of a
+ * chat message (`conversationApi`'s reload projection, the live turn stream, `MessageContent`'s
+ * render, `attachmentStore`'s transforms) agrees on. Derived from the real construction/
+ * consumption sites, not invented:
+ *   - `TextPart`/`FilePart` come verbatim from the JSDoc contract atop `attachmentStore.ts`
+ *     (owns the parts<->wire transform; converted since this file was written, confirming
+ *     these shapes — one revision, `FilePartOffice` gained `truncationNote`).
+ *   - `PlanOptionsPart`/`StepPart` wrap the already-typed `PlanOptionsItem`/`StepItem` from
+ *     `turnStreamApi.ts`; both are built only by `messagesFromProjection` (reload path).
  *   - `BuildInProgressPart` likewise comes from `messagesFromProjection`.
- *   - `BuildPart` is the one case with a real pre-existing inconsistency
- *     between producers (see below) — this file makes it visible rather than
- *     papering over it.
  *
- * PRE-EXISTING INCONSISTENCY, STILL NOT FIXED: the persisted/reload `build` part
- * (`conversationApi`'s `messagesFromProjection`, the `banner` branch) and the live
- * `build` part carry different field sets under the same `type:'build'`
- * discriminant. Both producers named here originally lived on the deleted builder
- * page; the divergence outlived it, which is why the two named types below are
- * still worth keeping apart. No consumer has ever distinguished them — every field
- * is read via plain optional access regardless of producer, which is why this was
- * never a runtime bug.
- * `BuildPartPersisted` and `BuildPartLive` are kept as two distinct named
- * types, unioned, rather than collapsed into one everything-optional shape, so
- * the divergence stays legible to a future reader.
+ * PRE-EXISTING INCONSISTENCY, STILL NOT FIXED: the persisted/reload `build` part (the
+ * `banner` branch of `messagesFromProjection`) and the live `build` part carry different
+ * field sets under the same `type:'build'` discriminant — both trace to the deleted builder
+ * page, and the divergence outlived it. No consumer has ever distinguished them (every field
+ * is read via optional access regardless of producer), so it was never a runtime bug.
+ * `BuildPartPersisted`/`BuildPartLive` stay two distinct named types, unioned rather than
+ * collapsed into one everything-optional shape, so the divergence stays legible.
  *
- * UPDATE: `attachmentStore.ts` has since converted — its real construction
- * sites confirmed this file's shapes, with one revision: `FilePartOffice`
- * gained `truncationNote` (was missing when this file was first written).
- *
- * IT CARRIES ONE PIECE OF RUNTIME CODE, and only because the same reasoning that put the shapes
- * here applies to it: `outcomeSummary` turns a build part's own fields into the sentence a citizen
- * reads, and BOTH producers of that part need it — the surface that draws the live terminal and
- * the projection that rebuilds it after a reload. A util cannot import a component, so a leaf both
- * already depend on is the only place one copy of that sentence can live (#204).
+ * IT ALSO CARRIES ONE PIECE OF RUNTIME CODE, for the same reason the shapes are here:
+ * `outcomeSummary` turns a build part's own fields into the sentence a citizen reads, and BOTH
+ * producers of that part need it — a util cannot import a component, so a leaf both already
+ * depend on is the only place one copy of that sentence can live.
  */
 import type { PlanOptionsItem, StepItem } from './turnStreamApi'
 
@@ -81,10 +64,7 @@ export interface FilePartOffice {
   text: string
   truncated: boolean
   /** Human-readable truncation detail for the chip tooltip; only set when
-   * `truncated` is true. Added converting attachmentStore.ts — flagged as
-   * missing when this file was first written (Step 1), before
-   * attachmentStore.js's real construction site (`buildUserParts`) was
-   * traced. */
+   * `truncated` is true. */
   truncationNote?: string
 }
 
@@ -111,8 +91,8 @@ export type FilePart = FilePartImageOrDocument | FilePartOffice | FilePartDeck
  *
  * `'stopped'` is a first-class outcome and NOT a flavour of failure. A citizen's own Stop, a
  * force-end, an idle teardown and a spent daily limit all end a build with nothing wrong, and
- * folding them into `'failed'` is exactly what announced a deliberate Stop as "The build failed:
- * stopped_by_user" (#204) — while the activity pill beside it correctly read "stopped before it
+ * folding them into `'failed'` is exactly what once announced a deliberate Stop as "The build
+ * failed: stopped_by_user" — while the activity pill beside it correctly read "stopped before it
  * finished". One fact, two states, one screen.
  *
  * BOTH producers carry it, deliberately. The live turn terminal (`ConversationSurface`'s
@@ -129,8 +109,7 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * only a leaf can serve both: the live terminal is drawn by `ConversationSurface` and the reloaded
  * one is projected by `conversationApi`, and a util cannot import a component without a cycle.
  * "Two authors for one sentence" is the documented failure this arrangement exists to prevent —
- * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md` records
- * fixing one emitter only changing WHEN the wrong text appeared.
+ * fixing one emitter alone only ever changed WHEN the wrong text appeared, never whether it did.
  *
  * IT MIRRORS `backend/src/services/build_sessions/outcome.py::_summary` — same four reasons, same
  * wording — because that emitter writes the durable row for legacy build sessions while this one
@@ -138,9 +117,10 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * depending on when you looked at it.
  *
  * PLUS ONE ARM THE SERVER TABLE LACKS: `workspace_restored`. It is raised at
- * `backend/src/services/turns/engine.py:1612` — a turn that ends because the citizen's workspace
+ * `engine.py`'s `_WriteEndedError("workspace_restored", …)` — a turn that ends because the
+ * citizen's workspace
  * had to be put back from the last saved copy, which is a SUCCESSFUL restore and not a broken
- * build. #204 caught it being announced as "The build failed: workspace_restored".
+ * build, once wrongly announced as "The build failed: workspace_restored".
  */
 export const OUTCOME_COPY: Readonly<Record<string, string | undefined>> = {
   quota_exceeded: 'The build stopped: you reached your daily limit.',
@@ -185,7 +165,7 @@ export function outcomeSummary({
   return 'Build finished.'
 }
 
-/** The persisted/reload `build` part (`conversationApi.js`'s `banner` projection
+/** The persisted/reload `build` part (`conversationApi.ts`'s `banner` projection
  * item) — the builder outcome bubble read back after a page reload. */
 export interface BuildPartPersisted {
   type: 'build'
@@ -195,9 +175,9 @@ export interface BuildPartPersisted {
   previewUrl: string | null
 }
 
-/** The live `build` part — rendered the moment a build turn ends, before any reload. Two call sites feed this: the C7
- * session-based path (carries `sessionId`) and the current turn-stream "Build
- * it" path (carries `turnId`); both otherwise produce the same fields. */
+/** The live `build` part — rendered the moment a build turn ends, before any reload. Two call
+ * sites feed this: the legacy session-based path (carries `sessionId`) and the current
+ * turn-stream "Build it" path (carries `turnId`); both otherwise produce the same fields. */
 export interface BuildPartLive {
   type: 'build'
   status: BuildOutcomeStatus
@@ -212,14 +192,14 @@ export interface BuildPartLive {
 export type BuildPart = BuildPartPersisted | BuildPartLive
 
 /** The Build it / Keep refining card, carried with its STORED resolution state
- * (`conversationApi.js` only — reload path). */
+ * (`conversationApi.ts` only — reload path). */
 export interface PlanOptionsPart {
   type: 'plan_options'
   item: PlanOptionsItem
 }
 
 /** A stored friendly agent step — the reload half of the build narrative
- * (`conversationApi.js` only — reload path; hidden steps are filtered before
+ * (`conversationApi.ts` only — reload path; hidden steps are filtered before
  * this part is ever constructed). */
 export interface StepPart {
   type: 'step'
@@ -227,28 +207,19 @@ export interface StepPart {
 }
 
 /**
- * The agent is REASONING — and this part carries no text, by construction.
- *
- * THE STATUS-ONLY GUARANTEE IS STRUCTURAL, NOT A PROMISE. Reasoning text is technical and far
- * too much for the people who read this, so the decision is that the transcript shows THAT the
- * agent is working and never what it is working through. The server enforces the same rule at
- * the other end — reasoning is stored for the provider's next turn and is never projected,
- * never framed and never sent here — and this shape is the second wall: there is no field for
- * reasoning text to arrive in, so a later change cannot start carrying it by accident.
- *
- * THE ONLY PRODUCER IS THE LIVE SURFACE, which synthesises one at the TAIL of the streaming
- * message while the turn's `working` flag is true — the model is thinking at the end of what it
- * has written so far, and `streamingParts` records at length why pinning it to index 0 made the
- * turn jump down the screen. It has no reload counterpart on purpose: a finished turn is not
- * thinking, and a status line about a moment that has passed is noise in a transcript somebody
- * is reading tomorrow.
+ * The agent is REASONING; carries no text, by construction — STRUCTURAL, not a promise:
+ * reasoning is too technical for readers, so the transcript shows only THAT the agent works.
+ * The server enforces this too (never projected here); this shape is the second wall, with
+ * no field for the text to land in by accident. Synthesised only by the LIVE surface, at the
+ * TAIL of a streaming message while `working` is true (see `streamingParts` on the index-0
+ * jump) — no reload counterpart, since a finished turn isn't thinking.
  */
 export interface ReasoningPart {
   type: 'reasoning'
 }
 
 /** A build began and no outcome closed it yet — the durable anchor
- * (`conversationApi.js` only — reload path). */
+ * (`conversationApi.ts` only — reload path). */
 export interface BuildInProgressPart {
   type: 'build_in_progress'
   sessionId: string

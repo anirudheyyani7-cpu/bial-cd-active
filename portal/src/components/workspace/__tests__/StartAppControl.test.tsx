@@ -1,13 +1,10 @@
 /**
- * THE ONE CONTROL THAT STARTS THE APP (Plan F, U3).
+ * THE ONE CONTROL THAT STARTS THE APP.
  *
- * ═══ WHAT A TEST IN THIS FILE CAN HONESTLY PROVE ═══
- *
- * That this component makes one request, discriminates the refusals correctly, and never names a
- * destructive verb. It CANNOT prove the endpoint is non-destructive — the component was never the
- * thing that could have destroyed a container. That proof is server-side, against L3's confirmation
- * triple, in `backend/tests/api/v1/build_sessions/test_preview_state.py`, and this plan added the
- * guard it was missing on the exact arm this button enters.
+ * A test here can honestly prove: one request, refusals discriminated correctly, no destructive
+ * verb named. It CANNOT prove the endpoint is non-destructive — the component never could have
+ * destroyed a container. That proof is server-side, against the confirmation triple, in
+ * `backend/tests/api/v1/build_sessions/test_preview_state.py`, on the exact arm this button enters.
  *
  * So there is deliberately NO test here shaped "no stop, release or restore call was made". It
  * would pass in the very state that loses work, and its greenness would be mistaken for evidence.
@@ -78,7 +75,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('AE1 — one deliberate press, one request', () => {
+describe('one deliberate press, one request', () => {
   it('renders the client-approved label and fires nothing until it is pressed', () => {
     renderControl(START, reportSpy())
 
@@ -117,7 +114,7 @@ describe('AE1 — one deliberate press, one request', () => {
   })
 })
 
-describe('R4b — a start that did not end in a running app says which way it ended', () => {
+describe('a start that did not end in a running app says which way it ended', () => {
   it('reads `ready: false` as "started but not painted", never as dead', async () => {
     api.relaunchPreview.mockResolvedValue({ appId: 'a1', previewUrl: 'https://app/', status: 'provisioning', restoredFromFailedBuild: false, ready: false })
     const report = reportSpy()
@@ -143,7 +140,7 @@ describe('R4b — a start that did not end in a running app says which way it en
 
   it('calls a failure with no server answer a timeout, not a named failure', async () => {
     // "We waited and nothing came back" is a different thing to have happened from "the server
-    // said why", and R4b asks for the difference to reach the citizen.
+    // said why" — and that difference must reach the citizen.
     api.relaunchPreview.mockRejectedValue(new TypeError('Failed to fetch'))
     const report = reportSpy()
     renderControl(START, report)
@@ -152,7 +149,7 @@ describe('R4b — a start that did not end in a running app says which way it en
     await waitFor(() => expect(report.onStartOutcome).toHaveBeenCalledWith({ kind: 'timed-out' }))
   })
 
-  it('AE3: a start whose readiness cannot be read issues no second call of its own', async () => {
+  it('a start whose readiness cannot be read issues no second call of its own', async () => {
     // Asserting what the COMPONENT does. Deliberately not written as "no stop, release or restore
     // call was made" — see this file's docblock for why that assertion would prove nothing.
     api.relaunchPreview.mockRejectedValue(new ApiError('could not read', 503))
@@ -212,16 +209,15 @@ describe('marked unavailable, never disabled', () => {
 
     await waitFor(() => expect(button().getAttribute('aria-disabled')).toBe('true'))
     expect(button().hasAttribute('disabled')).toBe(false)
-    // STILL NAMED, AND THE NAME IS NOW THE VISIBLE WORDS (`#210`). This used to assert an
-    // `aria-label` reading "Launch Application — Starting your app" over words that never
-    // changed; the override is gone, so the accessible name is what a sighted citizen reads.
+    // STILL NAMED, AND THE NAME IS NOW THE VISIBLE WORDS. The `aria-label` override that used to
+    // carry it is gone, so the accessible name is what a sighted citizen reads.
     expect(button().getAttribute('aria-label')).toBeNull()
     expect(screen.getByRole('button', { name: 'Starting your app…' })).toBe(button())
     button().focus()
     expect(document.activeElement).toBe(button())
   })
 
-  it('★ the WORDS change while a start is in flight, not just an attribute (#210)', async () => {
+  it('★ the WORDS change while a start is in flight, not just an attribute', async () => {
     // WHY THIS EXISTS. `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, and
     // the spinning glyph was the only part of this button that moved when it was pressed — the
     // label read "Launch Application" pressed and unpressed alike. With motion off, a citizen
@@ -244,10 +240,10 @@ describe('marked unavailable, never disabled', () => {
   })
 
   it('★ adds NO live region of its own — the pane already announces this start', () => {
-    // ASM5's other half. `LivePreview` keeps one permanent polite region that speaks for every
-    // state of the pane this button starts, including "Starting your app…". A region here would
-    // be the same situation announced twice, which is the duplicate `Announcer.tsx` records as
-    // having broken three tests.
+    // The other half of the one-live-region rule. `LivePreview` keeps one permanent polite
+    // region that speaks for every state of the pane this button starts, including "Starting
+    // your app…". A region here would be the same situation announced twice, which is the
+    // duplicate `Announcer.tsx` records as having broken three tests.
     api.relaunchPreview.mockImplementation(() => new Promise(() => {}))
     const { container } = renderControl(START, reportSpy())
     fireEvent.click(button())
@@ -302,7 +298,7 @@ describe('the other two verbs, and the one that does not exist', () => {
     for (const action of actions) {
       const { container } = renderControl(action, reportSpy())
       expect(container.textContent ?? '').not.toMatch(destructive)
-      // AND THERE IS NO SECOND NAME TO AUDIT. The `aria-label` override is gone (`#210`), so the
+      // AND THERE IS NO SECOND NAME TO AUDIT. The `aria-label` override is gone, so the
       // visible words above ARE the accessible name — asserting its absence is what keeps this
       // check total rather than leaving a channel that could say a dangerous word unexamined.
       expect(container.querySelector('button')?.hasAttribute('aria-label')).toBe(false)
@@ -315,9 +311,9 @@ describe('★ the URL a successful start produced reaches the surface that frame
   it('hands the preview URL back before it reports the outcome', async () => {
     // WITHOUT THIS THE CONTROL DID NOTHING VISIBLE INSIDE A BUILD CHAT. That surface feeds the
     // address resolver's project-scoped arm with `null` — its own poll only runs over an ALREADY
-    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button this plan
-    // retired. So a fresh start had no arm left to populate: the app came up in a container
-    // nothing framed, and the citizen saw a sentence where their app should have been.
+    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button that has
+    // since been retired. So a fresh start had no arm left to populate: the app came up in a
+    // container nothing framed, and the citizen saw a sentence where their app should have been.
     const report = reportSpy()
     api.relaunchPreview.mockResolvedValue({
       appId: 'a1', previewUrl: 'https://app.example/', status: 'ready',

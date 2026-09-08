@@ -35,13 +35,10 @@ async def test_create_redis_honours_pool_knobs() -> None:
 
 
 async def test_create_redis_installs_an_explicit_retry_policy() -> None:
-    # THE regression pin. `from_url` always builds a connection pool, which skips the
-    # branch of `Redis.__init__` that injects redis-py's advertised default retry, so
-    # a client built without an explicit `retry=` silently runs `Retry(NoBackoff(), 0)`
-    # — one attempt, no backoff, dead in 0.006s against a dead port. Asserting on the
-    # RESOLVED retry (`get_retry()`, i.e. what the connections will actually use), not
-    # on the constructor call, is the whole point: a passthrough assertion would stay
-    # green even if redis-py dropped the kwarg on the floor.
+    # The regression pin: `from_url` skips the branch of `Redis.__init__` that injects
+    # redis-py's advertised default retry, so without an explicit `retry=` a client silently
+    # runs `Retry(NoBackoff(), 0)` — dead in 0.006s against a dead port. Asserted on the
+    # RESOLVED retry (`get_retry()`), not the constructor call, so a dropped kwarg can't hide.
     client = create_redis(RedisConfig(url=_URL))
     try:
         retry = client.get_retry()
@@ -53,21 +50,13 @@ async def test_create_redis_installs_an_explicit_retry_policy() -> None:
 
 
 async def test_the_installed_retry_actually_retries_an_async_operation() -> None:
-    """U3 found this the hard way: `get_retry()` reporting the right policy is NOT evidence
-    that anything retries.
-
+    """`get_retry()` reporting the right policy is NOT evidence anything retries:
     `redis.retry.Retry` and `redis.asyncio.retry.Retry` are different classes with the same
-    name. The async connection does `await self.retry.call_with_retry(do, ...)` where `do`
-    returns a COROUTINE (`redis/asyncio/connection.py:351`). The sync class's
-    `call_with_retry` is an ordinary function, so its `try/except` only ever sees the
-    coroutine being CREATED — never awaited, never raising — and it hands the coroutine
-    straight back to be awaited outside the retry loop. Every assertion on `get_retry()`
-    stays green while the client makes exactly one attempt. Measured against a dead port:
-    0.012s with the sync class, 0.395s (four attempts) with the async one.
-
-    So this drives the RESOLVED retry object with a `do` that fails once and then succeeds,
-    and asserts the caller never sees the failure — the behaviour, not the configuration.
-    """
+    name, and the sync class's `call_with_retry` only ever sees the async connection's
+    coroutine being CREATED, never awaited or raising — every `get_retry()` assertion stays
+    green while the client makes exactly one attempt (0.012s vs 0.395s/4 attempts, measured
+    against a dead port). So this drives the RESOLVED retry object directly and asserts the
+    caller never sees an injected failure — the behaviour, not the configuration."""
     client = create_redis(RedisConfig(url=_URL))
     try:
         retry = client.get_retry()
@@ -126,8 +115,8 @@ async def test_create_redis_honours_configured_retry_attempts() -> None:
 
 
 async def test_retry_attempts_zero_is_a_valid_escape_hatch() -> None:
-    # NonNegativeInt, not PositiveInt: 0 retries = exactly one attempt, the pre-U1
-    # behaviour. An operator who wants a coordination call to fail on the first error
+    # NonNegativeInt, not PositiveInt: 0 retries = exactly one attempt.
+    # An operator who wants a coordination call to fail on the first error
     # must be able to say so without editing code.
     client = create_redis(RedisConfig(url=_URL, retry_attempts=0))
     try:
@@ -153,7 +142,7 @@ async def test_create_redis_honours_socket_timeouts() -> None:
 
 
 async def test_create_redis_does_not_set_the_trap_retry_flags() -> None:
-    # KD-2's two traps: `retry_on_error` WITHOUT an explicit retry degrades the policy
+    # Two traps: `retry_on_error` WITHOUT an explicit retry degrades the policy
     # to `Retry(NoBackoff(), 1)` (one immediate hot retry), and `retry_on_timeout` is
     # deprecated since redis-py 6.0.0. Neither may reappear.
     client = create_redis(RedisConfig(url=_URL))
@@ -167,7 +156,7 @@ async def test_create_redis_does_not_set_the_trap_retry_flags() -> None:
 
 async def test_aclose_redis_is_a_no_op_when_never_opened() -> None:
     # Mirrors aclose_storage: safe to call on shutdown even if no pool was ever
-    # opened (a dev/test boot with no REDIS__* env never opens one — D2).
+    # opened (a dev/test boot with no REDIS__* env never opens one).
     await reset_redis_for_tests()
     await aclose_redis()  # must not raise
 

@@ -1,24 +1,16 @@
-"""Journey — multiple apps for ONE user, one app PER PROJECT (KD-4 fan-out).
+"""Journey — multiple apps for ONE user, one app PER PROJECT.
 
-One citizen builds two independent tools. Under one-app-per-project, each tool is its own
-PROJECT, and each project holds exactly one app. Minting in each project fans out cleanly:
-two projects mint TWO distinct apps — distinct appIds, distinct publishable appKeys — both
-owned by the same user, each independently submittable. The mint is idempotent PER PROJECT
-(a second build session in the same project resolves that one app, never a third row).
+One citizen builds two independent tools, each its own project. Minting fans out cleanly: two
+projects mint TWO distinct apps (distinct appIds, distinct publishable appKeys) owned by the same
+user, each independently submittable, and is idempotent PER PROJECT — a second build session in
+the same project resolves that one app, never a third row.
 
-Two layers of assertion here:
+Two layers: FAN-OUT + IDEMPOTENCY, the truth the platform stands on, and ADDRESSING — each app
+is reached flat by its OWN appId (`appId != conversationId`), and submits into the queue
+independently through the submit service, keyed by that same appId.
 
-* The FAN-OUT + IDEMPOTENCY layer (distinct ids/keys, exactly two owned rows, a repeat
-  resolve in a project is a no-op) is the truth the whole platform stands on.
-
-* The ADDRESSING layer (KD-4): each app is addressed flat by its OWN appId (its uuid7 PK),
-  never by a conversation id. `appId != conversationId`, and each app submits into the
-  queue independently — through the submit SERVICE since U8 retired the citizen route
-  (`services/approvals/submit`, the publish gate's call), keyed by that same appId.
-
-The app row is minted by `resolve_app_for_project` — the build session's path, and since
-U6 the only one (`POST /apps/provision` had no production caller and is gone).
-"""
+Minted by `resolve_app_for_project`, the only path now: `POST /apps/provision` had no
+production caller and is gone."""
 
 from __future__ import annotations
 
@@ -55,7 +47,6 @@ async def _auth_user(db: AsyncSession, **overrides: object):
 
 
 async def test_one_user_fans_out_into_two_independent_apps(client, app, db_session) -> None:
-    # One citizen, two independent tools → two PROJECTS (one app per project, KD-4).
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
     # Both storage seams to ONE store: routes that document a 503 take the None-tolerant
@@ -82,7 +73,6 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
 
     # --- FAN-OUT: two distinct apps, two distinct publishable keys --------------
     assert app_id_a != app_id_b
-    # Each app has its OWN id, never a conversation id (KD-4).
     assert app_id_a != conv_a.id
     assert app_id_b != conv_b.id
     assert row_a.app_key != row_b.app_key
@@ -99,7 +89,6 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
     )
     assert len(rows) == 2
     assert all(row.user_id == user.id for row in rows)  # single-tenant ownership boundary
-    # Each app lives in its own project.
     assert {row.project_id for row in rows} == {project_a.id, project_b.id}
     assert len({row.app_key for row in rows}) == 2
 
@@ -108,7 +97,7 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
     await db_session.commit()
     refetched_a = await db_session.get(AppRegistry, reresolved_a)
     assert refetched_a is not None
-    assert reresolved_a == app_id_a  # same app row
+    assert reresolved_a == app_id_a
     assert refetched_a.app_key == row_a.app_key  # key minted once, never rotated
     # ...and it did NOT spawn a third row — still exactly two apps for this user.
     still_two = (
@@ -120,8 +109,7 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
     ).scalar_one()
     assert still_two == 2
 
-    # --- ADDRESSING (KD-4): each app is submittable at its OWN appId, through the
-    # --- one remaining writer (U8's submit service — the publish gate's call) ----
+    # --- ADDRESSING: each app is submittable at its OWN appId, through the submit service -----
     store.objects[snapshot_key(app_id_a)] = _BUNDLE
     store.objects[snapshot_key(app_id_b)] = _BUNDLE
     declaration = {"citizen": {}, "review": {}, "differences": [], "explanation": ""}
@@ -142,11 +130,8 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
         route=ApprovalRoute.SELF_PUBLISH,
     )
     await db_session.commit()
-    # Independent submissions: two distinct immutable copies, one per app.
     assert sub_a.submission_id != sub_b.submission_id
 
-    # Both apps entered the queue independently, each pinned to its own submission —
-    # and the owner's flat status read resolves each at its own appId.
     fresh_a = await db_session.get(AppRegistry, app_id_a)
     fresh_b = await db_session.get(AppRegistry, app_id_b)
     await db_session.refresh(fresh_a)

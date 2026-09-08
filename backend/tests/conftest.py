@@ -62,16 +62,12 @@ def test_engine():
 def _salt_every_provisioned_app_database():
     """Destroy every per-project database/role this SESSION provisioned, at session end.
 
-    `.env.test` configures a real `APP_DB__*` substrate, so any test that creates a project
-    through the endpoint or starts a build session now creates a REAL database and role on
-    the shared cluster (ADR-0028). The `db_session` rollback cannot undo that — it happens on
-    a separate AUTOCOMMIT engine — so without this the cluster accumulates orphans every run.
-
-    The hook is `provision._claim`, the one statement every ensure runs before it touches the
-    cluster, patched on the MODULE so it covers every call site (both callers bind
-    `ensure_project_database` by name at import, so patching that would miss them). Scoped to
-    ids this session actually claimed, never a `LIKE 'bialapp_%'` sweep — dev and test share
-    one cluster, and a broad sweep would drop a developer's live app database.
+    `.env.test` configures a real `APP_DB__*` substrate, so a test that provisions a project
+    creates a REAL database/role on the shared cluster — the `db_session` rollback runs on a
+    different engine and cannot undo that. Patched onto the `provision` MODULE (both callers
+    bind `ensure_project_database` by name at import, so patching the name would miss them),
+    and scoped to ids this session actually claimed — never a `LIKE` sweep, which on a cluster
+    dev and test share would drop a developer's live database.
     """
     import asyncio
     import uuid as _uuid
@@ -110,20 +106,15 @@ async def db_session(test_engine, request):
     # never see each other's writes.
     #
     # `join_transaction_mode="create_savepoint"` is what makes a ROUTE's own `db.rollback()`
-    # testable at all. Without it the session joins the outer transaction directly, so a route
-    # that rolls back — the concurrent-insert collision arms in `turns.py` and `transition.py`
-    # are the two — unwinds the whole test transaction and everything the fixtures set up goes
-    # with it. The arm is otherwise unreachable by the unit suite, which is how both of them
-    # shipped with no coverage for exactly the branch that only runs when something broke.
+    # testable at all: without it, the session joins the outer transaction directly, so a
+    # route that rolls back (the concurrent-insert collision arms in `turns.py` and
+    # `transition.py`) unwinds the whole test transaction and takes the fixtures with it.
     #
-    # OPT-IN, PER TEST, AND THAT IS THE POINT. Making it the shape of EVERY test looks free and
-    # is not: a savepoint-joined session provisions its connection lazily, so any test whose
-    # DETACHED task touches the session while the test itself is mid-statement stops being a
-    # benign interleave and becomes `InvalidRequestError: this session is provisioning a new
-    # connection`. Eight deploy tests went red that way — tests about save-and-publish, which
-    # have no opinion about transaction shape and should not have to. Two tests need the
-    # savepoint — both of them on `turns.py`'s collision arm — and they ask for it with
-    # `@pytest.mark.route_rollback`; the other ~3,700 keep the shape they were written against.
+    # OPT-IN, PER TEST — NOT the default. A savepoint-joined session provisions its connection
+    # lazily, so a DETACHED task touching the session mid-statement raises
+    # `InvalidRequestError: this session is provisioning a new connection` on tests that have
+    # no opinion about transaction shape. Only the two collision-arm tests opt in, with
+    # `@pytest.mark.route_rollback`; everything else keeps SQLAlchemy's own default.
     join_mode: JoinTransactionMode = (
         "create_savepoint"
         if request.node.get_closest_marker("route_rollback") is not None
@@ -156,10 +147,17 @@ async def client(app):
         yield c
 
 
+# THIS FIXTURE AND `fake_storage` BIND AN APP-LEVEL SINGLETON, so a test of the "dependency not
+# configured" branch must take NEITHER. With one bound, `get_redis()` / `get_storage()` always
+# answer and that branch is unreachable BY CONSTRUCTION — a test written for it proves nothing,
+# which is how a documented 503 stayed broken on every deployment that had the dependency switched
+# off. Redis, object storage, the sandbox and the per-app database are each genuinely optional
+# outside production, so every off-posture is a supported deployment that owes the caller a real
+# status; the tests pinning those statuses bind no fixture on purpose.
 @pytest.fixture
 async def fake_redis():
-    # Deterministic in-process Redis (KTD-8): `fakeredis[lua]` runs the compare-and-delete
-    # release script in-process, so the C5 lock/registry tests need no live server. We set
+    # Deterministic in-process Redis: `fakeredis[lua]` runs the compare-and-delete
+    # release script in-process, so the lock/registry tests need no live server. We set
     # the app-level singleton directly so `get_redis()` returns the fake, flushed per test.
     import fakeredis.aioredis
 
@@ -176,7 +174,7 @@ async def fake_redis():
 @pytest.fixture
 def fake_storage():
     # Dict-backed object store bound to the app-level singleton so `get_storage()` (called
-    # directly by the sandbox restore + the C4 snapshot) round-trips without Azurite.
+    # directly by the sandbox restore + the snapshot) round-trips without Azurite.
     from src.services.storage import accessor as _storage_accessor
     from tests.fakes import FakeStorage
 

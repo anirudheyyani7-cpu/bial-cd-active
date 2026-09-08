@@ -1,48 +1,25 @@
 /**
- * The publish read and the publish request, behind one lifetime — everything the chip
- * needs to say where an app stands and to act on it.
+ * The publish read and the publish request, behind one lifetime — everything the chip needs
+ * to say where an app stands and to act on it.
  *
- * RENAMED, NOT REWRITTEN. This was `useDeployment`, and 287 of its 290 lines are
- * unchanged: the generation token, the poll lifetime, the cross-mount nudge and the
- * treatment of `unsaved_changes` as a question rather than a failure are exactly the parts
- * that rot when copied, which is why they were not. What changed is three derived values
- * that went, because the server now computes the one state they were guessing at.
+ * The approval lifecycle rides the same status response, because a surface with no app id
+ * (the builder, pre-submit) can show nothing else.
  *
- * THE APPROVAL LIFECYCLE COMES THROUGH HERE TOO (U12), off the same status response. The
- * status card used to read `/apps/:id/status` itself, once, on mount — so a citizen who
- * pressed Publish and watched their app route into the queue sat there being told it was
- * still a draft. Hanging the lifecycle off this read is also the only way a surface with
- * no app id can show anything at all, and the builder's mount is exactly that.
+ * WHY THIS EXISTS
+ * Two refresh triggers besides the poll. The visibility/focus listeners are the cross-tab
+ * story — a publish started elsewhere is picked up when this tab is looked at. The
+ * `bial:deployment-changed` CustomEvent is the cross-mount story on one document: the chip
+ * (`WorkspaceToolbar`) and `AppStatusPanel` (`WorkspaceRail`) mount together on the workspace
+ * screen holding separate reads, and without the nudge a withdrawal in one leaves the other
+ * saying "waiting for review" — the bug this closes. Its test renders two hooks explicitly
+ * and pins the contract; deleting the nudge as apparently-dead code would reintroduce that
+ * bug on a screen where both surfaces are visible at once.
  *
- * TWO REFRESH TRIGGERS BESIDES THE POLL, and they are worth telling apart.
- *
- * The visibility/focus listeners are what make the poll safe to stop: a publish can be
- * started from another tab, so a settled state is re-read whenever somebody actually looks
- * at this one. That is the cross-tab story, and it still works exactly as it did.
- *
- * The `bial:deployment-changed` nudge is NOT that. It is a `window` CustomEvent, so it never
- * leaves the document that dispatched it — it exists to reconcile two mounts on ONE screen,
- * which is what the retired publish card and review status card were: two inches apart,
- * where nothing is ever re-entered and a withdrawal in one left the other saying "waiting
- * for review".
- *
- * THE NUDGE IS LOAD-BEARING AGAIN, and this paragraph replaces one that said the opposite.
- * It used to record that the chip's two mount sites were SIBLING ROUTES under one Outlet, so
- * at most one could be live and the nudge had nobody to notify — kept only against a future
- * that might bring a second surface back. That future arrived: two DIFFERENT consumers now
- * hold separate reads and mount together on the workspace screen, the chip in
- * `WorkspaceToolbar` and `AppStatusPanel` in `WorkspaceRail`. `AppStatusPanel`'s own docblock
- * quotes the very sentence this one used to end on and answers it — "That moment is now."
- * So the nudge is what keeps them agreeing, not three spare lines waiting for a use.
- *
- * Its test renders two hooks explicitly and pins that contract. Anyone reading this as dead
- * code and deleting it would be reintroducing the withdrawal-in-one-surface bug, on a screen
- * where both surfaces are visible at once.
- *
- * AND IT IS RAISED FROM OUTSIDE THIS HOOK TOO — see `announceDeploymentChanged` (#205). A
- * publish is no longer the only thing that changes what this read returns: the LAST SAVED row
- * is `savedHead`/`savedAt` off this same response, and the surface that writes them holds no
- * publish read of its own.
+ * The nudge is also raised from outside this hook, by `announceDeploymentChanged`: a publish
+ * is no longer the only thing that changes what this read returns — the last-saved row is
+ * `savedHead`/`savedAt` off this same response, and the surface that writes them holds no
+ * publish read of its own, so it raises the same nudge the chip and the status panel already
+ * listen to.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -88,32 +65,25 @@ function dispatchDeploymentChanged(projectId: string, origin: number): void {
 }
 
 /**
- * SOMETHING OUTSIDE THIS HOOK CHANGED WHAT THIS READ WOULD RETURN (#205).
+ * SOMETHING OUTSIDE THIS HOOK CHANGED WHAT THIS READ WOULD RETURN.
  *
- * The project screen's Save writes a new bundle, and the LAST SAVED row is `savedHead` and
- * `savedAt` — two fields of THIS read and of no other. The surface that performs the save holds
- * no publish read at all: the row is drawn by `AppStatusPanel` and the state by the toolbar's
- * chip, each with its own. So the save raises the nudge those two already listen to and both
- * reconcile off one dispatch, which is exactly the case the nudge was kept alive for.
- *
- * The alternative — a second deployment fetch inside the workspace's own refresh epoch — would
- * duplicate a reader and still leave the chip naming the previous version.
+ * The project screen's Save writes a new bundle, and the LAST SAVED row (`savedHead`, `savedAt`)
+ * is two fields of THIS read and of no other. The saving surface holds no publish read at all:
+ * the row is `AppStatusPanel`'s, the state the toolbar chip's, each with its own. So the save
+ * raises the nudge those two already listen to and both reconcile off one dispatch, the case the
+ * nudge was kept alive for. A second deployment fetch inside the workspace's own refresh epoch
+ * would instead duplicate a reader and still leave the chip naming the previous version.
  */
 export function announceDeploymentChanged(projectId: string): void {
   dispatchDeploymentChanged(projectId, NO_MOUNT)
 }
 
 /**
- * THREE DERIVED VALUES ARE GONE FROM HERE, and their absence is the point of the unit
- * that removed them: `running` (`status === 'running'`), `waitingForReview`
- * (`approval.status === 'pending'`) and `routed` (the last routed POST, held so a surface
- * could re-render it). Each was the browser re-deciding something the server had already
- * decided, and each was a place where two surfaces could disagree. The one publish state
- * on `deployment.publishState` says all three, and says them the same way to everyone.
- *
- * NOTHING HERE MAY GROW A PREDICATE BACK. If a consumer needs to know "is it live", "is it
- * waiting", "did it drift" — that is `publishState`, and if `publishState` cannot say it,
- * the fix is in the server that authors it.
+ * NOTHING HERE MAY GROW A PREDICATE BACK. `running`, `waitingForReview`, `routed` — derived
+ * booleans the browser used to compute from raw fields — are gone: each was the browser
+ * re-deciding something the server had already decided, and each was a place two surfaces
+ * could disagree. `deployment.publishState` alone says all three, the same way to everyone;
+ * if it can't say what a consumer needs, the fix belongs in the server that authors it.
  */
 export interface UsePublishState {
   deployment: DeploymentView | null
@@ -143,7 +113,7 @@ export interface UsePublishState {
    *  which case the failure is already in `unsaved`. */
   saveAndPublish: () => Promise<DeployOutcome | null>
   dismissUnsaved: () => void
-  /** Pull the owner's own pending submission back out of the queue (P6). */
+  /** Pull the owner's own pending submission back out of the queue. */
   withdraw: () => Promise<void>
   withdrawing: boolean
   withdrawError: string | null
@@ -181,25 +151,23 @@ export function usePublishState(projectId: string): UsePublishState {
       setLoadError(null)
     } catch (err) {
       if (generation.current !== mine) return
-      // A RE-READ THAT FAILS KEEPS THE ROW IT ALREADY HAS (#205). `loadError` is rendered
-      // FIRST by both surfaces and replaces everything — the pill, every provenance row and
-      // the action become one line — so a 500 on the read that follows a save would blank the
-      // whole panel on a screen that has just said "Saved". A row naming the previous version
-      // is worse than one naming the current one and better than no panel at all, and the
-      // citizen still has the state, the dates and the action they had a moment ago.
+      // A re-read that fails keeps the row it already has. `loadError` is rendered first by
+      // both surfaces and replaces everything — the pill, every provenance row and the action
+      // become one line — so a failed read that follows a save would blank the whole panel on
+      // a screen that has just said "Saved". A row naming the previous version is worse than
+      // one naming the current one and better than no panel at all, and the citizen still has
+      // the state, the dates and the action they had a moment ago.
       //
-      // THE FIRST READ IS THE EXCEPTION, and it is the one the branch below was written for:
-      // a mount that has never had an answer has nothing better to show than the failure, and
-      // a blank section there really would be indistinguishable from a broken page.
+      // The first read is the exception: a mount that has never had an answer has nothing
+      // better to show than the failure, and a blank section there really would be
+      // indistinguishable from a broken page.
       if (everRead.current) return
-      // EVERY FAILED READ LANDS IN ONE PLACE, and the 503 arm that used to sit above this
-      // — blank the surface, report nothing — is deliberately gone. Three reasons, and the
-      // first two are new since it was written. This is now the ONLY publishing surface
-      // the citizen has, so a chip that renders nothing is indistinguishable from a broken
-      // page. The server no longer 503s on a storage blip either: it degrades that to the
-      // explicit unknown state and answers 200, so a 503 would not be what catches it
-      // anyway. And the arm predates the change that made this read work without a deploy
-      // pipeline at all, which is the configuration it was written for.
+      // Every failed read lands in one place — blanking the surface and reporting nothing is
+      // not an option here. This is the only publishing surface the citizen has, so a chip
+      // that renders nothing is indistinguishable from a broken page. The server no longer
+      // 503s on a storage blip either: it degrades that to the explicit unknown state and
+      // answers 200, so special-casing 503 would not catch it, and this read no longer
+      // requires a deploy pipeline to exist at all.
       setLoadError(err instanceof ApiError ? err.message : 'Could not read the publish status.')
     }
   }, [projectId])
@@ -267,7 +235,7 @@ export function usePublishState(projectId: string): UsePublishState {
 
   const send = useCallback(
     async (answers: DataClassificationAnswers, saveFirst: boolean): Promise<DeployOutcome> => {
-      // TWO success shapes (U9). Routing is not an error and must not be thrown: the
+      // TWO success shapes. Routing is not an error and must not be thrown: the
       // modal would render it in red beside the button, and the citizen would read "your
       // app was sent for review" as a failure of the thing they just asked for.
       const outcome = await startDeploy(projectId, { answers, saveFirst })
@@ -287,8 +255,8 @@ export function usePublishState(projectId: string): UsePublishState {
   // EVERY OTHER ERROR REFRESHES BEFORE IT RETHROWS. A 409 here is usually the server
   // telling this surface something it did not know yet — most often `waiting_for_review`,
   // where another tab (or the other publish control, mounted on a different page) already
-  // routed a version while this one still showed the button enabled. R15b relies on the
-  // disabled waiting state to stop a second submit, but that state is only as fresh as the
+  // routed a version while this one still showed the button enabled. The disabled waiting
+  // state stops a second submit, but that state is only as fresh as the
   // last poll. Rethrowing alone left the modal open on state the server had already
   // contradicted, until the next tick happened to correct it.
   const onConfirm = useCallback(

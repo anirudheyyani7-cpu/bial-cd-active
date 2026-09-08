@@ -1,5 +1,5 @@
 /**
- * A PLAN CHAT HAS NO PANE, AND STILL SAYS EVERYTHING (Plan F, U6).
+ * A PLAN CHAT HAS NO PANE, AND STILL SAYS EVERYTHING.
  *
  * The property under test is not "some text appears". It is that a Plan chat is a SECOND RENDERER
  * of the one computed workspace state — so its sentence is byte-identical to the pane's, and no
@@ -61,19 +61,13 @@ const line = (preview: PreviewState) =>
 
 afterEach(() => cleanup())
 
-describe('AE5 — the standing line says what this chat DOES', () => {
+describe('the standing line says what this chat DOES', () => {
   it('★ speaks the board\'s line verbatim, and still never says the app is not RUNNING', () => {
-    // THE LINE WAS REWRITTEN ONCE, ON A MISREADING (plan 002, U6). An earlier pass read the
-    // board's "your app is not open here" as a claim that the container is down — which would be
-    // false, since a planning question reads the live app and starts it if it is stopped. But the
-    // board is talking about the SCREEN: a plan chat has no app pane. And its second clause is
-    // true for a different reason again — a plan chat's toolset carries no write, no schema
-    // change, no sandbox command and no finish tool, so the run cannot alter the app.
-    //
-    // So the board's words stand, and what must STILL never appear is a claim about the
-    // container's state. Both halves are asserted here, because keeping only the first would let
-    // the misreading back in and keeping only the second would let the board's line be rewritten
-    // again.
+    // The board's "your app is not open here" is about the SCREEN, not the container: a planning
+    // question still reads the live app and starts it if it is stopped. And a plan chat's toolset
+    // carries no write, no schema change, no sandbox command and no finish tool, so the run cannot
+    // alter the app either. Both halves are asserted, because keeping only one lets the other
+    // regress unnoticed.
     const { container } = line(reading({ state: 'asleep', restorable: true }))
     const text = container.textContent ?? ''
 
@@ -92,10 +86,11 @@ describe('AE5 — the standing line says what this chat DOES', () => {
   })
 })
 
-describe('★ AE48 — the same value, the same sentence, on both surfaces (R97)', () => {
-  // Scoped to the three states R97 names, deliberately. Asserting sameness across `never_built` and
-  // `asleep` too would pin wording R97 does not require and R11's framing may want different — a
-  // Plan chat has no business inviting somebody to press a start control it does not render.
+describe('★ the same value, the same sentence, on both surfaces', () => {
+  // Scoped to the three states this scenario covers, deliberately. Asserting sameness across
+  // `never_built` and `asleep` too would pin wording this scenario does not require, when the
+  // pane's own wording there may need to differ — a Plan chat has no business inviting somebody
+  // to press a start control it does not render.
   const spoken: [string, PreviewState][] = [
     ['being got ready', reading({ state: 'starting' })],
     [
@@ -154,7 +149,7 @@ describe('sentence always, action selectively — and only one of the three', ()
   })
 
   it('DOES render the remedy, and it has to', () => {
-    // R4b makes the go-to the answer for a taken workspace, and R94 says the asking happens in the
+    // The remedy for a taken workspace is a go-to control, and that control must appear in the
     // chat the person is actually in — so a Plan chat showing the sentence with no way to act would
     // leave the remedy unreachable from the only surface that can offer it.
     line(reading({ state: 'slot_taken', occupyingProjectName: 'Roster', occupyingProjectId: 'p-9' }))
@@ -171,8 +166,9 @@ describe('sentence always, action selectively — and only one of the three', ()
   })
 
   it('says nothing extra for the states the pane owns alone', () => {
-    // `asleep` and `never_built` are the pane's to speak for: R97 does not ask a Plan chat to
-    // repeat them, and repeating them would put a start-shaped sentence on a surface with no start.
+    // `asleep` and `never_built` are the pane's to speak for: this scenario does not ask a Plan
+    // chat to repeat them, and repeating them would put a start-shaped sentence on a surface with
+    // no start.
     for (const preview of [reading({ state: 'asleep', restorable: true }), reading({ state: 'never_built' })]) {
       const { unmount } = line(preview)
       expect(screen.queryByTestId('plan-chat-workspace-state')).toBeNull()

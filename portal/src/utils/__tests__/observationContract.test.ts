@@ -1,5 +1,5 @@
 /**
- * The beacon's name vocabulary, reconciled ACROSS THE LANGUAGE BOUNDARY (U3/U4).
+ * The beacon's name vocabulary, reconciled ACROSS THE LANGUAGE BOUNDARY.
  *
  * WHY THIS EXISTS. `POST /v1/observations` refuses any name not on its server-side allowlist —
  * that refusal is the security property, and it is correct. But the browser's half of this path

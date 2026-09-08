@@ -1,8 +1,8 @@
-"""Request/response schemas for the projects domain (KD-7, post schema-separation refactor).
+"""Request/response schemas for the projects domain (post schema-separation refactor).
 
 All models subclass the shared `CamelModel` (snake_case in Python, camelCase on the wire),
 live here in `src/schemas/`, and are re-exported from `src/schemas/__init__.py`. The
-name/description write rules (strip, empty→NULL, length cap — KD-8) are enforced HERE at the
+name/description write rules (strip, empty→NULL, length cap) are enforced HERE at the
 Pydantic boundary, not the DB column: a `ValueError` in a validator becomes the API's 422.
 """
 
@@ -28,15 +28,13 @@ from src.schemas.base import CamelModel
 
 
 def _clean_name(value: str) -> str:
-    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` — so create and
-    RENAME are both covered. #158 §14 is explicit that fixing only create leaves the limit
-    half real, and rename was the half with no client-side guard at all.
+    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` — so create and RENAME
+    are both covered. Fixing only create leaves the limit half real, and rename is the half
+    with no client-side guard at all.
 
-    The messages are written for a person. They used to reach the screen verbatim as
-    "Value error, name must be at most 120 characters", because the portal flattens
-    Pydantic's `detail[].msg` straight through — so a validator string IS product copy
-    here, whether or not anyone intended it to be.
-    """
+    Messages are written for a person: they reach the screen verbatim (the portal flattens
+    Pydantic's `detail[].msg` straight through), so a validator string IS product copy here,
+    intended or not."""
     value = value.strip()
     if not value:
         raise ValueError("Give the project a name.")
@@ -51,8 +49,8 @@ def _clean_name(value: str) -> str:
 
 
 def _clean_description(value: str | None) -> str | None:
-    # Normalize empty/whitespace to NULL so "present" (U7) and "non-null" (U8) have no
-    # undefined empty-string third state (KD-8); cap the stored value's length.
+    # Normalize empty/whitespace to NULL so "present" and "non-null" have no
+    # undefined empty-string third state; cap the stored value's length.
     if value is None:
         return None
     value = value.strip()
@@ -88,13 +86,11 @@ class ProjectPatch(CamelModel):
 
 
 def clean_deletion_reason(value: str, *, subject: str) -> str:
-    """Why this `subject` is being deleted — 5 to 50 WORDS (#158 §13.2).
+    """Why this `subject` is being deleted — 5 to 50 WORDS.
 
     The same shared rule as the title cap: `count_words` here,
     `portal/src/utils/words.ts` in the browser, both pinned against the same inputs. The
-    client keeps the person inside the limit and the server enforces it independently —
-    which is the shape §13.2 asks for, and the opposite of the rename path it cites as the
-    thing not to repeat.
+    client keeps the person inside the limit and the server enforces it independently.
 
     A lower bound is unusual and deliberate. The reason exists so an administrator reading
     a deletion months later learns something; "no" and "done" satisfy a required field
@@ -134,19 +130,15 @@ def _clean_delete_remark(value: str) -> str:
 
 
 class ProjectDeleteRequest(CamelModel):
-    """The body `DELETE /v1/projects/{id}` now requires.
+    """The body `DELETE /v1/projects/{id}` requires: deletion destroys the app, database,
+    files and all chats, permanently — and a stated reason replaced an earlier type-the-name
+    gate, because retyping a name proves you can read, not that you meant it, while the reason
+    is the part still useful a month later.
 
-    Deleting a project destroys its app, its database, its files and all of its chats, and
-    none of it comes back. #158 §13.1 replaced the type-the-name gate with a plain
-    confirmation plus a stated reason: retyping a name proves you can read, not that you
-    meant it, and the reason is the part that is still useful a month later.
-
-    THE REASON IS THE ONLY THING THE CLIENT GETS TO SAY. The deletion also records WHO, but
-    that is stamped by the route from the authenticated session, not carried here. It was
-    briefly a body field and that was wrong: a name the client supplies can name somebody
-    who did not act, and the field exists precisely so an administrator can tell who did.
-    An extra `deletedByName` in the body is ignored, as Pydantic ignores any unknown key.
-    """
+    THE REASON IS THE ONLY THING THE CLIENT GETS TO SAY. WHO deleted it is stamped by the route
+    from the authenticated session, never carried in the body — it was briefly a body field, and
+    that was wrong: a client-supplied name can name somebody who did not act. An extra
+    `deletedByName` is silently ignored, as Pydantic ignores any unknown key."""
 
     remark: str
 
@@ -157,13 +149,13 @@ class ProjectResponse(CamelModel):
     id: uuid.UUID
     name: str
     description: str | None
-    # Read-only discovery of the project's ONE app (KD-4) — additive and nullable: a
-    # fresh project has no app yet, so the SPA needs no mutating provision just to
-    # learn whether (and in what lifecycle state) an app exists.
+    # Read-only discovery of the project's ONE app — additive and nullable: a fresh project
+    # has no app yet, so the SPA needs no mutating provision just to learn whether (and in
+    # what lifecycle state) an app exists.
     app_id: str | None = None
     app_status: str | None = None
-    # IS IT SERVING RIGHT NOW? Settled on the #158 call: "live = deployed / published — if
-    # the application is published and has url". That is a DEPLOYMENT fact and cannot be
+    # IS IT SERVING RIGHT NOW? Defined as: "live = deployed / published — if the application
+    # is published and has url". That is a DEPLOYMENT fact and cannot be
     # read off `app_status`: APPROVED means an administrator said yes, not that anything is
     # running, and `PublishStatusChip` keeps `Approved` and `Live` apart for the same
     # reason. Derived by `services/deploy/liveness.live_app_ids`, the one definition the
@@ -172,18 +164,18 @@ class ProjectResponse(CamelModel):
     #
     # `False` for a project with no app at all — there is nothing that could be live.
     # NO DEFAULT. `_to_response` was made keyword-only and required specifically to stop a
-    # call site silently omitting this (round-3 fix for round-1 finding 1: three of five
-    # endpoints answered a live app as not serving because this WAS `= False`). A default
-    # one layer down would let a future direct `ProjectResponse(...)` construction
-    # reintroduce exactly that bug; every call site already passes it via `_to_response`.
+    # call site silently omitting this: with `= False` here, three of five endpoints answered
+    # a live app as not serving. A default one layer down would let a future direct
+    # `ProjectResponse(...)` construction reintroduce exactly that bug; every call site
+    # already passes it via `_to_response`.
     is_serving: bool
-    # N7 — whether this project has a bundle a Relaunch could actually restore.
+    # Whether this project has a bundle a Relaunch could actually restore.
     # THREE-STATE ON PURPOSE: `true` = there is one, `false` = confirmed there is not,
     # `null` = the object store could not be reached, so the platform declines to claim
     # anything in either direction and the client renders the plain empty state.
     #
-    # WIDENED (R18, 2026-08-11): computed by `restorable_presence`, which is the platform's
-    # turn-boundary recovery copy OR the user's explicit Save — the same pair a restore
+    # Computed by `restorable_presence`, which is the platform's turn-boundary recovery copy
+    # OR the user's explicit Save — the same pair a restore
     # actually consults. The saved bundle alone under-reported by exactly one person: the
     # builder who worked across several turns and never pressed Save. The field name still
     # says "snapshot" because renaming a shipped wire field to fix a nuance is a worse trade
@@ -203,21 +195,16 @@ class ProjectResponse(CamelModel):
 
 
 class ProjectCountsResponse(CamelModel):
-    """The three numbers above the project list (#158 §1).
-
-    A DEDICATED route rather than a count derived from the listing, for the reason
-    `/admin/apps/counts` gives: the list projects rows and joins, and polling it for three
-    integers would pay that on a cadence. It is also the only honest option — the list is
-    PAGINATED, so a client holding 8 of 12 rows cannot compute any of these.
+    """The three numbers above the project list. A DEDICATED route, not a count derived from
+    the listing: the list joins rows and is PAGINATED, so a client holding 8 of 12 rows cannot
+    compute any of these, and polling the full list just for three integers pays that cost.
 
     `in_production` reads the SAME `live_app_ids` collapse the status column does, so the
-    headline number and the rows beneath it cannot disagree. That is the failure this shape
-    exists to prevent: a dashboard saying three are live above a list showing two.
-    """
+    headline number and the rows beneath it can never disagree."""
 
-    # "Live = deployed / published — if the application is published and has url" (#158
-    # call). NOT `AppStatus.APPROVED`, which means an administrator said yes and nothing
-    # about whether anything is serving.
+    # "Live = deployed / published — if the application is published and has url". NOT
+    # `AppStatus.APPROVED`, which means an administrator said yes and nothing about whether
+    # anything is serving.
     in_production: int
     # Every application the citizen has ever created, whatever its state.
     total_applications: int
@@ -229,23 +216,15 @@ class ProjectCountsResponse(CamelModel):
 
 
 class ProjectListResponse(CamelModel):
-    """An OFFSET page envelope — deliberately NOT the keyset one the admin rosters use.
+    """An OFFSET page envelope, deliberately NOT the keyset one admin rosters use: numbered
+    pages ("Page 1 of 2") need a `total`, which keyset declines to compute.
 
-    This list was keyset (`nextCursor` + `hasMore`, a forward-only "Load more") until #158
-    specified numbered pages and a rows-per-page selector: `Showing 1-8 of 12`,
-    `Page 1 of 2`. Neither sentence is expressible without a `total`, and a total is exactly
-    what the keyset envelope declines to compute. The design is the requirement, so the
-    envelope changed rather than the design.
+    THE COST IS REAL, NOT ASSUMED AWAY. `pagination.py` refuses offset because a row inserted
+    underneath a page walk can duplicate or skip an entry at a boundary, and because `total` is
+    a second read under READ COMMITTED rather than one snapshot with the page. Both stay true
+    here; what makes them acceptable is written at `list_projects`, not here.
 
-    THE COST, STATED RATHER THAN ASSUMED AWAY. `pagination.py` refuses offset because a row
-    inserted underneath a page walk duplicates or skips an entry at a boundary, and because
-    `total` is a second read under READ COMMITTED rather than one snapshot with the page.
-    Both remain true here. What makes it acceptable is written at `list_projects`, and it is
-    NOT the marketplace's argument — see there.
-
-    `total` is the count AFTER `q` is applied, so "Showing 1-8 of 12" describes the search
-    the rows answer, never the whole collection.
-    """
+    `total` counts AFTER `q` is applied — it describes the search, never the whole collection."""
 
     items: list[ProjectResponse]
     page: int

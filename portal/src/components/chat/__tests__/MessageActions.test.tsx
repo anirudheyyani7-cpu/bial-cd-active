@@ -1,21 +1,12 @@
 /**
- * N1 — EVERY ASSISTANT MESSAGE CARRIES A COPY ACTION, AND ONLY A COPY ACTION.
+ * EVERY ASSISTANT MESSAGE CARRIES A COPY ACTION, AND ONLY A COPY ACTION.
  *
- * ══ WHY THIS IS ITS OWN FILE ══
+ * Own file because of `hideWhenRunning`: `useActionBarFloatStatus` reads `s.thread.isRunning` —
+ * the THREAD, not the message — so setting it hides Copy on every assistant message for the whole
+ * turn, and a citizen couldn't copy the plan they're reading mid-build. Not set here, deliberately.
  *
- * `hideWhenRunning` is the whole difficulty, and it is a prop somebody will reasonably want to
- * set. `useActionBarFloatStatus` reads `hideWhenRunning && s.thread.isRunning` — the THREAD, not
- * the message — and a hidden Root returns `null`. Setting it would remove Copy from EVERY
- * assistant message for the whole of every turn, so a citizen watching a build could not copy the
- * plan they are reading. That directly undercuts the reason copy exists here: it is what makes
- * "build it again next week" real without any storage.
- *
- * ══ WHAT IS DELIBERATELY ABSENT ══
- *
- * No Reload, no Edit, no feedback, no More menu (which carries ExportMarkdown), no branch picker.
- * Each is driven by a capability U4's exact-equality snapshot pins to FALSE, so rendering the
- * control would be dead chrome — and the More menu would additionally offer an export nobody
- * specified. Counting the buttons is what catches one arriving.
+ * DELIBERATELY ABSENT: Reload, Edit, feedback, More menu (carries ExportMarkdown), branch picker —
+ * each gated by a capability pinned FALSE below. Counting the buttons is what catches one arriving.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
@@ -114,9 +105,9 @@ describe('the accessible name does not change mid-interaction', () => {
 
 describe('autohide="not-last"', () => {
   it('the newest reply keeps its bar without a hover', () => {
-    // Non-default and deliberate: persistent on the latest turn, hover-revealed on history. Its
-    // consequence belongs here rather than in a comment — without hover the Root returns `null`,
-    // so on an older message there is no element and no attribute to query at all.
+    // Non-default and deliberate: persistent on the newest reply, hover-revealed on older ones.
+    // Hover isn't asserted here — without it the Root returns `null`, so there's no element to
+    // query at all.
     render(<Harness messages={[reply('a1', 'older'), reply('a2', 'newest')]} />)
     // One bar, and it belongs to the last message.
     expect(bars()).toHaveLength(1)

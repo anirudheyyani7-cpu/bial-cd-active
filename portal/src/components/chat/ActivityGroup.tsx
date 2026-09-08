@@ -1,54 +1,14 @@
 /**
- * AGENT ACTIVITY, DRAWN BY THE PARTS (R30–R35c).
+ * Agent activity, drawn BY THE PARTS (not by the turn, like the card this replaces) — so a
+ * turn with no tool-call parts renders nothing, and a group seals the moment the agent next
+ * speaks (the primitive coalesces ADJACENT parts; no separate seal logic exists). Built
+ * against `ActivityAnatomy`'s own bordered-chip container, not the design system's
+ * `tool-group` (its proportions don't fit this board); only `useScrollLock` is reused.
  *
- * ══ THE STRUCTURAL ARGUMENT, WHICH IS THE WHOLE POINT ══
- *
- * The pinned card this replaces was rendered BY THE TURN, so it appeared whether or not anything
- * ran — ask "who can see the visitor log?" and you got a progress bar. This is rendered BY THE
- * PARTS, so a turn with no tool-call parts renders literally no element.
- *
- * Two requirements therefore stop being rules anybody has to remember and become consequences:
- *   R35 (a turn that ran no tools shows nothing) is free — no parts, no group, no code.
- *   R32 (a group seals when the agent next speaks) is free — the primitive coalesces ADJACENT
- *        parts, so a group ends the moment a different part type appears. THERE IS NO SEAL LOGIC.
- *        A reviewer looking for it will not find it, which is why this paragraph exists.
- *
- * ══ WHY THIS IS NOT THE REGISTRY'S `tool-group` ══
- *
- * The registry's `tool-group.aui.tsx` was fetched and read, and porting it would have shipped
- * nothing usable: the variant we would pass, `ghost`, is LITERALLY THE EMPTY STRING, and its
- * `outline` default is a `rounded-lg border py-3` card whose proportions are not the board's. Every
- * visible property below is authored here against `ActivityAnatomy`, which is a whole artboard
- * about exactly this component.
- *
- * What the port would genuinely have brought is kept: `useScrollLock`, so expanding does not throw
- * the reader somewhere else, is imported from the library directly.
- *
- * ══ IT HAS A CONTAINER NOW, AND THAT IS THE BOARD'S (plan 002, U8) ══
- *
- * An earlier pass read `BuildChat` as drawing the group with no border and no background, and said
- * so at length here. `ActivityAnatomy` is the artboard that actually specifies it, and it draws a
- * bordered chip: `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`, opening into
- * a bordered panel with a header rule. A group with no chrome at all was bare text sitting in the
- * transcript with nothing to say it was a receipt rather than a sentence.
- *
- * ══ ALWAYS COLLAPSED — INCLUDING WHILE IT RUNS (owner ruling, 2026-09-02) ══
- *
- * This AMENDS the board in place. `ActivityAnatomy` panel 2 draws a live group open, with a label
- * naming the current step inside it; the owner does not want the working detail on screen. So a
- * running group is ONE COLLAPSED ROW — icons accumulating in it as steps complete — with a single
- * quiet line beneath it naming what is happening right now. Nothing expands on its own.
- *
- * PRESSING IT IS A GLANCE, NOT A NEW RESTING STATE. Opening shows the rows; pressing again closes
- * them; and a group opened WHILE RUNNING returns to collapsed by itself WHEN THE TURN ENDS, because
- * the turn it belonged to is over and the peek was about watching it. A group that was ALREADY
- * sealed when the reader opened it stays open until they close it — there is no later event to hang
- * a self-close on, and snapping shut under someone reading a finished receipt would be hostile
- * rather than tidy. Both halves are deliberate; the second is the honest limit of the first.
- *
- * R34's FAIL-OPEN IS THE ONE THING THAT OPENS ITSELF, and it fires only once the group is
- * terminal: expanding mid-turn moves what the reader is reading. Nothing is hidden when something
- * went wrong.
+ * A group always renders COLLAPSED, even while running — pressing it is a glance, not a new
+ * resting state: one opened while running re-collapses when the turn ends, but one already
+ * sealed when opened stays open until closed by hand. A failure opens the group by itself,
+ * but only once terminal — never mid-turn, which would move what the reader is reading.
  */
 import {
   ChevronDown,
@@ -79,7 +39,7 @@ import type { ActivityArgs, ActivityState } from './runtime/convertMessage'
 import { ToolActivityLine, type ToolActivityState } from './ToolActivityLine'
 
 /**
- * R35b — what a row says when the server sent no friendly label.
+ * What a row says when the server sent no friendly label.
  *
  * The canvas's wording, verbatim (`ActivityAnatomy`, board 3). Never the tool's own name: the
  * server's classifier fails closed precisely so an unrecognised command cannot reach a citizen as
@@ -88,24 +48,22 @@ import { ToolActivityLine, type ToolActivityState } from './ToolActivityLine'
 export const UNRECOGNISED_STEP = 'Working on your app'
 
 /**
- * Which messages ended on an interrupted turn (R35c).
+ * Which messages ended on an interrupted turn.
  *
- * A group cannot know this by itself — it is a fact about the TURN, carried by Plan B's durable
+ * A group cannot know this by itself — it is a fact about the TURN, carried by the durable
  * turn-terminal row — so the surface supplies it. Without it a count from a build somebody stopped
- * reads exactly like a count from one that finished, which is the specific misreading R35c names.
+ * reads exactly like a count from one that finished, which is the specific misreading this guards
+ * against.
  */
 export const InterruptedMessagesContext = createContext<ReadonlySet<string>>(new Set())
 
 /**
- * R66's SECOND ANNOUNCEMENT — what a group amounted to, the moment it sealed.
+ * What a group amounted to, announced the moment it sealed.
  *
- * It is reported from here rather than derived at the surface because this is the only place the
- * count is already right: a diagnostic joins the group as a failed row but never reaches the
- * surface's `turnSteps`, so a surface-side count would say "3 steps" about a group rendering four.
- * Two places computing the same sentence is how they come to disagree.
- *
- * The default is a no-op, so a group rendered outside a provider (every unit test of this file)
- * behaves exactly as it did.
+ * Reported from here, not derived at the surface, because this is the only place the count is
+ * already right: a diagnostic joins the group as a failed row but never reaches the surface's
+ * `turnSteps`, so a surface-side count would undercount a group with one. The default is a no-op,
+ * so a group rendered outside a provider (every unit test of this file) behaves exactly as before.
  */
 export const GroupSealedContext = createContext<(summary: string) => void>(() => {})
 
@@ -148,16 +106,11 @@ function pluralSteps(n: number): string {
 }
 
 /**
- * WHAT THE ROW SAYS, running or sealed — and since plan 002's U8 it is a COUNT either way.
- *
- * It used to name the running step here, which is what `ActivityAnatomy` panel 2 draws. The owner's
- * ruling of 2026-09-02 moves that sentence OUT of the row and onto one quiet line beneath the
- * collapsed group, so the row is the receipt and the line is the commentary. The count is what
- * belongs on a receipt.
- *
- * No headline, no elapsed timer, no "step 3 of 9" — the screen reads as an app being built, not an
- * agent being watched. The suffixes are sealed-only: a count of problems while the run is still
- * going describes something that may yet be recovered from.
+ * WHAT THE ROW SAYS, running or sealed — always a COUNT, never the running step's name (that
+ * moved to a quiet line beneath the collapsed group; the row is the receipt, that line is the
+ * commentary). No headline, no elapsed timer, no "step 3 of 9" — reads as an app being built,
+ * not an agent being watched. Failure suffixes are SEALED-ONLY: a count of problems mid-run
+ * describes something that may yet be recovered from.
  */
 export function groupLabel(facts: GroupFacts, interrupted: boolean): string {
   if (facts.running) return pluralSteps(facts.count)
@@ -168,18 +121,12 @@ export function groupLabel(facts: GroupFacts, interrupted: boolean): string {
 }
 
 /**
- * ONE ICON PER KIND OF STEP, rather than one tick for everything — `ActivityAnatomy`'s own rule.
- *
- * DERIVED FROM THE LABEL, WHICH IS AN HONEST LIMIT WORTH STATING. The wire carries `{label, state}`
- * and no kind, so there is no field to switch on: a real `kind` would have to be added by the
- * server's step classifier, which is where the platform's own vocabulary already lives, and that
- * is a backend change this unit does not carry. The labels ARE that vocabulary though — a small
- * closed set the classifier emits — so matching on their verb is reading the same decision one
- * layer later rather than inventing a second one.
- *
- * THE FALLBACK IS THE POINT OF THE SHAPE. An unrecognised label gets the neutral dot, never a
- * guessed icon: a wrong icon is a claim about what the agent did, and this component's whole
- * discipline is that it never makes one.
+ * ONE ICON PER KIND OF STEP — `ActivityAnatomy`'s own rule — derived from the LABEL, since the
+ * wire carries `{label, state}` with no `kind` field; a real one would need a backend classifier
+ * change this unit doesn't carry, so matching the classifier's own words is reading the same
+ * decision one layer later, not inventing a second one. THE FALLBACK IS THE POINT: an
+ * unrecognised label gets the neutral dot, never a guessed icon — a wrong icon is a claim about
+ * what the agent did, which this component never makes.
  */
 export function stepIconFor(label: string): LucideIcon {
   // `Still ` FRONTS ANY OTHER LABEL. The projection wraps a long-running step's own words rather
@@ -187,16 +134,10 @@ export function stepIconFor(label: string): LucideIcon {
   // would send every slow step — the ones a citizen stares at longest — to the neutral dot.
   const words = label.toLowerCase().replace(/^still\s+/, '')
 
-  // THE VOCABULARY IS THE SERVER'S, and these are its actual words rather than a guess at them.
-  // The first cut of this map matched `reading` / `adding` / `putting` / `creating` / `installing`
-  // / `finishing`, and the projection emits NONE of those — while the words it does emit, `looked`
-  // / `inspected` / `read` / `updating` / `getting` / `edited`, had no branch at all. A quarter of
-  // the tiles in a real transcript therefore drew the featureless fallback circle, which is the one
-  // thing `ActivityAnatomy` never draws: every tile on it names a kind of call.
-  //
-  // Read alongside `backend/src/services/messages/projection.py`, which is where these words are
-  // written. A label added there without a branch here is not an error — it is the fallback below,
-  // doing its job.
+  // THE VOCABULARY IS THE SERVER'S: these are its actual emitted words, read alongside
+  // `backend/src/services/messages/projection.py`, not guessed at. A label added there
+  // without a matching branch here is not a bug — it lands on the fallback below, which is
+  // what that branch exists for.
   if (
     words.startsWith('looking') ||
     words.startsWith('looked') ||
@@ -251,7 +192,7 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
     }
   }, [group.indices, parts])
 
-  // R34, as a controlled prop with the reader's own toggle winning thereafter. `null` means "the
+  // As a controlled prop with the reader's own toggle winning thereafter. `null` means "the
   // reader has not decided", which is what lets a failure open the group once WITHOUT overriding a
   // reader who has already closed it.
   const [readerOpen, setReaderOpen] = useState<boolean | null>(null)
@@ -259,25 +200,12 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
   const open = readerOpen ?? failOpen
 
   /**
-   * A GLANCE INSIDE A RUNNING GROUP IS TEMPORARY (owner ruling, 2026-09-02).
-   *
-   * Opening one while it runs is about watching it, so when the turn ends the peek is over and the
-   * group returns to its resting state — collapsed. Cleared to `null` rather than to `false`, so
-   * a group that also FAILED still opens itself: the reader has stopped deciding, which is exactly
-   * what `null` means here.
-   *
-   * IT ARMS PER GROUP AND FIRES PER TURN, and the two halves are different facts on purpose.
-   * `facts.running` is "some step in HERE is pending", which is what makes the glance a glance at
-   * something live — so it is the right thing to arm on. It is the WRONG thing to fire on:
-   * between one tool call returning and the next one starting the model thinks again, seconds at
-   * a time with adaptive reasoning on, and every step emitted so far reads as settled. Firing on
-   * that gap snapped the group shut under a reader who had just pressed it open, over and over,
-   * for the whole build. `streaming` is the turn-level fact, and it stays true across the gap.
-   *
-   * ONLY FOR A GROUP THE READER OPENED WHILE IT WAS RUNNING. One that was already sealed when they
-   * opened it has no later event to hang a self-close on, and snapping shut under someone reading
-   * a finished receipt would be hostile rather than tidy. That is the honest limit of this rule
-   * and it is deliberate.
+   * A PEEK INTO A RUNNING GROUP IS TEMPORARY: cleared to `null` (not `false`, so a failed
+   * group still self-opens) when the TURN ends, not when THIS group's steps finish. Arms
+   * on `facts.running` but fires on `streaming`, not `facts.running` — the inter-tool-call
+   * thinking gap reads as settled per group, and firing there snapped an open group shut
+   * repeatedly, mid-build. Only a group opened WHILE running self-closes; one already
+   * sealed when opened stays open by hand.
    */
   const openedWhileRunning = useRef(false)
   if (facts.running && readerOpen === true) openedWhileRunning.current = true
@@ -300,7 +228,7 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
 
   // ONCE, ON THE TRANSITION — not on mount.
   //
-  // R66 announces what just happened, so the group has to have RUN here to have anything to
+  // This announces what just happened, so the group has to have RUN here to have anything to
   // report. Firing on "not running and has steps" instead announced every historical group in the
   // transcript the moment a finished chat was opened: five past builds meant five summaries into
   // the live region, none of them about anything the reader had just done.
@@ -331,9 +259,9 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
       <div
         data-testid="activity-group-container"
         data-problem={problem || undefined}
-        // A BORDERED CHIP, which is what `ActivityAnatomy` actually draws — see the docblock for
-        // the earlier reading that said otherwise. `w-fit` so the container hugs its contents
-        // when collapsed and is not a full-width bar across the transcript.
+        // A BORDERED CHIP, which is what `ActivityAnatomy` actually draws. `w-fit` so the
+        // container hugs its contents when collapsed and is not a full-width bar across the
+        // transcript.
         className={`w-fit max-w-full overflow-hidden rounded-[10px] border ${
           problem ? 'border-problem-edge' : 'border-bial-border'
         }`}
@@ -410,10 +338,10 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
         )}
       </div>
 
-      {/* ONE QUIET LINE, BENEATH THE COLLAPSED ROW, naming what is happening right now (owner
-          ruling, 2026-09-02). The board puts this sentence INSIDE an open group; the owner does
-          not want the working detail on screen, so the group stays shut and the sentence moves
-          here. Running only: a sealed group's steps are in the receipt, one press away. */}
+      {/* ONE QUIET LINE, BENEATH THE COLLAPSED ROW, naming what is happening right now. The
+          board puts this sentence INSIDE an open group; here the working detail stays off
+          screen, so the group stays shut and the sentence moves here. Running only: a sealed
+          group's steps are in the receipt, one press away. */}
       {facts.running && (
         <p data-testid="activity-group-now" className="mt-1.5 ps-1 text-[11px] text-neutral">
           {facts.currentLabel}

@@ -35,23 +35,11 @@ def _override_storage(app, fake_storage) -> None:
 def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:
     """A sandbox client on BOTH seams, for every conversation test, by default.
 
-    THIS IS NOT SCAFFOLDING — IT IS THE POINT OF R98. A turn used to answer from the last SAVED
-    copy of the app when no sandbox service was configured, and "no sandbox service configured"
-    is exactly what the test environment is. So the whole conversation suite was exercising the
-    degraded path while believing it exercised the live one, and the day that degrade arm was
-    deleted every one of these tests would have started refusing at send with nothing to say why.
-
-    Both kinds now read the project's live app and only that, so the fixture binds what the
-    product requires rather than what the old branch tolerated. The tests that are ABOUT the
-    absence — R98's refusal — unbind it explicitly, which is the honest shape: the exception is
-    written down at the test that needs it, not assumed by every test that does not.
-
-    IT PULLS IN `fake_redis` FOR A REASON THAT IS NOT INCIDENTAL. Binding a workspace is what
-    makes the send route's reclaim preflight reachable — with no sandbox it was skipped
-    entirely — and that preflight reads the coordination store. A suite that binds one without
-    the other proves the refusal it wants and then dies on a store nobody configured, which
-    reads as a fixture problem rather than as what it is: the two are one deployment fact.
-    """
+    Without this, a turn silently answers from the last SAVED copy when no sandbox is
+    configured — exactly the state an unbound test env is in. Tests ABOUT that absence unbind
+    it via `no_workspace_service`. Pulls in `fake_redis` too: binding a workspace is what makes
+    the send route's reclaim preflight reachable, and that preflight reads the coordination
+    store — the two are one deployment fact, not two independent fixtures."""
     from src.api.v1.build_sessions.deps import sandbox_dependency, sandbox_or_none_dependency
     from src.config import settings
     from src.services.sandbox.config import SandboxConfig
@@ -67,7 +55,8 @@ def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def no_workspace_service(app) -> None:
-    """The R98 case, opted into by name: a deployment with no sandbox service at all.
+    """The no-sandbox case the binding above guards against, opted into by name: a deployment
+    with no sandbox service at all.
 
     Overrides the autouse binding above rather than fighting it, so a test that wants the
     refusal says so in its signature and every other test keeps the live path."""
@@ -76,21 +65,12 @@ def no_workspace_service(app) -> None:
     app.dependency_overrides[sandbox_or_none_dependency] = lambda: None
 
 
-# =============================================================================
-# The turn-driving seams, shared by the four files that drive turns
-# =============================================================================
+# --- The turn-driving seams, shared by the four files that drive turns -----------------
 #
-# These were byte-identical copies in `test_turn_stream.py`, `test_build_transition.py`,
-# `test_project_grounding.py` and `test_context_gate.py` — the last two added the 3rd and 4th
-# copy, and `test_build_transition.py` had already resorted to importing `_headers` out of
-# ANOTHER TEST MODULE to avoid a fifth. They live here now.
-#
-# THEY ARE DELIBERATELY NOT `autouse`, unlike the storage and workspace fixtures above. Six other
-# files in this directory drive no turns at all, and a directory-wide autouse `_override_billing`
+# DELIBERATELY NOT `autouse`, unlike the storage and workspace fixtures above: six other files
+# in this directory drive no turns at all, and a directory-wide autouse `_override_billing`
 # would rebind their billing factory for no reason. The four that need them opt in with a
-# module-level `pytestmark = pytest.mark.usefixtures("_fresh_engine", "_override_billing")` —
-# the same blast radius the per-module `autouse=True` had, said out loud at the module that wants
-# it rather than assumed for eight.
+# module-level `pytestmark = pytest.mark.usefixtures("_fresh_engine", "_override_billing")`.
 
 _TTL = settings.auth.access_ttl_seconds
 

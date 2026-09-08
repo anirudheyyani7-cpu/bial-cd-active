@@ -4,20 +4,13 @@ Revision ID: 0017_drop_app_files
 Revises: 0016_user_suspended_at
 Create Date: 2026-07-15
 
-Retire the per-app file model (OPEN-SANDBOX). Every consumer was removed first —
-files_router/parse_router serving (U10), admin governance + project-delete off
-`AppFile` (U9), the `Storage` relocation (U8) — so this drop breaks nothing on read.
-`app_files` has one outbound FK (app_registry.id CASCADE) and NO inbound FKs, so the
-drop is self-contained; it owns the native PG enum `app_file_status` (ADR-0008).
+Retire the per-app file model (OPEN-SANDBOX); every consumer was removed first, so this breaks
+nothing on read. Self-contained: one outbound FK (app_registry.id CASCADE), no inbound FKs.
 
-DESTRUCTIVE: `upgrade` deletes real rows. A pre-drop safety gate (row-count / empty
-check, or an export of the rows + their `blob_key`s for a deferred blob-GC) MUST run in
-the target environment BEFORE this is applied there — consumer removal proves nothing
-breaks on read, but only that gate protects the rows themselves. `downgrade` recreates the
-STRUCTURE (table + enum + indexes) but NOT the data.
-
-Mirrors 0012_app_files in reverse (its downgrade is this upgrade, its upgrade is this
-downgrade). Hand-finalized (ADR-0013).
+WHY THIS EXISTS. DESTRUCTIVE: `upgrade` deletes real rows. A pre-drop safety gate (row-count/
+empty check, or an export of the rows + `blob_key`s for a deferred blob-GC) MUST run in the
+target environment BEFORE this is applied there — consumer removal proves nothing breaks on
+read, only that gate protects the rows. `downgrade` recreates STRUCTURE, never the data.
 """
 
 from __future__ import annotations

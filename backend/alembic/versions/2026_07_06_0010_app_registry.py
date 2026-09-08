@@ -4,17 +4,18 @@ Revision ID: 0010_app_registry
 Revises: 0003_audit_logs
 Create Date: 2026-07-06
 
-The app-lifecycle spine of the deployed-app data plane (Plan B U1, R18/R4). The
-row `id` IS the appId (identifier preservation, AE3 — the backfill inserts a
-migrated app with its existing appId as the PK, no legacy_id). `app_key` is a
-publishable `secrets.token_urlsafe` label (ADR-0006). `status` is a native PG enum
-(ADR-0008), owned by this migration (CREATE/DROP TYPE explicit). `conversation_id`
-is a soft link (no FK) to Plan A's concurrently-developed `conversations` table.
+WHY THIS EXISTS
+The app-lifecycle spine of the deployed-app data plane. The row `id` IS the appId
+(identifier preservation — the backfill inserts a migrated app with its existing
+appId as the PK, no legacy_id). `app_key` is a publishable `secrets.token_urlsafe`
+label. `status` is a native PG enum, owned by this migration (CREATE/DROP TYPE
+explicit). `conversation_id` is a soft link (no FK) to the concurrently-developed
+`conversations` table.
 
-Plan B migrations use a distinct 0010+ revision band so they never collide with
-Plan A's concurrent chain; both branch off 0003_audit_logs and are reconciled
-(alembic merge) at integration. Hand-finalized from an autogenerate starting
-point (ADR-0013).
+This chain uses a distinct 0010+ revision band so it never collides with the
+concurrently-developed `conversations` chain; both branch off 0003_audit_logs and are
+reconciled (alembic merge) at integration. Hand-finalized from an autogenerate starting
+point.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ down_revision: str | None = "0003_audit_logs"
 branch_labels: str | None = None
 depends_on: str | None = None
 
-# The native app_status enum (ADR-0008). create_type=False so THIS migration owns
+# The native app_status enum. create_type=False so THIS migration owns
 # the lifecycle: explicit .create() in upgrade, .drop() in downgrade.
 app_status = postgresql.ENUM(
     "draft",
@@ -47,10 +48,10 @@ def upgrade() -> None:
     op.create_table(
         "app_registry",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004).
+        # OwnedByUserMixin — the single-tenant ownership boundary.
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("app_key", sa.String(length=64), nullable=False),
-        # Soft link to the builder conversation (Plan A) — no FK by design.
+        # Soft link to the builder conversation — no FK by design.
         sa.Column("conversation_id", sa.Uuid(), nullable=True),
         sa.Column("name", sa.String(length=120), server_default="", nullable=False),
         sa.Column("login_required", sa.Boolean(), server_default=sa.text("false"), nullable=False),

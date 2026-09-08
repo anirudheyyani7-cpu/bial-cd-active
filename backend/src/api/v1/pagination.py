@@ -1,24 +1,15 @@
-"""Shared keyset (cursor) pagination helpers for the new project + admin lists (KD-1, R5–R7).
+"""Shared keyset (cursor) pagination for the platform's list endpoints.
 
-Keyset, NOT offset: the origin requires a stable cursor that returns the next page with
-no duplicates or skips under concurrent inserts (R5/AE3), which offset structurally cannot
-do. Every owned model has a time-sortable UUIDv7 PK (ADR-0006), so the cursor IS the last
-row's id and the page is `WHERE id < :cursor ORDER BY id DESC LIMIT :n+1` — the extra row
-tells us whether a next page exists. The envelope is `{items, nextCursor, hasMore}`; there
-is deliberately no `total`/`totalPages` (keyset does not cheaply provide them and they are
-not required, KD-1).
+Keyset, NOT offset: a page must come back with no duplicates and no skips while rows are
+inserted underneath it, which offset structurally cannot promise. Every owned model has a
+time-sortable UUIDv7 primary key, so the cursor IS the last row's id and a page is
+`WHERE id < :cursor ORDER BY id DESC LIMIT :n+1` — the extra row is how `hasMore` is known.
+The envelope is `{items, nextCursor, hasMore}`, with no `total`/`totalPages`.
 
-This module governs the ADMIN ROSTER lists. It is no longer every list endpoint the API
-has: `GET /v1/projects` moved to OFFSET paging under #158, because §2 specifies
-`Showing 1-8 of 12` and `Page 1 of 2` and neither sentence is expressible without a `total`
-that keyset deliberately declines to compute. The argument for that deviation is written at
-`list_projects`, and it is NOT the marketplace's ("read-only and small") — the projects list
-is owner-scoped and effectively single-writer, so the skew this module guards against is one
-person's second tab rather than a shared table.
-
-It remains the single source of truth for the platform's page-size ceiling, which the offset
-callers import rather than redeclare.
-"""
+TWO SURFACES PAGE BY OFFSET INSTEAD — the marketplace catalog and the projects list, both
+because their designs specify numbered pages and a `Showing 1-8 of 12` count that keyset
+can't cheaply compute. Their helpers live in `offset_pagination.py`. This module stays the
+single source of truth for the platform's page-size ceiling, which offset callers import."""
 
 from __future__ import annotations
 
@@ -30,28 +21,25 @@ from fastapi import Query
 
 from src.core.errors import AppApiError
 
-# One platform-wide page-size ceiling: 100 rows is the most any single list response may
-# return. An over-large or non-positive `limit` is REJECTED (422), never silently clamped
-# in a way that skips rows (R7).
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
+
 # A generous cap on the free-text search token (200 chars) so `q` can't become an abusive
 # scan. Longer than any real search term, short enough to bound the LIKE pattern.
 MAX_SEARCH_Q = 200
 
-# The shared `?limit=` param: validated by `clean_limit` (R7) so an out-of-range value
-# 422s in the SAME `{error:{message}}` envelope as `parse_cursor`/`clean_search` — a
-# FastAPI `ge`/`le` bound would emit the native `{detail:[...]}` shape, putting two 422
-# bodies on one endpoint that `error_responses(...)` structurally can't both document.
-# The shared `?cursor=` param is validated by `parse_cursor` (a malformed cursor is a 422).
+# `Query()` deliberately carries no `ge`/`le` bound: a FastAPI bound emits the native
+# `{detail:[...]}` 422, so one endpoint would carry two 422 body shapes and
+# `error_responses(...)` cannot document both. Range and format are checked by `clean_limit`
+# and `parse_cursor` instead, in the one `{error:{message}}` envelope.
 LimitQuery = Annotated[int, Query()]
 CursorQuery = Annotated[str | None, Query()]
 SearchQuery = Annotated[str | None, Query()]
 
 
 def parse_cursor(cursor: str | None) -> uuid.UUID | None:
-    """A cursor is the last-seen row id (a UUID). Absent → first page; malformed → 422
-    (rejected, not silently ignored, so a bad cursor never quietly returns page one, R7)."""
+    """A cursor is the last-seen row id (a UUID). Absent → first page; malformed → 422 —
+    rejected, not silently ignored, so a bad cursor never quietly returns page one."""
     if cursor is None:
         return None
     try:
@@ -61,8 +49,8 @@ def parse_cursor(cursor: str | None) -> uuid.UUID | None:
 
 
 def clean_limit(value: int) -> int:
-    """Reject an out-of-range `?limit=` — never silently clamp in a way that skips rows
-    (R7) — in the one `{error:{message}}` 422 shape this module's siblings raise."""
+    """Reject an out-of-range `?limit=` rather than clamp it: a silent clamp drops every
+    row past the clamp out of the response."""
     if not 1 <= value <= MAX_PAGE_SIZE:
         raise AppApiError(422, f"limit must be between 1 and {MAX_PAGE_SIZE}.")
     return value
@@ -79,11 +67,9 @@ def clean_search(q: str | None) -> str | None:
     if len(q) > MAX_SEARCH_Q:
         raise AppApiError(422, f"q must be at most {MAX_SEARCH_Q} characters.")
     # A NUL byte is not representable in a Postgres text value, so it reaches asyncpg and
-    # raises `CharacterNotInRepertoireError` — escaping as an unhandled 500 on an
-    # authenticated endpoint. Rejected HERE rather than at any one call site because this
-    # function is the platform's `?q=` boundary: the same input 500s `/v1/projects` and the
-    # admin roster identically (#147 round 3). No info disclosure — the cost was a lying
-    # error contract, since every caller documents a 422 for a bad `q`.
+    # raises `CharacterNotInRepertoireError` — an unhandled 500 on an authenticated endpoint.
+    # Rejected here rather than at a call site because this function is the platform's `?q=`
+    # boundary: the same input would 500 every list endpoint that accepts one.
     if "\x00" in q:
         raise AppApiError(422, "q contains an unsupported character.")
     return q
@@ -92,9 +78,9 @@ def clean_search(q: str | None) -> str | None:
 def split_keyset[T](
     rows: Sequence[T], limit: int, *, key: Callable[[T], uuid.UUID]
 ) -> tuple[list[T], str | None, bool]:
-    """Split rows fetched with `LIMIT limit + 1` (ordered by id DESC) into the page, the
-    next cursor, and `hasMore`. The (limit+1)-th row's presence IS `hasMore`; the cursor is
-    the id of the LAST returned row (so the next page continues strictly below it)."""
+    """Split rows fetched with `LIMIT limit + 1` (ordered by id DESC) into the page, the next
+    cursor, and `hasMore`. The cursor is the id of the LAST returned row, so the next page
+    continues strictly below it."""
     has_more = len(rows) > limit
     page = list(rows[:limit])
     next_cursor = str(key(page[-1])) if has_more and page else None

@@ -182,7 +182,8 @@ test.describe('the platform draws no chrome over the citizen’s own app', () =>
   test.use({ viewport: WIDE })
 
   /**
-   * R24, in the form that SURVIVES the chips being deleted.
+   * Nothing the platform draws may overlap the citizen's own app — stated in the form that
+   * SURVIVES the chips being deleted.
    *
    * The chips are gone, so "the chip's rectangle and the app's controls are disjoint" is now
    * trivially true — there is no chip. Asserting that would be a scenario that passes because
@@ -280,7 +281,7 @@ test.describe('a reviewer’s note never pushes the review action out of view', 
   test.use({ viewport: NARROW })
 
   /**
-   * AE9. The note is free text capped at 1,000 characters and the rail is 360-640px wide, so the
+   * The note is free text capped at 1,000 characters and the rail is 360-640px wide, so the
    * only thing standing between a long note and an unreachable review button is that the note's
    * BOX is bounded rather than its text. A jsdom test can assert both elements exist and learn
    * nothing about which one moved.

@@ -1,27 +1,18 @@
 /**
  * The Help FAQ, reconciled against the code it describes.
  *
- * #157 C rewrote four answers that had gone quietly false: an invented Staff ID login, a
- * "no hard limit" that ignored the daily token cap, a footer link that pointed back at this
- * very page, and advice to attach a file type the composer had stopped accepting. None of
- * them broke anything — they just stopped being true, and nothing noticed, because HelpPage
- * had no test file at all and prose has no compiler.
- *
  * So these tests do not check the wording. They check that each answer still AGREES with the
  * thing it claims to describe — the real mode list, the real attachment allowlist, the real
  * feature flag — which is the axis these strings actually drifted on.
  *
- * The gate is deliberately incomplete, and the plan says which sentences it does NOT read:
- * `HelpPage`'s inline "Describe the data" tip and the two attach-button `title` attributes are
- * JSX-inline, and lifting them out so a test could scan them would be production code reshaped
- * for a test. Their edits ride the release that narrows the allowlist; what is gated here is the
- * two PROMISES about the picker — the attachment answer and the data answer.
+ * The gate is deliberately incomplete: `HelpPage`'s inline "Describe the data" tip and the two
+ * attach-button `title` attributes are JSX-inline, and lifting them out so a test could scan
+ * them would be production code reshaped for a test. What is gated here is the two PROMISES
+ * about the picker — the attachment answer and the data answer.
  *
  * They assert on the exported FAQS data rather than a render, on purpose. `AccordionItem`
  * renders its answer as `{open && ...}`, so against a collapsed accordion every negative
- * assertion here would pass with nothing in the DOM. That is not hypothetical: the #157
- * browser harness passed a full sweep of "this false claim is gone" checks for exactly that
- * reason before the accordions were expanded. Data cannot go vacuous that way.
+ * assertion here would pass with nothing in the DOM. Data cannot go vacuous that way.
  */
 import { describe, it, expect } from 'vitest'
 import { FAQS } from '../HelpPage'
@@ -30,8 +21,7 @@ import { ALLOWED_MEDIA_TYPES } from '../../utils/attachmentInput'
 /**
  * Literal media types, not imports.
  *
- * Plan D's narrowing deleted the `EXCEL_MEDIA_TYPE` / `PPTX_MEDIA_TYPE` exports along with the
- * formats. Keeping them as literals is what preserves the REFUSED direction of the reconciliation:
+ * Keeping them as literals is what preserves the REFUSED direction of the reconciliation:
  * a format that is gone from the module must still be checked for absence from the copy, and an
  * inventory built from the module's own exports can only check what it still offers.
  */
@@ -58,22 +48,18 @@ describe('the FAQ answers are non-empty prose', () => {
   })
 })
 
-// The "Start Chat" reconciliation block that used to live here is retired, not merely
-// unwritten: it checked the FAQ answer against `ModeSwitcher.MODES` (this file's own doctrine —
-// reconcile prose against the code it describes), and U19 deleted `ModeSwitcher` outright — U1
-// collapsed conversation kind + the ask/plan/write mode it switched into one two-valued ChatKind
-// (plan | build) chosen once at chat creation, so there is no live mode list left to reconcile
-// against. The "Start Chat" answer in `HelpPage.tsx` still describes the retired switch
-// ("three modes", "defaults to Plan") — `chatKind.ts`'s own comment already named this exact
-// copy update a deferral ("rides a later release"); U19 only widens how true that deferral is,
-// it does not resolve it. Left for whichever unit lands the create-time Plan/Build picker.
+// There is no reconciliation test for the "Start Chat" answer: conversation kind is a
+// single two-valued ChatKind (plan | build) chosen once at chat creation, so there is no live
+// mode list left to reconcile against. The "Start Chat" answer in `HelpPage.tsx` still
+// describes the retired multi-mode switch ("three modes", "defaults to Plan") — a known,
+// deliberate deferral, left for whichever unit lands the create-time Plan/Build picker.
 
 describe('the attachment answer agrees with the real allowlist', () => {
   const answer = answerTo(/files can I attach/)
 
   it('promises only formats the composer actually accepts', () => {
     // Both directions. The one-way version of this test is what let ".pptx" survive in the
-    // copy after the composer stopped taking it (#157 B2).
+    // copy after the composer stopped taking it.
     const offersPptx = (ALLOWED_MEDIA_TYPES as readonly string[]).includes(PPTX_MEDIA_TYPE)
     if (offersPptx) {
       expect(answer).toMatch(/PowerPoint|\.pptx/i)
@@ -95,11 +81,10 @@ describe('the attachment answer agrees with the real allowlist', () => {
 })
 
 describe('the "how does my app get its data" answer agrees with the real allowlist', () => {
-  // THE SECOND PROMISE ABOUT THE FILE PICKER IN THIS FILE, and until now the unread one. The
-  // block above reads "What files can I attach?"; this answer tells a citizen to "upload an Excel
-  // or CSV file", which is a claim about exactly the same allowlist and goes false at exactly the
-  // same moment — it just says it under a different question, which is why a grep for the drift
-  // found one and not the other (R48, R56).
+  // THE SECOND PROMISE ABOUT THE FILE PICKER IN THIS FILE. The block above reads "What files
+  // can I attach?"; this answer tells a citizen to "upload an Excel or CSV file", which is a
+  // claim about exactly the same allowlist and goes false at exactly the same moment — it just
+  // says it under a different question.
   const answer = answerTo(/How does my app get its data/)
 
   it('offers no data format the picker refuses, and names every one it accepts', () => {
@@ -118,8 +103,7 @@ describe('the "how does my app get its data" answer agrees with the real allowli
   })
 
   it('still says the app gets a database of its own, which is the half that stays true', () => {
-    // Liveness, and the part R46 does not touch: narrowing the allowlist must not be "fixed" by
-    // deleting the answer.
+    // Liveness: narrowing the allowlist must not be "fixed" by deleting the answer.
     expect(answer).toMatch(/database/i)
   })
 })

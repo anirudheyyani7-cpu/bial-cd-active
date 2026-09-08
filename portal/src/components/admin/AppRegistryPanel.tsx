@@ -39,7 +39,7 @@ const STATUS: Record<AppStatus, { label: string; cls: string }> = {
 // Draft used to be hidden here as "builder-side", which was true of the REVIEW flow and
 // false of the ops one: a self-published app is a draft (one-click deploy never writes a
 // status), so the ordinary live app in the marketplace had no row on this screen at all —
-// and the kill switch below can now reach it (#163). A lever nobody can get to is not a
+// and the kill switch below can now reach it. A lever nobody can get to is not a
 // lever. Pending stays the default tab; this only adds a place to stand.
 const TABS: AppStatus[] = ['pending', 'draft', 'approved', 'rejected', 'disabled']
 
@@ -68,7 +68,7 @@ function SubmittedCell({ iso }: { iso: string | null }) {
   return <time dateTime={iso} title={exact}>{relativeTimeVerbose(iso)}</time>
 }
 
-// Advisory on-disk size of the app's own database (ADR-0028). Null is a real value —
+// Advisory on-disk size of the app's own database. Null is a real value —
 // "no number to show" (never provisioned, not yet ready, or the cluster was unreachable) —
 // and renders as "—", never "0 B", which would read as an empty database.
 const fmtBytes = (n: number | null): string => {
@@ -84,7 +84,7 @@ function StatusBadge({ status }: { status: AppStatus }) {
   return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
 }
 
-/** The one thing this screen is for (P3), said out loud. An administrator who thinks
+/** The one thing this screen is for, said out loud. An administrator who thinks
  *  they are code-reviewing will either approve everything or block everything. */
 const THE_CRITERION =
   'Decide whether an app holding this kind of data is acceptable to publish. You are not ' +
@@ -105,34 +105,18 @@ const NOTHING_IN_DISPUTE_COPY =
   'they both said.'
 
 /**
- * Review a pending SUBMISSION.
- *
- * READING ORDER (R15): what is in DISPUTE first, then the automatic check's reason for
- * each, then the developer's explanation. The disagreement is the thing to read first —
- * the metadata is provenance, and the criterion (P3) is what the whole screen is for.
- *
- * Approve sends EXACTLY the submission id on display, so the server's reviewed-id guard
- * has something to check: a re-submit since this review 409s, never a silent promotion of
- * an unreviewed build. A WITHDRAWAL between opening this and clicking is answered by
- * purpose-written copy rendered IN PLACE OF the actions (`submission_withdrawn`), because
- * "conflict" describes a column and the administrator needs to know what happened.
- *
- * THE SCROLL CONTRACT. This card was a fixed-width box in a centred overlay with no
- * max-height and no overflow, and the page behind an overlay does not scroll either — so
- * anything taller than the viewport was simply unreachable. It now takes a max-height and
- * splits into three: a header, a MIDDLE THAT SCROLLS (the disputes and the explanation,
- * which is the part that grows without bound), and an action row OUTSIDE that scroll
- * region, so Approve and Reject are reachable with a full six-category dispute and a long
- * explanation on screen. `min-h-0` on the scrolling child is load-bearing: a flex item's
- * default `min-height:auto` refuses to shrink below its content, which silently restores
- * the original bug.
- *
- * EVIDENCE LOCATIONS ARE NEVER RENDERED (OD-B) — and structurally cannot be: they live in
- * a separate document that no call reaching this screen makes.
+ * Review a pending SUBMISSION. Reading order: disputes first, then the automatic check's
+ * reasoning, then the developer's explanation — the disagreement matters most. Approve sends the
+ * exact submission id on display, so a re-submit since this review 409s instead of silently
+ * promoting an unseen build; a withdrawal mid-review swaps the actions for explanatory copy. The
+ * card splits header / scroll / action row so a long dispute list can't push Approve/Reject
+ * off-screen — `min-h-0` on the scroll child is load-bearing (flex won't shrink below content).
+ * EVIDENCE LOCATIONS ARE NEVER RENDERED, and structurally cannot be: they live in a separate
+ * document that no call reaching this screen makes.
  */
 interface ReviewModalProps {
   app: RegistryApp
-  /** The developer pulled this submission back while the modal was open (P6). Set by the
+  /** The developer pulled this submission back while the modal was open. Set by the
    *  panel, which is the only thing that sees the failure; non-null replaces the actions
    *  entirely, because there is nothing left to decide and a button that can only fail
    *  again is worse than a sentence saying so. */
@@ -169,7 +153,7 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
             </div>
             {/* NAMED, because it is an icon on its own: without the label this dismiss control
                 reads as "button" to a screen reader, and it is the route out of the dialog that
-                R43's focus restore is measured on. */}
+                the focus restore below is measured on. */}
             <button aria-label="Close" onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
           </div>
           <p data-testid="review-criterion" className="mt-3 text-xs text-tertiary bg-bial-bg border border-bial-border rounded-xl px-3 py-2.5 leading-relaxed">
@@ -300,8 +284,8 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
             this review, the server refuses the approval rather than silently promoting a build
             you never saw.{' '}
             {app.approvalRoute === 'self_publish' ? (
-              // R17a: for this lineage there IS no runbook, and the previous copy sent the
-              // administrator to run one — instructing exactly what R17a forbids.
+              // For this lineage there IS no runbook, and the previous copy sent the
+              // administrator to run one — exactly the mistake corrected here.
               <span data-testid="review-self-publish-note">
                 Approving does not publish it — the developer publishes this approved version
                 themselves, and there is no go-live runbook for you to run.
@@ -349,7 +333,7 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
                       rejection, which the marketplace reads — so a live app vanishes from
                       the catalog while its URL keeps working, and only the OWNER can
                       re-submit to undo it. An admin rejecting a re-submission of an
-                      already-approved app had no way to know that (#147 round 3 review). */}
+                      already-approved app had no way to know that. */}
                   {app.deployedUrl && (
                     <p data-testid="reject-delists-warning" className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                       This app is live. Rejecting removes it from the Marketplace but leaves
@@ -447,7 +431,7 @@ function AuditDrawer({ app, onClose }: AuditDrawerProps) {
  * the admin-gated /api/admin/apps endpoints. Loads via useCallback+useEffect.
  */
 export interface AppRegistryPanelProps {
-  // U15: severity is optional (default 'ok' on the AdminPage side) so a plain confirmation
+  // severity is optional (default 'ok' on the AdminPage side) so a plain confirmation
   // call reads exactly as it always has — only `act()`'s catch branch below passes 'problem'.
   onToast: (msg: string, severity?: 'ok' | 'problem') => void
 }
@@ -461,11 +445,11 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   /** The app awaiting a delete reason, or null. See `onDelete`. */
   const [deleting, setDeleting] = useState<RegistryApp | null>(null)
   const [deleteReason, setDeleteReason] = useState('')
-  // Non-null once the developer withdraws the submission under review (P6). Cleared
+  // Non-null once the developer withdraws the submission under review. Cleared
   // whenever a different item is opened, so one race can never haunt the next review.
   const [withdrawn, setWithdrawn] = useState<string | null>(null)
   const [auditing, setAuditing] = useState<RegistryApp | null>(null)
-  // The waiting count, mirrored from the nav badge onto the Pending tab (P1). `null` =
+  // The waiting count, mirrored from the nav badge onto the Pending tab. `null` =
   // not asked yet or the ask failed; never rendered as a number.
   const [waiting, setWaiting] = useState<number | null>(null)
   // A SET of in-flight app ids, not one shared lock: acting on row A must never
@@ -487,7 +471,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const reviewTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   /**
-   * PUT FOCUS SOMEWHERE REAL WHEN THE REVIEW CLOSES (R43, #187).
+   * PUT FOCUS SOMEWHERE REAL WHEN THE REVIEW CLOSES.
    *
    * The review modal is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
    * captures the element that had focus and nothing restores it. Closing it dropped focus on
@@ -543,16 +527,13 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
   useEffect(() => { load() }, [load])
 
-  // Run a mutating action with a PER-ROW busy lock + toast, then reload. Returns the
-  // FAILURE, or null when `fn()` didn't throw — so callers can both gate on success and
-  // inspect which failure it was. (It used to return a bare boolean; the withdrawal race
-  // needs the error's `code`, and re-throwing after already toasting would have made the
-  // one caller that cares wrap every call in a second try.)
-  //
-  // U15: this is the one channel a confirmation AND a raw failure both travel down —
-  // `okMsg` on the happy path, `e`'s message on the catch. They must not render the same
-  // way: an administrator reading a channel that looks identical either way cannot tell,
-  // without reading the words, whether the action they just took worked.
+  // Run a mutating action with a per-row busy lock + toast, then reload. Returns the FAILURE,
+  // or null on success — never a bare boolean, because the withdrawal race needs the error's
+  // `code` and re-throwing after already toasting would force every caller into a second try.
+  // The toast is one channel for both a confirmation and a raw failure (okMsg vs. e.message), so
+  // the two must NOT render alike — an administrator left to tell them apart by reading the words
+  // cannot know whether the action they just took worked, which is why the catch branch, and only
+  // it, passes a 'problem' severity.
   const act = async (appId: string, fn: () => Promise<unknown>, okMsg?: string): Promise<unknown> => {
     setBusyIds((s) => new Set(s).add(appId))
     try { await fn(); if (okMsg) onToast(okMsg) ; await load(); return null }
@@ -562,7 +543,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
   /** Close the review modal on success; on the withdrawal race, keep it open and let it
    *  say what happened instead. Every other failure is already a toast and leaves the
-   *  modal alone — on the D5 409 the admin still needs the submission metadata. */
+   *  modal alone — on the 409 the admin still needs the submission metadata. */
   const settleReview = (failure: unknown): void => {
     if (failure === null) { setReview(null); setWithdrawn(null); return }
     if (failure instanceof ApiError && failure.code === 'submission_withdrawn') {
@@ -570,21 +551,17 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     }
   }
 
-  // Approve carries the submission id ON DISPLAY (the reviewed-id guard's input):
-  // the server 409s with "re-submitted since you reviewed it" copy, which `act`
-  // surfaces verbatim via the toast — never a generic failure. Close the modal ONLY
-  // on success: on the D5 409 the admin needs the submission metadata to re-review.
-  //
-  // app.submissionId is nullable in the general RegistryApp schema, but the Review
-  // button (and so this call) only ever fires for a 'pending' app, which always
-  // carries the submission that made it pending. Unchecked pass-through, matching
-  // pre-migration behavior exactly (no null guard existed before either).
+  // Approve sends the on-display submission id (the reviewed-id guard's input); a stale
+  // review 409s with copy `act` surfaces verbatim via toast, and the modal closes only on
+  // success so a 409 leaves the metadata visible to re-review. `submissionId` is nullable in
+  // the schema but always present once an app is 'pending' — the `as string` below is an
+  // unchecked pass-through matching pre-migration behavior, not a missed null check.
   const onApprove = (app: RegistryApp) => act(app.appId, () => approveApp(app.appId, app.submissionId as string), `“${appLabel(app)}” approved`).then(settleReview)
   const onReject = (app: RegistryApp, note: string) => act(app.appId, () => rejectApp(app.appId, note), `“${appLabel(app)}” rejected`).then(settleReview)
   const onToggleLogin = (app: RegistryApp) => act(app.appId, () => patchApp(app.appId, { loginRequired: !app.loginRequired }), `Login ${app.loginRequired ? 'disabled' : 'required'} for “${appLabel(app)}”`)
   const onDisable = (app: RegistryApp) => act(app.appId, () => disableApp(app.appId), `“${appLabel(app)}” disabled`)
   const onEnable = (app: RegistryApp) => act(app.appId, () => enableApp(app.appId), `“${appLabel(app)}” re-enabled`)
-  // The deployed URL is DATA, not automation (R5): the operator pastes what the go-live
+  // The deployed URL is DATA, not automation: the operator pastes what the go-live
   // runbook produced. Prompting (like `onDelete`'s confirm) keeps this on the runbook's
   // own rhythm — mark the deploy the moment it lands, address in hand. Cancel aborts
   // entirely; a blank answer still records the deploy and leaves any existing URL alone,
@@ -599,7 +576,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     const url = answer.trim()
     return act(app.appId, () => markDeployed(app.appId, url), `Deployment recorded for “${appLabel(app)}”`)
   }
-  // ═══ THE DELETE ASKS WHY, AND A `window.confirm` COULD NOT (U23, R5) ═══
+  // THE DELETE ASKS WHY, AND A `window.confirm` COULD NOT.
   //
   // The route now REQUIRES a 5-50 word reason, so a confirm-and-send would 422 every time. The
   // reason rides the `app:delete` audit row, which is written before destruction and has no
@@ -653,7 +630,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
             className={`text-xs font-medium px-3 py-1.5 rounded-md transition inline-flex items-center gap-1.5 ${tab === t ? 'bg-white text-primary shadow-sm border border-bial-border' : 'text-neutral hover:text-primary'}`}
           >
             {STATUS[t].label}
-            {/* Mirrors the nav badge (P1), same component and same accessible name. */}
+            {/* Mirrors the nav badge, same component and same accessible name. */}
             {t === 'pending' && <WaitingCountBadge count={waiting} where="tab" />}
           </button>
         ))}
@@ -668,7 +645,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            {/* The ordering is a GUARANTEE the backend makes and pins with a test (R16),
+            {/* The ordering is a GUARANTEE the backend makes and pins with a test,
                 and until now it was invisible: nothing on screen told an administrator
                 that top means oldest, so the queue read as an arbitrary list. Said out
                 loud, the position becomes information. Deliberately NOT a sort control —
@@ -730,7 +707,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                         {app.status === 'approved' && app.redeployNeeded && (
                           <span data-testid={`redeploy-needed-${app.appId}`} title="The approved build has not been deployed (or was re-approved since the last deploy) — run the go-live runbook, then mark it deployed" className="inline-flex items-center text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-100 text-amber-700">Deploy needed</span>
                         )}
-                        {/* R17a: the self-publish lineage has NO runbook step, so it gets
+                        {/* The self-publish lineage has NO runbook step, so it gets
                             neither the prompt above (the server already forces
                             `redeployNeeded` false for it) nor this control — which the
                             server refuses anyway. An affordance whose only outcome is a
@@ -779,18 +756,18 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 }
 
 /**
- * THE ADMIN DELETE'S REASON (U23, R5).
+ * THE ADMIN DELETE'S REASON.
  *
  * ON THE VENDORED RADIX `Dialog`, like every other dialog in this portal — and this one was
- * hand-rolled when it first landed, which reintroduced in the admin panel the exact defect U9
- * exists to close: a `fixed inset-0` div with `role="dialog"` gives no focus trap, no Escape,
- * and no focus restored to the trash control that opened it. Its sibling review modal in this
- * same file carries an explicit `reviewTriggerRef` restore for that reason. The most
- * destructive control on this screen must not be the one with the weakest keyboard contract.
- * Radix gives the trap, Escape and the overlay click (both routed through `onOpenChange`, so
- * `busy` guards them the way the hand-rolled overlay only guarded its own click), and the
- * restore — via `useFocusBackstop` in `ui/dialog.tsx`, because this dialog is rendered
- * conditionally like the rest.
+ * hand-rolled when it first landed, which reintroduced in the admin panel the exact defect a
+ * vendored dialog exists to close: a `fixed inset-0` div with `role="dialog"` gives no focus
+ * trap, no Escape, and no focus restored to the trash control that opened it. Its sibling
+ * review modal in this same file carries an explicit `reviewTriggerRef` restore for that
+ * reason. The most destructive control on this screen must not be the one with the weakest
+ * keyboard contract. Radix gives the trap, Escape and the overlay click (both routed through
+ * `onOpenChange`, so `busy` guards them the way the hand-rolled overlay only guarded its own
+ * click), and the restore — via `useFocusBackstop` in `ui/dialog.tsx`, because this dialog is
+ * rendered conditionally like the rest.
  *
  * A `window.confirm` stood here before that. It could not collect anything, and the route now
  * REQUIRES a 5-50 word justification — so the old control would 422 on every press. The words ride the

@@ -1,41 +1,14 @@
 /**
- * The app pane host (Plan A, U4) — one iframe for the whole workspace.
+ * The app pane host — one iframe for the whole workspace.
  *
- * ═══ WHAT THIS FILE PROVES, AND WHAT IT CANNOT ═══
+ * This suite proves ELEMENT IDENTITY: moving between the two addresses inside a project keeps the
+ * same iframe node, a genuinely different address replaces it, and a hidden pane is still in the
+ * document and still inert. It cannot prove a real cross-origin frame did not reload — jsdom does
+ * not fetch the `src`, so "the same node, and its load handler did not fire again" is as close as
+ * a unit suite gets.
  *
- * It proves ELEMENT IDENTITY: that moving between the two addresses inside a project keeps the same
- * iframe DOM node, that a genuinely different address replaces it, and that a hidden pane is still
- * in the document and still inert. That is the mechanism R8 rests on, and it is exactly what jsdom
- * can answer.
- *
- * It CANNOT prove that a real cross-origin frame did not reload. jsdom does not fetch the `src`, so
- * "the same node, and its load handler did not fire again" is as close as the unit suite gets. The
- * browser suite is not in CI and is stale against `main`, so this plan does not claim what it
- * cannot show here: one scripted manual browser pass is named as a release condition on the PR
- * instead — open a project, open a build chat with a running preview, go back to the project,
- * return, and confirm the frame's content window is the same one and the framing handshake did not
- * re-run.
- *
- * ═══ THE FAILURE MODES THESE SCENARIOS ARE WRITTEN AGAINST ═══
- *
- * The general shape is "buy continuity by weakening what identifies the frame", and it has one
- * form per layer. The famous one — pinning the IFRAME's key to a constant — lives inside
- * `LivePreview` and is pinned in its own suite (`LivePreview.test.jsx:135`, a new URL remounts),
- * so it is deliberately not re-asserted here; mutating it at THIS layer changes nothing, because
- * the identity that matters is the iframe's, not this component's.
- *
- * What is this layer's to get wrong is the ADDRESS staying live and staying correct, and it fails
- * in three directions rather than one — each with a scenario below, and each mutation-checked:
- *
- *  - the identity picks up something that is not the address (the route, the chat, the rail mode),
- *    so an ordinary navigation reloads a running app;
- *  - the address is cleared when the surface that published it unmounts, so leaving a build chat
- *    for the project screen destroys the app — R8, broken in the transition it most obviously
- *    covers;
- *  - the address is kept too long, so a frame quietly holds one project's container alive while
- *    the citizen works in another, invisibly, for the life of the tab.
- *
- * Every continuity assertion here is therefore paired with a discontinuity one.
+ * Pinning the iframe's own key is `LivePreview`'s to get wrong and is asserted in that suite, not
+ * re-asserted here. Every continuity assertion below is paired with a discontinuity one.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { useState, useEffect, type ReactNode } from 'react'
@@ -93,11 +66,10 @@ function ChatSurface({
  * THE SAME SURFACE, MOUNTING COLD — and the distinction the suite above cannot make.
  *
  * `ChatSurface` takes its url as a constant prop, so a remount republishes the SAME address and the
- * return leg of a round trip is never actually tested. The real `BuilderPage` has no constant: every
- * arm of `resolvePreviewAddress` reads hook state or a ref that is fresh per mount (a session hook
- * starts null, a turn-narrative ref starts unset, a transcript starts empty), and the URL only
- * arrives after a hydrate/reattach round trip. So its FIRST commit resolves nothing, and that is the
- * commit that used to retire the held address and tear the frame down on the way back in.
+ * return leg of a round trip is never actually exercised. The real surface has no constant:
+ * every arm of `resolvePreviewAddress` reads hook state or a ref that is fresh per mount, and the
+ * URL only arrives after a hydrate/reattach round trip, so its FIRST commit resolves nothing —
+ * the commit that used to retire the held address and tear the frame down on the way back in.
  */
 function ColdChatSurface({
   projectId = 'pA',
@@ -120,7 +92,7 @@ function ColdChatSurface({
   return <div data-testid="chat-surface" />
 }
 
-/** The project screen before Plan F: it declares its project and asks for nothing. */
+/** The project screen: it declares its project and asks for nothing. */
 function ProjectSurface({ projectId = 'pA' }: { projectId?: string }) {
   useWorkspaceProject(projectId)
   return (
@@ -173,10 +145,8 @@ function ProjectAddress() {
 
 afterEach(() => cleanup())
 
-describe('AppPaneHost — the frame outlives a move between the two addresses (AE4)', () => {
+describe('AppPaneHost — the frame outlives a move between the two addresses', () => {
   it('keeps the SAME iframe node across chat → project → chat, and never re-issues its src', () => {
-    // The transition the whole plan exists for. Before it, the pane existed because `BuilderPage`
-    // was the page that matched, so going back to the project destroyed the running app.
     render(<Workspace chatSurface={<ChatSurface />} />)
     const original = frame()
     expect(original).toBeTruthy()
@@ -197,8 +167,7 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
   })
 
   it('hides the pane on the project address rather than discarding it', async () => {
-    // "Hidden, not unmounted" IS the requirement: the pane is a cross-origin frame whose `src` is
-    // re-issued on remount, and re-issuing it means a full reload plus a fresh framing handshake.
+    // "Hidden, not unmounted" is the requirement — see `AppPaneHost`.
     render(<Workspace chatSurface={<ChatSurface />} />)
     expect(paneWrapper()?.className).toMatch(/flex-1/)
 
@@ -207,9 +176,7 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
     const wrapper = paneWrapper()
     expect(wrapper).toBeTruthy()
     expect(frame()).toBeTruthy() // the liveness half: a host that threw would read as a pass
-    // AWAITED, because the departure is drawn rather than instant (plan 002, U6): the column holds
-    // its size for one animation while the card slides out, then collapses. The reader is told it
-    // is gone immediately, which is the assertion that needs no wait.
+    // Awaited because the departure animates — `aria-hidden` lands immediately, `invisible`/`w-0` follow.
     expect(wrapper?.getAttribute('aria-hidden')).toBe('true')
     await waitFor(() => expect(paneWrapper()?.className).toMatch(/invisible/))
     expect(paneWrapper()?.className).toMatch(/w-0/)
@@ -217,14 +184,8 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
 
   it('leaves the frame alone when the conversation unmounts MID-BUILD', () => {
     // THE REGRESSION THIS SUITE WAS BLIND TO, and it was blind for a reason worth writing down:
-    // every other scenario here pins `iterating: false`, so none of them could see it.
-    //
-    // The pane view is cleared when its publisher unmounts. `iterating` rode along with it, fell
-    // back to `LivePreview`'s prop default, and the pane read that true→false edge as "a turn just
-    // ended over a live preview" — its signal to re-request the document. So leaving a build chat
-    // for the project screen WHILE A BUILD WAS RUNNING reloaded the app: silently, and about an
-    // event that had not happened. That is R8 broken in the one transition this host exists for,
-    // and it is why `iterating` is held by the host rather than treated as chrome.
+    // every other scenario here pins `iterating: false`, so none of them could see it. Why the
+    // host holds `iterating` rather than treating it as chrome is recorded in `AppPaneHost`.
     render(<Workspace chatSurface={<ChatSurface pane={{ iterating: true }} />} />)
     const original = frame()
     expect(original).toBeTruthy()
@@ -236,17 +197,9 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
   })
 
   it('survives the RETURN leg, when the remounted surface has not resolved an address yet', () => {
-    // THE OTHER HALF OF R8, and the half every scenario above was structurally unable to see: they
-    // all hand `ChatSurface` a constant url, so their remount republishes the same address and the
-    // return leg is asserted without ever being exercised.
-    //
-    // A real surface mounts COLD. Its first commit resolves `{url: null, status: null}`, and the
-    // publish ran on every render with no gate — so coming BACK into the build chat retired the
-    // address the outbound leg had just gone to such lengths to keep, unmounted the iframe, and
-    // then mounted a brand-new one once the reattach landed. The citizen watched their running app
-    // reload on the way back in: R8 broken through the opposite door from the one it was fixed at.
-    //
-    // A publisher with nothing to say now abstains until it has an answer of its own.
+    // The one leg the constant-url scenarios above cannot exercise — see `ColdChatSurface`.
+    // A publisher with nothing to say abstains until it has an answer of its own, rather than
+    // publishing an empty address that retires the one the outbound leg kept.
     render(<Workspace chatSurface={<ColdChatSurface />} />)
     const original = frame()
     expect(original).toBeTruthy()
@@ -298,8 +251,9 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
     // — so it fell back to `LivePreview`'s `false` default over an address whose `ended` status is
     // deliberately KEPT. `frameContext` collapsed and the iframe was unmounted: leaving a build chat
     // at the moment a citizen is most likely to leave one destroyed an app the server was still
-    // serving. The host answered that with a held ref; U2 answered it structurally, by moving
-    // liveness onto the address, which survives the unmount for the same reason the URL does.
+    // serving. The host first answered that with a held ref, then was reworked to answer it
+    // structurally, by moving liveness onto the address, which survives the unmount for the same
+    // reason the URL does.
     //
     // `ended` is the address status a completed build rests at, and the address KEEPS it. Without
     // it this scenario would false-green: a non-terminal status frames regardless of liveness.
@@ -329,10 +283,10 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
   })
 
   it('but leaving for ANOTHER project\'s screen takes the frame down', () => {
-    // The other side of "the address outlives its publisher", and the reason it needed bounding at
-    // all. Kept for the whole life of the tab, a held address means a frame quietly holding one
-    // project's container alive while the citizen works in another — invisible, so nothing would
-    // ever surface it. A different project is a different app.
+    // The bound on a held address, and the reason it needs one: kept for the whole life of the
+    // tab, a held address means a frame quietly holding one project's container alive while the
+    // citizen works in another — invisible, so nothing would ever surface it. A different
+    // project is a different app, and a legitimate remount.
     render(<Workspace chatSurface={<ChatSurface />} />)
     expect(frame()).toBeTruthy()
 
@@ -344,28 +298,17 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
 })
 
 describe('AppPaneHost — which column grows, and which one is sized', () => {
-  // THE REGRESSION THIS EXISTS TO CATCH, and jsdom cannot measure a pixel of it. The two columns
-  // are the conversation and the app. Before the extraction the builder surface owned both, so its
-  // 288px chat panel sat beside a `flex-1` preview. Split across the shell's grid with BOTH columns
-  // at `flex-1`, the workspace halves: the panel keeps its 288px inside a column twice its width
-  // and the app loses half the screen it had. Nothing in the unit suite would have said a word.
-  //
-  // REWRITTEN FOR PLAN F'S SETTLED WIDTHS, and the property is the same one. When Plan A shipped
-  // this, the rail had no width of its own, so "not `flex-1`" WAS the whole signal — the column
-  // fell back to its content. Plan F gives it two settled widths and a stacked crossing, both
-  // expressed as classes on this same element, so the honest assertion is now: at the two-column
-  // breakpoint the rail is the SIZED column (`lg:flex-none` plus a settled `lg:w-[…]`) and the
-  // pane is the growing one. The `flex-1` that remains is the STACKED case, where the two share a
-  // column and both must grow — asserting its absence would now be asserting that the layout below
-  // the threshold is broken.
+  // jsdom cannot measure a pixel, so a column that silently lost its share of the screen would
+  // pass every assertion here unless something checks WHICH column is sized. At the two-column
+  // breakpoint the rail is the sized column (`lg:flex-none` + a settled `lg:w-[…]`) and the pane
+  // grows; `flex-1` on the rail is only correct in the stacked case, so asserting its absence
+  // here is the actual regression check.
   const outlet = () => screen.getByTestId('workspace-outlet')
 
   /** The rail is the sized column: a settled width, and not the one that grows, at `lg`. */
   const expectRailIsSized = (className: string) => {
-    // ONE CLASS, ONE CUSTOM PROPERTY (plan 002, U7). The width was a literal per rail mode; it is
-    // the citizen's own now, carried on `--rail-w` and consumed only above the stacking threshold.
-    // The class no longer says WHICH width — that is the element's style — so the assertion is
-    // that the rail is SIZED rather than growing.
+    // The class no longer names WHICH width — that's the element's own `--rail-w` style — so
+    // this only asserts the rail is SIZED (not growing), never the number.
     expect(className).toMatch(/wide:flex-none/)
     expect(className).toMatch(/wide:w-\[var\(--rail-w\)\]/)
   }
@@ -385,7 +328,7 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
   })
 
   it('with nothing asking for the pane, the conversation column IS the whole surface', () => {
-    // Every planning conversation — which under Plan F is the one surface with no pane at all.
+    // Every planning conversation — which is the one surface with no pane at all.
     render(<Workspace chatSurface={<ChatSurface visible={false} />} />)
 
     expectRailIsEverything(outlet().className)
@@ -404,11 +347,9 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
   })
 
   it('gives the conversation the WIDER of the two OPENING widths', () => {
-    // Two opening widths, and which is which is not arbitrary: a conversation holds a transcript
-    // and a composer, the project's details do not. Taken from the canvas's 400px and 520px.
-    // They are the OPENING widths now rather than settled ones — once the citizen has dragged,
-    // their own width replaces both, which is the board's "drag it once and every project opens
-    // there". The number lives on the element's style, because the class is shared.
+    // The two opening widths are 400px and 520px, and which is which is not arbitrary: a
+    // conversation holds a transcript and a composer, the project's details do not. It only holds pre-drag — after
+    // that, the citizen's own width replaces it everywhere ("drag it once, every project opens there").
     render(<Workspace chatSurface={<ChatSurface />} />)
     expect(outlet().style.getPropertyValue('--rail-w')).toBe('520px')
   })
@@ -418,8 +359,8 @@ describe('AppPaneHost — a hidden pane is genuinely inert, at shell level', () 
   // ASSERTED HERE AND NOT IN `ProjectPage.test.tsx`, ON PURPOSE. That suite renders the project
   // page with no shell and stubs `LivePreview` to null, so its `queryByTestId('live-preview')`
   // assertions cannot observe anything the shell mounts and would stay green against a pane
-  // leaking onto the project screen. Its assertions still pass and stay Plan F's to invert
-  // deliberately; they are not evidence for this unit.
+  // leaking onto the project screen. Its assertions still pass; they are not evidence for this
+  // unit.
   it('is in the document, out of the tab order, out of the accessibility tree, and offers nothing', async () => {
     render(<Workspace chatSurface={<ChatSurface />} />)
     fireEvent.click(screen.getByText('to project'))
@@ -431,7 +372,7 @@ describe('AppPaneHost — a hidden pane is genuinely inert, at shell level', () 
 
     // `visibility:hidden` rather than `aria-hidden` alone: zero width and overflow:hidden clip a
     // subtree visually but leave its descendants in the tab order. Awaited because the pane draws
-    // its departure first (plan 002, U6) — `aria-hidden` is the half that lands immediately.
+    // its departure first — `aria-hidden` is the half that lands immediately.
     expect(wrapper.getAttribute('aria-hidden')).toBe('true')
     await waitFor(() => expect(paneWrapper()?.className).toMatch(/invisible/))
 
@@ -525,12 +466,12 @@ describe('AppPaneHost — identity is the address, and a different app is a real
   })
 })
 
-describe('AppPaneHost — a layout change does not remount the frame (AE37)', () => {
+describe('AppPaneHost — a layout change does not remount the frame', () => {
   it('flipping the shell\'s grid between side-by-side and stacked keeps the same iframe node', () => {
-    // The class comes from a fixture here; Plan F owns the threshold that produces it in the
-    // product. What is assertable NOW — and what makes the claim about this plan's own element
-    // rather than an arbitrary wrapper — is that the container whose class changes is the shell's
-    // grid, and the pane host is its sibling.
+    // The class comes from a fixture here; the real threshold that produces it in the
+    // product lives elsewhere. What is assertable NOW — and what makes the claim about this
+    // suite's own element rather than an arbitrary wrapper — is that the container whose class
+    // changes is the shell's grid, and the pane host is its sibling.
     function Flipper() {
       const channel = useWorkspaceChannel()
       const [stacked, setStacked] = useState(false)
@@ -603,8 +544,8 @@ describe('AppPaneHost — the framed app\'s message gate survived the move', () 
 
 describe('AppPaneHost — nothing to host is not the same as hidden', () => {
   it('renders no pane at all at a project address that has never framed anything', () => {
-    // R3 stays true before Plan F owns the start control: the host frames what already exists and
-    // never asks for an address, so a project screen with nothing built costs nothing at all.
+    // The host frames what already exists and never asks for an address, so a project screen with
+    // nothing built costs nothing at all.
     render(
       <MemoryRouter initialEntries={['/projects/pA']}>
         <Routes>

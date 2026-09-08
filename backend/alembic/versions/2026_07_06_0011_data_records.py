@@ -4,11 +4,11 @@ Revision ID: 0011_data_records
 Revises: 0010_app_registry
 Create Date: 2026-07-06
 
-The per-app data-service store (Plan B U4, R22/R24). App-scoped (FK app_registry.id,
+The per-app data-service store. App-scoped (FK app_registry.id,
 CASCADE) — every query MUST carry `WHERE app_id`; a dropped predicate is a cross-app
-leak. `search_text` is the derived free-text projection matched by substring ILIKE
-(U5). Chains off 0010_app_registry (Plan B's own linear sub-chain off 0003).
-Hand-finalized from an autogenerate starting point (ADR-0013).
+leak. `search_text` is the derived free-text projection matched by substring ILIKE.
+Chains off 0010_app_registry — part of a linear sub-chain that branches off 0003
+rather than the main revision line. Hand-finalized from an autogenerate starting point.
 """
 
 from __future__ import annotations

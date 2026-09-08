@@ -1,42 +1,17 @@
-"""THE ROLLBACK FOR THE R22 REGISTRY PREFIX CUTOVER — mirror the new keys back onto the old shape.
+"""Mirror the environment-scoped sandbox registry back onto the pre-cutover key shape.
 
-WHY THIS EXISTS. The cutover ships FORWARD safely: `read_registry` reads both prefixes and
-migrates a legacy hash it finds, so a fleet registered before the deploy stays visible. There is
-no matching path BACKWARD. Roll the release back — for any reason, including one that has nothing
-to do with reclamation — and the previous image reads only `bial:sandbox:registry:{user}`, which is
-exactly where the records no longer are. Every container live at that moment becomes invisible to
-`sweep_all` AND to the Azure inventory at once, and the registry hash is the one key family with no
-TTL, so nothing expires and nothing cleans up. That is the entire orphan class ADR-0029 exists to
-collect, manufactured wholesale by a rollback that looked routine.
-
-A rollback plan whose first step is "write a script" is not a rollback plan. This is the script.
-
-WHAT IT DOES. For every `bial:{ENVIRONMENT}:sandbox:registry:*`, COPY the hash to the bare
-`bial:sandbox:registry:{user}` key. Non-destructive by construction: it only ever WRITES the
-legacy shape and never touches the current one, so running it against a deployment that is not
-rolling back costs a few kilobytes and changes no behaviour — the forward image reads the current
-prefix first and never looks.
-
-It is safe to run BEFORE the rollback (recommended: the window where records are missing is then
-zero) and idempotent, so run it as often as you like.
-
-WHAT IT DELIBERATELY DOES NOT DO:
-
-* It does not delete anything, ever. Nothing here can lose a record.
-* It does not mirror `lock`, `heartbeat` or `lease`. Those are short-TTL keys that re-establish
-  themselves within ninety seconds of a build resuming, and a lock mirrored under a prefix the
-  rolled-back image writes with a different TTL is a way to lock somebody out for fifteen minutes.
-  The registry hash is the one that cannot rebuild itself.
-* It does not skip records that already exist under the legacy prefix — it OVERWRITES them,
-  because the environment-scoped record is by definition the newer claim. A stale legacy hash
-  naming a container that has since been replaced is precisely the "teardown pointed at the wrong
-  container" failure the migration-on-read path guards against.
+The rollback for the registry prefix cutover: a rolled-back image reads only
+`bial:sandbox:registry:{user}`, where the records no longer are — `keys.py` records what a
+forgotten registry key costs. Copies every `bial:{ENVIRONMENT}:sandbox:registry:*` hash onto the
+legacy shape: write-only, idempotent, safe to run before the rollback. `lock`, `heartbeat` and
+`lease` are deliberately not mirrored — they re-establish within ninety seconds, and a mirrored
+lock can shut somebody out. An existing legacy hash is OVERWRITTEN: the scoped record is newer.
 
   DRY RUN (default):  uv run python -m scripts.mirror_registry_to_legacy_prefix
   APPLY:              uv run python -m scripts.mirror_registry_to_legacy_prefix --apply
-
-Read `docs/engineering/deployment/` for where this sits in the release-B checklist.
 """
+
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
 
 from __future__ import annotations
 

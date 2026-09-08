@@ -1,24 +1,14 @@
 /**
  * shadcn/ui `toggle`, copied in from the registry — the primitive `toggle-group` composes.
- *
- * RE-ADDED DELIBERATELY. Both this and `toggle-group.tsx` were removed from this folder earlier as
- * unused, which was correct at the time: nothing imported them. Plan F's rail composer is the
- * importer, so they come back with a caller rather than on spec. Saying so here because "these
- * were deleted once" is the kind of thing that gets them deleted again.
- *
- * THE CLASSES ARE THE TAILWIND-3 REGISTRY GENERATION, matching `button.tsx` and `badge.tsx` beside
- * it. The current registry uses v4-era arbitrary variants, and this portal is on Tailwind 3, where
- * a class the build does not produce renders as NOTHING while every DOM assertion still passes —
- * jsdom computes no Tailwind styles, so no unit test in this repo can catch it. Every token used
- * here (`neutral`, `foreground`, `surface-muted`, `input`, `ring`, `white`, `transparent`,
- * `shadow-segment`) is already defined in `tailwind.config.js` + `src/index.css`, which is what
- * `src/__tests__/tailwind-tokens.test.js` guards.
- *
- * THE SELECTED SEGMENT CARRIES NO HUE, WHICH IS THE POINT. The registry's `data-[state=on]:bg-accent`
- * resolves to the brand orange #F5A623 in this build, and the canvas draws the Plan/Build control
- * with a white pill and a 1px shadow on an #F0F4F8 track — elevation, not colour. Painting the ON
- * segment orange also put a gold icon on an orange ground at roughly 1.2:1. `shadow-segment` is the
- * board's own `0 1px 2px rgba(16,24,40,.08)`.
+ * RE-ADDED DELIBERATELY: this and `toggle-group.tsx` were removed once as unused (correct
+ * then — nothing imported them); `RailComposer.tsx` is now the importer, so say so here
+ * before "these were deleted once" deletes them again.
+ * CLASSES ARE TAILWIND-3 GENERATION (matches `button.tsx`): a v4-era class this
+ * Tailwind-3 build doesn't produce renders as NOTHING while every DOM assertion still passes
+ * — jsdom computes no styles, so no test catches it.
+ * THE SELECTED SEGMENT CARRIES NO HUE, DELIBERATELY: the registry's on-state class resolves
+ * to brand orange here (a gold icon on it read ~1.2:1); `shadow-segment` is elevation
+ * instead — a white pill + 1px shadow on the canvas track.
  */
 import * as React from "react"
 import * as TogglePrimitive from "@radix-ui/react-toggle"

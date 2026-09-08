@@ -1,15 +1,14 @@
-"""The `attachments` table — one row per uploaded image/PDF (R16, R4).
+"""The `attachments` table — one row per uploaded image/PDF.
 
 Bytes live in the object store under an owner-scoped key (`att/{user_id}/{uuid}` via
-`attachment_key`); this row is the metadata + the per-user quota ledger. That is a
-DELIBERATE improvement on Express, which kept NO per-attachment doc — only a per-user byte
-counter (`attachment_usage`) that could drift; summing `size` here is drift-free.
+`attachment_key`); this row is the metadata + the per-user quota ledger. Express kept NO
+per-attachment doc — only a per-user byte counter (`attachment_usage`) that could drift;
+summing `size` here cannot.
 
 The SPA references an attachment by its CLIENT-MINTED `attachment_id` token (Express `ID_RE`,
 e.g. `att_<ts>_<rand>` — NOT necessarily a UUID) in message parts and GET/DELETE URLs, so that
 token is a separate unique-per-owner column; the UUIDv7 PK is what the traversal-safe object key
-is built from. Ownership is `user_id` (ADR-0004) — download/delete are scoped by it AND
-re-guarded with `assert_owned` on the stored key.
+is built from.
 """
 
 from __future__ import annotations
@@ -47,8 +46,11 @@ class Attachment(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     size: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     # The object-store key where the bytes live. Stored (not recomputed) so the pointer is
     # explicit and a backfill can carry an existing Express key (`att/{username}/{token}`).
+    # Because it is stored rather than derived, download and delete re-check it with
+    # `assert_owned` before handing it to the store — owning the ROW says nothing about where
+    # the key it carries points.
     storage_key: Mapped[str] = mapped_column(sa.String(512), nullable=False)
-    # The conversation this upload was stamped to at upload time (R10 / U9) — the candidate
+    # The conversation this upload was stamped to at upload time — the candidate
     # narrowing + row backstop the never-sent reclaimer needs. NULLABLE and `ON DELETE SET
     # NULL`, DELIBERATELY not the `ON DELETE CASCADE` that `conversations.project_id` uses:
     # CASCADE would destroy this row while its blob survives — the exact permanent orphan the

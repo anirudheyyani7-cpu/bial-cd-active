@@ -1,51 +1,35 @@
-"""The shared read-only tool surface (U8 / R6 / plan 2026-07-22-002).
+"""The shared read-only tool surface.
 
-Four tools — bounded `read_file`, `list_files`, `search_files`, and an allowlisted
-read-only `run_command` — built as a `FunctionToolset` factory over a `ReadOnlyWorkspace`
-Protocol. The Protocol is the routing seam: a workspace resolved from a local snapshot
-extraction dir (`ExtractedSnapshotWorkspace`) answers about saved code, and one resolved
-from the live sandbox through the supervisor (`LiveSandboxWorkspace`) answers about the tree
-in front of the model instead of a stale bundle. WHICH workspace is a fact about the run, not
-about the ability: what these tools ALLOW is written down once, here, and no body below asks
-which agent or which chat kind resolved it (R71).
+Four tools — `read_file`, `list_files`, `search_files`, `run_command` — as a
+`FunctionToolset` factory over a `ReadOnlyWorkspace` Protocol: a snapshot extraction
+answers about saved code, a live sandbox about the tree in front of the model. WHAT
+these tools allow is written once, here; WHICH workspace answers is a fact about the
+run, not the ability.
 
-Containment model for `run_command`, layered fail-closed:
-- exec-style argv only, no shell — pipes, redirection, and chaining are structurally
-  impossible, and `sh`/`bash` are not on the guest list;
-- argv[0] must be on `_GUEST_LIST` (POSIX read-only classics), with per-command deny
-  flags catching each binary's write-capable forms (`sed -i`, `find -delete`/`-exec`/
-  `-fprintf`, `tail -f`); `sed` additionally goes through a script validator because its
-  DANGER lives in the script argument (`w`/`W` write files, GNU `e` executes) — only the
-  numeric range-print form (`sed -n '40,80p' file`) is admitted;
-- every argv token is vetted against path escape (absolute, `~`, `..` segments);
-- WHERE it runs depends on the workspace, and the two differ materially. On the LIVE
-  container (the normal case) the command goes through the supervisor into the app's
-  own environment — which holds `BIAL_DATABASE_URL` and a Blob SAS — with the supervisor's
-  own timeout and secret redaction. On the snapshot fallback (only when no sandbox service
-  is configured) it runs cwd-jailed on the control-plane server under `_minimal_env`, an
-  explicit allowlist carrying no DSN and no tokens. The POLICY above is identical either
-  way; the surroundings are not, and the richer one is now the normal case. Output on both
-  is capped → de-escaped → secret-redacted → de-noised → cut to HEAD AND TAIL with the loss
-  stated (U22/R28; mirrors `orchestrator/tools._redact_command_output`, reimplemented here so
-  this module never imports the sandbox tool module — one table-driven test runs both copies
-  and pins them identical).
+WHY THIS EXISTS: `run_command` is contained fail-closed and layered — exec-style argv only, no
+shell, so pipes, redirection, and chaining are structurally impossible, and `sh`/`bash` are not
+on the guest list. argv[0] must be on `_GUEST_LIST` (POSIX read-only classics), with per-command
+deny flags catching each binary's write-capable forms (`sed -i`, `find -delete`/`-exec`/
+`-fprintf`, `tail -f`); `sed` additionally goes through a script validator because its danger
+lives in the script argument (`w`/`W` write files, GNU `e` executes) — only the numeric
+range-print form (`sed -n '40,80p' file`) is admitted. Every argv token is vetted against path
+escape (absolute, `~`, `..` segments). WHERE it runs depends on the workspace, and the two differ
+materially: on the LIVE container (the normal case) the command goes through the supervisor into
+the app's own environment — which holds `BIAL_DATABASE_URL` and a Blob SAS — with the
+supervisor's own timeout and secret redaction; on the snapshot fallback (only when no sandbox
+service is configured) it runs jailed on the control-plane server under `_minimal_env` (no DSN,
+no tokens). The policy above is identical either way; the surroundings are not, and the richer
+one is now the normal case. Output is capped, de-escaped, redacted, de-noised, and cut to
+head+tail with the loss stated — mirrors, never imports, `orchestrator/tools`'s
+`_redact_command_output` so this module adds no runtime edge into the sandbox tool module; a
+table-driven test pins the pair identical. `psql` is never on this allowlist.
 
-THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY (U20 / R26). pydantic-ai
-sends each as the tool's description at registration, and `list_files`/`search_files` are
-additionally rendered into the Write prompt's generated `TOOL SURFACE` block
-(`agent/toolsets.render_tool_surface`), so editing one is editing a prompt and
-`test_prompt.py`'s drift check says so until the snapshot is regenerated. Write the FIRST
-SENTENCE as the line you want in the prompt.
+THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY: pydantic-ai sends each
+as the tool description, and two also render into the Write prompt's `TOOL SURFACE`
+block — `test_prompt.py` catches drift. Write the first sentence as the prompt line.
 
-Refusals are teaching `ModelRetry`s in the U1 sentinel's voice — they say WHY and what to
-do instead, so the model self-corrects rather than retrying blind. There is no "no app
-exists yet" answer here any more: the workspace a turn is given comes from one arm
-(`turns/engine._pin_workspace`, which always resolves the project's live container), so the
-emptiness signal never arrives and the workspace that used to produce it is gone — which is
-why no segment promises the model one (U20; pinned by
-`test_no_segment_promises_an_emptiness_signal_that_never_arrives`).
-
-`psql` is never on this allowlist (plan, locked).
+Refusals teach (the destructive-SQL sentinel's voice); there is no "no app exists" case
+since a turn's workspace always comes from one pinned arm (`_pin_workspace`).
 """
 
 from __future__ import annotations
@@ -75,8 +59,7 @@ if TYPE_CHECKING:
     from src.services.orchestrator.deps import SandboxSession
 
 # ---------------------------------------------------------------------------------------
-# Bounds. The plan defers exact tuning ("tuned during implementation against real traces")
-# — these mirror the orchestrator's proven values where a twin exists.
+# Bounds — these mirror the orchestrator's proven values where a twin exists.
 # ---------------------------------------------------------------------------------------
 
 READ_MAX_LINES = 400
@@ -103,8 +86,8 @@ READ_EXEC_TIMEOUT_S = 15.0
 _REDACT_INPUT_MAX_CHARS = 32_000
 _OUTPUT_MAX_CHARS = 16_000
 """The dump budget, mirroring `orchestrator/constants.RUN_COMMAND_OUTPUT_MAX_CHARS`. Read mode
-renders under it on BOTH exit paths — see the U22 block below for why a success is not summarised
-on a surface that has no slice handle."""
+renders under it on BOTH exit paths — see the mirrored-output-cap discussion below for why a
+success is not summarised on a surface that has no slice handle."""
 
 # Heavy or history dirs the read surface refuses everywhere (list, search, read): they are
 # build artifacts or plumbing, never app truth. `.git` also hides the extraction's plumbing.
@@ -112,7 +95,7 @@ on a surface that has no slice handle."""
 # under the exact exclusions the model reads under.
 IGNORED_DIRS = frozenset({".git", "node_modules", ".next", "dist", ".turbo"})
 
-# Dependency lock files, refused at every site the directory set is applied (R22a): a lockfile
+# Dependency lock files, refused at every site the directory set is applied: a lockfile
 # is the single largest file in a generated app and carries no signal worth its tokens.
 # Deliberately MIRRORS the sandbox toolset's `orchestrator/constants.READ_IGNORE_FILES` rather
 # than importing it — the two toolsets are separate surfaces, and this module must add NO
@@ -122,20 +105,13 @@ IGNORED_FILES = frozenset({"package-lock.json", "pnpm-lock.yaml", "yarn.lock"})
 
 
 def is_dependency_lockfile(path: Path) -> bool:
-    """A lockfile is the name BESIDE THE MANIFEST IT RESOLVES — never the name alone.
+    """A lockfile is the name BESIDE THE MANIFEST IT RESOLVES, never the name alone.
 
-    `npm`/`pnpm`/`yarn` write the lock file next to the `package.json` it locks, so that
-    pairing is what actually identifies one. Matching the bare name at any depth was a
-    hole rather than a saving: a file named `app/config/yarn.lock` is ordinary source, and
-    the name hid it from BOTH the model and the model-free credential sweep while it still
-    shipped — the deploy packaging step does not exclude lockfiles, so a credential parked
-    there survived the whole gate.
-
-    Anchoring to the manifest keeps every byte of the intended saving, INCLUDING the
-    monorepo case a root-only rule would have broken: `apps/web/package-lock.json` sits
-    beside `apps/web/package.json` and is still excluded. R22a's rationale (no signal worth
-    its tokens; a multi-MB file would truncate the sweep) is true of exactly those files
-    and of nothing else."""
+    Matching the bare name at any depth was a hole: `app/config/yarn.lock` is ordinary
+    source, but the name hid it from the model AND the credential sweep — deploy
+    packaging does not exclude lockfiles, so a credential there survived the whole gate.
+    Anchoring to the adjacent `package.json` closes that and still excludes the monorepo
+    case (`apps/web/package-lock.json` beside `apps/web/package.json`)."""
     return path.name in IGNORED_FILES and (path.parent / "package.json").is_file()
 
 
@@ -303,14 +279,13 @@ class ExtractedSnapshotWorkspace:
 
     def _refuse_escaping_argv(self, argv: Sequence[str]) -> None:
         """Realpath-resolve each non-flag argv token against the resolved root and refuse any
-        that lands outside — the BELT to `snapshot_read`'s `core.symlinks=false` braces, and
-        the only symlink guard when a live workspace (U12), not a clone-controlled extraction,
-        backs the reads. `check_the_guest_list` only vets tokens LEXICALLY (`/`, `~`, `..`), so
-        a symlink inside the tree that points out of it would otherwise be followed by the OS
-        when `cat`/`grep`/`find`/`sed` open it. A bare flag carries no path and is skipped, but
-        `--flag=<path>` does (`wc --files0-from=/etc/passwd`), so the VALUE half is contained
-        exactly like a positional token. A non-path token (a grep pattern) resolves to a
-        harmless in-root path and passes."""
+        that lands outside the root — belt to `snapshot_read`'s `core.symlinks=false` brace,
+        and the ONLY symlink guard once a live workspace, not a clone-controlled extraction,
+        backs the reads. `check_the_guest_list` only vets tokens LEXICALLY, so a symlink
+        pointing out of the tree would otherwise be followed when `cat`/`grep`/`find`/`sed`
+        open it. A bare flag is skipped, but `--flag=<path>` is vetted on its VALUE half too
+        (`wc --files0-from=/etc/passwd`); a non-path token (a grep pattern) resolves
+        harmlessly in-root and passes."""
         resolved_root = self.root.resolve()
         for token in argv[1:]:
             if token.startswith("-"):
@@ -412,26 +387,13 @@ def _grep_the_tree(pattern: str, target: str) -> list[str]:
 @dataclass(frozen=True)
 class LiveSandboxWorkspace:
     """Reads over the LIVE Write sandbox, routed through the supervisor's exec transport.
+    Only `list_files`/`search_files` run here (`_WRITE_STRUCTURED_READS`); the other two
+    exist because the Protocol is a contract, not a convention.
 
-    Only `list_files` and `search_files` ever run here: `toolsets._WRITE_STRUCTURED_READS`
-    allowlists exactly those two, and Write gets the sandbox-routed `read_file`/`run_command`
-    for everything else. The other two are implemented anyway because the Protocol is a
-    contract, not a convention — they do the real read through the same transport rather than
-    existing as a hole.
-
-    THE CONTAINMENT GUARD IS LEXICAL ONLY, and that is worth being plain about.
-    `ExtractedSnapshotWorkspace`'s resolution jail cannot be reused: `Path.resolve()` answers
-    about THIS server's filesystem, and the tree lives in a container on the far side of an HTTP
-    boundary. So the guard is string work — absolute / `~` / `..` via `_vet_path_token`, plus the
-    ignore set — and there is NO symlink defence available at all. A symlink planted inside the
-    sandbox would be followed by the sandbox's own `grep`, and nothing here would know.
-
-    That is acceptable because containment is not this class's job. The supervisor's workspace
-    jail and the demoted `appuser` are the real boundary, and in a Build chat the model already
-    holds an unrestricted `run_command` on the other side of it — a listing filter it can trivially
-    step around is not what keeps the sandbox contained. This is a model-facing hygiene filter:
-    it keeps results on the app's own source and turns a bad path into a refusal the model can
-    learn from. Do not cite it as a security control."""
+    THE CONTAINMENT GUARD IS LEXICAL ONLY — no `Path.resolve()` across the HTTP boundary
+    means NO symlink defence. Acceptable because containment is the supervisor's job, not
+    this class's (a Build-chat model already holds unrestricted `run_command` there). DO
+    NOT CITE THIS AS A SECURITY CONTROL — it's a hygiene filter, a teachable refusal."""
 
     session: SandboxSession
     label: str = "your app's live workspace"
@@ -520,20 +482,13 @@ class LiveSandboxWorkspace:
 
     async def exec_readonly(self, argv: Sequence[str]) -> ReadExecResult:
         """Run an ALREADY-POLICY-CHECKED argv inside the container.
-
-        THE POLICY DID NOT MOVE, THE ENVIRONMENT DID — and that is worth being precise about
-        rather than waving through. The guest list, the per-command deny flags, the `sed`
-        script validator and the path vetting all still run in the tool layer above this, so
-        the set of commands this surface may issue is byte-for-byte what it was.
-
-        What changed is where they land. They used to run on the CONTROL-PLANE server under
-        `_minimal_env` — an explicit allowlist holding no DSN and no tokens, asserted by test.
-        They now run in the app's own container, which by construction holds `BIAL_DATABASE_URL`
-        and a Blob SAS in its environment. Nothing on the guest list can print an environment
-        variable, absolute paths are refused before the command is built, and the supervisor
-        redacts known secrets from every response — so the exposure is bounded on three sides.
-        It is still a materially richer environment than a bare checkout on a server, and that
-        is a real change in posture, not a no-op."""
+        THE POLICY DID NOT MOVE, THE ENVIRONMENT DID. The guest list, deny flags, `sed`
+        validator and path vetting all still run in the tool layer above this — same
+        commands, byte-for-byte. What changed is where they land: no longer the
+        CONTROL-PLANE server under `_minimal_env` (no DSN, no tokens), but the app's own
+        container, which holds `BIAL_DATABASE_URL` and a Blob SAS. Exposure stays bounded
+        (no guest-list command prints env, absolute paths are refused, the supervisor
+        redacts secrets) — but it is a real change in posture, not a no-op."""
         result = await self.session.sandbox_client.exec(
             self.session.handle, list(argv), timeout_s=_LIVE_READ_TIMEOUT_S
         )
@@ -558,9 +513,9 @@ def _minimal_env(home: Path) -> dict[str, str]:
 
 def _vet_sed_script(argv: Sequence[str]) -> str | None:
     """`sed`'s write/execute surface lives in its SCRIPT (`w`/`W` write files, GNU `e`
-    runs commands), so flags alone can't make it safe. Admit only the one shape the plan
-    names — numeric range printing (`sed -n '40,80p' file`) — and teach everything else
-    toward `read_file`/`search_files`."""
+    runs commands), so flags alone can't make it safe. Admit only the one safe shape —
+    numeric range printing (`sed -n '40,80p' file`) — and teach everything else toward
+    `read_file`/`search_files`."""
     scripts: list[str] = []
     files: list[str] = []
     tokens = list(argv[1:])
@@ -620,8 +575,8 @@ _PATH_BEARING_FLAG_REASON = (
 
 # The guest list: POSIX read-only classics, present on any Linux/macOS server
 # runtime (verified against POSIX; the extraction runs SERVER-side, not in the sandbox
-# image — when U12 routes to the live workspace these same names exist in the
-# debian-based sandbox). `psql` is NEVER listed (plan, locked). `sh`/`bash`/`node`/`npm`
+# image — when routing goes to the live workspace these same names exist in the
+# debian-based sandbox). `psql` is NEVER listed (locked). `sh`/`bash`/`node`/`npm`
 # are absent by design: no shell, no runtime, no package manager on a read-only surface.
 _GUEST_LIST: dict[str, CommandPolicy] = {
     "ls": CommandPolicy(),
@@ -691,7 +646,7 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
     """The door policy for the read-only `run_command`: returns the teaching refusal, or
     None when the command may run. Mirrors `sql_guard.you_shall_not_pass`'s contract.
 
-    R71 — WHAT IT ALLOWS IS A PROPERTY OF THE ABILITY, and the signature is where that is
+    WHAT IT ALLOWS IS A PROPERTY OF THE ABILITY, and the signature is where that is
     provable: `argv` and nothing else. No `RunContext`, no deps, no settings, no chat kind,
     and nothing in this module imports one. Two agents reach these bodies today — a Plan
     chat's toolset and the classification agent's, which has no chat kind at all — and they
@@ -733,7 +688,7 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
 
 
 # ---------------------------------------------------------------------------------------
-# U22 / R28: the MIRRORED output cap — head AND tail, with the truncation stated
+# THE MIRRORED OUTPUT CAP — head AND tail, with the truncation stated
 # ---------------------------------------------------------------------------------------
 #
 # THE MIRROR of `orchestrator/tools`'s block of the same shape (`_is_predictable_noise` /
@@ -790,20 +745,11 @@ def _capture_limit_marker(dropped: int) -> str:
 
 
 def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
-    """The head and the tail of a raw capture, cut ON LINE BOUNDARIES — and what that cost.
+    """The head and the tail of a raw capture, cut ON LINE BOUNDARIES.
 
-    TWO PROPERTIES, and the older single `text[:cap]` slice got both wrong.
-
-    SECURITY: the redactor is never handed half a line. A credential is a shape on ONE line, so a
-    cut landing inside one leaves a fragment matching none of the redactor's shapes — which U22
-    turned from harmless into egressed, because the tail of the capture is now always rendered.
-    Whole lines in, whole lines out; a single line longer than the window is dropped rather than
-    truncated.
-
-    TRUTHFULNESS: a head-only cap silently deleted the END of every capture over the limit, and
-    the notice then reported the surviving line count as the total.
-
-    The two halves together stay inside `_REDACT_INPUT_MAX_CHARS` (the ReDoS guard)."""
+    A window holding no newline at all yields an empty half: one over-long line is dropped
+    whole rather than truncated, because half a line is a credential fragment the redactor
+    can no longer match. The two halves together stay inside `_REDACT_INPUT_MAX_CHARS`."""
     if len(text) <= _REDACT_INPUT_MAX_CHARS:
         return text, "", 0
     half = _REDACT_INPUT_MAX_CHARS // 2
@@ -813,18 +759,7 @@ def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
 
 
 def _redacted_lines(text: str) -> list[str]:
-    """The SAFE artifact, and the ONLY thing that is ever returned (U22 / R3).
-
-    `scrub_untrusted` is cap → de-escape → redact, in that order: the cap bounds the work an
-    app-controlled blob can make a synchronous scan do (ReDoS guard), the escape strip runs
-    BEFORE the mask because an ANSI sequence spliced into a credential splits the token and the
-    pattern stops matching, and the mask is what makes the text egressable at all.
-
-    REDACTION HAPPENS HERE, ONCE, ON EVERY CHARACTER THAT SURVIVES CAPTURE — before any slicing,
-    before the head/tail cut: cutting first would split a credential that straddles the cut into
-    two fragments that no longer match the redactor's shapes, which is exactly how a cap applied
-    after redaction re-exposes one. The capture cut above is the same rule one level up, which is
-    why it cuts on lines."""
+    """The SAFE artifact, and the ONLY thing that is ever returned."""
     head, tail, dropped = _within_the_capture_limit(text)
     # THE HEAD IS CUT WHEN IT ENDS INSIDE A CREDENTIAL — the MIRROR of the Write copy's head
     # guard, and the same reason: a value opened in the head and closed past it matches none of
@@ -870,13 +805,12 @@ def _elision_notice(
 ) -> str:
     """The truncation notice: WHAT was removed, and — inline — how to get it back.
 
-    NAMING THE TOOL AND THE HANDLE IN THE NOTICE ITSELF is the point. A capability described once
-    in a system prompt is a thing the model has to remember at the moment it is staring at a
-    truncated log; a call it can copy off the line in front of it is not.
+    NAMING THE TOOL AND HANDLE IN THE NOTICE ITSELF is the point: a capability in a
+    system prompt is easy to forget mid-log; a call copied off the line in front of you
+    is not.
 
-    `cut_line` IS PASSED RATHER THAN DERIVED (it used to be `first - 1`) — the MIRROR of the Write
-    copy's change, and the same reason: the caller now names the elided range from the first line
-    it did not show WHOLE, so the two numbers stopped being one apart."""
+    `cut_line` IS PASSED, NOT DERIVED — mirrors the Write copy's fix, keeping the elided
+    range in sync with the first line not shown WHOLE."""
     if elided_lines > 0:
         edge = " (the ends of that range are only partly shown here)" if partly_shown else ""
         what = (
@@ -901,7 +835,7 @@ def _elision_notice(
 
 
 def _render_output(lines: list[str], *, budget: int, handle: str | None) -> str:
-    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL (ASM13).
+    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL.
 
     Head-only was the defect: a stack trace puts its message at the top and the failing assertion
     at the bottom, so a head cap loses the error and a tail cap loses the cause. The budget is
@@ -961,18 +895,13 @@ def _cap_redact_cap(text: str, *, budget: int, handle: str | None = None) -> str
 def read_only_toolset[DepsT](
     workspace_of: Callable[[RunContext[DepsT]], ReadOnlyWorkspace],
 ) -> FunctionToolset[DepsT]:
-    """Build the four read tools over whatever workspace `workspace_of` resolves from the
-    run's deps. Generic over the deps type so the SAME surface serves every consumer over
-    its own deps — a Plan chat (`ReadDeps`), the classification review agent (`ReviewDeps`),
-    and the Build chat's borrowed structured reads. Note: `read_file` and `run_command`
-    already exist on the sandbox toolset, so the Build composition must add ONLY
-    `list_files`/`search_files` (tool names are unique per run).
-
-    The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with
-    `get_type_hints` at registration, and a PEP-695 type param of the ENCLOSING function
-    is not in scope there under deferred annotations. The factory signature carries the
-    real typing; the `cast` at the return is the one boundary where it narrows back.
-    """
+    """Build the four read tools over whatever workspace `workspace_of` resolves. Generic
+    over deps so ONE surface serves every consumer — Plan (`ReadDeps`), classification
+    review (`ReviewDeps`), Build's borrowed reads (which must add ONLY
+    `list_files`/`search_files`; `read_file`/`run_command` already exist on the sandbox
+    toolset, so tool names stay unique per run). Inner tools annotate `RunContext[Any]`,
+    not `RunContext[DepsT]`, because pydantic-ai's `get_type_hints` can't see the
+    enclosing PEP-695 type param; the `cast` at the return narrows back."""
 
     async def read_file(ctx: RunContext[Any], path: str, start_line: int = 1) -> str:
         """Read a file from the app (line-numbered), up to 400 lines per call. Pass

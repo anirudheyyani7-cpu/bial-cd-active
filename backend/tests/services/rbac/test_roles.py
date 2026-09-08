@@ -24,7 +24,7 @@ def test_absent_email_is_citizen() -> None:
 
 @pytest.mark.parametrize("email", ["ADMIN@BIAL.COM", "Admin@Bial.com", "admin@bial.com"])
 def test_matching_is_case_insensitive(email: str) -> None:
-    # AE1: the allowlist is lowercased at config load and the user email is
+    # The allowlist is lowercased at config load and the user email is
     # lowercased here, so any case the IdP echoes still resolves to super-admin.
     user = UserFactory.build(email=email)
     assert role_for(user, _ALLOWLIST) is Role.SUPER_ADMIN

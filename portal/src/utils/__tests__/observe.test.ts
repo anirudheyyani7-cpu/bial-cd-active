@@ -1,10 +1,10 @@
 /**
- * The three marks only the browser can make (U4; R104, R105).
+ * The three marks only the browser can make.
  *
  * These are guard tests, and every guard here exists because a counter that double-counts, or
  * that counts a numerator without its denominator, is not a weaker measurement — it is a wrong
- * one. R105 is read as `1 − (project_opened_chat / project_opened)`, so a ratio above 1 is not a
- * bias, it is a broken number.
+ * one. The chat-open ratio is read as `1 − (project_opened_chat / project_opened)`, so a ratio
+ * above 1 is not a bias, it is a broken number.
  *
  * Module state IS the guard (one project id per page load), so each test imports a FRESH copy of
  * the module rather than reaching for a reset export that would exist only for tests.
@@ -47,8 +47,8 @@ describe('opening a project', () => {
 
   it('is marked ONCE when the same project is opened twice in one load', async () => {
     // ★ THE STRICTMODE CASE. React double-invokes every effect in development, so a mount-fired
-    // beacon double-counts without this guard — and an early read of R105 would be skewed by
-    // whichever developers happened to be clicking around. It is also the repeat-visit case:
+    // beacon double-counts without this guard — and an early read of the chat-open ratio would be
+    // skewed by whichever developers happened to be clicking around. It is also the repeat-visit case:
     // one project id per page load is what "a visit" MEANS here.
     const { markProjectOpened } = await aFreshPageLoad()
 
@@ -90,8 +90,8 @@ describe('opening a chat from a project', () => {
 
   it('★ sends NOTHING for a project this load never opened (the deep-link case)', async () => {
     // A bookmark, a shared link or a browser restore lands straight on `/chat/{id}` and resolves
-    // a project whose page was never on screen. Counting it would push R105's ratio above 1 — a
-    // denominator smaller than its numerator. Removing the guard must fail this.
+    // a project whose page was never on screen. Counting it would push the chat-open ratio above
+    // 1 — a denominator smaller than its numerator. Removing the guard must fail this.
     const { markChatOpened } = await aFreshPageLoad()
 
     markChatOpened('p-never-opened')
@@ -161,7 +161,8 @@ describe('first seeing the app', () => {
 
   it('★ records nothing when the project page was never opened in this load', async () => {
     // The deep-link case from the other end. An implementer who defaults a missing mark to
-    // page-load time measures a DIFFERENT journey and pollutes the only R104 number there is.
+    // page-load time measures a DIFFERENT journey and pollutes the only `project_to_app_visible_ms`
+    // number there is.
     const { markAppVisible } = await aFreshPageLoad()
 
     markAppVisible('p-deep-link')

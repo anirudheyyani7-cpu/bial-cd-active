@@ -1,34 +1,25 @@
 /**
- * The composer draft, per conversation (G3) — THE ONE STORE, FOR BOTH CHAT KINDS.
+ * The composer draft, per conversation — THE ONE STORE, FOR BOTH CHAT KINDS.
  *
- * Under the mode-free composer contract the user is invited to keep typing while the assistant
- * works — so the text they type has to survive the three things that used to destroy it: a
- * reload, a chat switch, and a refinement chip. Two of those are this module's job.
- *
- * BOTH KINDS USE IT NOW (Plan A, U5). Only the builder surface did; the planning surface kept its
- * text in assistant-ui's in-memory composer and cleared it on every chat change including the
- * first mount after a reload, so a planning draft died on a reload and on a round trip to a
- * sibling chat. R72 asks for one surface whose draft survives the same way in each kind, and this
- * is the half of that which is a store rather than a component. Plan A owns this module; Plan D
- * CONSUMES it and specifies none of it, so there is exactly one writer per key.
+ * WHY THIS EXISTS: under the mode-free composer contract the user can keep typing while the
+ * assistant works, so the text must survive a reload and a chat switch. Both kinds use it now —
+ * planning used to keep its text in assistant-ui's in-memory composer, which cleared on every
+ * chat change including the first mount after a reload, so a planning draft died on reload and on
+ * a round trip to a sibling chat. This module is the sole owner of the key; other surfaces only
+ * consume it, so there is exactly one writer per key.
  *
  * SEMANTICS, stated because they are user-visible:
  *  - `sessionStorage`, not `localStorage`: a draft is tab-scoped work-in-progress, and dying with
- *    the tab is the correct lifetime. `localStorage` would accumulate every abandoned half-thought
- *    forever, across every conversation the user ever opened.
- *  - Keyed per conversation, so switching chats shows each one its own draft rather than leaking
- *    A's text into B.
- *  - LAST WRITER WINS across tabs. Two tabs on one conversation share the key and the later write
- *    stands. Accepted deliberately: the alternative is a merge UI for a text box.
- *  - Cleared on a SUCCESSFUL send, never on failure — a failed send is exactly when the text is
- *    worth most, and an uncleared draft would otherwise re-populate the composer with the message
- *    the user just sent, which is easy to send twice by accident.
+ *    the tab is correct, rather than accumulating every abandoned half-thought forever.
+ *  - Keyed per conversation, so switching chats shows each one its own draft.
+ *  - LAST WRITER WINS across tabs sharing one conversation — accepted deliberately; the
+ *    alternative is a merge UI for a text box.
+ *  - Cleared on a SUCCESSFUL send only, never on failure — a failed send is exactly when the text
+ *    is worth most, and clearing it would resend the same message by accident.
  *
- * Storage access is wrapped because `sessionStorage` genuinely throws rather than degrading —
- * Safari's private mode on quota, and any embedding that blocks storage access. Losing a draft is
- * not worth taking the chat down with it, so the failure has a defined meaning here: no
- * persistence, everything else unaffected. This is the documented-optional case in
- * `.claude/rules/fail-first.md`, not a swallowed error.
+ * Storage access is wrapped because `sessionStorage` genuinely throws rather than degrading
+ * (Safari private mode on quota, storage-blocking embeds) — losing a draft is not worth taking
+ * the chat down with it.
  */
 
 const key = (conversationId: string): string => `draft:${conversationId}`

@@ -1,17 +1,14 @@
 /**
- * ONE ROW INSIDE AN ACTIVITY GROUP (R35b, R36's rendering half, R66).
+ * ONE ROW INSIDE AN ACTIVITY GROUP. The row vocabulary is VERB + TARGET + STATE, and the row can
+ * read exactly two things: the server's friendly label and the state. Nothing else reaches it —
+ * `convertMessage` never copies `detail`, `args` or `result` onto the part, so that wall is
+ * upstream of this file and this component could not leak a file path if it tried; a promise at
+ * the draw site is only as good as the next person editing the draw site.
  *
- * The row vocabulary is VERB + TARGET + STATE, and the row is allowed to read exactly two things:
- * the server's friendly label and the state. Nothing else is available to it — `convertMessage`
- * never copies `detail`, `args` or `result` onto the part, so R36's wall is upstream of this file
- * and this component could not leak a file path if it tried. That is deliberate: a promise at the
- * draw site is only as good as the next person editing the draw site.
- *
- * Every guarantee `ToolActivityLine` already carries comes through unchanged, because the row IS
- * `ToolActivityLine` — the reduced-motion gate, the sr-only "failed" text node (failure by shape
- * and text, never colour alone, WCAG 1.4.1), the `relative` containment that stops that sr-only
- * span anchoring to the document and stretching the page by ~11,000px, and a constant height
- * across states so a row does not reflow as it resolves.
+ * Every guarantee `ToolActivityLine` carries comes through unchanged, because the row IS
+ * `ToolActivityLine` — the reduced-motion gate, the sr-only "failed" text (failure by shape and
+ * text, never colour alone, WCAG 1.4.1), the `relative` containment that stops that span
+ * stretching the page by ~11,000px, and a constant height across states so a row never reflows.
  */
 import type { ToolCallMessagePartComponent } from '@assistant-ui/react'
 

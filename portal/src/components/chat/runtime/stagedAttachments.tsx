@@ -1,39 +1,27 @@
 /**
- * THE ADAPTER, BOUND TO THE RUNTIME IT IS REGISTERED ON (plan 002, U5).
+ * THE ADAPTER, BOUND TO THE RUNTIME IT IS REGISTERED ON.
  *
- * `add` has to see what is ALREADY staged, because the per-message file cap and the
- * per-conversation text-byte budget are both cumulative — checking only the arriving file is the
- * cap bypass R57 records. But the staged list lives ON the runtime, and the runtime cannot be
- * built until the adapter has been handed to it. So the adapter reads through a ref, and a tiny
- * component INSIDE the provider — the only place `useAui` resolves — keeps that ref current.
+ * WHY THIS EXISTS: `add` must see what is ALREADY staged — the per-message file cap and the
+ * per-conversation byte budget are both cumulative, and checking only the arriving file is
+ * exactly how a cap gets bypassed. The staged list lives ON the runtime, but the runtime cannot
+ * be built until the adapter is handed to it — so the adapter reads through a ref, kept current
+ * by a tiny component INSIDE the provider (the only place `useAui` resolves).
  *
- * PER PROVIDER, NEVER MODULE-LEVEL. Two runtimes can be mounted at once (the project rail's
- * composer-only one and a chat's), and a shared ref would have each one validating against the
- * other's staged files.
+ * PER PROVIDER, NEVER MODULE-LEVEL: two runtimes can mount at once (the rail's composer-only one
+ * and a chat's), and a shared ref would validate each against the other's staged files. A REF,
+ * NOT A CLOSURE, because `add` runs at pick time, long after the render that built the adapter —
+ * a captured array would be stale.
  *
- * A REF RATHER THAN A CLOSURE OVER STATE: `add` runs at pick time, long after the render that
- * created the adapter, so a captured array would be whatever was staged when the composer last
- * rendered rather than what is staged now.
+ * THE REF HOLDS A READER, NOT A COPY — it used to hold the last-handed array, refreshed by
+ * re-rendering on every staged file; now it holds a function, so nothing needs refreshing and
+ * there is no window where it points at a thrown-away render.
  *
- * AND WHAT THE REF HOLDS IS A READER, NOT A COPY. It used to hold the array `useAuiState` had
- * last handed the binding, refreshed by re-rendering this component on every staged file; it now
- * holds a function that reads the composer when the adapter asks. Nothing has to be refreshed, so
- * a keystroke costs one component less work, and there is no window in which the ref points at an
- * array from a render that was thrown away.
- *
- * WHAT IT DOES NOT BUY IS A LAG-FREE VIEW, and saying otherwise here was wrong for a while.
- * `composer.getState()` is the assistant client's own snapshot, and the client is fed from the
- * runtime through React: measured inside a single commit, the runtime's composer already reports
- * a just-added file while `aui.composer.getState()` still reports the list from the last paint.
- * So this reader is as current as the last render — the same currency the copy had, spelled in a
- * way that cannot go stale on its own.
- *
- * WHAT ACTUALLY COVERS THAT WINDOW IS THE ADAPTER'S CLAIM LIST: it counts what `add` has said yes
- * to and is still reading, which is the whole of the gap between a file being taken and the screen
- * catching up — see `attachmentAdapter.ts`. The one case neither covers is two SEPARATE gestures
- * landing inside a single repaint, where nothing is in flight and the staged list has not caught
- * up; closing that would mean reading the composer runtime under the client, which the library
- * exposes only as an internal.
+ * THIS IS NOT A LAG-FREE VIEW, though it was once described as one: `composer.getState()` is a
+ * snapshot fed through React, so inside a single commit the runtime already knows a just-added
+ * file before `getState()` does — the reader is only as current as the last render. The gap is
+ * covered instead by the adapter's OWN claim list (`attachmentAdapter.ts`), which counts what
+ * `add` has accepted and is still reading; the one case neither covers is two separate picks
+ * landing inside one repaint, which would need reading an internal the library does not expose.
  */
 import { createContext, useContext, useMemo, useRef, type MutableRefObject, type ReactNode } from 'react'
 import { useAui, type Attachment, type AttachmentAdapter } from '@assistant-ui/react'
@@ -72,15 +60,11 @@ export function useBoundAttachmentAdapter(): BoundAdapter {
 }
 
 /**
- * THE REFUSAL SINK, AS CONTEXT rather than as a prop chain.
- *
- * The provider that builds the runtime is mounted ABOVE the composer and does not know which of
- * its children is the one with a voice — on the chat surface the composer is several levels down,
- * beside a transcript and half a dozen banners. Threading a ref through those would be a prop
- * nobody in between has any business carrying.
- *
- * `null` outside a provider is the honest default: a composer rendered with no runtime cannot
- * stage a file at all, so there is nothing for a refusal to be about.
+ * THE REFUSAL SINK, AS CONTEXT rather than a prop chain: the provider is mounted ABOVE the
+ * composer and does not know which child has the voice — on the chat surface the composer sits
+ * several levels down, beside a transcript and banners — so threading a ref through would be a
+ * prop nobody in between has business carrying. `null` outside a provider is the honest default:
+ * a composer with no runtime cannot stage a file, so there is nothing for a refusal to be about.
  */
 const RefusalSinkContext = createContext<MutableRefObject<(message: string) => void> | null>(null)
 
@@ -104,14 +88,11 @@ export function useRefusalSink(onUrgent: (message: string) => void): void {
 }
 
 /**
- * Renders nothing. Its whole job is to run `useAui` inside the provider and hand the adapter a way
- * to read the composer it was registered on.
- *
- * IT SUBSCRIBES TO NOTHING, deliberately. It used to hold `useAuiState(s => s.composer.attachments)`
- * and re-render on every staged file so the ref could be refreshed; what it publishes now is a
- * reader, so nothing has to be refreshed and a keystroke costs one component less work. Nothing
- * downstream wanted those renders — this component draws nothing, and the ref is the only thing it
- * ever produced.
+ * Renders nothing; its whole job is running `useAui` inside the provider and handing the adapter
+ * a reader over the composer it was registered on. SUBSCRIBES TO NOTHING, deliberately — it used
+ * to hold `useAuiState(s => s.composer.attachments)` and re-render on every staged file to
+ * refresh the ref; now it publishes a reader instead, so nothing needs refreshing, and nothing
+ * downstream wanted those renders anyway.
  */
 export function StagedAttachmentsBinding({
   target,

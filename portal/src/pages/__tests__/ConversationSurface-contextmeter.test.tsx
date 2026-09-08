@@ -1,7 +1,7 @@
 /**
- * THE "THIS CHAT IS GETTING LONG" LINE, AND WHERE ITS NUMBER COMES FROM (#194, R8a/R9a).
+ * THE "THIS CHAT IS GETTING LONG" LINE, AND WHERE ITS NUMBER COMES FROM.
  *
- * ═══ WHY THIS FILE EXISTS ═══
+ * WHY THIS FILE EXISTS
  *
  * The browser used to compute this number itself — four characters to the token, a flat nominal
  * per attachment — so the meter a citizen watched and the wall the server enforces were two
@@ -122,9 +122,9 @@ const warning = () => screen.queryByTestId('composer-context-warning')
 
 describe('the meter reads the server’s figure', () => {
   it('★ warns on first paint for a chat the server would already be about to refuse', async () => {
-    // COVERS AE3b. The figure is the administrator's own soft threshold — the exact token at
-    // which the server's `effective_context` says this chat is getting long, handed over by the
-    // read rather than recomputed here. One number, two readers.
+    // The figure is the administrator's own soft threshold — the exact token at which the server's
+    // `effective_context` says this chat is getting long, handed over by the read rather than
+    // recomputed here. One number, two readers.
     h.getBuild.mockResolvedValue(savedChat(SOFT))
     const { deps: d } = deps()
     renderBuilder({ deps: d })
@@ -148,7 +148,7 @@ describe('the meter reads the server’s figure', () => {
   it('★ is silent for a chat nobody has measured — null is not zero and is not "assume full"', async () => {
     // EDGE CASE. A brand-new chat, or one where only the platform has spoken, carries no
     // measurement. The honest answer is to say nothing: a browser that guessed here is exactly
-    // what #194 deleted.
+    // the kind of estimate this surface no longer makes.
     h.getBuild.mockResolvedValue(savedChat(null))
     const { deps: d } = deps()
     renderBuilder({ deps: d })
@@ -196,7 +196,7 @@ describe('the meter reads the server’s figure', () => {
 
 describe('nothing is sized before a send', () => {
   it('★ typing asks the server nothing, at any length', async () => {
-    // COVERS AE3, THE EDGE CASE — asserted on the transport log. This platform has SETTLED that
+    // THE EDGE CASE — asserted on the transport log. This platform has SETTLED that
     // there is no pre-send token counting: the only number that exists is the one the provider
     // reported for a turn it already served. A "how big is this?" round trip on the keystroke
     // path is the thing that must never be added back, and this is what would notice.

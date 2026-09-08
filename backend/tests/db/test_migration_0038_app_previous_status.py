@@ -1,4 +1,4 @@
-"""`app_registry.previous_status` against the REAL migrated schema (U31, R42, #163).
+"""`app_registry.previous_status` against the REAL migrated schema.
 
 The test DB carries the column from `alembic upgrade head` (revision
 0038_app_previous_status), so the shape assertions exercise the actual DDL — the existing
@@ -51,7 +51,7 @@ async def _app(db, email: str, **overrides) -> AppRegistry:
 async def test_the_column_is_the_native_enum_nullable_with_no_default(db_session) -> None:
     """Three properties, each a decision rather than a default.
 
-    NATIVE ENUM (ADR-0008), not a varchar with a check — it holds a status, and the type that
+    NATIVE ENUM, not a varchar with a check — it holds a status, and the type that
     already exists is the one that should hold it. NULLABLE, because the absence of a value
     carries meaning here: an app that is not switched off has nothing to remember. And NO
     SERVER DEFAULT, for the same reason — there is nothing for a default to say, and one would

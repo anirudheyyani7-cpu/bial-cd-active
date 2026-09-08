@@ -1,16 +1,14 @@
-"""U14 — no container is destroyed unless a durable copy of its work is confirmed current.
+"""No container is destroyed unless a durable copy of its work is confirmed current.
 
-R9, R11. Every other guard in this system protects money. This one protects work, and it is the
+Every other guard in this system protects money. This one protects work, and it is the
 last thing standing between a scheduled process with ARM delete authority and somebody's unsaved
 afternoon.
 
 THE TEST THAT MATTERS MOST is `test_a_storage_off_deployment_cannot_authorise_a_single_delete`.
 `manager.py` reads `StorageUnconfiguredError` as a CONFIRMED absent bundle, which is correct for
-the build path — on a storage-off deployment you must not offer a restore that cannot work. Read
-by a destroy path, that same value says "nothing to preserve, safe to delete" about every
-container at once, so the most natural misconfiguration in the system would produce a worker that
-deleted the entire fleet while believing it had verified each one.
-"""
+the build path. Read by a destroy path, that same value would say "nothing to preserve, safe to
+delete" about every container at once — the misconfiguration that deletes the whole fleet while
+believing it verified each one."""
 
 from __future__ import annotations
 
@@ -68,16 +66,12 @@ def store(monkeypatch: pytest.MonkeyPatch) -> FakeStorage:
 
 @pytest.fixture(autouse=True)
 def attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
-    """Every copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
+    """Every copy-before-reclaim outcome this test recorded, without touching the database.
 
-    AUTOUSE, AND THAT IS NOT CONVENIENCE. `record_durable_copy_attempt` opens its own session and
-    COMMITS — it has to, because in production the row must land even when the reap it describes
-    has just failed. Inside a suite that is otherwise one rolled-back transaction, that means
-    every gated reap driven from this file would leave a permanent row in the SHARED test
-    database, and `test_reclamation_report_only.py::test_a_zero_candidate_pass_still_writes_a_
-    record` counts every row in that table — so unguarded, this file breaks a test in another one,
-    on every run, forever. `test_the_copy_record_reaches_the_database_and_is_committed` below is
-    the single place the real writer runs, and it runs against a connection that rolls back."""
+    AUTOUSE, not convenience: `record_durable_copy_attempt` opens its own session and commits, so
+    inside this suite's otherwise-rolled-back transaction an unguarded reap would leave a
+    permanent row that `test_reclamation_report_only.py` counts. The one place the real writer
+    runs is `test_the_copy_record_reaches_the_database_and_is_committed` below."""
     recorded: list[CopyAttempt] = []
 
     async def _spy(attempt: CopyAttempt) -> None:
@@ -89,7 +83,7 @@ def attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
 
 @pytest.fixture(autouse=True)
 def _forget_the_divert_streak() -> None:
-    """The refusal counter behind U2's escalation is PROCESS-LOCAL, so a divert driven here would
+    """The refusal counter behind the divert escalation is PROCESS-LOCAL, so a divert here would
     otherwise be carried into whatever test ran next in this interpreter."""
     reset_divert_streaks_for_tests()
 
@@ -115,8 +109,6 @@ async def test_a_recovery_copy_matching_head_is_confirmed(store: FakeStorage) ->
 
 
 async def test_a_recovery_copy_behind_head_is_stale_not_destroyable(store: FakeStorage) -> None:
-    """*Covers AE7.* The deadline lapsed but the newest copy predates the newest change. A copy
-    must be taken first; until one is, this container is not eligible for anything."""
     await _put_recovery(store, OLDER)
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=False)
@@ -126,41 +118,27 @@ async def test_a_recovery_copy_behind_head_is_stale_not_destroyable(store: FakeS
 
 
 async def test_a_matching_head_over_a_dirty_tree_is_not_destroyable(store: FakeStorage) -> None:
-    """★ THE U19 REGRESSION. A HEAD match stopped meaning "preserved" when the agent stopped
-    committing.
-
-    Before U19 the build agent committed as it worked, so a turn that wrote files MOVED `HEAD` and
-    a copy from the previous turn was detectably behind it — this gate's whole comparison rested on
-    that. U19 deleted the commit discipline, so "HEAD unchanged + dirty tree" is now the shape of
-    every building turn. A turn that dies before its finalizer (process death, OOM, a deploy
-    restart) leaves `HEAD` exactly where the LAST turn's copy was stamped.
-
-    So this is the shape that used to read CONFIRMED_CURRENT and destroy a whole turn's work while
-    writing an audit row saying it was safe. The copy is not behind HEAD — it is behind the WORKING
-    TREE, which is why STALE (a known state with a known remedy: copy first, then reclaim) rather
-    than UNCONFIRMED.
-
+    """★ THE REGRESSION: a HEAD match stopped meaning "preserved" once the agent stopped
+    committing as it worked.
     Mutation check: drop `container_dirty` from the head-match arm in `durable_copy.py` and this
-    goes red while every other test in this file stays green — which is exactly how the defect
-    shipped."""
+    goes red."""
     await _put_recovery(store, HEAD)
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=True)
 
     assert verdict.state is CopyState.STALE
     assert verdict.may_destroy is False
-    # The reason must name the TREE, not the head — an operator reading "behind HEAD" over a
-    # matching head would reasonably conclude the gate was broken.
+    # The reason must name the TREE, not the head — "behind HEAD" over a matching head would read
+    # as the gate being broken.
     assert "uncommitted" in verdict.reason
 
 
 async def test_a_matching_head_on_an_unread_tree_spares_rather_than_guesses(
     store: FakeStorage,
 ) -> None:
-    """We reached the container and read its HEAD, but the tree probe did not answer. That is an
-    unestablished fact on a path that authorises destruction, and this module's governing rule is
-    that every such branch spares. `None` is deliberately NOT collapsed into `False`: a default
-    that reads "clean" is precisely the permissive shape the regression above came from."""
+    """An unestablished fact on a path that authorises destruction must spare. `None` is
+    deliberately NOT collapsed into `False` — a default that reads "clean" is the permissive
+    shape the regression above came from."""
     await _put_recovery(store, HEAD)
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=None)
@@ -170,10 +148,9 @@ async def test_a_matching_head_on_an_unread_tree_spares_rather_than_guesses(
 
 
 async def test_a_clean_tree_at_a_matching_head_is_still_collected(store: FakeStorage) -> None:
-    """THE OTHER HALF, and the reason the fix is not just "never confirm". A gate that spares
-    everything forever is as broken as one that destroys live work — it collects nothing and the
-    fleet bills forever, which is the failure the reaper exists to prevent. The benign case must
-    still authorise."""
+    """THE OTHER HALF: a gate that spares everything forever is as broken as one that destroys
+    live work — it collects nothing and the fleet bills forever. The benign case must still
+    authorise."""
     await _put_recovery(store, HEAD)
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=False)
@@ -184,9 +161,8 @@ async def test_a_clean_tree_at_a_matching_head_is_still_collected(store: FakeSto
 
 async def test_currency_is_the_sha_not_the_timestamp(store: FakeStorage) -> None:
     """Azure stamps `last_modified` in WHOLE SECONDS, so a Save and an autosave inside one second
-    are indistinguishable by time. On this path "indistinguishable" means deleting a container
-    whose newest change was never copied — so the comparison is the sha, and a fresh blob whose
-    sha is stale still reads STALE."""
+    are indistinguishable by time. The comparison is therefore the sha: a fresh blob whose sha is
+    stale still reads STALE."""
     await _put_recovery(store, OLDER)
     # As freshly written as anything can be; the clock says current, the content does not.
     assert store.mtimes[recovery_key(APP)] is not None
@@ -199,10 +175,9 @@ async def test_currency_is_the_sha_not_the_timestamp(store: FakeStorage) -> None
 async def test_the_saved_bundle_is_not_a_substitute_for_the_recovery_slot(
     store: FakeStorage,
 ) -> None:
-    """R11 asks for the builder's LAST COMPLETED CHANGE. The recovery slot is the platform's
-    autosave at turn boundaries; `snapshot_key` is the user's explicit Save. A builder who never
-    pressed Save still has work worth keeping — and they are the population most likely to be
-    reclaimed, so reading the wrong slot would lose exactly the work it was written to protect."""
+    """The recovery slot is the platform's autosave at turn boundaries; `snapshot_key` is the
+    user's explicit Save. A builder who never pressed Save still has work worth keeping, and
+    reading the wrong slot would lose exactly the work it was written to protect."""
     await store.put(snapshot_key(APP), a_git_bundle(HEAD), metadata={"head_sha": HEAD})
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=False)
@@ -217,16 +192,11 @@ async def test_the_saved_bundle_is_not_a_substitute_for_the_recovery_slot(
 async def test_a_storage_off_deployment_cannot_authorise_a_single_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """THE FLEET-DELETING MISCONFIGURATION (Q4).
-
-    `manager.py:156` returns False on `StorageUnconfiguredError` and calls it a CONFIRMED absent,
-    which is right for its caller. Consumed here that value would mean "no work to preserve" for
-    every container simultaneously — a worker deleting the whole fleet while every check read
-    green. It is a fact about the deployment, not about anybody's work.
-
-    Mutation-check: let the `StorageUnconfiguredError` arm fall through to the no-bundle branch
-    and this stays UNCONFIRMED only by accident; make it return CONFIRMED_CURRENT and this is the
-    single test that goes red."""
+    """THE FLEET-DELETING MISCONFIGURATION: `manager.py::head_presence` reads
+    `StorageUnconfiguredError` as a CONFIRMED absent bundle, correct for its build-path caller.
+    Consumed here that same value would mean "no work to preserve" for every container at once.
+    Mutation-check: make the `StorageUnconfiguredError` arm return CONFIRMED_CURRENT and this is
+    the single test that goes red."""
 
     def _no_store() -> object:
         raise StorageUnconfiguredError("no OBJECT_STORE__ block on this deployment")
@@ -257,7 +227,7 @@ async def test_an_unreachable_store_spares_rather_than_destroys(
 
 async def test_a_bundle_with_no_stamped_sha_cannot_be_compared(store: FakeStorage) -> None:
     """Older bundles predate the metadata stamp. A copy whose head is unknown is a signal that
-    could not be read, and R4 sends every one of those to escalate."""
+    could not be read, and every one of those escalates."""
     await store.put(recovery_key(APP), a_git_bundle(HEAD), metadata={})
 
     assert (
@@ -279,11 +249,9 @@ async def test_no_recovery_copy_at_all_is_unconfirmed_not_permission(store: Fake
 async def test_an_unreachable_container_falls_back_to_a_parseable_bundle(
     store: FakeStorage,
 ) -> None:
-    """THE GATE MUST STAY SATISFIABLE. An orphan has no registry record and may not answer at all,
-    so requiring the live `HEAD` comparison in this branch would spare every genuinely-dead
-    container forever and collect nothing — which is the round-1 wording this replaced.
-
-    A present, parseable bundle stands in. The real comparison still happens in the normal case."""
+    """An orphan has no registry record and may not answer at all, so requiring a live HEAD
+    comparison on this branch would spare every genuinely-dead container forever and collect
+    nothing. A present, parseable bundle stands in instead."""
     await _put_recovery(store, HEAD)
 
     verdict = await confirm_durable_copy(APP, container_head=None, container_dirty=None)
@@ -318,10 +286,9 @@ async def _register(redis: aioredis.Redis) -> None:
 async def test_reap_user_refuses_when_the_copy_cannot_be_confirmed(
     fake_redis: aioredis.Redis, store: FakeStorage
 ) -> None:
-    """THE F1 PATH WAS THE UNGATED ONE. `reap_user` called `sandbox_client.teardown` with no
-    durable-copy check at all, and it is the path that does almost all of the deleting — so a gate
-    added only to the orphan path would have protected the rare case and left the common one
-    exactly as it was."""
+    """`reap_user` used to call `sandbox_client.teardown` with no durable-copy check at all, on
+    the path that does almost all of the deleting — a gate added only to the orphan path would
+    have left this, the common case, exactly as it was."""
     await _register(fake_redis)
     client = FakeSandboxClient()
 
@@ -329,7 +296,7 @@ async def test_reap_user_refuses_when_the_copy_cannot_be_confirmed(
 
     assert reaped is False
     assert client.torn_down == []
-    # SPARED AND REPORTED — the lock and registry stay so a later pass retries once a copy exists.
+    # Spared AND reported: the lock and registry stay so a later pass retries once a copy exists.
     assert await fake_redis.exists(registry_key(USER)) == 1
 
 
@@ -350,12 +317,10 @@ async def test_reap_user_proceeds_once_the_copy_is_confirmed(
 
 
 def _reachable(client: FakeSandboxClient, *, head: str) -> None:
-    """Make the fake container attachable AND answerable, which is the state the comparison needs.
-
-    `attach_existing` refusing is the DEFAULT here (a fake with no `attach_handle` raises
-    `SandboxGoneError`), and that default is why the hardcoded `None` went unnoticed for so long:
-    every existing test in this file drives the unreachable branch, so the fallback was the only
-    branch anything exercised."""
+    """Make the fake container attachable AND answerable, which is the state the comparison
+    needs. A fake with no `attach_handle` raises `SandboxGoneError` by default — which is why the
+    hardcoded `None` this file's later tests replaced went unnoticed for so long: every test here
+    that predates them drives only the unreachable branch."""
     client.attach_handle = SandboxHandle(
         fqdn=f"{a_sandbox_name('x')}.example.io",
         token="tok",
@@ -370,14 +335,9 @@ def _reachable(client: FakeSandboxClient, *, head: str) -> None:
 async def test_a_reachable_container_is_compared_against_its_real_head(
     fake_redis: aioredis.Redis, store: FakeStorage
 ) -> None:
-    """THE COMPARISON THIS GATE IS NAMED FOR, WHICH NEVER ONCE RAN.
-
-    `reap_user` passed a hardcoded `container_head=None`, so the "could not read the container,
-    trust the bundle" fallback was the only reachable branch: the `stamped == container_head`
-    comparison and the entire STALE verdict were dead code. A container holding a turn's worth of
-    work newer than its last autosave therefore read as provably preserved — the exact loss this
-    unit exists to prevent, by the one path that is supposed to prevent it.
-
+    """THE COMPARISON THIS GATE IS NAMED FOR, WHICH NEVER ONCE RAN: `reap_user` passed a
+    hardcoded `container_head=None`, so the "could not read the container, trust the bundle"
+    fallback was the only reachable branch, and the STALE verdict was dead code.
     Mutation-check: put `container_head=None` back and this goes red — the fallback fires, the
     verdict is CONFIRMED_CURRENT, and the container with the uncopied work is torn down."""
     await _register(fake_redis)
@@ -396,7 +356,7 @@ async def test_a_reachable_container_whose_copy_matches_is_still_reaped(
     fake_redis: aioredis.Redis, store: FakeStorage
 ) -> None:
     """The other direction of the same comparison, so "reads the head" cannot be satisfied by a
-    gate that simply refuses everything reachable. A copy that IS current authorises the delete."""
+    gate that simply refuses everything reachable."""
     await _register(fake_redis)
     await _put_recovery(store, HEAD)
     client = FakeSandboxClient()
@@ -410,8 +370,8 @@ async def test_a_caller_that_passes_no_app_id_is_unchanged(
     fake_redis: aioredis.Redis, store: FakeStorage
 ) -> None:
     """Reconcile-on-start and the sweep reap a user's OWN stale state, where the builder is about
-    to be handed a fresh container anyway. They stay byte-identical; the scheduled janitor — the
-    process with no human watching it — passes the id and is gated."""
+    to be handed a fresh container anyway, so they stay byte-identical. Only the scheduled janitor
+    — the process with no human watching it — passes the id and is gated."""
     await _register(fake_redis)
     client = FakeSandboxClient()
 
@@ -420,21 +380,18 @@ async def test_a_caller_that_passes_no_app_id_is_unchanged(
 
 
 # =============================================================================
-# U5 — ADR-0029 §7: the copy is TAKEN, not merely found missing
+# The copy is TAKEN, not merely found missing
 # =============================================================================
 #
-# §7 promises that if the newest durable copy predates the newest change, a copy is taken BEFORE
-# the container is reclaimed. Neither call site took one. Both read the verdict, logged "not
-# provably preserved" and spared — so a container whose autosave had silently failed was spared on
-# that pass, and on every pass after it, forever: a supervisor, a dev server and an ACA replica
-# billing indefinitely, with the only trace a log line that repeated every fifteen minutes and
-# read, to anyone scanning it, like the guard working exactly as designed. ASM30 found the
-# platform in that state.
+# The contract: if the newest durable copy predates the newest change, a copy is taken BEFORE
+# the container is reclaimed. Both call sites used to read the STALE verdict, log it, and spare
+# — forever — which let an autosave failure bill a dead container indefinitely with nothing but a
+# repeating log line to show for it.
 #
 # These tests use the SINGLETON store (`fake_storage`) rather than the `store` fixture above,
-# because `snapshot.py` resolves the store through the accessor and the local fixture only rebinds
-# `durable_copy`'s name for it. Two fakes would mean the gate reads one store and the write lands
-# in another — every assertion below would pass against a copy nobody could ever restore.
+# because `snapshot.py` resolves the store through the accessor and the local fixture only
+# rebinds `durable_copy`'s name for it. Two fakes would mean the gate reads one store and the
+# write lands in another — every assertion below would pass against a copy nobody could restore.
 
 
 def _bundles[Client: FakeSandboxClient](
@@ -448,14 +405,11 @@ def _bundles[Client: FakeSandboxClient](
     """A container that attaches AND answers the whole snapshot ladder: commit, bundle, base64.
 
     `_reachable` above stops at the state probe, which was enough while the gate only ever
-    compared a sha against blob metadata. U5 writes a real bundle out of the same container, and a
-    client that answers the state probe to EVERY command hands `base64` its own porcelain — which
-    fails to decode, takes the sparing arm, and makes the test green for entirely the wrong
-    reason. So the ladder is scripted properly and the failure arm is driven deliberately instead.
-
+    compared a sha against blob metadata. A client that answered the state probe to EVERY command
+    would hand `base64` its own porcelain, which fails to decode, takes the sparing arm, and
+    passes for the wrong reason — so the handler discriminates by `cmd[0]`.
     `attaches_as` exists for one test: the registry can name a different container by the time we
-    attach, and the copy must refuse rather than bundle somebody else's tree into this app's slot.
-    """
+    attach, and the copy must refuse rather than bundle somebody else's tree into this slot."""
     name = attaches_as or a_sandbox_name("x")
     client.attach_handle = SandboxHandle(
         fqdn=f"{name}.example.io",
@@ -483,9 +437,9 @@ def _bundles[Client: FakeSandboxClient](
 class _ReadsTheSlotAtTeardown(FakeSandboxClient):
     """Records what the recovery slot held AT THE MOMENT teardown was called.
 
-    ORDER IS THE PROMISE, not just the pair of facts. §7 says a copy is taken BEFORE the container
-    is reclaimed; a test that only checks the slot afterwards passes just as happily against an
-    implementation that tears the container down first and then tries to bundle from a corpse."""
+    Order is the promise, not just the pair of facts: a copy is taken BEFORE the container is
+    reclaimed, and a test that only checks the slot afterwards would pass just as happily against
+    an implementation that tears the container down first and bundles from a corpse."""
 
     def __init__(self, store: FakeStorage) -> None:
         super().__init__()
@@ -501,14 +455,9 @@ class _ReadsTheSlotAtTeardown(FakeSandboxClient):
 async def test_a_copy_that_predates_the_newest_change_is_taken_before_the_reap(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ THE UNIT. The recovery copy is behind the container, which is precisely the `STALE`
-    verdict ADR-0029 §7 says to resolve by TAKING a copy — and until U5 was the verdict that got
-    a container spared forever instead.
-
-    Deleting this test loses the only proof that a stale-copy container is ever collected at all:
-    every other test in this file asserts sparing, so a regression to "spare and log" reads as a
-    guard doing its job.
-
+    """★ THE UNIT: the recovery copy is behind the container, and the STALE verdict resolves by
+    TAKING a copy — before this fix the container was spared forever instead. Deleting this test
+    loses the only proof a stale-copy container is ever collected at all.
     Mutation check: put `if not verdict.may_destroy: return False` back in `reap_user` and this
     goes red — nothing is torn down and the slot still holds the older tree."""
     await _register(fake_redis)
@@ -529,16 +478,11 @@ async def test_a_copy_that_will_not_take_spares_the_container_and_records_why(
     attempts: list[CopyAttempt],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The store refuses the upload. Taking a copy is what §7 asks for; SUCCEEDING at it is not
-    something this code can promise, so the arm that matters is the one where it fails — and it
-    must land back on the pre-existing behaviour (spare, never destroy) rather than on the new
-    one. A copy that did not land authorises nothing.
-
-    And it leaves a RECORD. That is the half ASM30 shows is load-bearing: sparing quietly is how
-    the leak stayed invisible for as long as it did.
-
-    Mutation check: return True from the `except` arm in `_take_the_copy_we_promised` and this
-    goes red — the container is torn down having preserved nothing."""
+    """The store refuses the upload. Taking a copy is what the contract asks for; succeeding at
+    it is not something this code can promise, so this must land back on the pre-existing
+    behaviour (spare, never destroy) — and leave a RECORD, since sparing quietly is how the leak
+    stayed invisible for as long as it did.
+    Mutation check: return True from the `except` arm in `_take_the_copy_we_promised` → red."""
     await _register(fake_redis)
     await _put_recovery(fake_storage, OLDER)
     client = _bundles(FakeSandboxClient(), head=HEAD, bundles_to=BUNDLED)
@@ -557,17 +501,11 @@ async def test_a_copy_that_will_not_take_spares_the_container_and_records_why(
 async def test_a_tree_that_fails_the_lineage_guard_diverts_and_spares_rather_than_clobbering(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ THE REASON THE FIX GOES THROUGH U3'S GUARDED WRITE AND NOT A RAW `put`.
-
-    The container's HEAD is not a descendant of the copy on record — a reverted or re-initialised
-    workspace. A fix that simply "took a copy" here would stamp that tree in as the newest copy of
-    the user's work and then destroy the container on the strength of it, which is the 2026-08-18
-    loss performed by the code written to prevent it. So the write diverts, the existing bundle is
-    untouched to the byte, the pinned alarm fires, and the container is spared.
-
-    Mutation check: read `RecoveryOutcome.DIVERTED` as authorising (return True) and this goes red
-    at the teardown assertion, with the good bundle still sitting in the slot it would have been
-    deleted alongside."""
+    """★ THE REASON THE FIX GOES THROUGH THE GUARDED WRITE AND NOT A RAW `put`: the container's
+    HEAD is not a descendant of the copy on record (a reverted or re-initialised workspace), so
+    simply taking a copy here would stamp that tree in as the newest and destroy the container on
+    the strength of it — the loss performed by the code written to prevent it.
+    Mutation check: read `RecoveryOutcome.DIVERTED` as authorising (return True) → red."""
     await _register(fake_redis)
     await _put_recovery(fake_storage, OLDER)
     good_bundle = fake_storage.objects[recovery_key(APP)]
@@ -589,10 +527,8 @@ async def test_a_current_copy_is_reclaimed_without_taking_a_second_one(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
     """The other direction, so "takes a copy" cannot be satisfied by a reaper that bundles every
-    container it ever looks at. A copy that is already current is the whole point of the gate; a
-    second one would cost an exec, a bundle and an upload per container per pass, on the path that
-    walks the entire fleet every fifteen minutes.
-
+    container it looks at — a second copy would cost an exec, a bundle and an upload per
+    container per pass, on the path that walks the entire fleet every fifteen minutes.
     Mutation check: drop the `verdict.may_destroy` early-out from `_take_the_copy_we_promised` and
     this goes red — the slot is re-stamped with a tree nobody asked for."""
     await _register(fake_redis)
@@ -610,13 +546,12 @@ async def test_a_current_copy_is_reclaimed_without_taking_a_second_one(
 async def test_a_container_that_will_not_attach_is_spared_with_a_record_not_in_silence(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """There is no copy and no way to take one, so the pre-existing sparing stands. What must NOT
-    stand is the silence: this is the shape that bills forever, and the record is the only thing
-    an operator can look for that does not depend on the failing component to announce itself.
-
+    """There is no copy and no way to take one, so the pre-existing sparing stands — but not in
+    silence: the record is the only thing an operator can look for that doesn't depend on the
+    failing component to announce itself.
     Mutation check: drop the `record_durable_copy_attempt` call from the unreachable arm and this
-    goes red while every other assertion in the file stays green — which is exactly the state the
-    two call sites were already in."""
+    goes red while every other assertion in the file stays green — exactly the state the two call
+    sites were already in."""
     await _register(fake_redis)
     client = FakeSandboxClient()  # no `attach_handle`: `attach_existing` raises SandboxGoneError
 
@@ -628,14 +563,10 @@ async def test_a_container_that_will_not_attach_is_spared_with_a_record_not_in_s
 async def test_a_copy_is_never_taken_from_a_container_the_record_no_longer_names(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ THE WAY THIS FIX COULD ITSELF DESTROY WORK, closed before it can happen.
-
-    `attach_existing` builds its handle from the registry record, and the record is the one input
-    on this path that changes underneath us — a builder starting a fresh sandbox between the
-    record read and the attach hands us their LIVE container. Bundling that tree into this app's
-    recovery slot would overwrite one app's only copy with another app's work, through the code
-    added to stop exactly that.
-
+    """`attach_existing` builds its handle from the registry record, and the record is the one
+    input on this path that can change underneath us — a builder starting a fresh sandbox between
+    the record read and the attach hands us their LIVE container. Bundling that tree into this
+    app's recovery slot would overwrite one app's only copy with another app's work.
     Mutation check: drop the `reached.handle.app_name != expected_name` guard and this goes red —
     the other container's tree is bundled straight over the copy on record."""
     await _register(fake_redis)  # the registry names sbx-x
@@ -656,10 +587,9 @@ async def test_a_copy_is_never_taken_from_a_container_the_record_no_longer_names
 
 def test_every_copy_attempt_carries_an_explanation_an_operator_can_act_on() -> None:
     """A row saying a container was spared, with no `detail` and no outcome mapped to it, is a row
-    nobody can do anything with — and the failure is worse than useless: an unmapped member raises
-    `KeyError` INSIDE `record_durable_copy_attempt`'s swallow, so the record simply vanishes and
-    the sparing goes silent again, which is the exact condition this unit exists to remove.
-
+    nobody can act on — and worse, an unmapped member raises `KeyError` inside
+    `record_durable_copy_attempt`'s swallow, so the record vanishes and the sparing goes silent
+    again.
     Mutation check: add a member to `CopyAttempt` without a `_ATTEMPT_MEANING` row and this goes
     red."""
     assert set(_ATTEMPT_MEANING) == set(CopyAttempt)
@@ -675,16 +605,12 @@ def copy_record_writes_here(  # noqa: ANN201
 ):
     """Point the REAL `record_durable_copy_attempt` at this test's connection.
 
-    The production function opens its OWN session, because it has to land even when the reap it
-    describes has just failed — which is precisely what makes it invisible to a suite running
-    inside one rolled-back transaction. So the factory is rebound to hand back THIS connection's
-    session with `commit` neutered: committing the harness transaction would leak rows into every
-    later test, and `test_reclamation_report_only.py` counts every row in that table.
-
-    `committed` is not bookkeeping. Autoflush means a bare `add()` is visible to the very next
-    SELECT, so a writer that forgot to commit would read as perfectly healthy here while writing
-    nothing at all in production. Modelled on `record_pass_writes_here`, which exists for the
-    same reason one layer up."""
+    The production function opens its OWN session, because the row must land even when the reap
+    it describes has just failed — which makes it invisible to a suite running inside one
+    rolled-back transaction. The factory is rebound to hand back THIS connection's session with
+    `commit` neutered: committing the harness transaction would leak rows into every later test.
+    `committed` is not bookkeeping — autoflush means a bare `add()` is visible to the very next
+    SELECT, so a writer that forgot to commit would read as healthy here while writing nothing."""
     import src.db.base as db_base
 
     class _NoCommitSession:
@@ -720,10 +646,9 @@ async def test_the_copy_record_reaches_the_database_and_is_committed(
 ) -> None:
     """THE ONE TEST THAT RUNS THE REAL WRITER. Everything above spies on it, so without this the
     whole "a spared container is visible" claim rests on a list in a test file.
-
     Mutation check: drop the `await db.commit()` and this goes red on the last assertion — the row
-    is still visible in here through autoflush, which is exactly how a writer that persists
-    nothing in production reads as healthy in a suite."""
+    is still visible in here through autoflush, exactly how a writer that persists nothing in
+    production reads as healthy in a suite."""
     db, sessions = copy_record_writes_here
 
     await record_durable_copy_attempt(CopyAttempt.UNREACHABLE)
@@ -740,15 +665,11 @@ async def test_the_copy_record_reaches_the_database_and_is_committed(
 async def test_a_copy_record_never_makes_a_dead_reclamation_worker_look_alive(
     copy_record_writes_here: tuple[AsyncSession, Sequence[object]],
 ) -> None:
-    """★ THE REASON THESE ROWS CARRY THEIR OWN `task_name`.
-
-    `reclamation_pass_freshness` reads the single newest row for `RECLAMATION_TASK_NAME` and
-    pronounces the scheduler alive on the strength of it. That is the ONLY detector of a dead
-    worker in the system — every other alarm the pass raises is emitted by the pass, so a
-    crashlooping scheduler emits none of them. Filing a per-container copy attempt under the
-    pass's own name would keep that detector permanently satisfied by a completely different
-    subsystem, and the one alarm that can see a dead worker would never fire again.
-
+    """`reclamation_pass_freshness` reads the single newest row for `RECLAMATION_TASK_NAME` and
+    pronounces the scheduler alive on the strength of it — the only detector of a dead worker in
+    the system, since a crashlooping scheduler emits no alarms of its own. Filing a per-container
+    copy attempt under the pass's own name would keep that detector permanently satisfied by a
+    different subsystem.
     Mutation check: set `DURABLE_COPY_TASK_NAME = RECLAMATION_TASK_NAME` and this goes red."""
     db, _ = copy_record_writes_here
     before = await reclamation_pass_freshness(db)
@@ -759,24 +680,19 @@ async def test_a_copy_record_never_makes_a_dead_reclamation_worker_look_alive(
 
 
 # =============================================================================
-# The unguarded first copy — the P1 an adversarial review reproduced
+# The unguarded first copy — the path an adversarial review reproduced
 # =============================================================================
 
 
 async def test_an_uncomparable_copy_on_record_is_never_overwritten_and_never_authorises_a_reap(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★★ THE VERIFIED DATA-LOSS PATH, in the shape the review drove it.
-
-    The recovery slot holds a bundle written before the head stamp existed — `durable_copy.py`
-    documents that population — so `confirm_durable_copy` cannot compare and returns UNCONFIRMED.
-    U5 then takes the copy. Before this fix, `write_recovery_copy` read "no head to compare
-    against" as "nothing to protect" and wrote the reverted tree straight over the user's only
-    durable copy, into a store with no versioning and no soft delete — and U5 read that WRITTEN as
-    proof and deleted the container in the same call.
-
-    Mutation check: restore either half (the `recorded is None` write in `snapshot.py`, or the
-    `recorded_head is None` spare in `reaper.py`) and this goes red."""
+    """★★ THE VERIFIED DATA-LOSS PATH: the recovery slot holds a bundle written before the head
+    stamp existed, so `confirm_durable_copy` cannot compare and returns UNCONFIRMED, and a copy is
+    then taken. Before this fix, "no head to compare against" read as "nothing to protect",
+    wrote the reverted tree over the user's only durable copy, then read that write as proof and
+    deleted the container.
+    Mutation check: restore either `None` arm (`snapshot.py`/`reaper.py`) → red."""
     await _put_recovery(fake_storage, None)  # present, but carrying no head_sha
     before = await fake_storage.get(recovery_key(APP))
     await _register(fake_redis)
@@ -793,14 +709,10 @@ async def test_an_uncomparable_copy_on_record_is_never_overwritten_and_never_aut
 async def test_the_first_copy_on_record_is_kept_but_does_not_authorise_a_reap(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ THE OTHER HALF, and it needs no legacy bundle at all — it is U5's own target population.
-
-    An app whose every autosave failed (ASM30) has an EMPTY recovery slot. A reverted container's
-    empty tree then becomes the first copy on record, `recoverable_work` ranks it newest by
-    `last_modified`, and the citizen's next build is restored from the template over their saved
-    app. Taking the copy is still right — it is strictly better than nothing — but it is not
-    evidence, so it must not authorise the delete.
-
+    """The other half, and it needs no legacy bundle — it is this fix's own population: an app
+    whose every autosave failed has an EMPTY recovery slot, a reverted container's empty tree
+    becomes the first copy on record, and `recoverable_work` ranks it newest by `last_modified`.
+    Taking the copy is still right, but it is not evidence, so it must not authorise the delete.
     Mutation check: drop the `recorded_head is None` arm in `reaper.py` and this goes red."""
     await _register(fake_redis)
     client = _bundles(FakeSandboxClient(), head=REVERTED, bundles_to=REVERTED, ancestry="0 1")
@@ -809,8 +721,8 @@ async def test_the_first_copy_on_record_is_kept_but_does_not_authorise_a_reap(
 
     assert reaped is False
     assert client.torn_down == []
-    # …and the copy was still taken, which is the half that must NOT regress into "spare and do
-    # nothing" — that is the forever-billing leak this unit exists to close.
+    # …and the copy was still taken, which must NOT regress into "spare and do nothing" — the
+    # forever-billing leak this unit exists to close.
     assert await fake_storage.head(recovery_key(APP)) is not None
     assert attempts == [CopyAttempt.UNGUARDED]
 
@@ -818,14 +730,11 @@ async def test_the_first_copy_on_record_is_kept_but_does_not_authorise_a_reap(
 async def test_a_destroy_on_the_unreadable_container_fallback_says_so(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ `may_destroy` is True for two different facts, and only one of them is "already current".
-
-    The other is `confirm_durable_copy`'s deliberate fallback: the container could not be read, so
-    a present, parseable bundle stands in — a trade that exists so a genuinely dead container can
-    ever be collected at all. Nothing about currency was established there, and recording it as
-    "the durable copy was already current" writes the one row an operator would use to find "we
-    destroyed containers we could not verify" and makes it say the opposite.
-
+    """`may_destroy` is True for two different facts, and only one of them is "already current" —
+    the other is the deliberate fallback where the container could not be read and a present,
+    parseable bundle stands in. Recording that as "the durable copy was already current" writes
+    the one row an operator would use to find "we destroyed containers we could not verify" and
+    makes it say the opposite.
     Mutation check: record `NOTHING_TO_COPY` unconditionally and this goes red."""
     await _register(fake_redis)
     await _put_recovery(fake_storage, HEAD)
@@ -836,8 +745,8 @@ async def test_a_destroy_on_the_unreadable_container_fallback_says_so(
 
 
 def test_every_copy_attempt_still_maps_to_an_operator_sentence() -> None:
-    """The table is the operator's whole vocabulary; a member without a row is a row that vanishes
-    (or, before the lookup moved inside the swallow, an aborted reap)."""
+    """The table is the operator's whole vocabulary; a member without a row is a row that
+    vanishes."""
     from src.services.build_sessions.pass_history import _ATTEMPT_MEANING
 
     assert set(_ATTEMPT_MEANING) == set(CopyAttempt)

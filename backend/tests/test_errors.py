@@ -1,5 +1,5 @@
-"""Boundary exception handlers: no input echo on 422, no internal detail on 500 — and, since
-`#187`, no bound parameters in the line the 500 handler logs."""
+"""Boundary exception handlers: no input echo on 422, no internal detail on 500, and no
+bound parameters in the line the 500 handler logs."""
 
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ from src.services.auth.session_jwt import mint_session_jwt
 from tests.db.test_engine_hides_parameters import engine_as_written_in_db_base
 from tests.factories import ProjectFactory, UserFactory
 
-# The three values `#187` read out of a live operator log line, restated as test data.
+# The three values below were read out of a live operator log line, restated as test data.
 ACTOR_EMAIL = "actor.under.test@nobody.invalid"
 ACTOR_DISPLAY_NAME = "Actor Under Test"
 REMARK_WORDS = "the verification run is finished"
-# A8's input: a NUL byte inside an otherwise valid 5-50 word reason. Postgres refuses it in a
-# text parameter, so the tombstone INSERT fails and the request 500s.
+# The reproducing input: a NUL byte inside an otherwise valid 5-50 word reason. Postgres
+# refuses it in a text parameter, so the tombstone INSERT fails and the request 500s.
 NUL_BYTE_REMARK = f"Deleting because\x00 {REMARK_WORDS}"
 
 
@@ -65,7 +65,7 @@ def test_unhandled_handler_returns_generic_500() -> None:
     assert b"secret stack detail" not in bytes(response.body)
 
 
-# --- #187: a 500 on a real route must not log what the citizen typed -----------
+# --- a 500 on a real route must not log what the citizen typed -----------------
 
 
 def _rendered(exc: BaseException) -> str:
@@ -80,8 +80,8 @@ def _rendered(exc: BaseException) -> str:
 
 
 async def _delete_with_a_nul_byte(engine: AsyncEngine):
-    """Drive the REAL `DELETE /v1/projects/{id}` into A8's 500, on `engine`, and return the
-    response plus everything the loggers were handed while it happened.
+    """Drive the REAL `DELETE /v1/projects/{id}` into the NUL-byte 500, on `engine`, and return
+    the response plus everything the loggers were handed while it happened.
 
     Everything this writes lives inside one transaction that is rolled back, so the 500 leaves
     the database exactly as it found it.
@@ -118,18 +118,15 @@ async def _delete_with_a_nul_byte(engine: AsyncEngine):
 
 
 async def test_a_500_on_the_delete_route_logs_no_bound_parameters(fake_storage) -> None:
-    """`#187`'s A8 reproduction, end to end on the real route and the real engine.
+    """The reproduction, end to end on the real route and the real engine. A NUL byte in the
+    deletion reason still 500s — rejecting it on the way in is a separate change's job, not this
+    one's — but the line the operator gets must no longer carry the actor's email, display name,
+    or reason typed, all three bound to the tombstone INSERT that fails.
 
-    A NUL byte in the deletion reason still 500s — the input half is batch 2's job, not this
-    one's — but the line the operator gets must no longer carry the actor's email, their
-    display name or the reason they typed, all three of which are bound to the tombstone
-    INSERT that fails.
-
-    THE ENGINE IS THE POINT, so the session is built on the application engine AS
-    `src/db/base.py` WRITES IT rather than on `conftest`'s `test_engine`, which is a fixture's
-    own `create_async_engine` call and would answer for itself rather than for the source.
-    `fake_storage` only satisfies the route's object-store dependency, which resolves before
-    the body runs; nothing is written to it on this path.
+    THE ENGINE IS THE POINT: the session runs on the application engine as `src/db/base.py`
+    writes it, not `conftest`'s `test_engine` (a fixture's own `create_async_engine` call,
+    answering for itself, not the source). `fake_storage` only satisfies the route's
+    object-store dependency, resolved before the body runs; nothing is written to it here.
     """
     engine = engine_as_written_in_db_base()
     try:
@@ -137,8 +134,8 @@ async def test_a_500_on_the_delete_route_logs_no_bound_parameters(fake_storage) 
     finally:
         await engine.dispose()
 
-    # The crash half of A8 is unchanged (batch 2 owns the input fix), and the body a citizen
-    # sees is still the generic one, with no internal detail in it.
+    # The crash half is unchanged (the input fix belongs to that separate change), and the body
+    # a citizen sees is still the generic one, with no internal detail in it.
     assert response.status_code == 500, response.text
     assert response.json() == {"detail": "Internal server error"}
 
@@ -151,7 +148,7 @@ async def test_a_500_on_the_delete_route_logs_no_bound_parameters(fake_storage) 
     assert "[SQL parameters hidden due to hide_parameters=True]" in rendered
     assert "[parameters:" not in rendered
 
-    # The three values #187 read out of a live log line.
+    # The three values read out of a live log line.
     assert ACTOR_EMAIL not in rendered
     assert ACTOR_DISPLAY_NAME not in rendered
     assert REMARK_WORDS not in rendered

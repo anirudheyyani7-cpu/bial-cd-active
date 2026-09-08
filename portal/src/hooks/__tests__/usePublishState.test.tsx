@@ -48,7 +48,7 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   savedHead: null,
   savedAt: null,
   // `null` is "the server did not say", which keeps the saved row — the neutral default
-  // for suites that are not about U16's never-saved omission.
+  // for suites that are not about the never-saved omission.
   savedState: null,
   ...over,
 })
@@ -346,7 +346,7 @@ describe('taking a submission back out of the queue', () => {
 
 describe('the hook hands out no predicate over the deployment fields', () => {
   it('returns the publish state and nothing derived from it', async () => {
-    // U5's own verification. `running`, `waitingForReview` and `routed` were three ways of
+    // Its own verification: `running`, `waitingForReview` and `routed` were three ways of
     // saying what `publishState` now says once, and every one of them was a place two
     // surfaces reading one response could still disagree.
     const { result } = renderHook(() => usePublishState('p1'))

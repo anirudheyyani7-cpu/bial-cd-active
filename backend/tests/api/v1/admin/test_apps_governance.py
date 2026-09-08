@@ -1,8 +1,8 @@
-"""Admin app-registry governance (APPROVAL U5–U7, AE1, R27/R29): super-admin-only +
-audited, the exact state machine, the reviewed-submission-id approve guard (D5),
-the artifact-exists pin check (R11), the audited bundle download (R15), the
-mark-deployed marker (R17) and the deployed URL it records (PILOT R5) — plus the
-approval LINEAGE (REVIEW U4, R17a/P5): runbook-lineage queue items get no new
+"""Admin app-registry governance: super-admin-only +
+audited, the exact state machine, the reviewed-submission-id approve guard,
+the artifact-exists pin check, the audited bundle download, the
+mark-deployed marker and the deployed URL it records — plus the
+approval LINEAGE: runbook-lineage queue items get no new
 approvals, and self-publish-lineage apps get neither the deploy-needed prompt nor
 the mark-deployed marker."""
 
@@ -32,11 +32,11 @@ from tests.fakes import FakeStorage
 
 _TTL = settings.auth.access_ttl_seconds
 _SHA = "1f" * 20  # 40 lowercase hex chars — the shape the bundle parser guarantees
-# The address a runbook operator pastes at mark-deployed (R5). Already normalized
+# The address a runbook operator pastes at mark-deployed. Already normalized
 # (scheme + host + path, no trailing-slash ambiguity), so it round-trips byte-for-byte
 # through pydantic's URL parse and the assertions can compare it verbatim.
 _LIVE_URL = "https://apps.bial.example.com/gate-ops"
-# A rejection note that clears the U13 floor (20 chars, trimmed). The floor itself and
+# A rejection note that clears the floor (20 chars, trimmed). The floor itself and
 # every way of failing it are pinned in `test_queue_counts.py`; here the note is just a
 # valid input, so the state-machine tests stay about the state machine.
 _NOTE = "This one needs a named data owner before it goes live."
@@ -55,7 +55,7 @@ class _RecordingContainerStore(AppContainerStore):
 
 
 class _ExplodingHeadStorage(FakeStorage):
-    """A store whose `head()` fails TRANSIENTLY (not not-found) — approve's R11
+    """A store whose `head()` fails TRANSIENTLY (not not-found) — approve's
     verify-before-pin seam must map a storage ERROR to 503 (ambiguity denies), never a
     409 (absent). Mirrors `_ExplodingGetStorage`/`_ExplodingPutStorage` in test_lifecycle."""
 
@@ -119,7 +119,7 @@ def _approved(**extra):
 
 
 def _stage_bundle(store: FakeStorage, row: AppRegistry) -> None:
-    """Seed the submission blob approve's R11 head-check verifies."""
+    """Seed the submission blob approve's head-check verifies."""
     assert row.source_submission_id is not None
     store.objects[submission_key(row.id, row.source_submission_id)] = b"# v2 git bundle\nfake"
 
@@ -139,7 +139,7 @@ def _approve_body(row: AppRegistry) -> dict[str, str]:
     return {"submissionId": str(row.source_submission_id)}
 
 
-# --- AE1: super-admin gating ---------------------------------------------------
+# --- super-admin gating ---------------------------------------------------
 
 
 async def test_citizen_is_forbidden(client, db_session) -> None:
@@ -201,7 +201,7 @@ def test_admin_routes_document_error_codes_in_openapi() -> None:
     assert {"404", "409", "401", "403", "500"} <= deployed
 
 
-# --- D5/R7/R11: approve pins exactly the reviewed submission ---------------------
+# --- approve pins exactly the reviewed submission ---------------------
 
 
 async def test_approve_pins_the_reviewed_submission(client, app, db_session) -> None:
@@ -219,7 +219,7 @@ async def test_approve_pins_the_reviewed_submission(client, app, db_session) -> 
     fresh = await db_session.get(AppRegistry, row.id)
     await db_session.refresh(fresh)
     assert fresh.status is AppStatus.APPROVED
-    # The pin IS the reviewed submission (D5), SHA carried over from submit (R4).
+    # The pin IS the reviewed submission, SHA carried over from submit.
     assert fresh.approved_submission_id == fresh.source_submission_id
     assert fresh.approved_commit_sha == _SHA
     assert fresh.approved_by is not None
@@ -227,7 +227,7 @@ async def test_approve_pins_the_reviewed_submission(client, app, db_session) -> 
 
 
 async def test_approve_race_resubmitted_since_review_is_409(client, app, db_session) -> None:
-    # THE race (R7): admin reviews submission A; the owner re-submits (B) before the
+    # THE race: admin reviews submission A; the owner re-submits (B) before the
     # admin clicks approve-with-A. A status-only guard cannot see this
     # (PENDING→PENDING is legal); the reviewed-id predicate updates zero rows.
     store = _wire_storage(app)
@@ -253,7 +253,7 @@ async def test_approve_race_resubmitted_since_review_is_409(client, app, db_sess
 
 
 async def test_approve_missing_artifact_is_409_and_no_pin(client, app, db_session) -> None:
-    # R11: the reviewed submission's blob is gone (or never existed) → refuse, so an
+    # The reviewed submission's blob is gone (or never existed) → refuse, so an
     # app can never reach APPROVED with an artifact that 404s at runbook time.
     _wire_storage(app)  # empty store — no blob staged
     row = await _app(db_session, **_pending())
@@ -270,7 +270,7 @@ async def test_approve_missing_artifact_is_409_and_no_pin(client, app, db_sessio
 
 
 async def test_approve_storage_head_error_is_503_no_pin_no_audit(client, app, db_session) -> None:
-    # R11 fail-closed: a storage ERROR on the verify-before-pin head-check is ambiguity,
+    # Fail-closed: a storage ERROR on the verify-before-pin head-check is ambiguity,
     # NOT absence — 503 (not 409), nothing pinned, and no approve audit row written.
     store = _ExplodingHeadStorage()
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
@@ -327,8 +327,8 @@ async def test_approve_requires_pending(client, app, db_session) -> None:
 
 
 async def test_approve_disabled_directly_is_409(client, app, db_session) -> None:
-    # R10 mirror: →approved legally permits DISABLED (that is enable's path), and a
-    # kill-switched app's source_submission_id is frozen — so WITHOUT the explicit
+    # The transition to APPROVED legally permits DISABLED as a source (that is enable's path),
+    # and a kill-switched app's source_submission_id is frozen — so WITHOUT the explicit
     # PENDING-only pre-check, approve-with-the-frozen-id would re-stamp the pin and
     # promote a kill-switched app. Approve reaches APPROVED only from PENDING.
     store = _wire_storage(app)
@@ -395,7 +395,7 @@ async def test_disable_then_enable_preserves_the_pin(client, db_session) -> None
 async def test_disable_switches_off_a_draft_or_rejected_app(
     client, db_session, source: AppStatus
 ) -> None:
-    """AE8/#163: the kill switch reaches the two categories most likely to need it.
+    """The kill switch reaches the two categories most likely to need it.
 
     DRAFT is the ORDINARY member of the marketplace catalog — one-click deploy never writes
     a status — and REJECTED apps keep serving whatever they last deployed. Before the
@@ -410,13 +410,13 @@ async def test_disable_switches_off_a_draft_or_rejected_app(
     fresh = await db_session.get(AppRegistry, app.id)
     await db_session.refresh(fresh)
     assert fresh.status is AppStatus.DISABLED
-    # ADR-0005: a gated action that moves the state machine writes its audit row — the
+    # A gated action that moves the state machine writes its audit row, always — the
     # widened source set must not slip a transition past the trail.
     assert "disable" in await _audited_actions(db_session, app.id)
 
 
 async def test_disable_refuses_a_pending_app_and_names_the_right_lever(client, db_session) -> None:
-    """PENDING is the one status deliberately LEFT OUT of the widening (#163).
+    """PENDING is the one status deliberately LEFT OUT of the widening.
 
     An app sitting in the review queue is REJECTED, not switched off: disabling it would let
     an administrator dispose of a submission with the ops lever instead of deciding it, and
@@ -439,7 +439,8 @@ async def test_disable_refuses_a_pending_app_and_names_the_right_lever(client, d
 async def test_an_administrators_kill_switch_survives_the_owners_withdraw(
     client, db_session
 ) -> None:
-    """THE BYPASS `#163` DOCUMENTS, pinned so the obvious repair cannot ship silently.
+    """THE BYPASS THE TRANSITION TABLE WARNS ABOUT, pinned so the obvious repair cannot
+    ship silently.
 
     `withdraw` is citizen-facing and reads `STATUS_TRANSITIONS[DRAFT]` with nothing but an
     ownership predicate in front of it. Add DISABLED to that row — the tempting way to
@@ -472,14 +473,14 @@ async def test_enable_guard_rejects_non_disabled(client, db_session) -> None:
     assert resp.status_code == 409
 
 
-# --- what the app WAS, remembered across the kill switch (U31, R42, #163) ---------------
+# --- what the app WAS, remembered across the kill switch ---------------------------------
 
 
 @pytest.mark.parametrize("source", [AppStatus.DRAFT, AppStatus.REJECTED])
 async def test_switching_off_and_back_on_returns_the_app_to_what_it_was(
     client, db_session, source: AppStatus
 ) -> None:
-    """AE8/R42: a rejected app comes back REJECTED and a draft comes back DRAFT.
+    """A rejected app comes back REJECTED and a draft comes back DRAFT.
 
     Enable used to resolve to the literal APPROVED. On an app that was never approved that
     invents an approval nobody gave — and once the artifact-pin guard refuses a row with no
@@ -505,7 +506,7 @@ async def test_switching_off_and_back_on_returns_the_app_to_what_it_was(
     # The memory describes a switched-off app; a stale one on a live row is a fact waiting
     # to be misread.
     assert fresh.previous_status is None
-    # ADR-0005: both gated actions leave their trail.
+    # Both gated actions leave their trail.
     actions = await _audited_actions(db_session, app.id)
     assert "disable" in actions and "enable" in actions
 
@@ -516,9 +517,9 @@ async def test_an_approved_app_still_checks_its_approved_submission_on_the_way_b
     """The artifact-pin guard rides on the APPROVED arm only, and it still bites there.
 
     An approved-status row with no `approved_submission_id` is the approved-with-no-artifact
-    state the schema otherwise prevents (D13). Re-enabling one would resurrect it, so the
-    guard refuses — and because it is scoped to the approved arm, the draft and rejected
-    restores above (which have no pin and are not supposed to) sail past it.
+    state the schema otherwise prevents. Re-enabling one would resurrect it, so the guard
+    refuses — and because it is scoped to the approved arm, the draft and rejected restores
+    above (which have no pin and are not supposed to) sail past it.
     """
     app = await _app(db_session, status=AppStatus.APPROVED, approved_submission_id=None)
     headers = await _admin(db_session)
@@ -562,7 +563,7 @@ async def test_an_app_disabled_before_the_column_existed_re_enables_to_approved(
     assert fresh.status is AppStatus.APPROVED
 
 
-# --- the queue projection (R15/R16) -----------------------------------------------
+# --- the queue projection -----------------------------------------------
 
 
 async def test_list_and_status_filter(client, db_session) -> None:
@@ -572,7 +573,7 @@ async def test_list_and_status_filter(client, db_session) -> None:
     listed = await client.get("/v1/admin/apps?status=approved", headers=headers)
     ids = [a["appId"] for a in listed.json()["apps"]]
     assert str(approved.id) in ids
-    # The projection never leaks the app key or mints a signed URL (R15).
+    # The projection never leaks the app key or mints a signed URL.
     row = next(a for a in listed.json()["apps"] if a["appId"] == str(approved.id))
     assert "appKey" not in row
     assert "url" not in row and "bundleUrl" not in row
@@ -580,7 +581,7 @@ async def test_list_and_status_filter(client, db_session) -> None:
 
 
 async def test_list_sources_the_display_name_from_the_owning_project(client, db_session) -> None:
-    # F5 (#48): app_registry has no name column; the admin registry shows the OWNING PROJECT's
+    # app_registry has no name column; the admin registry shows the OWNING PROJECT's
     # name (never the old "(untitled)"), for both a pending and a non-pending app.
     owner = await UserFactory.create(db_session)
     pending_project = await ProjectFactory.create(db_session, owner.id, name="Acme Expenses")
@@ -607,7 +608,7 @@ async def test_unknown_status_filter_is_400(client, db_session) -> None:
 
 
 async def test_pending_queue_is_ordered_by_submitted_at(client, db_session) -> None:
-    # R16: the pending list is a REVIEW QUEUE — oldest submission first. created_at
+    # The pending list is a REVIEW QUEUE — oldest submission first. created_at
     # (provision time) is deliberately not the axis.
     now = datetime.now(UTC)
     newer = await _app(db_session, **_pending(submitted_at=now))
@@ -630,7 +631,7 @@ async def test_pending_row_carries_the_review_payload(client, db_session) -> Non
     assert row["redeployNeeded"] is False  # never approved → nothing to deploy
 
 
-# --- the audited bundle download (R15) ---------------------------------------------
+# --- the audited bundle download ---------------------------------------------
 
 
 async def test_bundle_url_mints_and_audits(client, app, db_session) -> None:
@@ -645,7 +646,7 @@ async def test_bundle_url_mints_and_audits(client, app, db_session) -> None:
     assert body["submissionId"] == str(row.source_submission_id)
     assert body["commitSha"] == _SHA
     assert body["url"].startswith("https://")
-    # Minutes-scale TTL — far under the ABC's 7-day ceiling (R15).
+    # Minutes-scale TTL — far under the ABC's 7-day ceiling.
     assert 0 < body["expiresInSeconds"] <= 3600
 
     audit = (
@@ -655,7 +656,7 @@ async def test_bundle_url_mints_and_audits(client, app, db_session) -> None:
             )
         )
     ).scalar_one()
-    # The detail identifies the artifact — and NEVER carries the bearer URL (R15).
+    # The detail identifies the artifact — and NEVER carries the bearer URL.
     assert audit.detail == {"submissionId": str(row.source_submission_id), "commitSha": _SHA}
     assert body["url"] not in str(audit.detail)
 
@@ -704,7 +705,7 @@ async def test_bundle_url_without_submission_is_409_and_unaudited(client, app, d
     assert rows == []
 
 
-# --- mark-deployed (R17, D7) --------------------------------------------------------
+# --- mark-deployed --------------------------------------------------------------
 
 
 async def test_mark_deployed_stamps_marker_and_audits(client, db_session) -> None:
@@ -717,7 +718,7 @@ async def test_mark_deployed_stamps_marker_and_audits(client, db_session) -> Non
 
     fresh = await db_session.get(AppRegistry, app.id)
     await db_session.refresh(fresh)
-    assert fresh.status is AppStatus.APPROVED  # a marker, NOT a status transition (D7)
+    assert fresh.status is AppStatus.APPROVED  # a marker, NOT a status transition
     assert fresh.deployed_submission_id == fresh.approved_submission_id
     assert fresh.deployed_at is not None
 
@@ -745,7 +746,7 @@ async def test_mark_deployed_refuses_unapproved(client, db_session) -> None:
     assert fresh.deployed_submission_id is None  # nothing written
 
 
-# --- deployed URL (R5): the address the runbook operator pastes ----------------------
+# --- deployed URL: the address the runbook operator pastes ----------------------
 
 
 async def test_mark_deployed_records_the_url_and_projects_it(client, db_session) -> None:
@@ -896,7 +897,7 @@ async def test_citizen_cannot_record_a_deployed_url(client, db_session) -> None:
 
 async def test_reapproval_after_deploy_surfaces_redeploy_needed(client, app, db_session) -> None:
     # approve → mark-deployed → re-submit → re-approve: the approved pin moved past
-    # the deployed marker, so the queue must show a re-deploy is needed (R17).
+    # the deployed marker, so the queue must show a re-deploy is needed.
     store = _wire_storage(app)
     row = await _app(db_session, **_approved())
     headers = await _admin(db_session)
@@ -904,7 +905,6 @@ async def test_reapproval_after_deploy_surfaces_redeploy_needed(client, app, db_
         await client.post(f"/v1/admin/apps/{row.id}/mark-deployed", headers=headers)
     ).status_code == 200
 
-    # The owner re-submits (fresh submission id), the admin re-approves it.
     new_sid = uuid.uuid4()
     await db_session.execute(
         sa.update(AppRegistry)
@@ -943,9 +943,9 @@ async def test_disable_enable_do_not_disturb_the_deployed_marker(client, db_sess
     assert fresh.deployed_at is not None
 
 
-# --- approval lineage (REVIEW U4: R17a, P5) -----------------------------------------
+# --- approval lineage -----------------------------------------
 
-# The shape U8's submit service attaches: both answer sets, the differences, and the
+# The shape the submit service attaches: both answer sets, the differences, and the
 # redacted explanation. The projection must carry it VERBATIM — the review screen leads
 # with the disagreement, and a lossy pass-through here would blank it.
 _DECLARATION = {
@@ -959,11 +959,10 @@ _DECLARATION = {
 async def test_self_publish_approval_projects_without_the_runbook_prompts(
     client, app, db_session
 ) -> None:
-    # Scenario 1 (R17a), driven through the real approve endpoint: a publish-flow
-    # submission (self_publish lineage + declaration) is approved, and the projection
-    # then shows NO deploy-needed prompt — the bare id derivation would say True
-    # (approved pin set, deployed marker never set), which is exactly the forever-
-    # prompt ASM8 exists to prevent. The declaration rides along for the review screen.
+    # A publish-flow submission (self_publish lineage + declaration) approved via the real
+    # endpoint must show NO deploy-needed prompt — the bare id derivation would say True
+    # (approved pin set, deployed marker never set), which is exactly the forever-prompt
+    # the self-publish route exists to prevent.
     store = _wire_storage(app)
     row = await _app(
         db_session,
@@ -1005,7 +1004,7 @@ async def test_runbook_lineage_projects_exactly_as_today(client, db_session) -> 
 
 
 async def test_null_lineage_projects_and_behaves_as_today(client, db_session) -> None:
-    # The interim state: a row submitted before the publish-flow writer (U8) lands
+    # The interim state: a row submitted before the publish-flow writer lands
     # carries NO lineage. NULL means "today's behaviour everywhere" — projected as
     # null, deploy-needed still derived, and (per the existing approve happy-path
     # tests, whose factory rows are all NULL-lineage) approvable as before.
@@ -1021,8 +1020,8 @@ async def test_null_lineage_projects_and_behaves_as_today(client, db_session) ->
 async def test_a_superadmin_approving_their_own_app_is_recorded_distinguishably(
     client, app, db_session
 ) -> None:
-    """ASM19 — recorded, not forbidden. RBAC has two computed roles and no concept of a
-    second approver, and ADR-0005 already books the missing separation of duties as an
+    """Recorded, not forbidden. RBAC has two computed roles and no concept of a
+    second approver, and the platform already books the missing separation of duties as an
     accepted risk; forbidding it would leave a superadmin unable to publish their own
     work at all. So the answer is a trail an actor-keyed query can read: the action word
     itself differs (`approve:self`), which makes "list every self-approval" one
@@ -1042,7 +1041,7 @@ async def test_a_superadmin_approving_their_own_app_is_recorded_distinguishably(
 
 
 async def test_approving_someone_elses_app_stays_the_plain_action(client, app, db_session) -> None:
-    """The other half of ASM19: the ordinary case must NOT drift into the self bucket,
+    """The other half of that distinction: the ordinary case must NOT drift into the self bucket,
     or the distinction it exists to make is worthless."""
     store = _wire_storage(app)
     row = await _app(db_session, **_pending())  # owned by a citizen, not the admin
@@ -1058,7 +1057,7 @@ async def test_approving_someone_elses_app_stays_the_plain_action(client, app, d
 
 
 async def test_approve_refuses_a_runbook_lineage_queue_item(client, app, db_session) -> None:
-    # The P5 cutover's named dead end: a queue item outstanding at release was
+    # The cutover's named dead end: a queue item outstanding at release was
     # backfilled runbook, and approving it would burn the admin's decision on an app
     # its owner still could not publish. The copy tells the admin what to DO (have
     # the citizen re-submit through the publish flow) — and the refusal writes
@@ -1083,7 +1082,7 @@ async def test_approve_refuses_a_runbook_lineage_queue_item(client, app, db_sess
 
 
 async def test_mark_deployed_refuses_a_self_publish_app(client, db_session) -> None:
-    # Error path (R17a): recording a runbook deployment nobody performed. The app is
+    # Error path: recording a runbook deployment nobody performed. The app is
     # APPROVED — the status guard alone would accept it — so only the lineage refuses,
     # and the refusal stamps nothing and audits nothing.
     row = await _app(db_session, **_approved(approval_route=ApprovalRoute.SELF_PUBLISH))
@@ -1104,12 +1103,10 @@ async def test_mark_deployed_refuses_a_self_publish_app(client, db_session) -> N
 
 
 async def test_historical_runbook_address_survives_the_lineage_change(client, db_session) -> None:
-    # The plan's edge case: an app runbook-deployed in its past life, later approved
-    # through the review lineage. The recorded address (and its timestamp) stay
-    # visible — the administrator sees both of the app's addresses, the older one
-    # labelled by the SPA — while the runbook PROMPT stops: no deploy-needed flag
-    # (though the approved pin has moved past the old marker), and mark-deployed is
-    # refused rather than re-recording a runbook that must no longer be run.
+    # The edge case: an app runbook-deployed in its past life, later approved through the
+    # review lineage. The recorded address (and its timestamp) stay visible, the runbook
+    # PROMPT stops (no deploy-needed flag), and mark-deployed is refused rather than
+    # re-recording a runbook that must no longer be run.
     row = await _app(
         db_session,
         **_approved(
@@ -1131,7 +1128,7 @@ async def test_historical_runbook_address_survives_the_lineage_change(client, db
     assert refused.status_code == 409  # the affordance is dead server-side too
 
 
-# --- audit (ADR-0005) -------------------------------------------------------------
+# --- audit -------------------------------------------------------------
 
 
 async def test_governance_actions_are_audited_with_artifact_detail(
@@ -1144,7 +1141,6 @@ async def test_governance_actions_are_audited_with_artifact_detail(
     await client.post(f"/v1/admin/apps/{row.id}/approve", json=_approve_body(row), headers=headers)
     events = await client.get(f"/v1/admin/apps/{row.id}/audit", headers=headers)
     approve_event = next(e for e in events.json()["events"] if e["action"] == "approve")
-    # R14: the audit detail identifies the artifact (submission id + commit SHA).
     assert approve_event["detail"]["submissionId"] == str(row.source_submission_id)
     assert approve_event["detail"]["commitSha"] == _SHA
 
@@ -1157,8 +1153,8 @@ async def _audited_actions(db_session, app_id) -> list[str]:
 
 
 async def test_patch_login_required_is_audited(client, db_session) -> None:
-    # ADR-0005: audit every gated action. The login-required gate is the only admin-patchable
-    # field now that the app display name is sourced from the owning project (#48).
+    # Audit every gated action. The login-required gate is the only admin-patchable
+    # field now that the app display name is sourced from the owning project.
     app = await _app(db_session, **_pending())
     headers = await _admin(db_session)
     await client.patch(f"/v1/admin/apps/{app.id}", json={"loginRequired": True}, headers=headers)
@@ -1166,7 +1162,7 @@ async def test_patch_login_required_is_audited(client, db_session) -> None:
 
 
 async def test_patch_ignores_a_name_key_and_does_not_audit_it(client, db_session) -> None:
-    # The app name is project-sourced (#48); `PatchAppRequest` no longer carries `name`, and
+    # The app name is project-sourced; `PatchAppRequest` no longer carries `name`, and
     # `CamelModel` ignores unknown keys — so a stray `{"name": ...}` is silently dropped (200,
     # not 422) and writes no `config:name` audit row. The response name stays the project's.
     app = await _app(db_session, **_pending())
@@ -1198,7 +1194,7 @@ async def test_reject_over_long_note_is_422_not_silently_truncated(client, db_se
 async def test_hard_delete_purges_everything(client, db_session, app) -> None:
     store = _wire_storage(app)
     row = await _app(db_session, **_pending())
-    # The C4 snapshot bundle is the app's object-store artifact nuke_app must sweep (the per-app
+    # The snapshot bundle is the app's object-store artifact nuke_app must sweep (the per-app
     # file model and the shared data plane were both retired, so nothing else is left to sweep).
     store.objects[snapshot_key(row.id)] = b"bundle-bytes"
     await db_session.flush()
@@ -1213,11 +1209,10 @@ async def test_hard_delete_purges_everything(client, db_session, app) -> None:
         },
     )
     assert resp.json() == {"ok": True}
-    # Registry row gone; the snapshot blob swept.
     assert await db_session.get(AppRegistry, row.id) is None
     assert store.objects == {}
     # ★ THE ROW, AND WHAT IT SAYS. Asserting only that an `app:delete` row exists left the
-    # `detail=` kwarg deletable with the suite still green — and that kwarg IS R5: the
+    # `detail=` kwarg deletable with the suite still green — and that kwarg IS the
     # administrator's justification, on the one row that outlives what it destroyed. Read by
     # APP ID after the app row is gone, which is the property `audit_logs` is chosen for (no
     # foreign key, `resource_id` a plain string, `read_audit` does no existence pre-check).
@@ -1258,7 +1253,7 @@ async def test_hard_delete_without_a_reason_is_refused(client, db_session, app) 
 
 
 async def test_hard_delete_sweeps_every_retained_submission(client, db_session, app) -> None:
-    # R23: submissions are retained forever — until the app is hard-deleted, at which
+    # Submissions are retained forever — until the app is hard-deleted, at which
     # point the whole submissions/{app_id}/ prefix goes with it. Another app's
     # submissions are untouched (the prefix is app-scoped).
     store = _wire_storage(app)
@@ -1305,7 +1300,7 @@ async def test_nuke_app_sweeps_the_per_app_container(db_session) -> None:
 
 
 async def test_nuke_app_sweeps_the_container_registry_repository(db_session, monkeypatch) -> None:
-    """★ THE IMAGE GOES WITH THE APP (U21/U23), and until now nothing said so.
+    """★ THE IMAGE GOES WITH THE APP, and until now nothing said so.
 
     `sweep_app_repositories` was wired into `nuke_app` and never asserted anywhere: delete the
     call and every suite stayed green while the admin lever — the one whose dialog says
@@ -1356,7 +1351,7 @@ async def test_nuke_app_does_not_ask_the_registry_about_an_app_never_built(
 
 
 async def test_nuke_app_names_every_artefact_that_outlived_it(db_session, monkeypatch) -> None:
-    """★ SURVIVORS ARE THE RETURN VALUE (U22), not a log line the caller cannot read.
+    """★ SURVIVORS ARE THE RETURN VALUE, not a log line the caller cannot read.
 
     All four sweeps already answer with what they could not destroy and `nuke_app` used to
     throw all four answers away, which made the admin hard-delete the one destructive lever on
@@ -1398,14 +1393,14 @@ async def test_nuke_app_names_every_artefact_that_outlived_it(db_session, monkey
 async def test_hard_delete_records_a_database_that_outlived_it(
     client, db_session, app, monkeypatch
 ) -> None:
-    """★ A SURVIVING DATABASE IS ON THE RECORD (U22/R7), on the harsher lever too.
+    """★ A SURVIVING DATABASE IS ON THE RECORD, on the harsher lever too.
 
     `salt_the_earth` answers whether the earth is actually salted, and this route discarded
     that answer — so an administrator could destroy somebody else's app, the drop could fail,
     and a copy of the citizen's data would stay on the cluster with nothing written down.
     Nothing automatic collects it either: `appdb/reconcile.py` is operator-invoked and, by its
     own docstring, report-only. The route still answers `{"ok": true}` — the delete DID happen,
-    and the citizen has no notification path to be told otherwise (D18)."""
+    and the citizen has no notification path to be told otherwise."""
     _wire_storage(app)
     owner = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, owner.id)
@@ -1494,13 +1489,10 @@ async def test_hard_delete_writes_no_teardown_row_when_nothing_survived(
 async def test_storage_route_is_503_not_500_when_storage_is_unconfigured(
     client, db_session, route: str
 ) -> None:
-    """Fixture-free store-off baseline (`.claude/rules/testing.md`) for the two governance routes
-    that ADVERTISE a 503: with no store wired at all, `storage_or_none_dependency` resolves
-    `get_storage()` -> StorageUnconfiguredError -> None, and each body maps None onto the
-    documented 503. The eager `Storage` dependency they used to take raised at dependency-solve
-    time — before the route body, and before even the 404/409 guards above it — so the client got
-    an undocumented 500 in the catch-all's `{"detail": ...}` envelope instead. Deliberately
-    fixture-free: any fixture that binds a store makes this branch unreachable BY CONSTRUCTION."""
+    """Fixture-free store-off baseline for the two governance routes that ADVERTISE a 503: with
+    no store wired at all, `storage_or_none_dependency` resolves `get_storage()` ->
+    StorageUnconfiguredError -> None, and each body maps None onto the documented 503. Binding
+    no fixture is the load-bearing half — see `fake_storage` in `tests/conftest.py`."""
     from src.services.storage import accessor as _storage_accessor
 
     _storage_accessor._backend_singleton = None  # store off: no backend configured in .env.test

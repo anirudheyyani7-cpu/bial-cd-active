@@ -1,19 +1,15 @@
 /**
- * THE PLAN OFFER, AS A STRIP ON THE COMPOSER (R29, R29a, R45, R64, R51a).
+ * THE PLAN OFFER, AS A STRIP ON THE COMPOSER.
  *
- * The three decisions this file exists to hold, because each is one someone would reasonably
- * undo:
+ * Three decisions this file pins, each one someone could reasonably undo:
  *
- *  D2 — A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool call; that is
- *       unavoidable. Pressing again is an ordinary request that creates another Build chat.
- *       "Only one offer is live" is about which one blocks the composer, never about which one a
- *       citizen may press.
- *  D3 — THE BROWSER NEVER POSTS THE PLAN TEXT BACK. The server reads it from the offering tool
- *       call's own message. A browser-supplied body would let a stale second tab write stale
- *       requirements into a permanent first message.
- *  D4 — IDEMPOTENCY WITHOUT STORAGE, and its honest boundary. The minted id lives in a ref, so a
- *       double press and a retry collide on the primary key and the server hands back the chat
- *       that already exists — and a RELOAD is out of reach, which is asserted rather than hidden.
+ *  A SPENT STRIP STAYS PRESSABLE. The first press answers the tool call; pressing again is an
+ *  ordinary request that opens another Build chat — "only one offer is live" gates the composer,
+ *  never which offer may be pressed.
+ *  THE BROWSER NEVER POSTS THE PLAN TEXT BACK. The server reads it from the offering tool call's
+ *  own message, so a stale second tab can't write stale requirements into a permanent message.
+ *  IDEMPOTENCY WITHOUT STORAGE. The minted id lives in a ref: a double press or retry collides on
+ *  the primary key, but a RELOAD mints a new one — an honest boundary, asserted rather than hidden.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -40,10 +36,9 @@ const keepPlanning = () => screen.getByTestId('offer-keep-planning')
 
 describe('the two buttons, and the words on them', () => {
   it('reads as a pair: each label names the mode the press puts you in', () => {
-    // Client call, 2026-08-31 (R-15). NOT "Build it", NOT "Keep refining" — which the client found
-    // confusing — and NOT the canvas's older "Not yet — keep talking". The same two words appear
-    // in the model-facing copy, or the agent tells a citizen to press a button that does not
-    // exist, so they are pinned here as constants rather than as inline strings.
+    // The same two words appear in the model-facing copy — diverge here and the agent tells a
+    // citizen to press a button that does not exist — so they are pinned as constants, not
+    // inline strings.
     draw()
     expect(build().textContent).toContain(BUILD_LABEL)
     expect(keepPlanning().textContent).toContain(KEEP_PLANNING_LABEL)
@@ -58,7 +53,7 @@ describe('the two buttons, and the words on them', () => {
     expect(container.querySelectorAll('button')).toHaveLength(2)
   })
 
-  it('never renders a real `disabled`, in any state (R45, R64)', () => {
+  it('never renders a real `disabled`, in any state', () => {
     // `disabled` on the focused element blurs it to `document.body`. Both buttons carry
     // `aria-disabled` while a press is in flight instead — affordance, not enforcement.
     const { container } = draw({ spent: true })
@@ -67,12 +62,9 @@ describe('the two buttons, and the words on them', () => {
 })
 
 describe('★ the strip SAYS what it is, which is what makes it a control and not chrome', () => {
-  // `PlanReady`'s annotation is the requirement, and it is about register: "this teal strip is not
-  // text the agent typed — it is a control the interface draws". It shipped as two bare buttons at
-  // the right of the box, which is indistinguishable from chrome — nothing marked them off from
-  // Send, and nothing anywhere on the screen said what pressing one would DO. A citizen pressed
-  // "Build this plan" with no statement that it opens a SECOND chat and leaves this one alone,
-  // which is the one thing they would want to know first.
+  // `PlanReady`'s annotation is the requirement, and it is about register: this strip must read as
+  // a control the interface draws, not text the agent typed, and it must say what pressing a
+  // button DOES — namely that Build opens a SECOND chat and leaves this one untouched.
 
   it('carries the board\'s headline and its one line of explanation', () => {
     draw()
@@ -117,7 +109,7 @@ describe('the strip IS its tool call id', () => {
 })
 
 describe('Build this plan', () => {
-  it('sends the conversation, the tool call and a minted chat id — and NO plan text (D3)', async () => {
+  it('sends the conversation, the tool call and a minted chat id — and NO plan text', async () => {
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ onBuild })
 
@@ -125,18 +117,18 @@ describe('Build this plan', () => {
     await waitFor(() => expect(onBuild).toHaveBeenCalled())
 
     const handoff = onBuild.mock.calls[0][0]
-    // Asserted on the KEYS, not just the values: an extra field carrying the plan is exactly the
-    // thing D3 forbids, and checking only that the three expected fields are right would not see
-    // a fourth one arrive.
+    // Asserted on the KEYS, not just the values: an extra field carrying the plan text is
+    // exactly what the browser must never send back, and checking only that the three expected
+    // fields are right would not see a fourth one arrive.
     expect(Object.keys(handoff).sort()).toEqual(['conversationId', 'newChatId', 'toolCallId'])
     expect(handoff.conversationId).toBe('chat-1')
     expect(handoff.toolCallId).toBe('call-1')
-    // A UUIDv7 — the id becomes a conversation's primary key and ADR-0006 wants v7, so the shape
-    // is pinned even though the value cannot be.
+    // A UUIDv7 — the id becomes a conversation's primary key, which requires the v7 format, so
+    // the shape is pinned even though the value cannot be.
     expect(handoff.newChatId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
-  it('a double press carries the SAME minted id — one plan, one build chat (D4)', async () => {
+  it('a double press carries the SAME minted id — one plan, one build chat', async () => {
     // Two presses that minted two ids would be two build chats for one plan, and the citizen would
     // be looking at the second, empty one. The ref is what makes the second press collide on the
     // primary key so the server answers with the chat that already exists.
@@ -157,11 +149,11 @@ describe('Build this plan', () => {
     expect(onBuild.mock.calls[1][0].newChatId).toBe(onBuild.mock.calls[0][0].newChatId)
   })
 
-  it('a FRESH mount mints a new id — R28’s reload clause, undelivered on purpose', async () => {
-    // A ref dies with the page. The only thing that would survive a reload is a local record,
-    // which D2 forbids, so after a reload a fresh press-session mints a new id and creates a
-    // SECOND build chat. That is the honest boundary of R28, and it is asserted here rather than
-    // discovered in production — closing it needs storage, which is a decision nobody has taken.
+  it('a FRESH mount mints a new id — the reload gap stays undelivered, on purpose', async () => {
+    // A ref dies with the page, and this component keeps no other record of a mint — so after
+    // a reload a fresh press-session mints a new id and creates a SECOND build chat. That is
+    // the honest boundary of idempotency without storage, asserted here rather than discovered
+    // in production — closing it needs storage, which is a decision nobody has taken.
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ onBuild })
     fireEvent.click(build())
@@ -176,7 +168,7 @@ describe('Build this plan', () => {
     expect(onBuild.mock.calls[1][0].newChatId).not.toBe(first)
   })
 
-  it('a failed handoff leaves the reader where they are, told, with the strip pressable (R29)', async () => {
+  it('a failed handoff leaves the reader where they are, told, with the strip pressable', async () => {
     const onBuild = vi.fn().mockRejectedValue(new Error('nope'))
     const onFailed = vi.fn()
     draw({ onBuild, onFailed })
@@ -212,14 +204,15 @@ describe('Keep planning', () => {
   })
 })
 
-describe('a spent strip (D2)', () => {
+describe('a spent strip', () => {
   it('stays on screen, is marked spent, and STILL issues a request when pressed', async () => {
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ spent: true, onBuild })
 
     const strip = screen.getByTestId('offer-strip')
     expect(strip.getAttribute('data-spent')).toBe('true')
-    // The whole of D2 in one assertion: spent is a TREATMENT, not a disablement.
+    // The whole of the spent-strip decision in one assertion: spent is a TREATMENT, not a
+    // disablement.
     fireEvent.click(build())
     await waitFor(() => expect(onBuild).toHaveBeenCalledTimes(1))
   })

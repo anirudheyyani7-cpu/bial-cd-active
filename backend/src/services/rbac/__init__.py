@@ -1,4 +1,4 @@
-"""Computed-role RBAC (no stored role column, ADR-0005). Public surface via
+"""Computed-role RBAC (no stored role column). Public surface via
 explicit `from .x import Y as Y` re-exports."""
 
 from src.services.rbac.roles import Role as Role

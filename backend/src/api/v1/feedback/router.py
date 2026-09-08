@@ -1,4 +1,4 @@
-"""Feedback HTTP endpoint — citizen feedback submission (R30, R31).
+"""Feedback HTTP endpoint — citizen feedback submission.
 
 `POST /v1/feedback` byte-matches the Express `POST /api/feedback` contract
 (`server/feedback.js`): a required `message` (trimmed, ≤4000 UTF-8 bytes) and an advisory
@@ -7,7 +7,7 @@ caller — a body-supplied `username` is ignored. Success is `201 {"ok": true}`;
 failures return the Express `400 {"error":{"message"}}` shape the SPA reads (not FastAPI's
 default `422 {"detail"}`). Rate-limited per user (20 / 15 min) via the in-process limiter.
 
-Feedback *read* is an admin surface (Plan B) — not here.
+Feedback *read* is an admin surface — not here.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from src.services.ratelimit import rate_limit
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
-# The raw-parse route takes a JSON body FastAPI never sees (no Pydantic param), so its
-# request shape is documented explicitly from the model — without enabling the 422 path.
 _REQUEST_BODY_DOC = raw_body_doc(FeedbackRequest)
 
 # Message byte cap (UTF-8, on the trimmed value) — Express `MAX_FEEDBACK_CHARS`.

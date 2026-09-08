@@ -33,10 +33,9 @@ function res403(detail, { nonJson = false } = {}) {
 }
 
 describe('authFetch', () => {
-  // Evolved from the characterization test: once the interceptor exists, a 403
-  // CSRF failure IS peeked (one clone) to rule out suspension, then handed back
-  // to the caller untouched — no redirect, no throw. (AdminPage / CSRF retry
-  // paths keep owning their own 403s.)
+  // A 403 CSRF failure is peeked (one clone) to rule out suspension, then handed back to the
+  // caller untouched — no redirect, no throw. AdminPage and other CSRF-retry paths keep
+  // owning their own 403s.
   it('403 CSRF failure is peeked then returned to the caller — no redirect, no throw', async () => {
     const res = res403('CSRF check failed')
     const out = await authFetch('/api/x', {}, { getToken: () => 't', refresh: vi.fn(), fetchImpl: async () => res })
@@ -149,7 +148,7 @@ describe('authFetch — the suspension gate covers the post-refresh retry too', 
 
   it('still hands a NON-suspension 403 on the retried response back to the caller', async () => {
     // A genuine CSRF rejection (a forged or truly invalid token) still belongs to the caller.
-    // NOTE this is no longer the *stale-token* shape — see the N11 guard below, which is why the
+    // NOTE this is no longer the *stale-token* shape — see the guard below, which is why the
     // request here is a safe GET rather than the mutation this test used to assert.
     const fetchImpl = vi.fn().mockResolvedValueOnce(res401()).mockResolvedValueOnce(res403('CSRF check failed'))
     const refresh = vi.fn(async () => true)
@@ -160,13 +159,13 @@ describe('authFetch — the suspension gate covers the post-refresh retry too', 
   })
 })
 
-// N11 REGRESSION GUARD (U1 / KTD-9). `/auth/refresh` ROTATES the `csrf` cookie. authFetch used to
+// REGRESSION GUARD. `/auth/refresh` ROTATES the `csrf` cookie. authFetch used to
 // read the token ONCE before the first attempt and close over it, so the post-refresh retry re-sent
 // a token the refresh had just invalidated — trading the 401 for a 403 on every mutating call. It
 // looked healthy only because the observed recovery was a GET, which carries no token at all. This
-// is the half of U1 that must land WITH the turn-transport routing: routing the six turn calls
+// guard must land together with the turn-transport routing itself: routing the six turn calls
 // through a wrapper with this bug would have converted a dead transport into a 403ing one.
-describe('authFetch — the retry carries the POST-refresh CSRF token (N11)', () => {
+describe('authFetch — the retry carries the POST-refresh CSRF token', () => {
   const res401 = () => ({ ok: false, status: 401, json: async () => ({ detail: 'Not authenticated' }), clone() { return this } })
   const setCsrf = (value) => {
     document.cookie = `csrf=${value}`
@@ -212,12 +211,13 @@ describe('authFetch — the retry carries the POST-refresh CSRF token (N11)', ()
   })
 })
 
-// F1 REGRESSION GUARD. Business routes (conversation create, mode-switch, turn start/stop,
+// REGRESSION GUARD. Business routes (conversation create, mode-switch, turn start/stop,
 // Build-it) now enforce the signed double-submit token via `RequireCsrf`. authFetch must ride
-// `X-CSRF-Token` on every MUTATING method and stay silent on safe ones — a blind create/switch
-// (the P0 that gated the whole unified-chat flow) is exactly a missing header here. getCsrfToken()
-// reads the JS-readable `csrf` cookie, so we drive it through jsdom's document.cookie.
-describe('authFetch — CSRF double-submit on mutating methods (F1 regression guard)', () => {
+// `X-CSRF-Token` on every MUTATING method and stay silent on safe ones — a blind create/switch,
+// the release-blocking defect that gated the whole unified-chat flow, is exactly a missing header
+// here. getCsrfToken() reads the JS-readable `csrf` cookie, so we drive it through jsdom's
+// document.cookie.
+describe('authFetch — CSRF double-submit on mutating methods (regression guard)', () => {
   const setCsrf = (value) => {
     document.cookie = `csrf=${value}`
   }

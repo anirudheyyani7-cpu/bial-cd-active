@@ -3,14 +3,13 @@
 Probes the always-on dependency (Postgres) and fails CLOSED (503) so a platform
 health gate never routes traffic to an API that cannot reach its database.
 
-It ALSO probes Redis — the build-session coordination store (C5) — but Redis does
+It ALSO probes Redis — the build-session coordination store — but Redis does
 NOT fail the endpoint closed. Redis is genuinely optional outside production and,
 when it is down, only build sessions are affected while every other route keeps
 working; draining the instance would remove working functionality without fixing
 anything. So a Redis fault reports `status: "degraded"` at **HTTP 200**. See
 `HealthStatus` for the full semantics and the "never key on the word, key on the
-code" warning that follows from it.
-"""
+code" warning that follows from it."""
 
 import asyncio
 from typing import Final, Literal

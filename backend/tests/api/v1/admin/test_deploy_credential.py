@@ -1,4 +1,4 @@
-"""The superadmin deploy-credential mint (U2/R2): `POST /v1/admin/apps/{appId}/deploy-credential`.
+"""The superadmin deploy-credential mint: `POST /v1/admin/apps/{appId}/deploy-credential`.
 
 The long-lived, container-scoped Blob credential a DEPLOYED app uses to reach its own storage
 directly — the runbook's step-5 env pair, and the end of its KNOWN GAP. What these tests pin:
@@ -6,7 +6,7 @@ the gate (superadmin-only, owner-agnostic), the fail-closed 409 on a config that
 cannot mint one, the 503-on-ambiguity twin of `approve`/`bundle-url`, and the security contract
 — the SAS is returned to the admin ONCE and appears in neither the audit trail nor the logs.
 
-The last test is the composition-root check (`mocks-mask-composition-seams`, 2026-07-15): it
+The last test is the composition-root check (`mocks-mask-composition-seams`): it
 mints through the REAL `AppContainerStore` against Azurite with NO `dependency_overrides` on the
 container-store seam, so the wiring itself is under test and not stubbed past.
 """
@@ -206,7 +206,7 @@ async def test_composition_root_mints_through_the_real_store_against_azurite(
 ) -> None:
     """No `dependency_overrides` on the container-store seam: `container_store_dependency` →
     `get_app_container_store()` → a REAL `AppContainerStore` → Azurite. A double on this seam
-    would prove only that our double works (the 2026-07-15 composition-root lesson); this proves
+    would prove only that our double works (the composition-root lesson); this proves
     the endpoint actually mints a credential a deployed app could use."""
     if not _port_open("127.0.0.1", 10000):
         pytest.skip(

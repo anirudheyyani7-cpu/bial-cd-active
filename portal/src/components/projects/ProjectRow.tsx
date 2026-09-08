@@ -1,7 +1,7 @@
 /**
  * One project as a LIST row: name · description · details updated · status, plus Delete.
  *
- * INVARIANT F-10 — NO NESTED INTERACTIVE ELEMENTS, and this row is the shape that most
+ * NO NESTED INTERACTIVE ELEMENTS is the invariant, and this row is the shape that most
  * wants to break it. The whole row opens the project AND it carries a Delete button, which
  * is a button inside a button the moment anyone reaches for the obvious implementation.
  *
@@ -13,15 +13,15 @@
  * wrapping it in a link, is what breaks it. Native buttons carry Enter and Space for free,
  * so there is no key handler here and there should not be one.
  *
- * ONE TOOLTIP, ON THE NAME ONLY (§14). It is conditional: clipped text reveals itself on
- * hover, text that already fits shows nothing, and the gate is the element actually being
- * clipped (`scrollWidth > clientWidth`), measured after layout rather than guessed from
- * length. A tooltip firing on text the reader can already see in full is noise.
+ * ONE TOOLTIP, ON THE NAME ONLY. It is conditional: clipped text reveals itself on hover,
+ * text that already fits shows nothing, and the gate is the element actually being clipped
+ * (`scrollWidth > clientWidth`), measured after layout rather than guessed from length. A
+ * tooltip firing on text the reader can already see in full is noise.
  *
- * THE DESCRIPTION'S TOOLTIP AND POINTER CURSOR ARE GONE (plan 001, U15, R37) — it is clipped
- * by CSS with its full text left in the DOM, so there is nothing a hover could reveal that
- * assistive technology does not already read. `ClampedDescription` carries the whole argument,
- * including why JavaScript truncation would have reproduced the defect rather than fixed it.
+ * THE DESCRIPTION'S TOOLTIP AND POINTER CURSOR ARE GONE — it is clipped by CSS with its full
+ * text left in the DOM, so there is nothing a hover could reveal that assistive technology
+ * does not already read. `ClampedDescription` carries the whole argument, including why
+ * JavaScript truncation would have reproduced the defect rather than fixed it.
  *
  * THE DESCRIPTION IS STILL LIFTED ABOVE THE STRETCHED `::after` — the same `z-10` Delete
  * carries — so its `onOpen` is what receives the click rather than the overlay. That is a
@@ -41,14 +41,13 @@ export interface ProjectRowProps {
 }
 
 /**
- * The description cell: the WHOLE description, clipped to two lines by CSS (plan 001, U15, R37).
+ * The description cell: the WHOLE description, clipped to two lines by CSS.
  *
- * ═══ WHAT WENT, AND WHY THE OBVIOUS FIX WAS THE WRONG ONE ═══
- *
- * This cell used to be one `truncate`d line carrying a `cursor-pointer` and a hover tooltip.
- * Three defects in one small element: it advertised an interaction (the pointer) that had no
- * keyboard route, it hid most of the text behind a HOVER — which a keyboard or touch reader
- * never triggers — and it did all that for an action the row's name already offers.
+ * WHAT WENT, AND WHY THE OBVIOUS FIX WAS THE WRONG ONE. This cell used to be one `truncate`d
+ * line carrying a `cursor-pointer` and a hover tooltip. Three defects in one small element: it
+ * advertised an interaction (the pointer) that had no keyboard route, it hid most of the text
+ * behind a HOVER — which a keyboard or touch reader never triggers — and it did all that for an
+ * action the row's name already offers.
  *
  * The obvious remedy is to cut the string in JavaScript and show the rest in a tooltip. That
  * reproduces both defects rather than fixing either: a JS-truncated description is truncated in
@@ -57,16 +56,17 @@ export interface ProjectRowProps {
  * stays in the DOM and only the BOX is bounded — `line-clamp-2`, which clips visually and leaves
  * the text intact for anything that is not painting pixels.
  *
- * NO SECOND INTERACTIVE ELEMENT IS ADDED, and the name keeps its tooltip (§14) because a
- * clipped NAME has no other route to its full value — the description now reads two lines of
- * itself, and its full text is available to assistive technology either way.
+ * NO SECOND INTERACTIVE ELEMENT IS ADDED, and the name keeps its own tooltip because a clipped
+ * NAME has no other route to its full value — the description now reads two lines of itself,
+ * and its full text is available to assistive technology either way.
  *
  * `relative z-10` STAYS, AND ITS REASON CHANGED. It used to lift this cell above the name
  * button's stretched `::after` so the tooltip could be hovered at all. There is no tooltip now,
  * but the lift is what keeps `onOpen` reachable: without it the `::after` takes the click and
  * the row opens anyway, which is fine in a browser and INVISIBLE to jsdom — so the explicit
  * handler is the version this suite can actually hold. It stays a `<p>`: the name is the row's
- * one keyboard-reachable open affordance, and a second one is the shape F-10 exists to prevent.
+ * one keyboard-reachable open affordance, and a second one is exactly the nested interactive
+ * element this row is built to avoid.
  */
 function ClampedDescription({
   text,
@@ -94,9 +94,9 @@ function ClampedDescription({
 }
 
 /**
- * The name, with the SAME treatment §14 asks for: clamp with an ellipsis, show the full title
- * on hover. The cap is not retroactive, so stored 120-character names are precisely the ones
- * that clip — and the tooltip is the only way to read them.
+ * The name: clamp with an ellipsis, show the full title on hover. The cap is not retroactive,
+ * so stored 120-character names are precisely the ones that clip — and the tooltip is the only
+ * way to read them.
  *
  * The button keeps its stretched `::after`: this is the row's open affordance, so it must stay
  * the thing covering the row.

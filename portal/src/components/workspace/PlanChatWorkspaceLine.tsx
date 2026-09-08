@@ -1,60 +1,40 @@
 /**
- * A PLAN CHAT HAS NO PANE, AND STILL SAYS EVERYTHING (Plan F, U6).
+ * A PLAN CHAT HAS NO PANE, AND STILL SAYS EVERYTHING.
  *
- * ═══ TWO DIFFERENT SENTENCES, AND CONFUSING THEM IS THE MISTAKE TO AVOID ═══
+ * THE STANDING LINE is the board's wording, verbatim, and it is a claim about the SCREEN — a plan
+ * chat has no app pane — not about the container, which a planning question may well have started
+ * and be holding. Its second clause holds for its own reason: a plan turn is handed no mutating tools.
  *
- * THE STANDING LINE says what this chat is for, and it is THE BOARD'S, VERBATIM (plan 002, U6).
+ * THE WORKSPACE LINE below it is the value the pane renders, as text — one computed state, two
+ * renderers, never a second wording.
  *
- * IT WAS REWRITTEN ONCE, AND THAT WAS A MISREADING. An earlier pass read the board's "your app is
- * not open here" as a claim that the app is not RUNNING, which would be false — a planning question
- * reads the live app and starts it if it is stopped, so the container may well be up and held by
- * this very conversation. But the board is not talking about the container. It is talking about the
- * SCREEN: a plan chat has no app pane, which is the whole of what "not open here" says, and the
- * second clause is true for a different reason again — a plan chat's toolset carries no write, no
- * schema change, no sandbox command and no finish tool, so the run genuinely cannot alter the app.
+ * WHY THIS EXISTS
  *
- * Both halves are true, so the board's own words stand. Recorded at this length because the line
- * has now been argued about twice, and the next reader should not have to have it a third time.
+ * `StartAppControl` carries no surface predicate of its own, so the gate lives here and lets
+ * exactly one of its four members through: go to the project holding the workspace. START never
+ * renders — a Plan chat is the surface that deliberately keeps the app off screen. RETRY never
+ * renders either, for the same reason: a second author for a state the pane already owns. GO-TO
+ * does render: it is the remedy for a taken workspace, and the asking has to happen in the chat
+ * the person is actually in. TAKE-BACK never renders, for START's reason and its own — its wait
+ * is a modal narrating a stop, a save and a start over a screen with no pane to show the result in.
  *
- * THE WORKSPACE LINE is the same value the pane renders, as text. Same source, same wording,
- * different surface. That is what makes "no pane" structurally incapable of meaning "says nothing":
- * a Plan chat is a second RENDERER of one computed state, not a surface with its own vocabulary.
- *
- * ═══ SENTENCE ALWAYS, ACTION SELECTIVELY — AND THE RULE IS STATED BECAUSE IT IS NOT OBVIOUS ═══
- *
- * `StartAppControl` renders wherever the map offers an action, with no surface predicate of its
- * own. So the gate is here, and it lets exactly ONE of the four members through: go to the project
- * that holds the workspace.
- *
- *  - START never renders. A Plan chat with a "Launch Application" button contradicts R11's framing
- *    and the register — this is the surface that deliberately does not put the app on screen.
- *  - RETRY never renders. It would be a second author for a state the pane already owns, and a
- *    person in a Plan chat has no pane to watch the retry land in.
- *  - GO-TO does render, and it has to. R4b makes that remedy the answer for a taken workspace, and
- *    R94 says the asking happens in the chat the person is actually in — so a Plan chat that showed
- *    the sentence with no way to act would leave the remedy unreachable from the only surface that
- *    can offer it.
- *  - TAKE-BACK never renders, for START's reason and one of its own. Its whole purpose is to bring
- *    THIS app up, which is the one thing this surface deliberately does not do — and its wait is a
- *    modal narrating a stop, a save and a start over a screen with no pane to show the result in.
- *
- * TWO MECHANISMS SAY SO, and the second is why this file needs no gate of its own for the fourth
- * member. The narrowing below reads `state.action` — the slot the map leads with — and never
- * `state.secondAction`, which is the only place a take-back has ever appeared. And `StartAppControl`
- * draws a take-back only for a caller that hands it the sequence behind one, which is `AppPane` and
- * nothing else. A future edit that widened this line to read both slots would still render no verb,
- * which is the right kind of belt-and-braces: the failure is a missing button, never a modal
- * stopping somebody's app from a surface that cannot report what happened.
+ * Nothing here has to gate that fourth member explicitly, because two mechanisms already do: the
+ * narrowing below reads `state.action`, never `state.secondAction`, the only slot a take-back
+ * ever occupies, and `StartAppControl` only draws one for a caller that hands it the sequence —
+ * `AppPane`, and nothing else. Widening this line to read both slots would still render no verb,
+ * so failure here stays a missing button, never a modal stopping an app from a surface that
+ * cannot report what happened.
  */
 import StartAppControl from './StartAppControl'
 import { useWorkspaceReport } from './workspaceChannel'
 import type { WorkspaceStateName } from './workspaceState'
 
 /**
- * The states R97 requires a Plan chat to speak for, and only those. Scoped deliberately: asserting
- * sameness across `never_built` and `not-running` too would pin wording R97 does not ask for, and
- * which R11's framing may well want different — a Plan chat has no business inviting somebody to
- * press a start control it does not render.
+ * The exact set of workspace states a Plan chat must describe in the board's own wording,
+ * and no others. Scoped deliberately: extending the same wording to `never_built` and
+ * `not-running` would lock in phrasing those states don't need, and whose copy may
+ * reasonably want to say something different — a Plan chat has no business inviting somebody
+ * to press a start control it does not render.
  */
 const SPOKEN_HERE: ReadonlySet<WorkspaceStateName> = new Set<WorkspaceStateName>([
   'starting',
@@ -68,7 +48,7 @@ export default function PlanChatWorkspaceLine() {
   const state = report?.state
   const speak = state !== undefined && SPOKEN_HERE.has(state.name)
   // The ONE action member this surface may render, narrowed off the slot the map LEADS with —
-  // never off `secondAction`, which is where `#196`'s take-back lives and which this surface has
+  // never off `secondAction`, which is where the take-back lives and which this surface has
   // no business drawing. Read before the early return below so the rule is visible beside the
   // states it applies to rather than buried in a branch.
   const remedy = state?.action?.kind === 'go-to-project' ? state.action : null

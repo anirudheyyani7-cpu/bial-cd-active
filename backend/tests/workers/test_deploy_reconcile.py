@@ -1,4 +1,6 @@
-"""The scheduler's first passenger (U6, ADR-0011 / ADR-0029).
+"""The scheduler's first passenger.
+
+WHY THIS EXISTS
 
 Three properties are worth a test rather than a comment, and each of them has a specific way of
 failing silently:
@@ -100,7 +102,7 @@ def on_duty(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Every behavioural test has to opt in explicitly: the suite runs with `DEPLOY__*` unset and the
     flag off, so without this the task would take the disabled branch and every assertion below
-    would pass vacuously (`.claude/rules/testing.md`).
+    would pass vacuously.
     """
     monkeypatch.setattr(settings, "deploy", _deploy_config(reconcile_enabled=True))
 
@@ -177,7 +179,7 @@ async def test_the_pass_settles_a_stalled_deploy_and_reports_the_count(
 async def test_the_log_line_carries_counts_and_nothing_identifying(
     monkeypatch: pytest.MonkeyPatch, db_session: Any, on_duty: None
 ) -> None:
-    """Counts only (`.claude/rules/security.md`). A deployment id or an app name in the worker's
+    """Counts only. A deployment id or an app name in the worker's
     log stream is a durable record of who deployed what, in a process that has no reason to know
     either."""
     deployment_id = await _abandoned(db_session)
@@ -194,9 +196,8 @@ async def test_the_log_line_carries_counts_and_nothing_identifying(
 async def test_a_pass_that_resolves_nothing_still_logs(
     monkeypatch: pytest.MonkeyPatch, db_session: Any, on_duty: None
 ) -> None:
-    """Silence is how an out-of-process worker dies unnoticed. A completed pass is the liveness
-    signal (U11 reads its staleness), so "nothing to do" must be distinguishable from "nothing
-    ran"."""
+    """Silence is how an out-of-process worker dies unnoticed. A completed pass is the
+    liveness signal, so "nothing to do" must be distinguishable from "nothing ran"."""
     _wire(monkeypatch, db_session, _Arm(fqdn=None))
 
     with capture_logs() as logs:
@@ -248,17 +249,12 @@ async def test_an_unconfigured_deployment_is_reported_separately_from_a_switched
 def test_a_disabled_pass_imports_nothing_heavy() -> None:
     """THE ordering contract, in a fresh interpreter.
 
-    A disabled task must cost structlog, the broker and the settings profile and nothing else, so
-    that parking a passenger on this scheduler never taxes a deployment that has not turned it on.
-    Nothing raises when this regresses — the task simply works while quietly loading the ORM
-    engine and the publish client's Azure credential chain into a process that will not use them.
+    A disabled task must cost structlog, the broker and the settings profile — nothing else; a
+    regression here quietly loads the ORM engine and Azure credential chain, and nothing raises.
 
-    Scoped by measurement, not aspiration: `sqlalchemy` and `azure.mgmt.appcontainers` are ALREADY
-    in the chassis's import closure (`src.config` reads every capability's config model), so
-    naming them here would assert a falsehood about a cost this unit did not add. What is asserted
-    is exactly this module's own lazy set — `src.db.base` in particular BUILDS the async engine at
-    import — plus `src.main`, which a careless import would add silently.
-    """
+    Scoped by measurement: `sqlalchemy` and `azure.mgmt.appcontainers` are already in the
+    chassis's import closure, so naming them would assert a false cost. Asserted instead is
+    this module's own lazy set — `src.db.base` builds the engine at import — plus `src.main`."""
     result = subprocess.run(  # noqa: S603
         [
             sys.executable,

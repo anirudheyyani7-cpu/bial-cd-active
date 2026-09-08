@@ -1,34 +1,27 @@
 /**
- * RENAME A PROJECT — the control that had to move rather than be dropped (plan 002, U2).
+ * RENAME A PROJECT — the control that had to move rather than be dropped.
  *
- * It lived in the rail's header, as a pencil that swapped the project's `<h1>` for an input. U3
- * replaces that header with the board's three sections — start a chat, app status, description —
- * none of which is a project name, and the name itself is in the toolbar row now.
+ * WHY THIS EXISTS
+ * It lived in the rail's header as a pencil that swapped the project's `<h1>` for an input; the
+ * rail's header is gone, so it opens this dialog instead — a shipped capability is kept even
+ * though no board currently draws a rename control inline, because the row is one 54px line
+ * shared by both screens and an inline text field would fight the title's truncation.
  *
- * NO BOARD DRAWS A RENAME CONTROL ANYWHERE. It survives on the origin's own rule: do not delete a
- * shipped capability because an older board omits it. What changed is its shape — the row is one
- * 54px line shared by both screens and an inline text field in it would have to grow the row and
- * fight the title's truncation, so the pencil opens this instead.
+ * Built on the vendored Radix `Dialog`, like the delete and create dialogs, replacing a
+ * hand-rolled `fixed inset-0` that had no real focus trap at all — Escape was wired only to the
+ * `<input>`'s own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing. Radix
+ * gives the trap, Escape from anywhere inside, `role="dialog"`, and focus back on the pencil that
+ * opened it, which survives a rename. That last one was not free: Radix's restore runs in
+ * `FocusScope`'s cleanup, and this dialog is rendered conditionally, so `onClose()` deletes the
+ * whole subtree in the same commit and the restore never runs. Measured in a browser, Escape left
+ * `document.activeElement` on the body with the pencil still connected. The backstop that fixes it
+ * lives in the vendored `dialog.tsx`, once, for all five dialogs — see `useFocusBackstop` there.
  *
- * BUILT ON THE VENDORED RADIX `Dialog` (§12), like the delete and create dialogs. It used to be
- * a third hand-rolled `fixed inset-0` whose docblock claimed "the same portal-and-scrim treatment
- * as `ProjectDescriptionEditor`" — but that file implements a real container-level focus trap
- * and this one did not: there was no trap at all, and Escape was wired only to the `<input>`'s
- * own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing (round-4 review).
- * Radix gives the trap, Escape from anywhere inside, `role="dialog"` — and focus back on the
- * pencil that opened it, which survives a rename. That last one was NOT free, and the docblock
- * used to claim it was: Radix's restore runs in `FocusScope`'s cleanup, and this dialog is
- * rendered conditionally, so `onClose()` deletes the whole subtree in the same commit and the
- * restore never runs. Measured in a browser, Escape left `document.activeElement` on the body
- * with the pencil still connected. The backstop that fixes it lives in the vendored `dialog.tsx`,
- * once, for all five dialogs — see `useFocusBackstop` there.
- *
- * IT CARRIES THE 8-WORD CAP (#158 §14), because §14's rule is "both entry points, or neither".
- * The server refuses a 9-word name on PATCH exactly as it does on POST, so a rename without a
- * client-side guard is a round trip whose only purpose is to be refused. The cap has now missed
- * this control twice by relocation — out of `ProjectPage` into the rail under #172, out of the
- * rail into this dialog under #175 — which is the argument for it living beside the input rather
- * than anywhere upstream of it.
+ * Carries the same 8-word cap the server enforces on PATCH as well as POST, because the rule is
+ * "both entry points, or neither" — a rename without the client-side guard is a round trip whose
+ * only purpose is to be refused. The cap has now missed this control twice by relocation — out of
+ * `ProjectPage` into the rail, and out of the rail into this dialog — which is the argument for
+ * keeping it beside the input rather than anywhere upstream of it.
  */
 import { useEffect, useRef, useState } from 'react'
 import { patchProject } from '../../utils/projectApi'
@@ -63,7 +56,7 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
   const words = countWords(draft)
   const tooManyWords = words > MAX_PROJECT_NAME_WORDS
   const trimmed = draft.trim()
-  // A LEGACY NAME OVER THE CAP MUST NOT OPEN ALREADY REFUSING (round-4 review). The 8-word
+  // A LEGACY NAME OVER THE CAP MUST NOT OPEN ALREADY REFUSING. The 8-word
   // rule is not retroactive — names saved before it keep working — but the word gate used
   // to fire on the UNTOUCHED draft, so opening this dialog on a stored 9-word name showed
   // Save disabled and, if pressed, an error about text the person had not typed. Nothing
@@ -80,10 +73,8 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
     // focused button fires two `patchProject` calls for the same rename and closes the dialog
     // twice. Same guard, same reason, as `WorkspaceToolbar`'s Save and `StartAppControl`'s press.
     //
-    // #180 and #173's round-4 review found this independently, on two branches, and fixed it
-    // the same way; this is #180's wording, which names the sibling call sites. `trimmed` is
-    // hoisted to the component body here because the disabled-state derivation below needs it
-    // too.
+    // `trimmed` is hoisted to the component body here because the disabled-state derivation below
+    // needs it too.
     if (busy) return
     // Blocked client-side BEFORE any request: the server 400s on name:null and 422s on "". A
     // whitespace-only name never reaches the wire.
@@ -167,7 +158,7 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
         )}
 
         <div className="mt-5 flex justify-end gap-2">
-          {/* CANCEL HAS TO REFUSE WHILE A SAVE IS IN FLIGHT (R44a, `#187`). It called `onClose`
+          {/* CANCEL HAS TO REFUSE WHILE A SAVE IS IN FLIGHT. It called `onClose`
               unconditionally, so a citizen who pressed Save, changed their mind and pressed Cancel
               got the dialog closed AND the project renamed — the request was already away, and
               closing the dialog does nothing to it. That is data integrity, not polish: the

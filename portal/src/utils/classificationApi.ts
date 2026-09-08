@@ -1,29 +1,17 @@
 /**
  * Typed client for the pre-publish classification review
- * (`/api/projects/:projectId/classification-review`), mirroring `deployApi.ts`: every
- * call is `fn(args, deps = {})` forwarding `deps` to `authFetch`, responses arrive as
- * `unknown` and pass through a narrower that throws `ApiError` on a structurally-invalid
- * body — never cast, never `any`.
+ * (`/api/projects/:projectId/classification-review`), mirroring `deployApi.ts`: every call is
+ * `fn(args, deps = {})`, responses arrive as `unknown` and pass through a narrower that throws
+ * `ApiError` on a structurally-invalid body — never cast, never `any`.
  *
- * TWO VERBS, ONE SHAPE. `ensureClassificationReview` (POST) makes sure a review exists
- * for the app's current SAVED version — the stored answers come back for an unchanged
- * version without a run, a failed attempt is re-asked on this same verb, and a new
- * version claims a fresh run (202; the body says `running`). `getClassificationReview`
- * (GET) reads and NEVER starts a run — it is what the dialog polls while one is in
- * flight. Both answer with the same body, so the dialog renders one thing however it got
- * there. CSRF rides the POST automatically: `authFetch` attaches the signed
- * double-submit header on every mutating method.
- *
- * TWO STAMPS, AND THE CALLER MUST FILTER ON THE SECOND. `headSha` is the version saved
- * RIGHT NOW; `reviewedSha` is the version the stored review examined. They differ
- * exactly when a Save landed after the review — so a dialog paints verdicts only from a
- * response whose `reviewedSha` matches the stamp it asked about, or a second tab's newer
- * review would fill in answers for a version this dialog never named.
- *
- * THE BROWSER IS NEVER THE SOURCE OF WHAT THE REVIEW SAID. Everything here is
- * presentation: the publish request re-reads the stored review server-side and performs
- * the merge there, so a client that ignored this module entirely could not skip the
- * review, and one that edited these responses could not change what is stored.
+ * WHY THIS EXISTS: TWO VERBS, ONE SHAPE. `ensureClassificationReview` (POST) ensures a review
+ * exists for the SAVED version (stored answers for an unchanged version, a fresh 202 `running`
+ * run for a new one); `getClassificationReview` (GET) only reads, never starts a run, for the
+ * dialog to poll. Both return the same body. TWO STAMPS, FILTER ON THE SECOND: `headSha` is the
+ * version saved now, `reviewedSha` is the version the stored review examined — paint verdicts
+ * only when they match, or a second tab's newer review fills in answers for a version this
+ * dialog never named. THE BROWSER IS NEVER THE SOURCE: the publish request re-reads and merges
+ * server-side, so nothing here can be used to skip or forge a review.
  */
 import { ApiError, isRecord, optionalString, readApiError } from './apiError'
 import { authFetch } from './api.js'
@@ -31,8 +19,8 @@ import type { AuthFetchDeps } from './projectApi'
 import type { ClassificationKey } from './deployApi'
 
 /**
- * The citizen-facing state of the review. `nothing_to_review` is R21's "no saved code
- * yet"; `not_reviewed` means saved code with no review ever claimed (a GET-only state —
+ * The citizen-facing state of the review. `nothing_to_review` is the "no saved code
+ * yet" state; `not_reviewed` means saved code with no review ever claimed (a GET-only state —
  * the ensure-POST is what claims one); an aged-out running review arrives as `failed`
  * with the `review_abandoned` code, never as an immortal `running`.
  */
@@ -43,7 +31,7 @@ export type ClassificationReviewStatus =
   | 'complete'
   | 'failed'
 
-/** `unanswered` is a real verdict, distinct from `no` (R5): the review answers only
+/** `unanswered` is a real verdict, distinct from `no`: the review answers only
  *  where it has evidence, and an unanswered question is the citizen's alone to decide. */
 export type ReviewVerdict = 'yes' | 'no' | 'unanswered'
 
@@ -193,27 +181,12 @@ export async function getClassificationReview(
 }
 
 /**
- * The answer of record per question — the client's mirror of the server's merge
- * (`backend/src/services/classification/merge.py`).
- *
- * ONE RULE, IN BOTH DIRECTIONS: either side may raise a flag and neither may lower the
- * other's. A review Yes stands over a developer's No because its evidence was validated
- * before it was stored; a developer's Yes stands over a review No because the developer
- * knows things the code does not show. Everything else is the developer's answer.
- *
- * WHY THIS EXISTS AT ALL. The dialog used to score the developer's answers alone, so a
- * developer who set the check's two Yes verdicts back to No was shown "0 — no sensitive
- * data declared — this can publish automatically" and a button reading Publish, moments
- * before the server merged the same answers to 45 and routed the app. The server was never
- * wrong; the screen was, on the one question it exists to answer.
- *
- * WHAT IT CANNOT SEE, deliberately: the two server-side disputes — a credential-shaped hit
- * the review overruled, and a review Yes discarded for citing code that does not exist.
- * Both route, and neither is shown on this form or obliges an explanation, precisely
- * because the developer has no surface for them (see `MergedQuestion.disputed_only`). So
- * this mirror can under-count in exactly the cases where the developer is not being asked
- * to account for anything — never in a case they can act on, and never the other way,
- * which is why the copy below says what WILL happen rather than what cannot.
+ * The answer of record per question, mirroring the server's merge
+ * (`backend/src/services/classification/merge.py`): either side may raise a flag, neither may
+ * lower the other's — validated review evidence beats a developer No, developer knowledge beats
+ * a review No, everything else is the developer's. Exists because scoring developer answers
+ * alone once showed "0 — can publish automatically" before the server merged to 45 and routed
+ * the app. Deliberately blind to two server-only disputes — can under-count, never unsafely.
  */
 export function mergeWithReview<K extends string>(
   citizen: Partial<Record<K, boolean | null>>,
@@ -224,7 +197,7 @@ export function mergeWithReview<K extends string>(
   for (const key of keys) {
     const own = citizen[key] ?? null
     // A review Yes is the only verdict that overrides; `no` and `unanswered` both hand the
-    // question back to the developer (R5), and so does a review that never landed.
+    // question back to the developer, and so does a review that never landed.
     merged[key] = verdicts?.[key]?.verdict === 'yes' ? true : own
   }
   return merged

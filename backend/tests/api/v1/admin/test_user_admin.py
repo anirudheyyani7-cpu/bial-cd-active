@@ -1,4 +1,4 @@
-"""Super-admin roster (U9, R8–R9, KD-1): keyset-paginated + searchable `list_users`
+"""Super-admin roster: keyset-paginated + searchable `list_users`
 replacing the unbounded full-table load; per-user "today's usage" as `input + output`
 (the shared `billable_spend`) by ONE page-wide aggregate keyed to the IST day (no N+1);
 suspension state surfaced. The limit-PATCH itself is covered by `test_limits_feedback.py`."""
@@ -78,7 +78,7 @@ async def test_roster_pages_walk_without_dup_or_skip(client, db_session) -> None
             assert body["nextCursor"] is None
             break
         cursor = body["nextCursor"]
-    assert len(seen) == 5  # every user exactly once — no duplicates, no skips
+    assert len(seen) == 5
     assert len(set(seen)) == 5
 
     # Newest-first: UUIDv7 ids sort by creation time, so the admin (created last)
@@ -113,7 +113,7 @@ async def test_search_matches_email_and_display_name(client, db_session) -> None
     await UserFactory.create(db_session, email="carol@rvaiglobal.com", display_name="Carol")
     headers = await _admin(db_session)
 
-    body = await _roster(client, headers, q="ALICE")  # case-insensitive
+    body = await _roster(client, headers, q="ALICE")
     assert {u["email"] for u in body["users"]} == {"alice@rvaiglobal.com", "bob@rvaiglobal.com"}
 
 
@@ -125,7 +125,7 @@ async def test_search_wildcards_are_literal(client, db_session) -> None:
     assert body["users"] == []
 
 
-# --- parameter validation (R7) ---------------------------------------------------
+# --- parameter validation ---------------------------------------------------------
 
 
 async def test_bad_params_rejected_422(client, db_session) -> None:
@@ -165,14 +165,12 @@ async def test_usage_today_is_cost_weighted(client, db_session) -> None:
     # Weighted: fresh=100-3-4=93 + output 20 + reads 0.3 + writes 5 = 118.3 → rounds to 118.
     assert by_email["spender@rvaiglobal.com"]["usageToday"] == 118
     assert by_email["idle@rvaiglobal.com"]["usageToday"] == 0
-    assert idle.suspended_at is None  # sanity: fresh users active
+    assert idle.suspended_at is None
 
 
 async def test_roster_usage_today_agrees_with_the_daily_gate(client, db_session) -> None:
-    # Decision 2 (F0): the roster and the daily gate share ONE billable-spend expression, so
-    # they can never drift. Seed a cache-heavy row and assert the roster's usageToday equals
-    # the gate's `_used_today` for the same user/day — a half-landed fix (one reader corrected,
-    # the other not) would break this exactly.
+    # The roster and the daily gate share ONE billable-spend expression, so they can never
+    # drift — a half-landed fix (one reader corrected, the other not) would break this exactly.
     user = await UserFactory.create(db_session, email="agree@rvaiglobal.com")
     await record_usage(
         db_session,
@@ -192,7 +190,7 @@ async def test_roster_usage_today_agrees_with_the_daily_gate(client, db_session)
 
 
 async def test_review_spend_is_its_own_roster_figure_never_folded(client, db_session) -> None:
-    # U15: the roster reports review spend BESIDE the build figure. `usageToday` stays
+    # The roster reports review spend BESIDE the build figure. `usageToday` stays
     # the number the daily cap actually measures (build only — the admin comparing it
     # against the cap must see what the cap sees); `reviewUsageToday` carries what
     # reviews cost, and neither is ever folded into the other.
@@ -216,7 +214,7 @@ async def test_review_spend_is_its_own_roster_figure_never_folded(client, db_ses
 async def test_roster_build_figure_equals_the_gates_with_review_spend_present(
     client, db_session
 ) -> None:
-    # The U15 integration property on top of the F0 no-drift one: with BOTH kinds
+    # The integration property on top of the no-drift one: with BOTH kinds
     # recorded, the roster's `usageToday` still equals the daily gate's `_used_today`
     # exactly — both read build rows only, through the one shared expression, so a
     # kind filter landing in one reader but not the other would break this here.
@@ -285,7 +283,7 @@ async def test_usage_is_one_aggregate_query_not_n_plus_one(client, db_session) -
     assert sum("user_limits" in s for s in statements) == 1
 
 
-# --- suspension surfaced (column via U10a; endpoints tested in U10) ---------------
+# --- suspension surfaced ----------------------------------------------------------
 
 
 async def test_suspended_at_is_surfaced(client, db_session) -> None:

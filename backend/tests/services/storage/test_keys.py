@@ -48,7 +48,7 @@ def test_app_file_key_uses_apps_namespace() -> None:
     assert app_file_key(_APP, _FILE) == f"apps/{_APP}/{_FILE}"
 
 
-# --- container_name: per-app Blob container (C9 §6) ---------------------------
+# --- container_name: per-app Blob container -----------------------------------
 
 # Azure container-name rules: 3–63 chars, lowercase letters/digits/hyphen, must start with a
 # letter or digit, and no consecutive hyphens. The `app-{uuid}` form is 40 chars and can never
@@ -79,7 +79,7 @@ def test_container_name_valid_for_many_random_uuids() -> None:
         assert _AZURE_CONTAINER_RE.match(container_name(uuid.uuid4())) is not None
 
 
-# --- submission keys (APPROVAL R1/R2/R23) --------------------------------------
+# --- submission keys -----------------------------------------------------------
 
 
 _SUB = uuid.UUID("019f1c00-0000-7000-8000-0000000000dd")
@@ -91,7 +91,7 @@ def test_submission_key_shape() -> None:
 
 
 def test_submissions_prefix_has_trailing_slash() -> None:
-    # The trailing slash is the boundary the delete-path sweep (R23) relies on.
+    # The trailing slash is the boundary the delete-path sweep relies on.
     assert submissions_prefix(_APP) == f"submissions/{_APP}/"
     assert submissions_prefix(_APP).endswith("/")
 

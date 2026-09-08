@@ -110,13 +110,12 @@ const nextConfig: NextConfig = {
   // dev's own localhost:3000 — and Next 16 blocks unlisted dev origins by default, which not only
   // kills HMR but STALLS HYDRATION (window.__BIAL_CONFIG never publishes, the CRUD screen sticks on
   // its loading skeleton). So allow every host the app is actually served on: the ACA FQDN in
-  // production, and 127.0.0.1/localhost for the local dev-loop acceptance (proven by Track SANDBOX
-  // U13 — the acceptance run is how this gap surfaced).
+  // production, and 127.0.0.1/localhost for the local dev-loop acceptance.
   //
   // The glob MUST be `**.` — a real ACA FQDN is MULTI-LABEL
   // (sbx-<id>.<env-domain>.<region>.azurecontainerapps.io) and a single `*` does not span
   // label dots: `*.azurecontainerapps.io` matched only single-label hosts, so next dev 403'd
-  // the HMR upgrade and hydration never ran on real ACA (2026-07-16 browser E2E finding).
+  // the HMR upgrade and hydration never ran on real ACA.
   //
   // `**.bialairport.com` is the BIAL-hosted name. BIAL prod runs the ACA environment INTERNAL
   // (one public App Gateway, everything else private), so its `*.azurecontainerapps.io` domain
@@ -127,7 +126,7 @@ const nextConfig: NextConfig = {
   // entries stay — the ACA name is still how dev and E2E environments serve.
   allowedDevOrigins: ["**.bialairport.com", "**.azurecontainerapps.io", "127.0.0.1", "localhost"],
   // Untrusted, agent-generated feature code lives here; keep type + build errors HARD so
-  // BRAIN's self-heal loop (C7: tsc / next build failures over /exec) actually fires.
+  // the platform's self-heal loop (tsc / next build failures over /exec) actually fires.
   typescript: { ignoreBuildErrors: false },
   // BADGE-ONLY (measured, not assumed): this hides the small floating dev-tools indicator in the
   // corner. It does NOT touch the full-viewport compile/runtime error overlay — Next still

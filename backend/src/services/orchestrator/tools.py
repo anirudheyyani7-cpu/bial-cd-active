@@ -1,47 +1,41 @@
-"""The eight sandbox tools — the model's ENTIRE action surface (KD-4 / KD-5 / KD-9 / KD-10 / R1).
+"""The eight sandbox tools — the model's ENTIRE action surface.
 
-Five file tools go through the C2 `files()` op; `run_command` runs a general shell command over
-the C2 `exec` transport — the vibe-coding pivot, so the model can `npm install`, run linters, and
-drive its own build (R1). `run_command`'s containment is NOT a tool-level allowlist (it can write
-anywhere the workspace allows): it is the demoted `appuser`, the supervisor's fail-closed
-child-env, and secret-redacted + length-capped output (R3/R13) — plus the destructive-SQL
-sentinel (`sql_guard.you_shall_not_pass`, U1/#12) that refuses improvised DML/DDL against the
-app's real database BEFORE the transport ever sees it. A non-zero command exit is a
-NORMAL return the model reads and fixes; a transport failure (incl. an install-timeout 504) is
-converted to a `ModelRetry` so the loop self-heals rather than hard-crashing (R11) — only a
-`SandboxGoneError` escalates. The three file mutators share one fail-closed write guard
-(absolute/`..` escape + `.git/` deny) applied BEFORE any `files()` call (KD-9). A `str_replace`
-that fails to match exactly once is enriched into a `ModelRetry` so the model self-corrects in-run
-(KD-5). Reads are bounded to `VIEW_MAX_LINES` and refuse the ignore set (KD-10). No tool ever
-renders `session.handle` / `handle.token` into a result or an error (KD-9 secret-safety).
+Five file tools use the sandbox client's `files()` op; `run_command` is a general shell
+(`npm install`, lint, `git`) over `exec`. Its containment is NOT a tool-level allowlist — it
+can write anywhere the workspace allows: it is the demoted `appuser`, the supervisor's
+fail-closed child-env, redacted+capped output, and the destructive-SQL sentinel
+(`sql_guard.you_shall_not_pass`), which refuses improvised DML/DDL against the app's REAL
+database BEFORE the transport ever sees it. A non-zero exit is a normal result; a transport
+failure becomes a self-healing `ModelRetry` — only `SandboxGoneError` escalates. File mutators
+share one fail-closed write guard (absolute/`..` escape + `.git/` deny). No tool ever renders
+`session.handle`/`handle.token`.
 
-`fetch_output_slice` (U22/R28) is the seventh, and it exists because the output cap used to be
-HEAD-ONLY: a truncated failure lost the assertion at the bottom, and recovering the middle cost a
-re-run. Output is now cut to head AND tail under an exit-code-conditional budget, and the notice
-between them names a handle the model reads the elided middle back through. The buffer behind
-that handle holds `scrub_untrusted` output and NOTHING ELSE, lives on `SandboxSession` (so the
-harness's per-run reset is its whole lifetime), never reaches the database or blob, and answers an
-unknown handle with a plain re-run instruction rather than a `ModelRetry` — which would spend the
-round-trip the tool exists to save.
+WHY THIS EXISTS: every tool docstring below is PROMPT COPY sent to the model by pydantic-ai
+at registration, and `core/prompt_blocks.WRITE_TOOL_SURFACE` is a generated snapshot of them
+(`agent/toolsets.render_tool_surface` is what generates it) — edit one here and
+`test_prompt.py`'s drift check goes red until it is regenerated. Write the FIRST SENTENCE as
+the line you want in the prompt; the rest is detail the model reads on the tool schema. Two
+sentences are load-bearing beyond their own tool and must survive any trim: `run_command`'s
+don't-start-or-restart-the-dev-server rule (the only thing covering a second `next dev`
+started through `/exec`, which the supervisor's child env cannot tell from the real one), and
+`declare_done`'s terminal-on-a-passing-check statement — a model promised a follow-up
+round-trip withholds its closing message from `summary`, and there is no reply to put it in.
 
-`apply_schema_change` (U23/R29) is the eighth, and it is the one tool here that is a SEQUENCE
-rather than an action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used
-to dictate step by step. It exists because both of them can fail while exiting zero, so a model
-reading exit codes believes a schema change happened that did not — it reads what they PRINTED,
-reports a per-step outcome, refuses to call a run successful when any step failed, and says which
-step failed and what state that left the workspace and the database in.
+`fetch_output_slice` is the seventh, and it exists because the output cap used to be
+HEAD-ONLY: a truncated failure lost the assertion at the bottom, and recovering the middle cost
+a re-run. Output is now cut to head AND tail under an exit-code-conditional budget, and the
+notice between them names a handle the model reads the elided middle back through. The buffer
+behind that handle holds `scrub_untrusted` output and NOTHING ELSE, lives on `SandboxSession`
+(so the harness's per-run reset is its whole lifetime), never reaches the database or blob, and
+answers an unknown handle with a plain re-run instruction rather than a `ModelRetry` — which
+would spend the round-trip the tool exists to save.
 
-EVERY TOOL DOCSTRING BELOW IS PROMPT COPY (U20 / R26). pydantic-ai sends it to the model as the
-tool's description at registration, and since U20 the build prompt's `TOOL SURFACE` block is
-GENERATED from these same strings (`agent/toolsets.render_tool_surface`) — so a docstring edit
-here is a prompt edit, and `test_prompt.py`'s drift check goes red until the snapshot in
-`core/prompt_blocks.WRITE_TOOL_SURFACE` is regenerated. Write the FIRST SENTENCE as the line you
-want in the prompt; the rest is detail the model reads on the tool schema. Two sentences in
-particular are load-bearing beyond their own tool and must survive any trim: `run_command`'s
-don't-start-or-restart-the-dev-server rule (the only thing covering a second `next dev` started
-through `/exec`, which the supervisor's child env cannot tell from the real one) and
-`declare_done`'s terminal-on-a-passing-check statement (U18 — a model promised a follow-up
-round-trip withholds its closing message from `summary`, and there is no reply to put it in).
+`apply_schema_change` is the eighth, and it is the one tool here that is a SEQUENCE rather
+than an action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used to
+dictate step by step. It exists because both of them can fail while exiting zero, so a model
+reading exit codes believes a schema change happened that did not — it reads what they
+PRINTED, reports a per-step outcome, refuses to call a run successful when any step failed,
+and says which step failed and what state that left the workspace and the database in.
 
 They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — mirroring
 `agent/read_tools.read_only_toolset` — rather than decorators on a module-level agent. That
@@ -51,12 +45,12 @@ because the accessor closure is still what lets one tool body serve whatever dep
 carries, and the tool tests drive it over their own.
 
 ONE SURFACE NOW, AND THE PROMPT FINALLY MATCHES IT. The harness took THIS toolset and nothing
-else — eight tools — while `WRITE_TOOL_SURFACE` described the Write chat arm's twelve and shipped
-in both prompts, so the harness was told about four tools it could not call. A Write chat turn
-takes this toolset plus `list_files`/`search_files` off `read_only_toolset` and the two
-`CONVERSATION_TOOLSET` tools — twelve, exactly what the snapshot names. Recorded at
+else — eight tools — while `WRITE_TOOL_SURFACE` described the Write chat arm's twelve and
+shipped in both prompts, so the harness was told about four tools it could not call. A Write
+chat turn takes this toolset plus `list_files`/`search_files` off `read_only_toolset` and the
+two `CONVERSATION_TOOLSET` tools — twelve, exactly what the snapshot names. Recorded at
 `core/prompt_blocks.WRITE_TOOL_SURFACE`; guarded by
-`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
+`test_prompt.py::test_the_prompts_tool_list_is_exactly_what_the_write_arm_registers`.
 """
 
 from __future__ import annotations
@@ -109,7 +103,7 @@ from src.services.sandbox import (
 )
 
 # ---------------------------------------------------------------------------------------
-# U22 / R28: output the model can act on — head AND tail, and a handle to the middle
+# Output the model can act on — head AND tail, and a handle to the middle
 # ---------------------------------------------------------------------------------------
 #
 # MIRRORED, DELIBERATELY, in `agent/read_tools.py` (`_is_predictable_noise` / `_redacted_lines` /
@@ -137,7 +131,7 @@ _NOISE_KEEP_TOKENS: Final = (
 )
 """WHERE THE NOISE BOUNDARY IS DRAWN, and the conservative half of it. A line carrying any of
 these is NEVER dropped, whatever else it looks like — `npm WARN deprecated x@1: use y`, an audit
-summary, a severity table, a CVE reference. R28 asks for predictable noise to go and for genuine
+summary, a severity table, a CVE reference. The goal is for predictable noise to go and for genuine
 vulnerability or deprecation signal to stay, and this is the second half stated as a rule instead
 of trusted to the patterns below being narrow enough."""
 
@@ -154,7 +148,7 @@ FRAME: an upgrade notice for npm itself, a funding request, a pnpm resolution co
 spinner frame, an ASCII progress bar. None of them is actionable by a model building an app, and
 all of them recur on every install.
 
-WHAT IS DELIBERATELY NOT HERE, since the plan left the boundary to implementation and being wrong
+WHAT IS DELIBERATELY NOT HERE, since being wrong
 in this direction is the expensive one: driver and runtime deprecation warnings
 (`(node:1) [DEP0040] DeprecationWarning: …`) stay. They read like noise because they recur, but
 telling the deprecation a model can act on (a package IT just installed) from one it cannot needs
@@ -211,29 +205,12 @@ def _capture_limit_marker(dropped: int) -> str:
 def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
     """The head and the tail of a raw capture, cut ON LINE BOUNDARIES — and what that cost.
 
-    TWO PROPERTIES, and the older single `text[:cap]` slice got both wrong.
-
-    SECURITY: the redactor is never handed half a line. A credential is a shape on ONE line —
-    `_URL_CRED_RE` needs the `@` that follows the password, the assignment families need their
-    terminator — so a cut landing inside one leaves a fragment that matches nothing and is
-    egressed in the clear. Whole lines in, whole lines out: a line is scanned entire or dropped
-    entire, and a single line longer than the window is therefore dropped rather than truncated.
-
-    THAT IS NOT THE WHOLE OF IT, and this docstring used to claim it was ("head-only hid the
-    fragment; only the retained tail is new exposure"). It is false for the quoted arms, which
-    span newlines on purpose: a value that OPENS in the head and closes past the cut is not
-    masked-with-its-key-present, it matches nothing at all and renders verbatim — a line-boundary
-    cut does not help, because the value legitimately contains the newlines it is cut on. Both
-    ends of this cut therefore go through the same guard in `_redacted_lines`, one withholding
-    the tail and one cutting the head back to the credential's own line.
-
-    TRUTHFULNESS: a head-only cap silently deleted the END of every capture over the limit —
-    which is where `Failed to compile.` and the failing assertion live — and the notice below
-    then reported the surviving line count as the total. The tail is cut here so the tail is
-    what the model reads.
-
-    The two halves together stay inside `REDACT_INPUT_MAX_CHARS`, so the synchronous redaction
-    scan is bounded exactly as it was (the ReDoS guard)."""
+    SECURITY: a mid-line cut leaves a credential fragment that matches nothing and egresses in
+    the clear, so an over-long line is dropped whole rather than truncated — except the
+    redactor's quoted arms, which span newlines; `_redacted_lines` guards both ends of this
+    cut for those instead of trusting the boundary alone. TRUTHFULNESS: a head-only cap used to
+    silently drop the END of every over-limit capture, where `Failed to compile.` and the
+    failing assertion live. Both halves stay inside `REDACT_INPUT_MAX_CHARS` (the ReDoS bound)."""
     if len(text) <= REDACT_INPUT_MAX_CHARS:
         return text, "", 0
     half = REDACT_INPUT_MAX_CHARS // 2
@@ -254,28 +231,14 @@ def _scrubbed_lines(text: str, *, denoise: bool) -> list[str]:
 
 
 def _redacted_lines(text: str, *, denoise: bool) -> list[str]:
-    """The SAFE artifact, and the ONLY thing that is ever buffered or returned (U22 / R3).
+    """The SAFE artifact, and the ONLY thing that is ever buffered or returned.
 
-    `scrub_untrusted` is cap → de-escape → redact, in that order, on the raw capture: the cap
-    bounds the work an app-controlled blob can make a synchronous scan do (ReDoS guard), the
-    escape strip runs BEFORE the mask because an ANSI sequence spliced into a credential splits
-    the token and the pattern stops matching, and the mask is what makes the text egressable at
-    all. It replaces the older `redact_secrets(text[:cap])` here because a handle RETAINS this
-    string for the rest of the turn — `core/redaction.scrub_untrusted`'s own docstring names
-    reaching for `redact_secrets` alone on app-authored text as the mistake it exists to stop.
+    REDACTION HAPPENS HERE, ONCE, NOWHERE DOWNSTREAM — a handle RETAINS this string for the rest
+    of the turn, and its elided middle is text no human ever reads, so anything less than a full
+    `scrub_untrusted` scrub is a direct path to an unseen secret.
 
-    REDACTION HAPPENS HERE, ONCE, ON EVERY CHARACTER THAT SURVIVES CAPTURE — before any slicing,
-    before the buffer, before the head/tail cut. That ordering is the unit's security property
-    twice over: the elided middle a handle hands back was never read by a human, so a buffer
-    built from raw stdout would be a direct path to a secret nobody ever saw; and cutting first
-    would split a credential that straddles the cut into two fragments that no longer match the
-    redactor's shapes, which is exactly how a cap applied after redaction re-exposes one. The
-    capture cut above is the same rule applied one level up, which is why it cuts on lines.
-
-    `denoise` is the CALLER's answer to "is this text a build log?", never a guess made from the
-    text itself. Dropping a line is only ever right for dependency-manager chatter; the same
-    filter run over `cat`'s output silently deletes a line from a file the model asked to read,
-    and an `edit_file` composed from that read then fails to match with no visible cause."""
+    `denoise` is the CALLER's answer to "is this a build log?", never guessed from the text —
+    the same filter run over a `cat` read would silently delete a line the model asked to see."""
     head, tail, dropped = _within_the_capture_limit(text)
     # THE HEAD IS CUT WHEN IT ENDS INSIDE A CREDENTIAL — the same rule as the tail guard below,
     # at the other end of the same cut, and it is NOT covered by masking the head. The redactor's
@@ -327,18 +290,12 @@ def _elision_notice(
 ) -> str:
     """The truncation notice: WHAT was removed, and — inline — how to get it back.
 
-    NAMING THE TOOL AND THE HANDLE IN THE NOTICE ITSELF is the point. A capability described once
-    in a system prompt is a thing the model has to remember at the moment it is staring at a
-    truncated log; a call it can copy off the line in front of it is not.
-
-    The line numbers inside the call are printed WITHOUT thousands separators while the totals
-    around them keep theirs: the first pair are arguments to be copied verbatim into a tool call,
-    and `start_line=1,024` is not an integer.
-
-    `cut_line` IS PASSED RATHER THAN DERIVED (it used to be `first - 1`). The caller now names the
-    elided range from the first line it did not show WHOLE, so the two numbers stopped being one
-    apart — and a notice that computes a line number out of another notice's arithmetic goes wrong
-    silently, one truncation shape at a time."""
+    Naming the tool and handle IN the notice is the point: a call the model can copy off the
+    line in front of it beats a capability it has to remember from the system prompt. The line
+    numbers inside that call print WITHOUT thousands separators (they're copied verbatim into a
+    tool call; `start_line=1,024` is not an integer), while the surrounding totals keep theirs.
+    `cut_line` is PASSED rather than derived (`first - 1`) — deriving it let the two numbers
+    drift a line apart, wrong silently, one truncation shape at a time."""
     if elided_lines > 0:
         edge = " (the ends of that range are only partly shown here)" if partly_shown else ""
         what = (
@@ -363,7 +320,7 @@ def _elision_notice(
 
 
 def _render_output(lines: list[str], *, budget: int, handle: str | None) -> str:
-    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL (ASM13).
+    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL.
 
     Head-only was the defect: a stack trace puts its message at the top and the failing assertion
     at the bottom, so a head cap loses the error and a tail cap loses the cause. The budget is
@@ -429,7 +386,7 @@ def _redact_command_output(
 def _new_output_handle() -> str:
     """A short, model-typeable name for one held capture. Random rather than sequential so a
     handle from a previous run cannot be guessed into a collision with a live one — it is not a
-    secret (it names redacted text), and it is not a UUID either (ADR-0006: a raw UUID is never
+    secret (it names redacted text), and it is not a UUID either (a raw UUID is never
     the thing a caller quotes)."""
     return f"out_{secrets.token_hex(4)}"
 
@@ -442,7 +399,7 @@ documented lifetime, not a mistake it made."""
 
 
 async def _count_at_the_tool_boundary(counter: HarnessCounter, session: SandboxSession) -> None:
-    """Record one adoption counter for this build (U22 / U25's surface).
+    """Record one adoption counter for this build.
 
     Imported INSIDE the function on purpose: `services.build_sessions.__init__` reaches this
     module through the session manager, so a module-level import closes a real cycle. Same shape
@@ -461,18 +418,14 @@ async def _format_command_result(
     denoise: bool,
     budget: int | None = None,
 ) -> str:
-    """Render an `ExecResult` for the model: the exit code plus redacted stdout/stderr, capped by
-    what the exit code says the output is WORTH (ASM13) — a success is summarised, a failure is
-    dumped. Empty streams are omitted so a clean run reads tersely.
+    """Render an `ExecResult` for the model: exit code plus redacted stdout/stderr, capped by
+    what the exit code says the output is WORTH — success summarised, failure dumped. Empty
+    streams are omitted. A stream too big for its budget is HELD under its own handle BEFORE
+    it is cut, so the notice names something that resolves; one that fits is never held.
 
-    A stream that does not fit its budget is HELD under its own handle before it is cut, so the
-    notice the model reads names something that actually resolves. A stream that fits is not held
-    at all: there is nothing to recover, and the ring is worth more to the next truncation.
-
-    `budget` OVERRIDES the exit code's own answer, and exists for exactly one caller: U23's
-    composite, whose whole point is that the underlying exit code lies. A step that exited 0 after
-    failing must be DUMPED, not summarised — sizing its output from `result.exit` would let the
-    misleading zero decide how much of the failure the model gets to read."""
+    `budget` OVERRIDES the exit code's own answer for exactly one caller — the composite step,
+    whose whole point is that its exit code lies. A step that exited 0 after failing must be
+    DUMPED, not sized from that misleading zero."""
     budget = output_budget_for_exit(result.exit) if budget is None else budget
     sections = [f"exit code: {result.exit}"]
     for stream, raw in (("stdout", result.stdout), ("stderr", result.stderr)):
@@ -490,31 +443,15 @@ async def _format_command_result(
 
 
 # ---------------------------------------------------------------------------------------
-# U23 / R29: one operation for applying a database change, and a status that tells the truth
+# One operation for applying a database change, and a status that tells the truth
 # ---------------------------------------------------------------------------------------
 #
-# THE SHAPE R29 NAMES, MET TWICE IN ONE SEQUENCE. Applying a schema change used to be two
-# prompt-taught commands, and BOTH of them can fail while exiting zero:
-#
-#   1. `npx drizzle-kit generate --name <what>` reaches the RENAME RESOLVER whenever a diff is
-#      ambiguous ("is `label` created, or renamed from `title`?"). No CLI flag answers it —
-#      `--name` least of all, it names the output file — and under this sandbox's real conditions
-#      (`stdin=DEVNULL`, no TTY, `CI=1`) it does not even hang: drizzle-kit prints "Interactive
-#      prompts require a TTY terminal" to stderr, writes NO migration, and exits 0.
-#   2. `npm run db:migrate` runs `sandbox/template/scripts/db-migrate.mjs`, which is NON-FATAL BY
-#      DESIGN — its own file header explains why: a migrate step that fails hard means `next dev`
-#      never prints "Ready in", and the harness then reports a rendering fault that does not
-#      exist. So it catches every error, abandons a slow migration after 20s, and ALWAYS exits 0.
-#
-# The composite therefore does not merely save a round trip. It is the only thing in the loop that
-# reads what those commands PRINTED and reports the failure their exit codes hide — per step,
-# naming which step failed and what state that left the workspace and the database in.
-#
-# WHAT IT DOES NOT DO is prevent the rename resolver. The one-kind-of-change-per-call rule in the
-# DATABASE block is the only thing that does, and the TTY defences (`CI=1`,
-# `stdin=subprocess.DEVNULL`, and `_refuse_a_manufactured_tty`, all in `sandbox/supervisor/app.py`)
-# are what make reaching it FAST AND LOUD rather than the observed four-minute stall. All three
-# stay; trimming any of them turns this tool's cleanest failure back into a wedge.
+# WHAT THIS COMPOSITE DOES NOT DO is prevent drizzle-kit's rename resolver; it only refuses to
+# report a run that hit one as a success. Prevention is the one-kind-of-change-per-call rule in
+# the DATABASE block, and the TTY defences (`CI=1`, `stdin=subprocess.DEVNULL`, and
+# `_refuse_a_manufactured_tty`, all in `sandbox/supervisor/app.py`) are what make reaching it fail
+# fast and loud instead of waiting at a prompt nobody can answer. All three stay; trimming any of
+# them turns this tool's cleanest failure back into a wedge.
 
 _GENERATE_ARGV: Final = ("npx", "drizzle-kit", "generate", "--name")
 _MIGRATE_ARGV: Final = ("npm", "run", "db:migrate")
@@ -565,8 +502,8 @@ class _CompositeStep:
     #: Substrings that mean "this failed", scanned case-folded over the RAW capture (before
     #: redaction and de-noising, so neither can hide a marker from the detector).
     failure_markers: tuple[str, ...]
-    #: What the workspace and the database are left in when THIS step fails. Not decoration: R29
-    #: asks the operation to say what state it left things in, and the answer differs per step.
+    #: What the workspace and the database are left in when THIS step fails. Not decoration: each
+    #: step must say what state it left things in, and the answer differs per step.
     state_when_failed: str
 
 
@@ -620,26 +557,20 @@ def _the_two_steps(name: str) -> tuple[_CompositeStep, ...]:
 
 
 def _the_command_lied(result: ExecResult, markers: tuple[str, ...]) -> bool:
-    """Did this command FAIL while exiting zero? Scanned over the RAW capture, case-folded.
+    """Did this command FAIL while exiting zero? Over the RAW capture, case-folded: reading the
+    redactor's or noise filter's output would be one masking rule from going blind, and nothing
+    scanned here is ever returned.
 
-    Raw, not redacted: the redactor and the noise filter both rewrite lines, and a detector that
-    reads their output is one masking rule away from going quietly blind. Nothing scanned here is
-    ever returned — the report is built from `_redact_command_output`'s artifact, as always.
-
-    AND UNCAPPED, DELIBERATELY, unlike every regex on this path. The capture is app-controlled and
-    unbounded, so the instinct is to hand it the same head+tail window `_within_the_capture_limit`
-    cuts — but that window has a MIDDLE it throws away, and a marker dropped there turns a failed
-    step into a reported success. This detector fails OPEN when it misses, which is the one
-    direction that matters here. The cost that would buy: `.lower()` plus a substring search is
-    memchr-speed, measured at 3.7 ms over 6.4 MB (~0.6 ms/MB) — three orders of magnitude cheaper
-    per byte than the credential scan whose bound this would be copying, and not worth a detector
-    that can be silenced by padding."""
+    UNCAPPED, DELIBERATELY, unlike every regex on this path. The capture is app-controlled and
+    unbounded, so the instinct is `_within_the_capture_limit`'s head+tail window — but it has a
+    MIDDLE, and a marker dropped there turns a failed step into a reported success. Fails OPEN.
+    `.lower()` + substring is memchr-speed, ~0.6 ms/MB — well under the bound it would copy."""
     printed = f"{result.stdout}\n{result.stderr}".lower()
     return any(marker in printed for marker in markers)
 
 
 def _still_doing_it_the_hard_way(argv: list[str]) -> bool:
-    """Is this a raw `drizzle-kit generate` — the two-step sequence driven BY HAND (U23/R29)?
+    """Is this a raw `drizzle-kit generate` — the two-step sequence driven BY HAND?
 
     The adoption question, and the head of the sequence is what answers it. A lone
     `npm run db:migrate` is NOT counted: re-applying an existing migration is legitimate work the
@@ -703,18 +634,14 @@ async def _step(
     state: Literal["started", "ok", "failed"],
     hidden: bool = False,
 ) -> None:
-    """The legacy C7 build feed. `emitter is None` on the chat-turn path, where the ENGINE emits a
-    StepFrame per tool call from the run's own FunctionToolCall/Result events using the same
-    `classify_tool_call` label — emitting both would render every step twice.
+    """The legacy build-progress feed. `emitter is None` on the chat-turn path, where the ENGINE
+    emits a StepFrame per tool call itself — emitting both here too would render every step twice.
 
-    NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, the same rule the turn engine's `_resolve_step`
-    and the reload projection both apply, and `classify_command`'s docstring states for this
-    emitter by name. A housekeeping command is plumbing while it works and the whole story the
-    moment it does not, and a group's problem count has to name a row the citizen can find.
-    Enforced HERE rather than at each call site: the classifier's `hidden` and the step's state
-    are decided in different places, and a caller that has to remember to combine them is a
-    caller that will eventually forget on the failing arm — which is the arm nobody looks at
-    until it matters."""
+    NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG (same rule as `_resolve_step` and the reload
+    projection): a housekeeping command is plumbing while it works, the whole story the moment
+    it doesn't. Enforced HERE, not at each call site — `hidden` and the step's state are decided
+    in different places, and a caller left to combine them will eventually forget on the failing
+    arm, which is the one nobody looks at until it matters."""
     if session.emitter is None:
         return
     await session.emitter.step(
@@ -723,7 +650,7 @@ async def _step(
 
 
 def _require_writable(path: str) -> None:
-    """Fail-closed write gate (KD-9). Raises `ModelRetry` — never touching `files()` — for the two
+    """Fail-closed write gate. Raises `ModelRetry` — never touching `files()` — for the two
     remaining denials in the open-sandbox model: a path that escapes the workspace (absolute or
     `..`) or a write into `.git/` (snapshot-history integrity). Every other workspace-relative path
     is writable — config, `package.json`, and the data client included."""
@@ -737,13 +664,13 @@ def _require_writable(path: str) -> None:
 
 async def _reanchor(session: SandboxSession, path: str) -> str:
     """Build the enriched retry message for a failed exact-replace: the current file, line-
-    numbered, plus guidance to add unique context or fall back to a whole-file write (KD-5)."""
+    numbered, plus guidance to add unique context or fall back to a whole-file write."""
     try:
         result = await session.sandbox_client.files(
             session.handle, FileView(path=path, view_range=[1, VIEW_MAX_LINES])
         )
     except SandboxGoneError:
-        raise  # a gone sandbox is terminal — escalate, never re-anchor (KD-11)
+        raise  # a gone sandbox is terminal — escalate, never re-anchor
     except SandboxError:
         current = "(the current file could not be read)"
     else:
@@ -771,11 +698,10 @@ def sandbox_toolset[DepsT](
     whatever deps its consumer carries (a Write chat turn's `ChatDeps`; the tool tests' own).
     It served the deleted harness's `BuildDeps` the same way.
 
-    The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with
-    `get_type_hints` at registration, and a PEP-695 type param of the ENCLOSING function is not in
-    scope there under deferred annotations. The factory signature carries the real typing; the
-    `cast` at the return is the one boundary where it narrows back.
-    """
+    The inner tools annotate `RunContext[Any]` rather than the enclosing PEP-695 type param,
+    because pydantic-ai resolves tool annotations with `get_type_hints` at registration and that
+    param is out of scope there under deferred annotations. The factory signature carries the
+    real typing; the `cast` at the return narrows back to it."""
 
     async def read_file(
         ctx: RunContext[Any], path: str, view_range: list[int] | None = None
@@ -791,7 +717,7 @@ def sandbox_toolset[DepsT](
                 "workspace-relative path is readable, including root config like `package.json`, "
                 "`next.config.ts`, and `tsconfig.json`."
             )
-        # Bound the view so a huge file can't blow the context window (KD-10). The -1 end-of-file
+        # Bound the view so a huge file can't blow the context window. The -1 end-of-file
         # spelling is bounded by the SAME budget: it becomes an explicit start+VIEW_MAX_LINES-1
         # window (the supervisor clamps to the real file length), so "-1 = end of file" holds for
         # any file within budget and a huge file is capped instead of read whole.
@@ -808,10 +734,10 @@ def sandbox_toolset[DepsT](
                 session.handle, FileView(path=path, view_range=bounded)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not read `{path}`: {exc}. Check the path.") from exc
-        # `content` is a contractually-required C1 `view` field (C2) — a missing/non-str value is a
+        # `content` is a contractually-required `view` field — a missing/non-str value is a
         # malformed response, surfaced as a retry not a phantom empty file (fail-first).
         content = result.detail.get("content")
         if not isinstance(content, str):
@@ -831,7 +757,7 @@ def sandbox_toolset[DepsT](
                 session.handle, FileCreate(path=path, file_text=file_text)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not write `{path}`: {exc}.") from exc
         session.workspace_touched = True
@@ -850,7 +776,7 @@ def sandbox_toolset[DepsT](
                 session.handle, FileStrReplace(path=path, old_str=old_str, new_str=new_str)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             # A files() error from a tool → enrich into a ModelRetry so the model self-corrects
             # in-run.
@@ -873,7 +799,7 @@ def sandbox_toolset[DepsT](
                 FileInsert(path=path, insert_line=insert_line, insert_text=insert_text),
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not insert into `{path}`: {exc}.") from exc
         session.workspace_touched = True
@@ -889,8 +815,7 @@ def sandbox_toolset[DepsT](
         do with their app, a handful of plain sentences in the everyday words they used to ask
         for it, with no file names, commands, libraries or frameworks in it. Do not hold that
         message back for a reply afterwards — on the passing path there is no reply to write it
-        in. If the app does NOT check out you receive the diagnostic and carry on fixing it
-        (KD-6)."""
+        in. If the app does NOT check out you receive the diagnostic and carry on fixing it."""
         session = sandbox_of(ctx)
         session.done_requested = True
         session.done_summary = summary
@@ -907,26 +832,25 @@ def sandbox_toolset[DepsT](
 
     async def run_command(ctx: RunContext[Any], command: list[str]) -> str:
         """Run a shell command in the app workspace and get its output back. Pass the command as a
-        list of argv tokens — e.g. `["npm", "install", "zod"]`, `["npm", "run", "lint"]`,
-        `["ls", "app"]`. It runs as an unprivileged user; the output is secret-redacted and
-        length-capped before you see it. A non-zero exit code comes back as a normal result — read
-        the output and fix the cause. A long output is cut to its first and last lines, and the
-        notice in the middle names a handle — pass that handle to `fetch_output_slice` to read
-        what was cut, instead of running the command again.
-        Do NOT start or restart the dev server (`next dev`); it is
-        already running and the harness reads it for you (KD-6)."""
+        list of argv tokens — e.g. `["npm", "install", "zod"]`, `["npm", "run", "lint"]`, `["ls",
+        "app"]`. It runs as an unprivileged user; the output is secret-redacted and length-capped
+        before you see it. A non-zero exit code comes back as a normal result — read the output and
+        fix the cause. A long output is cut to its first and last lines, and the notice in the
+        middle names a handle — pass that handle to `fetch_output_slice` to read what was cut,
+        instead of running the command again. Do NOT start or restart the dev server (`next dev`);
+        it is already running and the harness reads it for you."""
         session = sandbox_of(ctx)
         # alias keeps the call off the JS-oriented exec guard
         transport = session.sandbox_client.exec
-        # The FRIENDLY label is the only thing the browser ever sees for this command (F3/U3): the
+        # The FRIENDLY label is the only thing the browser ever sees for this command: the
         # classifier maps argv → citizen-plain copy (or a fail-closed "Working on your app"), so
         # the raw command / `$ argv` never reaches a visible step. `redacted_cmd` stays MODEL-only
         # — it rides the retry messages the model reads, never a StepEvent.
         friendly, hidden = classify_command(command)
         redacted_cmd = redact_secrets(" ".join(command)[:REDACT_INPUT_MAX_CHARS])
-        # The data-safety sentinel (U1 / #12) runs BEFORE the transport: improvised destructive
+        # The data-safety sentinel runs BEFORE the transport: improvised destructive
         # SQL never reaches the sandbox. The blocked attempt is emitted as a failed step so
-        # route-around behaviour stays observable in BRAIN traces (the iteration-2 tripwire).
+        # route-around behaviour stays observable in BRAIN traces.
         refusal = you_shall_not_pass(command)
         if refusal is not None:
             # The `— blocked …`/`— couldn't finish` suffixes are a LIVE-ONLY affordance on the
@@ -941,28 +865,28 @@ def sandbox_toolset[DepsT](
                 hidden=hidden,
             )
             raise ModelRetry(refusal)
-        # U22's adoption question, counted where it is observable: did the slice handle actually
+        # The adoption question this counts, where it is observable: did the slice handle actually
         # replace the re-run it exists to save? An identical command run a second time inside ONE
         # turn is the cost being measured, and it is read beside `output_slice_fetched` — one
         # number alone says nothing.
         #
         # COUNTED AFTER THE SQL SENTINEL AND BEFORE THE TRANSPORT, deliberately. A refused command
-        # never ran, so a second refusal is the model routing around a guard (U1's own tripwire
-        # already watches that) rather than paying for output it lost. A command that RAN and
-        # failed is a genuine repeat and counts as one.
+        # never ran, so a second refusal is the model routing around a guard (a separate
+        # tripwire elsewhere already watches for that) rather than paying for output it lost.
+        # A command that RAN and failed is a genuine repeat and counts as one.
         if session.note_command(redacted_cmd):
             await _count_at_the_tool_boundary(HarnessCounter.COMMAND_RERUN_IN_TURN, session)
-        # U23's adoption question, its other half: the sequence driven BY HAND, counted where the
+        # The other half of that adoption question: the sequence driven BY HAND, counted where the
         # hand is. Read against `schema_change_composed` — one number alone cannot tell "the
         # composite is being used" from "nobody is changing the schema at all".
         if _still_doing_it_the_hard_way(command):
             await _count_at_the_tool_boundary(HarnessCounter.SCHEMA_CHANGE_BY_HAND, session)
-        # No `started` emit: run_command collapses to ONE terminal row per command (F3/U3). The
+        # No `started` emit: run_command collapses to ONE terminal row per command. The
         # build headline spinner already conveys "working", and two emits sharing a friendly label
         # would otherwise render as two identical rows — this matches the reload projection's
         # one-row shape.
         try:
-            # F4: the bound depends on WHAT the command is. A wedged command used to get the
+            # The bound depends on WHAT the command is. A wedged command used to get the
             # full 600s, and the 1800s wall-clock deadline is only evaluated BETWEEN self-heal
             # iterations, so nothing could interrupt a churning one.
             timeout_s = (
@@ -979,11 +903,11 @@ def sandbox_toolset[DepsT](
                 state="failed",
                 hidden=hidden,
             )
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             # A transport failure (supervisor 504 incl. an install timeout, or a blip) → enrich
             # into a ModelRetry so a command/install failure re-enters the loop instead of
-            # hard-crashing the build (R11). Only SandboxGoneError escalates. The message is
+            # hard-crashing the build. Only SandboxGoneError escalates. The message is
             # redacted defensively.
             await _step(
                 session,
@@ -1079,15 +1003,11 @@ def sandbox_toolset[DepsT](
         """Apply the schema edits you just made in `db/schema.ts` — this generates the migration
         and runs it in one call, and tells you truthfully which step failed if either did.
 
-        Pass `what_changed` as a short description of the edit ("add visitors table"); it names
-        the migration file, so pass something a person could still read six months from now. Make
-        ONE kind of schema change per call — drizzle-kit cannot tell a rename from a drop plus a
-        create, so it stops and asks, and there is no terminal here to answer it. Both commands
-        behind this call can print a failure and still exit 0, which is exactly what this call
-        exists to catch: it reports each step's outcome, and on a failure it names the step,
-        overrides the misleading exit code, and tells you what state your workspace and database
-        were left in. Trust what it says over any exit code inside it, and do not run the
-        generate or migrate commands yourself through `run_command`."""
+        Pass `what_changed` as a short, readable description ("add visitors table") that names
+        the migration file. Make ONE kind of schema change per call — drizzle-kit cannot tell a
+        rename from a drop+create and stops to ask, with no terminal here to answer it. Both
+        commands can print a failure and still exit 0: trust this call's report over any exit
+        code, and never run generate or migrate yourself through `run_command`."""
         session = sandbox_of(ctx)
         # THE ADOPTION QUESTION'S FIRST HALF, counted before anything can go wrong: "was the tool
         # reached for", not "did it succeed". A composite that failed was still adopted.
@@ -1111,8 +1031,9 @@ def sandbox_toolset[DepsT](
                 outcomes.append(_StepOutcome(step=step, result=None, ok=False))
                 continue
             argv = list(step.argv)
-            # F4's classifier, ASKED RATHER THAN ASSUMED — the same one `run_command` uses, so a
-            # step here can never get a different bound from the identical command run by hand.
+            # `command_needs_the_long_timeout`, ASKED RATHER THAN ASSUMED — the same one
+            # `run_command` uses, so a step here can never get a different bound from the
+            # identical command run by hand.
             # Neither of these is in the slow class, and that is the point: a generate still
             # running after minutes is waiting for a terminal that does not exist.
             timeout_s = (
@@ -1130,7 +1051,7 @@ def sandbox_toolset[DepsT](
                     state="failed",
                     hidden=hidden,
                 )
-                raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+                raise  # terminal infra failure — propagate to the sandbox_gone escalation
             except SandboxError as exc:
                 await _step(
                     session,
@@ -1169,7 +1090,7 @@ def sandbox_toolset[DepsT](
         # THE OVERRIDE REACHES THE CAP TOO, not just the wording. `output_budget_for_exit` is
         # asked about the OPERATION's verdict rather than any command's exit code, so a step that
         # failed while exiting 0 is DUMPED like the failure it is — sizing it from the underlying
-        # zero would let the lie decide how much of the truth the model gets to read (U22/ASM13).
+        # zero would let the lie decide how much of the truth the model gets to read.
         return await _render_the_schema_change_report(
             session, outcomes, budget=output_budget_for_exit(0 if succeeded else 1)
         )

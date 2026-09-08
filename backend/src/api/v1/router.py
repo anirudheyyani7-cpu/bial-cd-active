@@ -1,6 +1,19 @@
 """Aggregate v1 router. Domain routers (auth, projects, admin, …) mount here as
 they land; the foundation exposes only the public health endpoint.
-"""
+
+WHY THIS EXISTS
+
+A route handler's docstring publishes verbatim as its OpenAPI `description` — write it for
+API consumers, not just developers reading the source.
+
+EVERY QUERY BEHIND THESE ROUTES IS SCOPED BY THE OWNING `user_id`. The platform is single-tenant
+— there is no `org_id`, so that predicate IS the isolation boundary and a dropped one is a
+cross-user leak, not a style nit; it belongs in the WHERE clause, never in a check made after the
+row is loaded. A resource owned by someone else and a resource that does not exist get the SAME
+non-leaking 404, with the same message, and never a 403: a 403 confirms the row exists, which is
+precisely the probe the 404 refuses to answer. Reaching across owners is an explicit, role-gated,
+audited admin action, and the one read that drops the predicate on purpose — the published-app
+catalog — argues for itself in its own module header."""
 
 from fastapi import APIRouter
 
@@ -28,7 +41,7 @@ from src.schemas import AUTH_403_SUSPENDED, DetailBody, error_responses
 # the unhandled-exception 500 (`{"detail": "Internal server error"}`,
 # `unhandled_exception_handler`) so every v1 route clears SonarQube S8415 without a
 # per-route declaration, and the suspension 403 `current_user` raises on every
-# authenticated route (deps.py, R11). FastAPI merges `{**router.responses,
+# authenticated route (deps.py). FastAPI merges `{**router.responses,
 # **route.responses}`, so a route with its own declaration — admin's superadmin 403 —
 # overrides these defaults. This is DOCUMENTATION only: the handlers themselves
 # (`core/errors.py`) are registered app-wide from `main.py`, not here.

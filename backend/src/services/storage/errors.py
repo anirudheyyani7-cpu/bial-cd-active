@@ -4,9 +4,9 @@ the credential.
 
 Security: `provider` and `key` are INTERNAL diagnostic fields for logs only.
 `key` encodes the owner-scoped path `att/{user_id}/...` (single-tenant — no
-org/project axis, ADR-0004), so the HTTP layer must map any `StorageError` to a
-generic user-facing message and never echo `key` into a response body (per
-security.md). Every class ends in `Error` (N818).
+org/project axis), so the HTTP layer must map any `StorageError` to a
+generic user-facing message and never echo `key` into a response body. Every
+class ends in `Error` (N818).
 """
 
 from __future__ import annotations

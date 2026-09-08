@@ -1,10 +1,10 @@
 /**
- * THE RAIL'S CONTENTS (Plan F, U1) — R6's four things, and the one control that must NOT be here.
+ * THE RAIL'S CONTENTS — four things, and the one control that must NOT be here.
  *
  * This suite is deliberately narrow. Everything about the rail's WIDTH, its collapse and its
  * relationship to the pane is a claim about the shell and lives in `ProjectWorkspace.test.tsx`,
  * which renders through the real one. What is left is what the rail itself is answerable for: that
- * it carries what R6 says it carries, and that it does not carry a second way to start the app.
+ * it carries all four, and that it does not carry a second way to start the app.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
@@ -59,7 +59,7 @@ function renderRail(over: { save?: SaveState | null } = {}) {
 
 afterEach(() => cleanup())
 
-describe("R6 — what the rail carries at rest", () => {
+describe("what the rail carries at rest", () => {
   it('carries the composer with its kind picker, the app status, and the description', () => {
     renderRail()
 
@@ -70,10 +70,9 @@ describe("R6 — what the rail carries at rest", () => {
   })
 
   it('★ carries the PUBLISH status, and no longer the workspace sentence', () => {
-    // TWO DIFFERENT STATUSES (plan 002, U4). This section is about publishing — what is live,
-    // what was approved, what the citizen last saved. Whether the CONTAINER is up is a different
-    // question, and the boards give it to the pane, where a citizen is already looking for their
-    // app. The rail carried it too, which meant two renderers for one sentence.
+    // TWO DIFFERENT STATUSES: publishing (live / approved / last saved) vs. whether the
+    // CONTAINER is up — the boards give that to the pane, where a citizen is already looking
+    // for their app. The rail carried it too, which meant two renderers for one sentence.
     const status = screen.queryByTestId('rail-app-status')
     expect(status).toBeNull() // nothing rendered yet — guards against a stale query below
     renderRail()
@@ -83,7 +82,7 @@ describe("R6 — what the rail carries at rest", () => {
     expect(block.textContent).not.toMatch(/your app is saved/i)
   })
 
-  it('★ carries NO start control — R3 says exactly one, and it is the pane\'s', () => {
+  it('★ carries NO start control — exactly one exists, and it is the pane\'s', () => {
     // The map OFFERS the start action here; the rail deliberately does not render it. A second
     // Start button on the same screen satisfies "exactly one control starts it" with two, and both
     // would race the same idempotent endpoint.
@@ -127,17 +126,16 @@ describe('the save half, which exists only while the app is running', () => {
   })
 
   it('never reports "everything is saved" from an unknown state', () => {
-    // R62: where the platform cannot tell, it says so rather than reporting there is nothing to
+    // where the platform cannot tell, it says so rather than reporting there is nothing to
     // lose. This is the half a loose assertion on the null arm would let through.
     renderRail({ save: save({ dirty: null }) })
     expect(screen.getByTestId('rail-save-state').textContent).not.toMatch(/everything is saved/i)
   })
 
   it('★ says only whether the container has moved on — the VERSION is the panel\'s row now', () => {
-    // The commit line here duplicated a fact the panel states properly: which version the
-    // citizen last saved, with its date, from object-store metadata and with no container in
-    // the request path. This block answers the question only a RUNNING container can — whether
-    // it holds work the saved bundle does not — and says nothing about versions.
+    // The commit line duplicated a fact the panel states properly — which version was last
+    // saved, with its date, from object-store metadata, no container involved. This block
+    // answers what only a RUNNING container can: whether it holds work the saved bundle does not.
     renderRail({ save: save({ savedHead: 'ccccccc1111111' }) })
 
     const block = screen.getByTestId('rail-save-state')
@@ -149,7 +147,7 @@ describe('the save half, which exists only while the app is running', () => {
 
 describe('the publishing chip and the recents survive the rewrite', () => {
   it('draws no chip and no project name of its own — both are the toolbar row\'s', () => {
-    // THE RAIL SURRENDERED ITS HEADER (plan 002, U2). Back, the project name, the status chip and
+    // THE RAIL SURRENDERED ITS HEADER. Back, the project name, the status chip and
     // the rename control lived here, inside a 400px column, which is why the name truncated at the
     // rail's width and vanished entirely on a collapse — the opposite of what the collapse board
     // draws. They are drawn once by the shell now, above both columns.

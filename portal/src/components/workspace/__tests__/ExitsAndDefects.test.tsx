@@ -1,5 +1,5 @@
 /**
- * THE UPHELD DEFECTS IN THESE FILES (plan 002, U11).
+ * THE UPHELD DEFECTS IN THESE FILES.
  *
  * Five things the review upheld, gathered here because they share one property: every one of them
  * is a silence. Nothing on the screen was wrong — something simply did not happen, and the citizen

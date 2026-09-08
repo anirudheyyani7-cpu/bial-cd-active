@@ -14,11 +14,8 @@ import {
 } from '../buildSessionApi'
 import { ApiError } from '../apiError'
 
-/**
- * A fake `Response` for the injected `fetchImpl`. `json()` is re-callable (unlike a
- * real body) and `clone()` returns itself, so `authFetch`'s 403 suspension probe can
- * read the clone while the client still reads the original.
- */
+/** A fake `Response`: `json()` is re-callable and `clone()` returns itself, so the
+ *  403 suspension probe can read the clone while the client reads the original. */
 function res(status: number, body: unknown): Response {
   const ok = status >= 200 && status < 300
   const response = { ok, status, json: async () => body, clone: () => response }
@@ -47,30 +44,26 @@ function headerOf(m: ReturnType<typeof jsonFetch>, name: string, call = 0): stri
 }
 
 // The frozen `buildSessionClient` member set — the portal's mirror of the backend's
-// `test_abstractmethod_set_equals_the_c2_contract` (`test_base.py`). A drifted mock bag is
-// what this guards: the client interface trimmed to five members here, but one call site
-// (`ConversationSurface-memo.test.jsx`) went on mocking `acquireLock` / `renewLock` / `releaseLock` /
-// `heartbeat` anyway, because nothing forced its stale keys to be read against the real
-// surface. This test fails LOUDLY the moment `buildSessionClient` gains or loses a member,
-// so the next removal cannot leave the same kind of residue behind unnoticed — and it did its
-// job again for `forceEnd` (U33), which is why it is DOWN to three and not quietly still four.
+// `test_abstractmethod_set_equals_the_pinned_contract`. A drifted mock bag is what this
+// guards: one call site (`ConversationSurface-memo.test.jsx`) went on mocking `acquireLock` /
+// `renewLock` / `releaseLock` / `heartbeat` after they were gone, unnoticed because nothing
+// forced its stale keys to be read against the real surface. This test fails LOUDLY the
+// moment `buildSessionClient` gains or loses a member, so the next removal cannot leave the
+// same kind of residue behind unnoticed — it did its job again for `forceEnd`'s removal,
+// which is why the set is DOWN to three and not quietly still four.
 const _CLIENT_MEMBERS = new Set(['relaunchPreview', 'stop', 'getStatus'])
 
 describe('buildSessionApi — buildSessionClient member set (inertness guard)', () => {
-  it('exposes exactly the three surviving C3 client operations', () => {
+  it('exposes exactly the three surviving client operations', () => {
     expect(new Set(Object.keys(buildSessionClient))).toEqual(_CLIENT_MEMBERS)
   })
 })
 
-describe('buildSessionApi — control operations (C3 §2)', () => {
-  // ─── THE 409 MAPPING, RE-POINTED OFF THE DELETED `start` (`postJson`, shared) ──────────────
-  //
-  // `start` is gone — a composer send is a TURN, so the wrapper had no caller — and these two
-  // cases rode it as a VEHICLE: what they actually pin lives in `postJson`, which every mutating
-  // call in this module goes through. Deleting them with the wrapper would have taken the typed
-  // 409 with them, so they are re-pointed onto `relaunchPreview`, which is live (`StartAppControl`
-  // and `RailComposer` call it directly) and is now the only caller that can raise this error.
-  it('a 409 build_session_already_active surfaces the existing sessionId as a typed error (C3 §2.1/§6)', async () => {
+describe('buildSessionApi — control operations', () => {
+  // `start` is gone — a composer send is a TURN, so the wrapper had no caller — but the typed
+  // 409 mapping these two cases pin lives in the shared `postJson`, not in `start` itself. They
+  // are re-pointed onto `relaunchPreview`, now the only live caller that can raise this error.
+  it('a 409 build_session_already_active surfaces the existing sessionId as a typed error', async () => {
     const fetchImpl = jsonFetch(409, { error: { code: 'build_session_already_active', message: 'You already have a build running.' }, sessionId: 'existing-9' })
     const err = await relaunchPreview({ projectId: 'p1' }, { fetchImpl }).catch((e: unknown) => e)
 
@@ -88,16 +81,15 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect((err as BuildSessionAlreadyActiveError).existingSessionId).toBe('nested-42')
   })
 
-  it('relaunchPreview: 200 maps {appId, previewUrl, status} — no sessionId/createdAt on this shape (Decision 6, #43)', async () => {
+  it('relaunchPreview: 200 maps {appId, previewUrl, status} — no sessionId/createdAt on this shape', async () => {
     const READY_URL = 'https://app.example.azurecontainerapps.io/'
     const fetchImpl = jsonFetch(200, { appId: 'a1', previewUrl: READY_URL, status: 'ready' })
     const out = await relaunchPreview({ projectId: 'p1' }, { fetchImpl })
 
-    // Two absent fields, two DIFFERENT defaults, and the asymmetry is the point.
-    // `restoredFromFailedBuild` absent reads FALSE — the label is an aid, not a gate, so silence
-    // claims nothing. `ready` absent reads TRUE — every server predating that field only ever
-    // replied once the app was serving, so defaulting it false would paint a permanent
-    // "not ready yet" over correct responses.
+    // Two absent fields, two DIFFERENT defaults: `restoredFromFailedBuild` absent reads FALSE
+    // (the label is an aid, not a gate — silence claims nothing), `ready` absent reads TRUE
+    // (every server predating that field only replied once serving, so defaulting false would
+    // paint a permanent "not ready yet" over correct responses).
     expect(out).toEqual({
       appId: 'a1',
       previewUrl: READY_URL,
@@ -105,19 +97,17 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
       restoredFromFailedBuild: false,
       ready: true,
     })
-    // A mutating POST: carries the CSRF header (KTD-2) and the projectId body to the relaunch route.
     expect(headerOf(fetchImpl, 'X-CSRF-Token')).toBe(CSRF)
     expect(JSON.parse(optsOf(fetchImpl).body as string)).toEqual({ projectId: 'p1' })
     expect(optsOf(fetchImpl).method).toBe('POST')
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/build-sessions/relaunch')
   })
 
-  it('relaunchPreview: carries `ready: false` through — a framable URL that is not serving yet (R6/SL-20)', async () => {
-    // The attach arm now hands back the live container's URL even when the app has not answered
-    // within its readiness budget, because the alternative — condemning the container — rolled a
-    // citizen back to their last save. The pane needs to be able to tell those two apart, so a
-    // `false` here must survive decoding rather than being flattened by the absent-reads-true
-    // default that protects older servers.
+  it('relaunchPreview: carries `ready: false` through — a framable URL that is not serving yet', async () => {
+    // The attach arm hands back the live container's URL even when it hasn't answered within
+    // its readiness budget — the alternative, condemning the container, rolled a citizen back
+    // to their last save. So `false` here must survive decoding, not fall to the absent-reads-true
+    // default meant for older servers.
     const URL_NOT_SERVING = 'https://app.example.azurecontainerapps.io/'
     const fetchImpl = jsonFetch(200, {
       appId: 'a1',
@@ -134,7 +124,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect(out.status).toBe('provisioning') // …and `status` does not claim READY over it
   })
 
-  it('relaunchPreview: the wire restoredFromFailedBuild=true survives the mapping (U6/F1)', async () => {
+  it('relaunchPreview: the wire restoredFromFailedBuild=true survives the mapping', async () => {
     const fetchImpl = jsonFetch(200, {
       appId: 'a1', previewUrl: 'https://x.example/', status: 'ready', restoredFromFailedBuild: true,
     })
@@ -156,7 +146,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect((statusErr as ApiError).status).toBe(500)
   })
 
-  it('getStatus: previewUrl is null before ready and the stable URL once ready; lastSeq present after the first envelope (C3 §2.3)', async () => {
+  it('getStatus: previewUrl is null before ready and the stable URL once ready; lastSeq present after the first envelope', async () => {
     const before = jsonFetch(200, { sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'building', previewUrl: null, lastSeq: 3, createdAt: 'c', updatedAt: 'u' })
     const b = await getStatus('s1', { fetchImpl: before })
     expect(b.previewUrl).toBeNull()
@@ -169,14 +159,13 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect(a.previewUrl).toBe(READY_URL)
     expect(a.status).toBe('ready')
 
-    // A safe GET carries NO CSRF token and no method override (C3 §3).
     expect(headerOf(after, 'X-CSRF-Token')).toBeUndefined()
     expect(optsOf(after).method).toBeUndefined()
   })
 })
 
-describe('buildSessionApi — CSRF discipline (C3 §3, KTD-2)', () => {
-  // RE-POINTED OFF THE DELETED LOCK OPS (U33). This ran a `cases` loop over `acquireLock` /
+describe('buildSessionApi — CSRF discipline', () => {
+  // RE-POINTED OFF THE DELETED LOCK OPS. This ran a `cases` loop over `acquireLock` /
   // `releaseLock`, then over the lone surviving `forceEnd`; with the kill switch gone the loop
   // had nothing to iterate. `relaunchPreview` and `stop` are the mutating session POSTs the
   // portal still makes, and the contract — every one of them carries the token — is unchanged.
@@ -200,21 +189,21 @@ describe('buildSessionApi — CSRF discipline (C3 §3, KTD-2)', () => {
   })
 })
 
-describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
+describe('buildSessionApi — lock ops + fail-closed errors', () => {
   it('stop: sends {reason} when supplied, and a valid empty StopBuildRequest {} otherwise', async () => {
     const withReason = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', { reason: 'user cancelled' }, { fetchImpl: withReason })
     expect(JSON.parse(optsOf(withReason).body as string)).toEqual({ reason: 'user cancelled' })
 
     // A bare stop still carries a body — {} is a complete StopBuildRequest (reason
-    // defaults to None), so it always satisfies the body model (C3 §2.2). The bodyless
+    // defaults to None), so it always satisfies the body model. The bodyless
     // POSTs, by contrast, send NO body (asserted below via the absent Content-Type).
     const noReason = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', {}, { fetchImpl: noReason })
     expect(JSON.parse(optsOf(noReason).body as string)).toEqual({})
   })
 
-  // RE-POINTED OFF `forceEnd` (U33), the same way it was once re-pointed onto it off
+  // RE-POINTED OFF `forceEnd`, the same way it was once re-pointed onto it off
   // `acquireLock` / `releaseLock`. The CONTRACT is `postJson`'s `body === undefined` branch — send
   // no JSON body and therefore no Content-Type — and the kill switch was only ever its vehicle.
   // The branch is still live and still has three callers, all project-scoped commands that name
@@ -235,10 +224,8 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
   // AND the route went in the same change: no other call can answer that code. The generic
   // non-2xx → `ApiError` mapping it rode is pinned by the 409 and boundary cases either side.
 
-  // The `renew` 409 and `heartbeat` 404 tests lived here and are gone with their functions. Both
-  // proved a real contract, and both proved it about code no caller could reach: U13 deleted the
-  // keep-alive loop that was the only consumer, so the assertions had been describing an unused
-  // module surface ever since. The backend routes keep their own tests.
+  // `renew`'s 409 and `heartbeat`'s 404 are not tested here — the keep-alive loop that called
+  // them is gone. The backend routes keep their own tests.
 
   it('a malformed success body fails at the boundary rather than corrupting state downstream', async () => {
     const fetchImpl = jsonFetch(200, { status: 'ready' }) // no sessionId
@@ -247,10 +234,9 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
     expect((err as ApiError).status).toBe(500)
   })
 
-  it('a session body with NO projectId fails at the boundary — it drives the 409 reattach/block routing (finding #31)', async () => {
+  it('a session body with NO projectId fails at the boundary — it drives the 409 reattach/block routing', async () => {
     // getStatus is the ONE reader of this guard now: the projectId comparison is the
-    // reattach-vs-block gate, and `start` — which used to anchor the same routing on the created
-    // session — is gone with its wrapper.
+    // reattach-vs-block gate that `start`, gone with its wrapper, used to anchor.
     const statusImpl = jsonFetch(200, { sessionId: 's1', appId: 'a1', status: 'ready', previewUrl: null, lastSeq: 1, createdAt: 'c', updatedAt: 'u' })
     const statusErr = await getStatus('s1', { fetchImpl: statusImpl }).catch((e: unknown) => e)
     expect(statusErr).toBeInstanceOf(ApiError)
@@ -258,7 +244,7 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
   })
 })
 
-describe('asReclaimBlocked (#83)', () => {
+describe('asReclaimBlocked', () => {
   it('reads the occupying project off the 409', () => {
     const err = { code: 'sandbox_reclaim_blocked', details: { projectId: 'p-a', projectName: 'Lost & Found', dirty: true } }
     expect(asReclaimBlocked(err)).toEqual({
@@ -266,18 +252,16 @@ describe('asReclaimBlocked (#83)', () => {
       projectName: 'Lost & Found',
       dirty: true,
       building: false,
-      // ABSENT READS AS FALSE (plan 002, U9). An older backend that does not send the field
-      // cannot have an agent to report, and defaulting the other way would tell every citizen
-      // their other project is busy.
+      // ABSENT READS AS FALSE — an older backend with no such field has no agent to report,
+      // and defaulting true would tell every citizen their other project is busy.
       agentWorking: false,
     })
   })
 
   it('★ carries `agentWorking` — the WIDE fact, separate from `building`', () => {
-    // `building` marks only turns whose toolset can WRITE, and the server records why widening
-    // it was wrong: it put a stop button and a hammer icon in front of someone who had only
-    // asked a question. This is the wide answer, for a different sentence the dialog needs to be
-    // able to say over a workspace it has just reported as holding nothing to lose.
+    // `building` marks only turns whose toolset can WRITE — widening it put a stop button and
+    // a hammer icon in front of someone who had only asked a question. `agentWorking` is the
+    // wide fact the dialog needs for a different sentence.
     const err = {
       code: 'sandbox_reclaim_blocked',
       details: { projectId: 'p-a', projectName: 'A', dirty: false, building: false, agentWorking: true },
@@ -315,15 +299,12 @@ describe('asReclaimBlocked (#83)', () => {
     expect(asReclaimBlocked(new Error('boom'))).toBeNull()
   })
 
-  // THE WIRE, END TO END — the tests above hand-build `{code, details}` and so would all
-  // still pass if `postJson` stopped carrying `details` at all, which is exactly the
-  // regression this feature already shipped once: the relaunch button rendered the raw error
-  // text instead of the dialog, because `readApiError` populated `details` and `postJson`
-  // dropped it on the floor. Drive the real 409 envelope through the real client instead.
-  //
-  // The body below is `reclaim_blocked_response`'s output verbatim (`live_build.py`) — a flat
-  // `error` object, NOT a nested `details` key. If the backend ever reshapes it, this goes red
-  // on the same commit rather than in someone's browser.
+  // END TO END: the tests above hand-build `{code, details}` and would still pass if `postJson`
+  // stopped carrying `details` at all — the exact regression that shipped once (the relaunch
+  // button showed the raw error text instead of the dialog). This drives the real 409 through
+  // the real client. The body is `reclaim_blocked_response`'s output verbatim (`live_build.py`),
+  // a flat `error` object, NOT a nested `details` key — if the backend reshapes it, this goes
+  // red on the same commit.
   const WIRE_409 = {
     error: {
       message: '“Lost & Found” is still open and has unsaved changes.',
@@ -405,13 +386,9 @@ describe('asReclaimBlocked — a project that is still being built', () => {
 })
 
 /**
- * `fetchPreviewState` — the hand-written mirror of the server's preview-state shape.
- *
- * This module narrows the wire by hand, so a field the server sends and this parser does not
- * read is discarded SILENTLY — no type error, no failing test, just a feature that never
- * works. Both facts pinned below were exactly that: `starting` is a server state the narrower
- * had to stop swallowing, and `occupyingProjectId` is the only thing the "another project
- * holds your workspace" remedy has to navigate with.
+ * `fetchPreviewState` narrows the wire by hand, so a field the server sends that this parser
+ * doesn't read is discarded SILENTLY — no type error, no failing test, just a dead feature.
+ * `starting` and `occupyingProjectId`, pinned below, are exactly that risk.
  */
 /** A clock that jumps rather than waits: the CEILING's behaviour is the thing under test, and a
  *  test that genuinely waited two minutes for it is a test nobody runs. */
@@ -425,15 +402,14 @@ function fastClock() {
   }
 }
 
-describe('handOverWorkspace — the stop → save → release ordering (#83)', () => {
-  /** Records the path of every call in order, and answers each of the three routes plausibly. */
+describe('handOverWorkspace — the stop → save → release ordering', () => {
   function recordingFetch(stopState = 'stopped') {
     const seen: string[] = []
     const fetchImpl = vi.fn<FetchImpl>(async (url: string) => {
       seen.push(new URL(url, 'http://x').pathname)
       if (url.endsWith('/save')) return res(200, { appId: 'a-1', headSha: 'deadbeef' })
       if (url.endsWith('/release')) return res(200, { released: true })
-      // THREE NAMED STATES, never a boolean (plan 002, U9) — see `StopState`. The old wire said
+      // THREE NAMED STATES, never a boolean — see `StopState`. The old wire said
       // `{stopped: true}` unconditionally, which is exactly the confusion this replaced.
       return res(200, { state: stopState })
     })
@@ -542,7 +518,7 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 
   /**
-   * THE POLL'S OWN FAILURE MODES (review #38, review #74).
+   * THE POLL'S OWN FAILURE MODES.
    *
    * `awaitStopSettled` retries a read that failed and abandons one that hangs, and both are
    * documented as load-bearing for the dialog not hanging forever — but every fetch above
@@ -643,13 +619,9 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 
   it('★ at the ceiling it says the other app is still saving, not that anything failed', async () => {
-    // THE OWNER'S DECISION ON REVIEW #45, pinned as copy. The server's stop budget is now a little
-    // over eight minutes — its derivation covers the snapshot a build's unwind writes — while the
-    // browser's wait deliberately stays at two, because nobody should be held in front of a modal
-    // for eight. That makes arriving here ORDINARY rather than alarming: the likeliest cause is a
-    // large app being packed away exactly as it should be, and the stop is still running behind
-    // the sentence. So the one line the citizen reads must not read as a failure in the other
-    // project, and it must point at the remedy, which is only to ask again.
+    // PINNED AS COPY. The server's stop budget runs ~8 minutes; the browser's wait deliberately
+    // stays at 2, so arriving here is ORDINARY, not alarming — likely a large app being packed
+    // away as it should. The line must not read as a failure, and must point at the remedy.
     const { fetchImpl, reads } = pollingFetch(async () => res(200, { state: 'still_running' }))
 
     const err = await handOverWorkspace('p-1', false, { fetchImpl }, undefined, fastClock()).catch(
@@ -663,22 +635,16 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
     expect((err as ApiError).message).not.toMatch(
       /fail|could not|did not|timed out|container|sandbox|server|api/i,
     )
-    // AND IT IS THE TWO-MINUTE WAIT THAT PRODUCED IT — two assertions, because those are two
-    // separate decisions and only one of them is this test's business to hold.
-    //
-    // HOW LONG A CITIZEN IS HELD is the owner's decision, and the one worth a fixed number:
-    // raising the ceiling to the server's eight-minute budget is exactly the change that must not
-    // pass, and it fails here by name rather than through an arithmetic nobody would read.
+    // HOW LONG A CITIZEN IS HELD is fixed and worth a hard number: raising the ceiling to the
+    // server's 8-minute budget is exactly the change that must not pass, so it fails by name.
     expect(STOP_CEILING_MS).toBe(2 * 60 * 1000)
-    // HOW OFTEN IT ASKS is a decision about traffic, and it must be free to move without this
-    // going red for a reason that has nothing to do with the citizen. So the count is derived
-    // rather than written out as 100: `Math.ceil`, because the loop checks the deadline BEFORE
-    // each read, so a poll that does not divide the ceiling evenly still gets its last one in.
+    // HOW OFTEN IT ASKS is free to move (a traffic decision), so the count is derived —
+    // `Math.ceil` because the loop checks the deadline BEFORE each read, so an unevenly
+    // dividing ceiling still gets its last poll in.
     expect(reads()).toBe(Math.ceil(STOP_CEILING_MS / STOP_POLL_MS))
   })
 
   it('carries a reclaim refusal out to the caller rather than swallowing it', async () => {
-    // The dialog is the only thing mounted that can report a failed hand-over.
     const fetchImpl = jsonFetch(409, {
       error: {
         message: '“Lost & Found” is still open and has unsaved changes.',
@@ -693,14 +659,13 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 })
 
-describe('fetchPreviewState — the wire mirror (C3 §8.3)', () => {
+describe('fetchPreviewState — the wire mirror', () => {
   const previewFetch = (body: unknown) =>
     ({ fetchImpl: async () => res(200, body) })
 
-  it('narrows `starting` to itself, not to `unknown` (AE54a)', async () => {
-    // The one that degrades silently: a closed tuple without `starting` resolves it through
-    // the fallback to `unknown`, so the pane says "we could not check" and offers a retry for
-    // a start that is actively under way.
+  it('narrows `starting` to itself, not to `unknown`', async () => {
+    // Without `starting`, a closed tuple falls back to `unknown` — the pane would say "we
+    // could not check" and offer a retry for a start actively under way.
     const state = await fetchPreviewState('p1', previewFetch({ state: 'starting', alive: false }))
     expect(state.state).toBe('starting')
   })
@@ -720,9 +685,8 @@ describe('fetchPreviewState — the wire mirror (C3 §8.3)', () => {
   })
 
   it('leaves a withheld attribution null on BOTH fields rather than inventing one', async () => {
-    // The server withholds the whole attribution when it cannot map the live container to a
-    // project this user owns — naming the wrong project is worse than naming none, and that
-    // now applies to the id as much as to the name.
+    // The server withholds the whole attribution when it can't map the container to an owned
+    // project — naming the wrong project is worse than naming none, id included now.
     const state = await fetchPreviewState('p1', previewFetch({ state: 'slot_taken', alive: false }))
     expect(state.occupyingProjectName).toBeNull()
     expect(state.occupyingProjectId).toBeNull()

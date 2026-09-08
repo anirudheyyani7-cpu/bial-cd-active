@@ -8,9 +8,8 @@ The reconciler's own four-answer logic is pinned in `tests/services/deploy/test_
 its scheduled wrapper in `tests/workers/test_deploy_reconcile.py`. This file pins the ROUTE: who
 may call it, what the wire body says, what reaches the audit trail, and which failures are
 retryable — the same set its three siblings carry (`test_sandbox_reconcile.py`,
-`test_database_reconcile.py`, `test_storage_reconcile.py`), because `.claude/rules/testing.md`
-asks for RBAC to be tested rather than reasoned about.
-"""
+`test_database_reconcile.py`, `test_storage_reconcile.py`), because this repo's testing
+convention asks for RBAC to be tested rather than reasoned about."""
 
 from __future__ import annotations
 
@@ -175,10 +174,9 @@ async def test_a_row_arm_could_not_answer_for_is_not_reported_as_resolved(
 async def test_the_audit_row_carries_counts_but_no_deployment_or_app(
     client, db_session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Counts only (`.claude/rules/security.md`), the same split every sibling report makes. A
-    deployment id or an app name in the trail turns an accountability record into a durable
-    inventory of who deployed what — and unlike the sandbox report, this one has no operator need
-    for names at all, so nothing identifying travels in the response either."""
+    """Counts only, the same split every sibling report makes — the rule is on `append_audit`.
+    Unlike the sandbox report, this one has no operator need for names at all, so nothing
+    identifying travels in the response either."""
     admin = await _admin(db_session)
     app, deployment_id = await _abandoned(db_session)
     _wire(monkeypatch, db_session, _Arm(fqdn="pub-x.example.io", image=f"reg/app@{_DIGEST}"))

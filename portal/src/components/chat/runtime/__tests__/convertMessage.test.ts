@@ -1,8 +1,8 @@
 /**
  * The seam's own tests. What they pin, in order of how expensive the failure is:
  *
- *  - the same fixture converts identically whether it arrived live or on reload (AE43);
- *  - a step carries LABEL AND STATE and nothing else (R36's wall, asserted on the object);
+ *  - the same fixture converts identically whether it arrived live or on reload;
+ *  - a step carries LABEL AND STATE and nothing else (a wall, asserted on the object);
  *  - a duplicate id throws here rather than silently losing a turn inside the runtime;
  *  - the predicate that decides whether the library mints an id of its own.
  */
@@ -80,12 +80,10 @@ describe('convertMessage — parts', () => {
   })
 })
 
-describe('R36 — the wall is the converter, not a promise at the draw site', () => {
+describe('the wall is the converter, not a promise at the draw site', () => {
   it('drops every platform-internal field a step frame may carry', () => {
-    // The wire's step frame carries `detail.args` and `detail.result`, redacted and clipped but
-    // PRESENT, and the diagnostic frame carries a developer half whose own schema records that
-    // "safe to render verbatim" once produced a stack trace under a file path in a citizen's
-    // chat. A part that never holds the field cannot leak it, however the expander is written.
+    // The wire's step frame carries `detail.args`/`detail.result` — redacted but still PRESENT. A
+    // part that never holds the field cannot leak it, however the expander is written.
     const leaky = {
       ...step(),
       detail: { args: '/srv/app/.env AZURE_KEY=abc', result: 'Traceback (most recent call last)' },
@@ -126,7 +124,7 @@ describe('convertMessage — identity is the server’s', () => {
     expect(convertMessage(message).id).toBe('srv_7_a_3')
   })
 
-  it('AE43: the same reply converts identically live and on reload', () => {
+  it('the same reply converts identically live and on reload', () => {
     // The live assembly and `messagesFromProjection` both produce a `ChatMessage`; ONE converter
     // takes both. Identical output is therefore a property of the shape, not a rule anyone has to
     // remember — which is what makes "one surface, both kinds, live and reloaded" true.

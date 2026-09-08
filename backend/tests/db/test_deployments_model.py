@@ -1,16 +1,14 @@
 """The `deployments` row shape and — the real subject — the partial unique index that
 serializes one-click deploys.
 
-`uq_deployments_one_in_flight` is the first partial index in the repo, and its whole value
-is in the WHERE clause: without it the index would forbid an app from ever being deployed
-twice, and with the wrong predicate it would let two pipelines race for the same container
-app name. So these tests pin BOTH halves — it rejects a second in-flight deploy, and it
-lets a terminal one be superseded — against the real migrated schema, not the ORM's idea
-of it.
+`uq_deployments_one_in_flight` is the first partial index in the repo, and its value is in the
+WHERE clause: without it the index would forbid a second deploy ever, and with the wrong
+predicate it would let two pipelines race for the same container app name. These tests pin both
+halves against the real migrated schema, not the ORM's idea of it.
 
-The claim is exercised in its production form (`ON CONFLICT ... DO NOTHING RETURNING` by
-INFERENCE, since a partial index cannot be an `ON CONSTRAINT` target). A test that used a
-plain INSERT and caught `IntegrityError` would pass while the real claim path was broken.
+Exercised in production form (`ON CONFLICT ... DO NOTHING RETURNING` by INFERENCE, since a
+partial index cannot be an `ON CONSTRAINT` target) — a plain INSERT caught for `IntegrityError`
+would pass while the real claim path was broken.
 """
 
 from __future__ import annotations
@@ -59,7 +57,6 @@ async def test_a_fresh_claim_is_running_and_unfinished(db_session) -> None:
     assert row.step == "claimed"
     assert row.heartbeat_at is not None
     assert row.finished_at is None
-    # Everything the pipeline fills in later starts empty.
     assert row.head_sha is None
     assert row.image_digest is None
     assert row.container_app_name is None

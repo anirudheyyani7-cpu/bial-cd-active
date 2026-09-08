@@ -4,13 +4,10 @@ Revision ID: 0016_user_suspended_at
 Revises: 0015_projects
 Create Date: 2026-07-09
 
-Adds the nullable `suspended_at` timestamp to `users` (R10–R13, KD-6): NULL means
-active; a timestamp means a super-admin blocked the account platform-side at that
-instant. Nullable-with-no-default is the correct shape (every existing and new row
-starts active), so this is a plain additive column — trivially reversible.
-
-Chains off `0015_projects` to keep the single migration head
-(`tests/test_alembic_single_head.py`).
+Adds the nullable `suspended_at` timestamp to `users`: NULL means active, a timestamp means a
+super-admin blocked the account. Nullable-with-no-default is correct (every row starts
+active), so this is a plain additive, trivially reversible column. Chains off `0015_projects`
+to keep the single migration head (`tests/test_alembic_single_head.py`).
 """
 
 from __future__ import annotations

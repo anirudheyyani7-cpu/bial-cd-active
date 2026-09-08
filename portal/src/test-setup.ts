@@ -1,26 +1,21 @@
 /**
  * THE ONE PLACE THE TEST ENVIRONMENT IS TAUGHT WHAT JSDOM DOES NOT IMPLEMENT.
  *
- * Before this file the portal had NO `setupFiles` key at all, and the gap showed: `scrollIntoView`
- * was stubbed per-file in seventeen files, `MarketplacePage.test.tsx` stubbed all four of Radix
- * Select's requirements with a comment saying the shim lived there *because there was nowhere
- * else to put it*, and `ResizeObserver`, `IntersectionObserver` and `navigator.clipboard` had zero
- * occurrences anywhere in `src/` — not because nothing needed them, but because nothing that
- * needed them could be rendered at all.
+ * WHY THIS EXISTS. Before this file the portal had NO `setupFiles` at all: `scrollIntoView`
+ * was stubbed per-file in seventeen files, `MarketplacePage.test.tsx` stubbed all four of
+ * Radix Select's requirements with a comment saying the shim lived there because there was
+ * nowhere else to put it, and `ResizeObserver`/`IntersectionObserver`/`navigator.clipboard`
+ * had zero occurrences anywhere in `src/` — not because nothing needed them, but because
+ * nothing that needed them could render at all.
  *
- * ── WHAT IS DELIBERATELY NOT DONE HERE ──
+ * WHAT IS DELIBERATELY NOT DONE: the seventeen per-file `scrollIntoView` stubs stay — removing
+ * them is a mechanical sweep with its own risk (a stub shaped differently than assumed), and
+ * folding that in here would leave a red suite ambiguous between this file and that sweep.
  *
- * The seventeen per-file `scrollIntoView` stubs are NOT removed. Removing them is a mechanical
- * sweep with one real risk — a file that relied on a differently-shaped stub — and folding it in
- * here would mean a red suite could be either this file or that sweep. The blast radius of adding
- * `setupFiles` is kept to "things that were previously impossible".
- *
- * ── EVERY DEFAULT IS TODAY'S BEHAVIOUR ──
- *
- * A shim that changes what tests observe is a shim that rewrites the suite. `matchMedia` reports
- * `matches: false`, so `usePrefersReducedMotion` keeps returning "animate" exactly as it does now
- * when the function is absent entirely. The observers do nothing rather than firing synthetic
- * callbacks. Nothing here makes an assertion pass that would otherwise fail.
+ * EVERY DEFAULT IS TODAY'S BEHAVIOUR: a shim that changes what tests observe rewrites the
+ * suite. `matchMedia` reports `matches: false` (same as the hook seeing no function at all);
+ * observers do nothing rather than firing synthetic callbacks. Nothing here makes an
+ * assertion pass that would otherwise fail.
  */
 // No `jest-dom` import: the suite asserts with plain vitest matchers throughout, and adding the
 // package here would put a new dependency in front of every one of the 103 existing test files
@@ -84,16 +79,16 @@ Object.defineProperty(window, 'matchMedia', {
 // ── Element methods jsdom leaves undefined ───────────────────────────────────────────────────
 // Radix Select calls all four while opening: it captures the pointer to track a drag-select, and
 // scrolls the highlighted item into view. Without them the component throws before it renders,
-// which is why three test files stub them by hand today. Plan F adds a Radix Select to the
-// history filter; three lines here are the difference between that landing and its implementer
-// re-deriving a per-file stub from a comment that will by then be out of date.
+// which is why three test files stub them by hand today. A future Radix Select on the history
+// filter will need the same stubs; three lines here are the difference between that landing and
+// its implementer re-deriving a per-file stub from a comment that will by then be out of date.
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
   return false
 }
 Element.prototype.setPointerCapture ??= function setPointerCapture() {}
 Element.prototype.releasePointerCapture ??= function releasePointerCapture() {}
-// The FIFTH, added when the thread's viewport arrived (U17): `useThreadViewportAutoScroll` calls
+// The FIFTH, added when the thread's viewport arrived: `useThreadViewportAutoScroll` calls
 // `scrollTo` from a `requestAnimationFrame` callback, so its absence surfaces as an UNCAUGHT
 // exception rather than a failing assertion — the test that provoked it has usually already
 // passed, and the message names a library file nobody edited. jsdom implements `scrollTo` on
@@ -101,9 +96,9 @@ Element.prototype.releasePointerCapture ??= function releasePointerCapture() {}
 Element.prototype.scrollTo ??= function scrollTo() {}
 
 // ── Clipboard ────────────────────────────────────────────────────────────────────────────────
-// A SPY, not a stub, and reset between tests. N1's copy button is the only consumer and its
+// A SPY, not a stub, and reset between tests. The copy button is the only consumer and its
 // failure path is a requirement, not a nicety: clipboard writes reject on insecure origins and
-// under a denied permission, and R65 says the citizen is told. A shim that can only succeed
+// under a denied permission, and the citizen must be told. A shim that can only succeed
 // makes the half that matters untestable.
 //
 // It is re-installed in `beforeEach` rather than once at module scope because a test that calls
@@ -130,8 +125,8 @@ beforeEach(() => {
 // It is not a tidiness problem. A leaked hook is still subscribed: one
 // `document.dispatchEvent(new Event('visibilitychange'))` reaches every tree a previous test
 // left standing, so a poll-counting assertion measures its own file's history rather than its
-// own scenario. It was measured at 18 reads where 2 were intended (#203's cadence work), and
-// it silently inflates any exact-count assertion in a multi-render file.
+// own scenario. It was measured at 18 reads where 2 were intended, and it silently inflates
+// any exact-count assertion in a multi-render file.
 //
 // Registered here rather than in each file for the reason `setupFiles` exists at all: seventeen
 // files once hand-stubbed `scrollIntoView`. `cleanup()` is idempotent, so the many files that

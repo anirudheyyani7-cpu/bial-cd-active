@@ -1,21 +1,13 @@
 /**
- * Open or save an attachment the server already serves, from the object URL
- * `attachmentApi` cached for it. Two helpers, one technique.
+ * Open or save an attachment the server already serves, from the object URL `attachmentApi`
+ * cached for it. Two helpers, one technique.
  *
- * A NEW TAB RATHER THAN A FRAME. The strict main-app CSP blocks embedding a
- * blob:/data: document in an iframe — the same gotcha the builder preview hit —
- * so a PDF, or any other non-image type, cannot be shown in place. A top-level
- * navigation to the object URL is allowed, and is what these do.
- *
- * AN ANCHOR CLICK RATHER THAN window.open(). window.open with `noopener`
- * returns null even on success, so its return value can't tell "popup blocked"
- * from "opened fine". An anchor click from the originating user gesture isn't
- * popup-blocked and needs no such check. What separates viewing from saving is
- * the `download` attribute alone: absent below, the browser renders the PDF
- * inline; present, it writes the file out.
- *
- * NEITHER REVOKES THE URL. Both take one the caller already holds, and the
- * caller's cache owns its lifetime.
+ * NEW TAB, NOT A FRAME: the strict CSP blocks embedding a blob:/data: doc in an iframe (the
+ * builder preview hit the same gotcha), so a top-level navigation to the object URL is used
+ * instead. ANCHOR CLICK, NOT `window.open()`: with `noopener`, `window.open` returns null
+ * even on success, so it can't tell "popup blocked" from "opened fine" — a user-gesture
+ * anchor click needs no such check; `download` alone decides view vs. save. NEITHER REVOKES
+ * THE URL — both take one the caller already holds, and the caller's cache owns its lifetime.
  */
 
 /**

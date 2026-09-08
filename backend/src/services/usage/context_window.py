@@ -1,13 +1,15 @@
 """The per-conversation admission check: how much of the window a conversation already holds.
 
+WHY THIS EXISTS
+
 ★ THE PLATFORM DOES NOT DERIVE THIS NUMBER ANY MORE, AND THAT IS THE WHOLE MODULE. The
 provider returns a token count for every turn it serves; this reads that count. It used to
 re-derive one instead — four characters to the token over a structural walk of the message
 tree, with a flat nominal for an image and another for a document — and the re-derivation was
 wrong in the direction that hurts. A 61-page upload really occupied 153,342 tokens and the
-estimate recorded 1,600, or 0.8% of the hard limit (#194). Every constant that made that
-possible is gone, and nothing estimates in its place: the measurement now comes from the only
-party that can take it.
+estimate recorded 1,600, or 0.8% of the hard limit. Every constant that made that possible is
+gone, and nothing estimates in its place: the measurement now comes from the only party that
+can take it.
 
 ★ THIS IS NOT A SPEND MEASUREMENT, AND THE SEPARATE MODULE IS STILL THE POINT. `weighted_spend`
 and `billable_spend` next door deliberately discount a cache READ to a tenth of a fresh token,
@@ -65,7 +67,7 @@ async def enforce_context_limit(
 
     ONE CALLER NOW — `turns.start_turn`, the route that starts a turn on a conversation that
     already exists. This used to be a shared preflight with `transition.build_from_plan`, and
-    the deletion of that second call is a decision, not an oversight (D16). A build chat is
+    the deletion of that second call is a decision, not an oversight. A build chat is
     created EMPTY: the route measured a fresh conversation against a ceiling and could only ever
     admit, so it was a guard that had already gone inert. The bound that does hold on that door
     is the plan's own — `engine.plan_from_call` refuses an offer whose plan is past

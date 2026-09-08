@@ -1,7 +1,7 @@
-"""AppRegistry model shape after the submissions re-shape (0018, APPROVAL U3).
+"""AppRegistry model shape after the submissions re-shape (0018).
 
 Two jobs: (1) PIN the lifecycle state machine — `STATUS_TRANSITIONS` is preserved
-verbatim by the re-shape (R6), and this pin makes any future edit a deliberate,
+verbatim by the re-shape, and this pin makes any future edit a deliberate,
 reviewed change instead of a drive-by; (2) prove the
 ORM's typed submission columns round-trip against the REAL migrated schema (no
 model↔migration drift)."""
@@ -20,17 +20,17 @@ from src.db.models.app_registry import (
 )
 from tests.factories import AppRegistryFactory, UserFactory
 
-# --- the state-machine pin (R6) -------------------------------------------------
+# --- the state-machine pin -------------------------------------------------
 
 
 def test_status_transitions_pinned_verbatim() -> None:
     # Target → allowed sources. If this fails, someone changed the lifecycle state
-    # machine — that must be a deliberate, reviewed decision, not a side effect (R6).
+    # machine — that must be a deliberate, reviewed decision, not a side effect.
     # Two post-Express additions, each one such a decision:
-    #   * `DRAFT: {PENDING}` is U8's withdrawal (P6) — an owner pulls their own pending
+    #   * `DRAFT: {PENDING}` is the withdrawal path — an owner pulls their own pending
     #     submission back out of the queue, and draft stopped being provision-only the day
     #     that route landed.
-    #   * `DISABLED: {APPROVED, DRAFT, REJECTED}` is #163 — the kill switch reaches the
+    #   * `DISABLED: {APPROVED, DRAFT, REJECTED}` is the kill switch reaching the
     #     ordinary catalog member (a self-published DRAFT) and a REJECTED app, not approved
     #     ones only. PENDING is deliberately absent: an app in the review queue is rejected,
     #     not switched off.
@@ -46,7 +46,7 @@ def test_status_transitions_pinned_verbatim() -> None:
     }
 
 
-# --- typed submission columns (D1) ------------------------------------------------
+# --- typed submission columns ------------------------------------------------
 
 
 async def test_fresh_row_has_all_submission_refs_null(db_session) -> None:
@@ -83,7 +83,6 @@ async def test_submission_refs_roundtrip_typed(db_session) -> None:
 
 
 async def test_orm_columns_match_live_schema(db_session) -> None:
-    # No drift between the model and the 0018-migrated DB, in either direction.
     live = set(
         (
             await db_session.execute(

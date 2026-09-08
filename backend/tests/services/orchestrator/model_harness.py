@@ -1,5 +1,5 @@
-"""`FunctionModel` scripting helpers (U4) — drive an agent with a deterministic sequence of model
-turns, each carrying its own `RequestUsage` so per-model-step metering is assertable (KD-1). A run
+"""`FunctionModel` scripting helpers — drive an agent with a deterministic sequence of model
+turns, each carrying its own `RequestUsage` so per-model-step metering is assertable. A run
 ends when the model returns a text turn (no tool call).
 
 Written for the standalone build harness, which drove several runs off one flat list of turns

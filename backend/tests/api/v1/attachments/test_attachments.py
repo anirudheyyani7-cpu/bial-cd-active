@@ -1,5 +1,5 @@
 """POST/GET/DELETE /v1/attachments — validation, magic bytes, quota, owner-scoped
-keys, rate limit (U10). Byte-stable with the Express `/api/attachments` contract.
+keys, rate limit. Byte-stable with the Express `/api/attachments` contract.
 """
 
 from __future__ import annotations
@@ -27,9 +27,8 @@ from tests.pdfs import locked_pdf, pdf_with_pages, restricted_pdf, unreadable_pd
 
 _TTL = settings.auth.access_ttl_seconds
 
-# Minimal magic-valid bytes for the allowlisted types.
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-# A REAL one-page PDF, not just the magic prefix: since U6 a PDF upload is parsed for its page
+# A REAL one-page PDF, not just the magic prefix: a PDF upload is parsed for its page
 # count, so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case,
 # tested by name below.
 _PDF = pdf_with_pages(1)
@@ -72,7 +71,6 @@ async def test_upload_image_then_download(client, db_session, fake_storage) -> N
     assert att["kind"] == "image"
     assert att["key"].startswith(f"att/{user.id}/")
 
-    # Stored under the owner-scoped key; download returns the exact bytes + sniffed type.
     dl = await client.get("/v1/attachments/att_1", headers=headers)
     assert dl.status_code == 200
     assert dl.content == _PNG
@@ -163,7 +161,6 @@ async def test_over_size_cap_rejected(client, db_session) -> None:
 
 async def test_over_quota_rejected(client, db_session) -> None:
     headers, user = await _auth(db_session)
-    # Pre-fill the user's quota to within a few bytes of the 50 MB cap.
     near_cap = 50 * 1024 * 1024 - 4
     db_session.add(
         Attachment(
@@ -256,7 +253,6 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}  # idempotent no-op — B owns nothing
 
-    # A's blob + row survive untouched (no cross-user destruction).
     assert len(fake_storage.objects) == 1
     row = await db_session.scalar(
         select(Attachment).where(
@@ -267,7 +263,7 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
 
 
 async def test_deck_upload_disabled_is_501(client, db_session) -> None:
-    # Deck is gated off (GOTENBERG_URL unset in test) → 501 envelope (migrated _error).
+    # Deck is gated off (GOTENBERG_URL unset in test) → 501 envelope.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
@@ -283,7 +279,7 @@ async def test_deck_upload_disabled_is_501(client, db_session) -> None:
 
 
 async def test_malformed_base64_rejected(client, db_session) -> None:
-    # Exercises the fixed tuple-except branch in _validate_attachment_bytes (U1).
+    # Exercises the tuple-except branch in _validate_attachment_bytes.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
@@ -309,7 +305,7 @@ def test_attachments_openapi_documents_codes() -> None:
     assert {"400", "429", "401", "500"} <= delete
 
 
-# --- conversation link (U9) ---------------------------------------------------
+# --- conversation link --------------------------------------------------------
 
 
 async def test_upload_links_owned_conversation(client, db_session, fake_storage) -> None:
@@ -415,7 +411,7 @@ async def test_upload_malformed_conversation_id_400(client, db_session, fake_sto
 async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
     client, db_session, fake_storage
 ) -> None:
-    # The store-after-parse invariant holds through the U9 change: a corrupt office file is
+    # The store-after-parse invariant holds: a corrupt office file is
     # rejected 400 and leaves no orphaned object, even with a valid conversationId in the body.
     headers, user = await _auth(db_session)
     conv = await ConversationFactory.create(db_session, user.id)
@@ -493,7 +489,7 @@ async def test_rate_limit_enforced(client, db_session) -> None:
     }
 
 
-# --- office / deck branches (U11) ---------------------------------------------
+# --- office / deck branches ---------------------------------------------------
 
 
 async def test_office_upload_extracts_markdown(client, db_session) -> None:
@@ -526,8 +522,6 @@ async def test_office_upload_extracts_markdown(client, db_session) -> None:
 
 
 async def test_upload_non_string_name_400(client, db_session, fake_storage) -> None:
-    # A present wrong-type `name` used to be coerced to "" — the attachment stored nameless
-    # and the SPA lost the filename it renders, with no error.
     headers, _ = await _auth(db_session)
     for bad in (123, ["shot.png"], {"n": "x"}):
         resp = await client.post(
@@ -546,8 +540,8 @@ async def test_upload_non_string_name_400(client, db_session, fake_storage) -> N
 
 
 async def test_upload_over_long_name_400(client, db_session, fake_storage) -> None:
-    # `Attachment.name` is String(512): an over-long name used to sail past the boundary
-    # and 500 at the DB flush instead of 400ing where the client can fix it.
+    # `Attachment.name` is String(512); 513 is one past the boundary — the check must catch
+    # it here, 400ing where the client can fix it, rather than 500ing at the DB flush.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
@@ -634,11 +628,11 @@ async def test_requires_auth(client) -> None:
     assert (await client.post("/v1/attachments", json={})).status_code == 401
 
 
-# --- the PDF page cap (U6 / D4) -----------------------------------------------
+# --- the PDF page cap ---------------------------------------------------------
 #
 # ★ WHAT THIS SECTION IS FOR. A 61-page document measured 153,342 tokens — 77% of the hard
-# context limit — while the guardrail recorded it as 1,600, or 0.8% (#194). The guardrail no
-# longer guesses at all: it reads what the provider reported for a turn it served
+# context limit — while the guardrail recorded it as 1,600, or 0.8%. The guardrail no longer
+# guesses at all: it reads what the provider reported for a turn it served
 # (`test_context_window.py`). That leaves THIS cap as the only bound acting before the provider
 # has seen the file, which is why the page count is checked at admission.
 #
@@ -682,8 +676,8 @@ async def test_a_pdf_one_page_over_the_cap_is_refused_in_plain_words(
     THE COPY IS THE ASSERTION, not decoration. The refusal has to name a limit the person can
     act on ("under 30 pages") and must not hand them the platform's vocabulary — no page
     objects, no parser, no bytes, no library name, no traceback. A body that leaks any of those
-    is the failure this pins, and it is a security property as much as a copy one
-    (`.claude/rules/security.md`: never expose internal errors to the frontend)."""
+    is the failure this pins, and it is a security property as much as a copy one —
+    internal errors must never be exposed to the frontend."""
     headers, _ = await _auth(db_session)
 
     resp = await _upload_pdf(client, headers, "att_over", pdf_with_pages(MAX_PDF_PAGES + 1))
@@ -734,11 +728,11 @@ async def test_a_corrupt_pdf_is_refused_with_the_same_sentence_not_a_500(
 ) -> None:
     """Magic-valid bytes that will not parse.
 
-    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before U6 this was
-    STORED and sent to the model as a document. It must now be refused, and refused as a
-    client error rather than as a server one: a 500 here would be the platform reporting its
-    own failure for the citizen's malformed file, and would put a stack trace one config flag
-    away from the browser.
+    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before the page cap
+    existed this was STORED and sent to the model as a document. It must now be refused, and
+    refused as a client error rather than as a server one: a 500 here would be the platform
+    reporting its own failure for the citizen's malformed file, and would put a stack trace one
+    config flag away from the browser.
 
     It wears the SAME sentence as the over-cap refusal on purpose. There is nothing true and
     useful the platform can tell someone about a PDF it could not read, and a second sentence
@@ -794,13 +788,13 @@ async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
 async def test_an_encrypted_pdf_cannot_lie_its_way_past_the_page_cap(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE BYPASS #194 WAS OPENED BY, AT THE ROUTE THAT HAS TO CLOSE IT.
+    """★ THE BYPASS THAT DEFEATS THE PAGE CAP, AT THE ROUTE THAT HAS TO CLOSE IT.
 
     A permission-restricted PDF — empty user password, so every reader including ours opens it
     unasked — whose catalog DECLARES one page and whose page tree carries twenty thousand. It
-    costs 120 KB, well inside the 4 MB size cap, and before U28 it was admitted: pypdf returns
-    the declared `/Count` unwalked for any encrypted file, so the count the cap compared against
-    was the uploader's own number.
+    costs 120 KB, well inside the 4 MB size cap, and before this check it was admitted: pypdf
+    returns the declared `/Count` unwalked for any encrypted file, so the count the cap compared
+    against was the uploader's own number.
 
     Two assertions, and they pull in opposite directions on purpose. It must NOT be refused for
     encryption — the file is perfectly readable and the 415 would be a lie the citizen cannot
@@ -852,7 +846,7 @@ async def test_a_pptx_is_still_governed_by_the_deck_cap_not_the_new_one(
     """The deck path keeps its own 100-page limit, and the two caps disagreeing is deliberate.
 
     A deck is rendered to a PDF by Gotenberg and counted by `extract/deck.py::count_pdf_pages`
-    — a raw-byte scan that is reliable for LibreOffice output and nothing else. U6 did not
+    — a raw-byte scan that is reliable for LibreOffice output and nothing else. The new cap did not
     reuse it and did not touch it. So a 60-page deck, which is over the new 30-page upload cap
     and under the deck path's 100, still uploads. Wire the new cap into the pptx branch and
     this goes red."""

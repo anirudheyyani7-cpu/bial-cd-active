@@ -1,50 +1,27 @@
 /**
- * THE COMPOSER BOX — one control, on both screens, built on the library's primitives (plan 002, U5).
+ * THE COMPOSER BOX — one control, on both screens, built on the library's primitives.
  *
- * ═══ WHAT THE BOARDS ASK FOR ═══
+ * WHY THIS EXISTS — the project screen and the chat used to hand-roll two independently
+ * drifting boxes; this is the shared `ComposerPrimitive` core instead, gated on the
+ * registered `attachments` adapter, so only the placeholder and what surrounds it differ.
  *
- * One bordered box with the attachment control and the send control INSIDE it, not beside it. The
- * project screen and the chat draw the same control; only the placeholder and what sits above and
- * below it differ. Two independently hand-rolled boxes is how they drifted apart, and one shared
- * core is the fix.
+ * NO CONTROL HERE IS EVER GIVEN A REAL `disabled` — not the textarea, attach or Send, in
+ * any state, including a running turn, a waiting offer or a spent budget: it blurs the
+ * focused element to `document.body` and drops keyboard focus, the recurring "blurs
+ * mid-sentence" defect. Unavailability is worn as `aria-disabled` with the reason in the
+ * accessible name, enforced in the handler; Send is hand-built for the same reason, since
+ * the library's own button hard-disables whenever `queue` (never registered) leaves it
+ * with no send callback.
  *
- * ═══ DECISION 1, SETTLED BY THE OWNER ON 2026-09-02: ADOPT THE LIBRARY COMPOSER ═══
+ * THE SEND PATH IS OURS, the property that matters most: `composer.send()` clears text
+ * BEFORE awaiting and restores it only if the attachment tasks throw, never if the append
+ * does — the defect that once destroyed a citizen's message and staged files. So this box
+ * reads text/attachments at press time, sends them itself, and clears ONLY once the
+ * server accepts — no restore path exists to race with.
  *
- * Adopted here: `ComposerPrimitive.Root` (the form, and its click-blank-space-to-focus),
- * `ComposerPrimitive.Input` (the textarea, its autosize, its paste-to-attach and its Enter
- * handling), `ComposerPrimitive.AddAttachment`, `ComposerPrimitive.Attachments` and
- * `ComposerPrimitive.AttachmentDropzone`. The `attachments` capability is turned on and an adapter
- * registered — those three primitives are gated on it and render nothing without one.
- *
- * ═══ ONE THING IS HAND-BUILT, AND THIS IS WHY, AT THE POINT IT HAPPENS ═══
- *
- * THE SEND CONTROL. `ComposerPrimitive.Send` is made by `createActionButton`, which renders
- * `<button disabled={props.disabled || !callback}>` — a REAL `disabled` attribute — and
- * `useComposerSend` returns no callback while `isRunning && !capabilities.queue`. `queue` is never
- * registered here, so the library's Send would carry a hard `disabled` for the whole of every turn.
- * `disabled` on the focused element blurs it to `document.body`, which is the mechanism behind "it
- * blurs mid-sentence and focus never comes back"; this repo has recorded that twice and forbids it.
- * The boards contradict it directly too — they draw a composer that keeps accepting typing while
- * the agent answers, with a line saying so.
- *
- * So Send is ours: `aria-disabled` for the affordance, the reason in its accessible name, and the
- * enforcement in the handler.
- *
- * ═══ AND THE SEND PATH IS OURS, WHICH IS THE PROPERTY THAT MATTERS MOST ═══
- *
- * `composer.send()` sets `_text = ""` BEFORE it awaits anything, and restores it only if the
- * ATTACHMENT tasks throw — never if the append does. That is exactly the defect that destroyed a
- * citizen's typed message and their staged files one day before this plan was written, and this
- * plan deliberately makes a send WAIT LONGER, which widens that window rather than narrowing it.
- *
- * So this box reads the text and the attachments off the runtime at press time, performs the send
- * itself, and clears ONLY once the server has accepted. A refused send leaves everything exactly
- * where it was, and there is therefore no restore path to race with — the whole class of defect
- * stops existing rather than being guarded.
- *
- * AND ONLY OVER THE CHAT IT WAS SENT IN. This box is not remounted per conversation, so an
- * accepted send can land while a sibling chat is on screen; what it clears is then decided
- * against the chat being typed into rather than the one it belongs to. See `liveConversation`.
+ * AND ONLY OVER THE CHAT IT WAS SENT IN: this box is not remounted per conversation, so
+ * an accepted send can land while a sibling chat is on screen — what it clears is then
+ * decided against the chat being typed into, not the one it belongs to (`liveConversation`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ComposerPrimitive, useAui, useAuiState } from '@assistant-ui/react'
@@ -61,7 +38,7 @@ import { SendRefusal } from './sendRefusal'
 export interface ComposerSubmission {
   text: string
   attachments: PendingAttachment[]
-  /** The conversation this send belongs to, stamped at press time (R60). */
+  /** The conversation this send belongs to, stamped at press time. */
   conversationId: string
 }
 
@@ -80,29 +57,19 @@ export interface ComposerBoxProps {
    */
   unavailableReason: string | null
   /**
-   * THE BOX IS WAITING ON AN ANSWER THAT IS NOT A MESSAGE, and the board draws that as a whole
-   * treatment rather than as a greyed send circle: the input row on a pale ground, the paperclip
-   * dimmed, and the reason sitting where the placeholder was (`PlanReady`, `PlanRevised`).
-   *
-   * IT IS A SEPARATE FLAG FROM `unavailableReason` BECAUSE IT IS A DIFFERENT CLAIM. Send waits for
-   * four reasons and three of them — the text is too long, a reply is arriving, a build is running
-   * — leave the box white on every board that draws them. Only a pending question locks it, so
-   * only a pending question wears the lock.
+   * THE BOX IS WAITING ON AN ANSWER THAT IS NOT A MESSAGE — a whole treatment (pale
+   * ground, dimmed paperclip, reason where the placeholder was), not a greyed send circle
+   * (`PlanReady`, `PlanRevised`). SEPARATE FROM `unavailableReason`: Send waits for four
+   * reasons, three of which (too-long text, a reply arriving, a build running) leave the
+   * box white — only a pending question locks it.
    */
   locked?: boolean
   /**
-   * WHAT THE BOX ACTUALLY KEPT FOR THAT CHAT, once an accepted send has been reconciled — the
-   * conversation the send was stamped with, and the text still standing in its box afterwards.
-   *
-   * IT EXISTS BECAUSE THE BOX DOES NOT ALWAYS EMPTY. A citizen who rewrites the box while the
-   * request is out gets their words left alone (see `doSend`), and a caller that clears its own
-   * copy of the draft on every accepted send would then be deleting text still on screen. Anyone
-   * keeping a second copy has to be told what survived rather than assuming nothing did.
-   *
-   * IT IS EMPTY WHENEVER THE CITIZEN HAS MOVED ON, and that is an answer rather than a shrug:
-   * nothing on screen belongs to the chat that was sent in any more, so nothing of its box
-   * survived. The caller stores exactly what it is told either way and needs no second opinion
-   * about which chat is showing.
+   * WHAT THE BOX KEPT for that chat once an accepted send is reconciled: the
+   * conversation stamped on the send, and whatever text still stands in the box.
+   * Exists because the box does not always empty — a citizen who rewrites it mid-request
+   * keeps their words (see `doSend`), so a caller holding a second draft copy must be told
+   * what survived; empty when the citizen has moved on, a real answer, not a shrug.
    */
   onAccepted?: (conversationId: string, remainingText: string) => void
   /** Rendered inside the box, above the input: the offer strip's locked treatment, and nothing else. */
@@ -133,17 +100,12 @@ export default function ComposerBox({
   const [sending, setSending] = useState(false)
 
   /**
-   * WHICH CHAT IS ON SCREEN NOW, as opposed to the one Send was pressed in — the whole of what
-   * makes the reconciliation below safe.
-   *
-   * THIS BOX IS ONE LONG-LIVED INSTANCE. Flat routing swaps `conversationId` rather than
-   * remounting, so a send still out when the citizen steps to a sibling finishes over somebody
-   * else's composing. `doSend` runs entirely from its press-time closure, so the `conversationId`
-   * beside it is the one the send belongs to and this ref is the one being typed into.
-   *
-   * WRITTEN DURING RENDER rather than in an effect, as `Composer` and `LivePreview` write theirs:
-   * an accepted send resolves in a microtask, which can run before a passive effect has flushed,
-   * and a ref one render behind is the same bug with more steps.
+   * WHICH CHAT IS ON SCREEN NOW, vs. the one Send was pressed in — what makes the
+   * reconciliation below safe. This box is ONE LONG-LIVED INSTANCE (flat routing swaps
+   * `conversationId`, no remount): a send still out when the citizen steps to a sibling
+   * finishes over somebody else's composing, since `doSend`'s press-time closure holds its
+   * own id while this ref holds what's being typed into. WRITTEN DURING RENDER, not an
+   * effect, since an accepted send can resolve before a passive effect flush.
    */
   const liveConversation = useRef(conversationId)
   liveConversation.current = conversationId
@@ -155,20 +117,12 @@ export default function ComposerBox({
   const hasContent = useAuiState((s) => s.composer.text.trim().length > 0) || stagedCount > 0
   const sendUnavailable = unavailableReason !== null || !hasContent || sending
   /**
-   * WHAT THE CONTROL LOOKS LIKE IS A DIFFERENT QUESTION FROM WHETHER IT WILL SEND, and collapsing
-   * the two was a departure from fourteen boards.
-   *
-   * The canvas paints the send circle `#D6DDE4` in exactly two places — `PlanReady` and
-   * `PlanRevised` — and in both the composer is LOCKED by a pending offer, with the greyed circle
-   * sitting beside "Choose one of the two above". Every other board that draws a composer, empty
-   * placeholder and all, draws it teal. So the pale ground means "you may not send", not "you have
-   * not typed anything yet" — and an empty box is the resting state of every screen in the product,
-   * which is how the resting state came to wear the locked treatment.
-   *
-   * It was also a contrast failure the boards do not have: white on `#D6DDE4` is about 1.4:1.
-   *
-   * `sendUnavailable` is untouched and still governs `aria-disabled`, the accessible name and the
-   * refusal in `doSend` — pressing an empty composer still sends nothing.
+   * LOOK vs. WILL-SEND are different questions — collapsing them was a departure from
+   * fourteen boards. The canvas paints the send circle `#D6DDE4` only where a pending
+   * offer LOCKS the composer (`PlanReady`, `PlanRevised`); every other board draws it teal
+   * even empty, so pale ground means "you may not send," not "you haven't typed yet" — and
+   * greying it for an empty box would also fail contrast (white on `#D6DDE4` ~1.4:1).
+   * `sendUnavailable` still governs `aria-disabled` and the refusal in `doSend` untouched.
    */
   const sendLocked = unavailableReason !== null || sending
 
@@ -283,22 +237,12 @@ export default function ComposerBox({
   )
 
   /**
-   * A REFUSED FILE IS SAID OUT LOUD, and it takes TWO wires because the library refuses in two
-   * different places.
-   *
-   * OUR VALIDATOR — the size caps, the per-message file limit, the per-conversation text budget —
-   * runs inside the adapter's `add`, and the library SWALLOWS the throw: both the dropzone and the
-   * input's paste handler wrap `addAttachment` in `try { … } catch {}`. So the adapter reports
-   * through `useRefusalSink` before it throws.
-   *
-   * THE FORMAT CHECK NEVER REACHES US AT ALL. The library filters on the adapter's `accept` string
-   * BEFORE calling `add`, and emits its own `"File type … is not accepted. Accepted types: …"` —
-   * a sentence written for nobody, listing MIME types at someone who dragged in a spreadsheet. So
-   * that arm is intercepted here and answered in the words `attachmentInput.ts` already owns,
-   * which name what IS accepted rather than what was not.
-   *
-   * Either way the file is discarded. What these two wires buy is that the citizen is TOLD —
-   * without them a dropped file vanishes in silence and they believe the model can see it.
+   * A REFUSED FILE IS SAID OUT LOUD — TWO wires, since the library refuses in two places.
+   * Our validator (size/limit caps) runs inside the adapter's `add`, but the library
+   * SWALLOWS that throw (dropzone + paste wrap `addAttachment` in `try {} catch {}`), so
+   * the adapter reports via `useRefusalSink` first. THE FORMAT CHECK NEVER REACHES US: the
+   * library filters on `accept` before `add` and emits its own MIME-type sentence,
+   * intercepted here and answered in `attachmentInput.ts`'s words instead.
    */
   useRefusalSink(onUrgent)
   useEffect(
@@ -372,7 +316,7 @@ export default function ComposerBox({
             placeholder={locked && unavailableReason ? unavailableReason : placeholder}
             data-testid="composer-input"
             rows={1}
-            // NO maxLength. Issue #156 forbids it by name and a test asserts its absence.
+            // NO maxLength — deliberately forbidden, and a test asserts its absence.
             className="max-h-[168px] w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-tertiary placeholder:text-canvas-placeholder focus:outline-none"
           />
 

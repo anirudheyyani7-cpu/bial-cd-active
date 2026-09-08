@@ -1,24 +1,15 @@
-"""THE PER-TURN RESTATEMENT IS GONE — this file is its inertness guard (R17).
+"""THE PER-TURN RESTATEMENT IS GONE — this file is its inertness guard.
 
-WHAT USED TO BE HERE. A cadence: a full restatement of "which mode you are in" every eighth
-turn in the mode, a one-line nudge every fourth between, anchored on the hidden mode-switch
-marker rows so a switch reset the count and the new mode's first turn got an immediate full
-reminder. Eight reminder strings, two engine constants, a marker scanner, and a card-state
-gate that decided which of the Plan variants was safe to send.
+A cadence used to restate "which mode you are in" (full reminder every 8th turn, nudge every
+4th) anchored on mode-switch markers. It went because a chat's kind is now fixed at creation —
+there is no mode to be in, and the ABILITIES available already carry "which chat this is". The
+delivery was also the wrong tier: a `user`-role message on a per-turn cadence, a named
+cache-breaking action.
 
-WHY IT WENT. It was restating a thing that no longer exists. A chat's kind is fixed when it is
-created, so there is no mode to be in and no boundary to re-anchor on; and having a different
-set of ABILITIES is what carries "which chat this is" — the model cannot call a tool it was not
-handed, whatever it was last told. The delivery was also the wrong tier: a `user`-role message
-on a per-turn cadence, which is a named cache-breaking action.
-
-WHY THIS FILE STAYS. Deleting a test suite deletes the evidence that the thing is gone. The
-repo's convention (`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`)
-is that the last link of a removal trace is a guard, not an absence. So: a long conversation
-runs through the real engine and no restatement rides it — and the workspace note, which shares
-the same envelope and the same injection mechanism but is a different claim entirely, still
-rides EVERY turn. That second half is what stops this guard from passing for the wrong reason,
-because "nothing was injected at all" would satisfy the first half on its own.
+This file stays as the removal trace's last link: a long conversation runs through the real
+engine and no restatement rides it. It also checks that the workspace note (same envelope,
+same injection mechanism, different claim) still rides every turn — the check that stops
+"nothing was injected at all" from satisfying the first half for the wrong reason.
 """
 
 from __future__ import annotations
@@ -59,7 +50,7 @@ _CTX = PromptContext(user_name="Ada", project_name="Visitors", project_descripti
 
 @pytest.fixture(autouse=True)
 def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every kind pins the project's LIVE container now (R18) — a Plan turn attaches a sandbox
+    """Every kind pins the project's LIVE container now — a Plan turn attaches a sandbox
     exactly like a Build turn — so a turn dies at the workspace pin before the model ever runs
     unless a deployment is configured. Same wiring `test_engine.py` and `test_write_turn.py`
     carry, for the same reason.
@@ -85,7 +76,7 @@ def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 async def _sandbox_dependencies(fake_redis, fake_storage) -> None:
-    """The R10 liveness lease (Redis) and the attach's storage reads both need a backing fake
+    """The liveness lease (Redis) and the attach's storage reads both need a backing fake
     now that every turn attaches a live container. One deployment fact, two fixtures."""
     return None
 
@@ -268,15 +259,13 @@ async def test_exactly_one_thing_is_injected_and_it_is_the_workspace_note(
 async def test_the_workspace_note_still_rides_a_turn_off_any_anchor(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """This is the half that keeps the guard honest: a change that stopped injecting anything
-    at all would pass every assertion above.
+    """The half that keeps the guard honest: without it, a change that stopped injecting
+    anything at all would still pass every assertion above.
 
-    A PLAN CHAT, and the Build half is asserted where the Build harness lives
-    (`test_write_turn.py::test_the_workspace_note_rides_a_build_turn_too`) rather than here.
-    The note is injected once, above the branch that picks the run loop, so both kinds get the
-    same message — but a Build turn takes the node loop and needs a provisioned container to
-    reach its first model request, and standing that up in this file to re-prove one line would
-    duplicate a harness rather than test anything new."""
+    PLAN CHAT only — the Build half lives in
+    `test_write_turn.py::test_the_workspace_note_rides_a_build_turn_too`, since a Build turn
+    needs a provisioned container just to reach its first model request, and standing that up
+    here would duplicate a harness to re-prove one line."""
     seen, _ = await _run_with_history(_fresh_engine, db_session, session_factory, _turns(3))
     dumped = ModelMessagesTypeAdapter.dump_json(seen[0]).decode()
     assert "checked this app's workspace just now" in dumped

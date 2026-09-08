@@ -1,72 +1,43 @@
 /**
- * THE READ BEHIND THE WORKSPACE STATE (Plan F, U2).
+ * THE READ BEHIND THE WORKSPACE STATE.
  *
- * `workspaceState.ts` is pure. This is the half that talks to the server: one cheap read, on a
- * cadence, turned into the one value the pane and the Plan-chat line both render.
+ * WHY THIS EXISTS
+ * `workspaceState.ts` is pure; this is the half that talks to the server — one cheap read, on a cadence,
+ * turned into the one value the pane and the Plan-chat line both render.
  *
- * ═══ IT RUNS WHEN THERE IS NO FRAME, AND THAT IS THE WHOLE DIFFERENCE ═══
+ * It runs even with NO FRAME on screen — unlike the conversation surface's preview probe, which asks only
+ * while a frame is live, right for a pane watching a framed app get reclaimed. That is exactly wrong here:
+ * a project whose app is saved but not running has no address at all — the no-frame state this hook exists
+ * to describe, and to carry the product's one start control for.
  *
- * The conversation surface's own preview probe returns early on `!framedPreviewUrl` — "only worth
- * asking while a frame is actually on screen claiming to be live". That is right for a pane whose
- * job is to catch a framed app being reclaimed underneath it. It is exactly wrong here: the
- * no-frame case is precisely what this hook exists to describe. A project whose app is saved and
- * not running has no address at all, and it is the state that carries the product's one start
- * control.
+ * `fetchPreviewState` is CHEAP BY CONTRACT: one cache read, at most two rows, at most two object-store
+ * HEADs, no container call — safe on a timer. `fetchSaveState` is not — two `git` execs in the container —
+ * so it is called only when the read says `alive`: asking a stopped project whether it has unsaved work is
+ * an attach against a dead workspace, which is a start this screen caused, and a screen read must never
+ * start a container. The consequence is stated rather than hidden: at rest, a stopped project shows no
+ * save state and no commit. `checkWorkspace` stays out of here for its own reasons — it costs a container
+ * exec, it can raise an operational alarm, and it is gated on a standing completion claim the project
+ * screen does not make. `fetchCompileState` IS asked from this surface: its route short-circuits before
+ * any attach when nothing is live, so it cannot start a stopped container. `ProjectWorkspace` asks it
+ * beside this read rather than from inside it, because it is gated on THIS hook's `alive` answer and on
+ * the resolved address, neither of which this hook holds.
  *
- * ═══ WHAT IT COSTS, AND THE LINE IT WILL NOT CROSS ═══
+ * `starting`'s successor arrives with no user gesture, so it's polled faster — at
+ * {@link STARTING_PROBE_MS} not {@link PREVIEW_PROBE_MS} — the window `nextProbeCadence` owns and bounds.
+ * The reschedule happens INSIDE the read, keyed off `[projectId, epoch]` so a start outcome can't re-arm
+ * the poll and a transition can't trigger an extra request — unlike the chat surface's equivalent effect,
+ * which blanks its reading on every re-run and can flicker "we could not check" or unframe a running app.
  *
- * `fetchPreviewState` is CHEAP BY CONTRACT (C3 §8.3): one cache read, at most two rows, at most
- * two object-store HEADs, and NO container call. It is safe on a timer.
+ * A throwing read spends from the window too (`spendProbeCadence`): the bound ceilings elapsed
+ * fast-polling rather than tallying answers returned, so an endpoint erroring mid-start still buys an
+ * unbounded 3-second poll for the tab's life. An accelerated tick asks the preview state only —
+ * `fetchSaveState` still waits for `alive`, since a seconds-old container is still booting — so the save
+ * state lands within one accelerated interval of when it would have arrived unaccelerated.
  *
- * `fetchSaveState` is not. It runs two `git` executions INSIDE the container, so it is called only
- * when the read says `alive`. Asking a stopped project whether it has unsaved work is an attach
- * against a dead workspace — a start the screen caused, which R3 forbids. The consequence is
- * stated rather than hidden: at rest, a stopped project shows no save state and no commit, and the
- * save half of the rail appears only while the app is running.
- *
- * `fetchCompileState` and `checkWorkspace` are not called from here at all, and the two are no
- * longer the same case. `checkWorkspace` genuinely belongs to a surface with a live turn behind it:
- * it costs a container exec, it can raise an operational alarm, and it is gated on a STANDING
- * COMPLETION CLAIM, which the project screen no longer makes. `fetchCompileState` IS asked from the
- * project surface now (U4/`#199`) — its route short-circuits before any attach when nothing is
- * live, so it cannot start a stopped container, which was the whole of R3's objection. It is called
- * by `ProjectWorkspace` beside this read rather than from inside it, because it is gated on THIS
- * hook's answer (`alive`) and on the resolved address, neither of which this hook holds.
- *
- * ═══ THE TIMER HAS TWO SPEEDS (#203) ═══
- *
- * `starting` is asked about every {@link STARTING_PROBE_MS} rather than every
- * `PREVIEW_PROBE_MS`, because it is the one reading whose successor arrives with no gesture
- * from anybody — see `nextProbeCadence`, which owns the whole decision, the bound on it, and the
- * reasoning behind both numbers. The reschedule happens INSIDE the read, on the
- * `keepAsking`/`stopAsking` seam: this effect's deps are `[projectId, epoch]`, a start outcome
- * must not re-arm the poll (below), and a cadence spelled as a dependency re-arms it on every
- * transition — an extra request each time, and on the chat surface, whose equivalent effect DOES
- * blank its reading on every re-run, a pane that flickers through "we could not check" and, since
- * #192, unframes an app that is running.
- *
- * A READ THAT THREW SPENDS FROM THE WINDOW TOO — see `spendProbeCadence`, and the `catch` below.
- * The bound is a ceiling on elapsed fast-polling, not a tally of answers we managed to get, or an
- * endpoint that starts erroring mid-start buys an unbounded 3-second poll for the life of the tab.
- *
- * AN ACCELERATED READ ASKS THE PREVIEW STATE AND NOTHING ELSE. `fetchSaveState` is two `git`
- * executions inside the container and it fires on the tick that first sees `alive` — which, in an
- * accelerated window, is a container that came up seconds ago and is still restoring its snapshot
- * and booting a dev server. So the acceleration buys the sentence and the frame, and buys them
- * with cheap reads only: it adds no container call anywhere, and the save state arrives on the
- * next background tick — within one accelerated interval of when it would have arrived with no
- * acceleration at all.
- *
- * ═══ TWO CONSEQUENCES OF THE TIMER, WRITTEN DOWN BECAUSE FEATURES DEPEND ON THEM ═══
- *
- *  - `starting` reaches `running` WITH NO USER GESTURE. Somebody presses start, the server holds
- *    the state, and the pane arrives at the running app on its own.
- *  - THE THIRTY-MINUTE STAY LAPSING IS NOTICED. `RELAUNCH_PREVIEW_STAY_SECONDS` is granted at
- *    relaunch and extended only by a turn's own deadline writers; the start-then-read shape has no
- *    turn, so the stay can lapse under a person who is still reading. The next read returns
- *    `asleep` and the pane says "Your app is saved." with the start offered again — one press to
- *    recover, nothing lost. Renewing the stay on a read would be a new way to hold a container
- *    claimed, which is a server capability nobody has planned.
+ * A thirty-minute stay can lapse unnoticed too: `RELAUNCH_PREVIEW_STAY_SECONDS` renews only via a turn's
+ * own deadline writers, so the start-then-read shape (no turn) can let it lapse under someone still
+ * reading. The next read then returns `asleep`, offering the start again with nothing lost — renewing the
+ * stay on a plain read would be a new way to hold a container claimed, which nobody has built.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPreviewState, fetchSaveState, samePreviewState, sameSaveState } from '../../utils/buildSessionApi'
@@ -217,7 +188,7 @@ export function useWorkspaceState({
           // start land, so the container it would ask has been alive for seconds and is still
           // restoring and booting — two `git` executions are the last thing it needs, and the
           // answer is the one the next background tick gives for free. The acceleration must cost
-          // cheap reads and nothing else (#203). SKIPPED, NOT RETURNED FROM: this read still owes
+          // cheap reads and nothing else. SKIPPED, NOT RETURNED FROM: this read still owes
           // the timer below its cadence decision, and an early exit here would leave the 3-second
           // interval running over an app that is already up.
           if (!accelerated) {
@@ -232,7 +203,7 @@ export function useWorkspaceState({
           setSave(null)
         }
 
-        // THE RESCHEDULE, MADE FROM THE ANSWER (#203) — see `nextProbeCadence`. It sits here, with
+        // THE RESCHEDULE, MADE FROM THE ANSWER — see `nextProbeCadence`. It sits here, with
         // the stopping rule, because both are the same question asked of the same reading: what
         // this answer means for when we ask next.
         cadence = nextProbeCadence(next.state, cadence)

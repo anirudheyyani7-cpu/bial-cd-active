@@ -1,24 +1,15 @@
-"""Deleting a project destroys its database, its role, and both of its containers
-(U5 / ADR-0028, plus the sandbox reap of #184).
+"""Deleting a project destroys its database, its role, and both of its containers — the per-app
+Blob container and the sandbox container it was running in. The database is a database on the
+shared cluster, dropped with `DROP DATABASE`; it is not one of the containers.
 
-The ordering under test is the one the whole delete path is built around: gather handles →
-delete rows → COMMIT → `salt_the_earth` → sweep → reap the sandbox. Nothing irreversible
-outside PostgreSQL's own rows happens before the commit that authorizes it, and nothing after
-the commit is allowed to raise — a delete that already succeeded must not 500 because a drop
-failed.
-
-The interesting scenario is the one the build-session guard does NOT cover. A relaunched
-preview holds no lock (pinned by
-`test_projects_crud.py::test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`)
-and a deployed container has no interlock at all, so at delete time something can still be
-holding live connections to the app database. `DROP DATABASE ... WITH (FORCE)` after the sever
-— not the guard, and not the reap, which is best-effort and cannot see a published container at
-all — is what makes that stop.
-
-Real cluster: the `db_session` rollback cannot undo cluster DDL run on the separate
-AUTOCOMMIT engine, so every database created here is destroyed either by the endpoint under
-test or by the session-scoped hook in `tests/conftest.py`.
-"""
+The ordering under test: gather handles → delete rows → COMMIT → `salt_the_earth` → sweep → reap
+the sandbox. Nothing irreversible outside PostgreSQL's own rows happens before the commit that
+authorizes it, and nothing after may raise — a delete that already succeeded must not 500 because
+a drop failed. The build-session guard does not cover every case: a relaunched preview holds no
+lock and a deployed container has no interlock, so something can still be holding live
+connections at delete time — the sandbox reap is best-effort and cannot see a published
+container, so `DROP DATABASE ... WITH (FORCE)` after the sever is what stops that. Every database
+here is dropped by the endpoint under test or the session-scoped hook in `tests/conftest.py`."""
 
 from __future__ import annotations
 
@@ -106,7 +97,7 @@ def _survived(captured: Sequence[Mapping[str, Any]], *, artefact: str) -> list[s
 
 async def _teardown_record(db: AsyncSession, project_id: uuid.UUID) -> list[Any] | None:
     """What the `project:teardown-incomplete` audit row says survived, or `None` when the
-    delete left nothing behind and so wrote no row at all (D18)."""
+    delete left nothing behind and so wrote no row at all."""
     row = await db.scalar(
         sa.select(AuditLog).where(
             AuditLog.action == "project:teardown-incomplete",
@@ -226,7 +217,7 @@ async def test_an_app_less_project_still_has_its_database_dropped(
     assert "appId" not in dropped.detail  # there is no app to file it under
 
 
-# --- #184: what the app WAS survives the cascade ------------------------------------------
+# --- what the app WAS survives the cascade ------------------------------------------------
 #
 # The record already named the project and said who deleted it and why. It did not say what
 # the thing DID, so an administrator reading "Visitor Log" three months later had a name and
@@ -244,7 +235,7 @@ async def test_an_app_less_project_still_has_its_database_dropped(
 async def test_the_description_survives_the_cascade_that_destroys_its_only_copy(
     app: Any, client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """AE1. The whole record, read back after the cascade committed.
+    """The whole record, read back after the cascade committed.
 
     Every field is asserted, not just the new one: a record that gained the description by
     losing the count, the owner or the reason would be a worse record than the one before it.
@@ -462,7 +453,7 @@ async def test_a_live_preview_connection_does_not_survive_the_delete(
 async def test_a_live_build_still_refuses_the_delete_and_leaves_the_database_alone(
     app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
 ) -> None:
-    # R9 unchanged: a held lock refuses before anything is gathered, so the database must be
+    # A held lock refuses before anything is gathered, so the database must be
     # exactly as reachable afterwards as it was before. A refusal that had already severed
     # would be a silent outage on a delete the user was told did not happen.
     from src.services.build_sessions import app_name_for
@@ -533,7 +524,7 @@ async def test_a_failed_drop_logs_an_orphan_and_still_returns_success(
     assert await db_session.get(Project, project.id) is None
     assert await _registry_row(db_session, project.id) is None
     assert any(e.get("event") == "app_database_drop_database_failed" for e in captured)
-    # Still there, and findable by name — which is exactly what the reconciler needs (U7).
+    # Still there, and findable by name — which is exactly what the reconciler needs.
     assert await _catalog(_DATABASE_EXISTS, db=record.db_name) is True
 
 
@@ -569,11 +560,11 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
     assert await db_session.get(Project, project.id) is None
     assert await _registry_row(db_session, project.id) is None
     # THE ALARM, not a bespoke event name: one pinned event across every arm of this path, with
-    # the artefact class as a field (U22). Nothing collects this database automatically —
+    # the artefact class as a field. Nothing collects this database automatically —
     # `appdb/reconcile.py` is operator-invoked AND report-only — so the alarm is the notice.
     assert _survived(captured, artefact="app_database") == [record.db_name]
     # ...and the record an operator reads, on the audit log rather than in the citizen's own
-    # words on the tombstone (D18).
+    # words on the tombstone.
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "app_database", "id": record.db_name}
     ]
@@ -584,8 +575,8 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
 async def test_a_project_without_a_database_deletes_exactly_as_before(
     app: Any, client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # The unconfigured baseline, fixture-free by construction: no `project_databases` row
-    # means no handles, no teardown call, and no audit row — the pre-ADR-0028 behaviour.
+    # No `project_databases` row means no handles, no teardown call, and no audit row —
+    # deletion behaves exactly as it did before project databases existed.
     user = await UserFactory.create(db_session)
     headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
     project = await ProjectFactory.create(db_session, user.id)
@@ -607,7 +598,7 @@ async def test_a_project_without_a_database_deletes_exactly_as_before(
     ) == 0
 
 
-# --- #184: the sandbox container goes with the project ------------------------------------
+# --- the sandbox container goes with the project -------------------------------------------
 #
 # THE MOST DESTRUCTIVE STEP ON THIS PATH, and the reason every test below pins the identity
 # check as hard as it pins the teardown. The sandbox registry key is per-USER
@@ -716,7 +707,7 @@ async def _delete(client: AsyncClient, project_id: uuid.UUID, headers: dict[str,
 async def test_the_sandbox_serving_the_deleted_project_is_torn_down(
     app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
 ) -> None:
-    # #184's whole point: a container serving a project that no longer exists bills at roughly
+    # The whole point of the reap: a container serving a project that no longer exists bills at
     # $2.60/day until the citizen next builds. Registry named this app; ARM delete called;
     # registry entry cleared.
     from tests.fakes import FakeSandboxClient
@@ -1046,9 +1037,9 @@ async def test_an_unconfigured_sandbox_still_deletes_the_project(
     #
     # Mutation check: swap `OptionalSandbox` for `SandboxDep` on `delete_project` and this goes
     # red at dependency-solve time with `SandboxNotConfiguredError` — before the route body,
-    # where no `except` of the route's can reach it. See `docs/solutions/design-patterns/
-    # eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`; that mistake has
-    # shipped here once already.
+    # where no `except` of the route's can reach it — FastAPI solves dependencies eagerly, so a
+    # required dependency bypasses every in-body error seam. That mistake has shipped here once
+    # already.
     headers, user, project, app_row = await _project_with_app(db_session)
     _wire_sandbox(app, None)
     _wire_manager(app)
@@ -1118,7 +1109,7 @@ async def test_a_busy_start_lock_leaves_the_container_standing_and_says_so(
     # SKIPPING IS STILL RIGHT; PRETENDING SOMETHING WILL COLLECT IT WAS NOT. The container is
     # still up, so the arm alarms and the delete files the record. The scheduled reap only
     # destroys in production (`may_destroy_on_this_control_plane`), which is why this stopped
-    # being "left to the scheduled sweep" (U22/R7a).
+    # being "left to the scheduled sweep".
     assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "sandbox_container", "id": _named(app_row.id)}
@@ -1133,7 +1124,7 @@ async def test_a_registry_entry_left_ending_is_still_torn_down(
     # WHY THE CHECK IS NAME-EQUALITY AND NOT `_registry_serves_and_is_ready`. That helper also
     # demands `state == "ready"`, and `ending` is what an earlier FAILED teardown leaves behind
     # — an entry naming THIS project's own container, on a container that is still standing and
-    # still billing. Sparing it is the exact leak #184 is about.
+    # still billing. Sparing it is the exact leak the reap exists to close.
     #
     # Mutation check: swap the name comparison for `_registry_serves_and_is_ready(reg, name)`
     # and this goes red — nothing is torn down and the `ending` record survives forever.
@@ -1189,7 +1180,7 @@ async def test_a_raising_redis_during_the_reap_is_logged_and_the_delete_still_su
     assert await db_session.get(Project, project.id) is None
     assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
     # ...and on the record, because a container nobody will collect is exactly what the record
-    # is for (U22).
+    # is for.
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "sandbox_container", "id": _named(app_row.id)}
     ]
@@ -1347,7 +1338,7 @@ async def test_the_reap_displaces_nothing_that_the_delete_already_did(
     assert sandbox.torn_down == [_named(app_row.id)]
 
 
-# --- #184: the built IMAGE goes with the project too (U21) ---------------------------------
+# --- the built IMAGE goes with the project too ---------------------------------------------
 #
 # The last artefact on the path, and the one that still holds the citizen's source: a published
 # app's image carries its compiled tree. The dialog promises "destroyed permanently", so a
@@ -1467,7 +1458,7 @@ async def test_a_registry_that_refuses_the_delete_leaves_it_successful_and_on_th
 async def test_the_citizens_own_reason_is_left_exactly_as_they_wrote_it(
     app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # D18: the operator's note goes in the AUDIT LOG, never appended into `remark`. That column
+    # The operator's note goes in the AUDIT LOG, never appended into `remark`. That column
     # is the citizen's own words and nothing else — an administrator reads it to learn why
     # somebody deleted something, and an appended note would need a delimiter convention and a
     # parser to get back out.

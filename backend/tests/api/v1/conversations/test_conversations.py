@@ -1,6 +1,6 @@
 """GET/PATCH /v1/conversations — user-scoped list, header get, patch.
-Keeps the Express-era wire shape (`_id`, `{error:{message}}`); the message read/append
-surface died with U4's destructive reset (the projection read arrives in U6)."""
+Keeps the Express-era wire shape (`_id`, `{error:{message}}`); there is no message
+read/append endpoint on this router."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ async def test_list_scoped_to_caller(client, db_session) -> None:
     assert resp.status_code == 200
     convs = resp.json()["conversations"]
     assert [c["_id"] for c in convs] == [str(mine.id)]
-    assert convs[0]["kind"] == "build"  # the factory's default, and every migrated chat's
+    assert convs[0]["kind"] == "build"  # the factory's default
     assert convs[0]["title"] == "mine"
     assert convs[0]["createdAt"].endswith("Z")
 
@@ -86,10 +86,10 @@ async def test_get_returns_header_with_the_chats_kind(client, db_session) -> Non
     assert resp.status_code == 200
     body = resp.json()
     assert body["conversation"]["_id"] == str(conv.id)
-    # What the chat IS (R16's server half), and nothing beside it.
+    # What the chat IS, and nothing beside it.
     assert body["conversation"]["kind"] == "plan"
     assert "mode" not in body["conversation"]
-    # The legacy message read died with the reset — the projection arrives in U6.
+    # This endpoint returns the header only; message content is not included.
     assert "messages" not in body
 
 
@@ -134,8 +134,8 @@ async def test_patch_title_and_context(client, db_session) -> None:
 
 
 async def test_patch_code_is_retired_400(client, db_session) -> None:
-    """The `code` column died in 0024 — a client still sending a snapshot gets a 400 naming
-    the retirement (never a silent ignore that looks like a saved snapshot)."""
+    """The `code` column no longer exists on conversations — a client still sending a snapshot
+    gets a 400 naming the retirement (never a silent ignore that looks like a saved snapshot)."""
     headers, user = await _auth(db_session)
     conv = await ConversationFactory.create(db_session, user.id, kind=ChatKind.BUILD)
     resp = await client.patch(
@@ -198,7 +198,7 @@ def test_conversations_openapi_documents_models_and_codes() -> None:
     paths = schema["paths"]
     get = paths["/v1/conversations/{conversation_id}"]["get"]["responses"]
     assert {"400", "404", "401", "500"} <= set(get)
-    # The legacy append endpoint is GONE (U4's destructive reset).
+    # No append endpoint exists for this router.
     assert "/v1/conversations/{conversation_id}/messages" not in paths
     # The documented-only HeaderOut preserves the Mongo `_id` wire key + camelCase
     # timestamps, and title/context stay optional (omitted-when-unset shape).

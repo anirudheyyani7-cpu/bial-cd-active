@@ -2,7 +2,7 @@
 head → 0017 → head against the real test DB. Proves `upgrade` drops both JSX-era
 JSONB snapshot columns and adds the seven typed submission columns, that the legacy
 status reset targets EXACTLY `pending`/`approved` (sparing `disabled`/`rejected`,
-whose reactivation would silently re-open a refused app's data plane — D13), and
+whose reactivation would silently re-open a refused app's data plane), and
 that `downgrade` recreates structure, never data. Mirrors
 `test_app_files_drop_migration.py`: programmatic `alembic.command` off the shared
 `alembic.ini`, the DB returned to head in a `finally` so a failed assertion can't
@@ -68,8 +68,6 @@ def _run_sql(work) -> Any:
 
 
 def _snapshot() -> dict[str, Any]:
-    """Introspect app_registry's column set + whether the app_status enum exists."""
-
     async def _read(conn) -> dict[str, Any]:
         rows = await conn.execute(
             text(
@@ -91,7 +89,7 @@ def test_app_registry_submissions_round_trip() -> None:
     at_head = _snapshot()
     assert _NEW_COLUMNS <= at_head["columns"]
     assert not (_DROPPED_COLUMNS & at_head["columns"])
-    # The enum is not this migration's to touch (D7) — it survives the upgrade.
+    # The enum is not this migration's to touch — it survives the upgrade.
     assert at_head["enum_present"] == 1
 
     try:
@@ -111,9 +109,6 @@ def test_app_registry_submissions_round_trip() -> None:
 
 
 def test_legacy_status_reset_is_status_scoped() -> None:
-    """Seed one row per status at 0017 (pre-re-shape), upgrade, and assert the reset
-    targets EXACTLY pending/approved: both land at draft with NULL refs, draft stays
-    draft, and disabled/rejected keep their refused-at-the-data-plane statuses."""
     config = _alembic_config()
     command.upgrade(config, "head")
     command.downgrade(config, _PRE_RESHAPE_REVISION)
@@ -198,7 +193,6 @@ def test_legacy_status_reset_is_status_scoped() -> None:
         # …with every new ref column NULL (nothing to backfill from).
         assert rows[app_ids["pending"]]["refs"] == (None, None, None)
         assert rows[app_ids["approved"]]["refs"] == (None, None, None)
-        # draft is untouched.
         assert rows[app_ids["draft"]]["status"] == "draft"
         # disabled/rejected are SPARED: resetting them to the active `draft` would
         # silently re-open a kill-switched/rejected app through its unchanged key.

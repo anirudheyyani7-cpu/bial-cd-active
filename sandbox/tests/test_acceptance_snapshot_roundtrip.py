@@ -1,10 +1,11 @@
-"""Acceptance (b) — local-disk -> Blob snapshot/restore round-trip via the C2 shape (U16).
+"""Local-disk -> Blob snapshot/restore round-trip through the sandbox-client shape.
 
-The second program risk, proven against REAL Azurite through a C2-ABC-conforming reference client:
+Proven against REAL Azurite with an ABC-conforming reference client:
 provision -> write a distinctive file -> snapshot (decode -> put RAW bundle to Blob) -> teardown ->
-provision a FRESH container -> restore (get -> encode -> files create -> restore.sh + C9 re-inject)
--> resume `next dev`. The C4 ordering exercised here uses a MOCK in-proc lock — SESSION-API
-re-verifies the shipped Redis-lock/ACA ordering (R3). Integration-marked; skips when Docker/Azurite
+provision a FRESH container -> restore (get -> encode -> files create -> restore.sh, then the
+app-data credential re-injected) -> resume `next dev`. The ordering exercised here uses a MOCK
+in-proc lock — SESSION-API
+re-verifies the shipped Redis-lock/ACA ordering. Integration-marked; skips when Docker/Azurite
 are absent. Conformance is a pure-Python offline test.
 """
 
@@ -27,9 +28,9 @@ from src.services.storage.errors import StorageError
 APP_ENV = {
     "BIAL_APP_ID": "app-acceptance-b",
     "BIAL_PORTAL_ORIGIN": "http://127.0.0.1:14300",
-    # ADR-0028: the per-project DSN rides the SAME birth-env path as the identity vars, so the
+    # The per-project DSN rides the SAME birth-env path as the identity vars, so the
     # round-trip must prove restore re-injects it too (a restored container is a NEW
-    # container — it gets its env at birth and never again, KTD-3).
+    # container — it gets its env at birth and never again).
     "BIAL_DATABASE_URL": (
         "postgresql://bialrole_acceptanceb:acceptancerolepassword@127.0.0.1:5432/bialapp_acceptanceb"
     ),
@@ -37,7 +38,7 @@ APP_ENV = {
 
 
 # --- conformance: pure Python, offline (no container / Azurite) --------------------------------
-def test_reference_client_conforms_to_frozen_c2_abc() -> None:
+def test_reference_client_conforms_to_the_frozen_sandbox_client_interface() -> None:
     # A complete subclass instantiates — all 10 frozen abstract methods are implemented.
     c = ReferenceSandboxClient(image="unused", storage=FakeStorage(), lock=InProcLock())
     assert isinstance(c, SandboxClient)
@@ -104,7 +105,8 @@ async def test_snapshot_restore_round_trip_via_blob(azurite_storage, make_client
 
     await client.teardown(h1)  # idempotent
 
-    # container #2: FRESH (baked, non-repo) -> restore overlays the snapshot + re-injects C9
+    # container #2: FRESH (baked, non-repo) -> restore overlays the snapshot + re-injects the
+    # app-data credential
     h2 = await client.restore_from_snapshot("userb", "appb", app_env=APP_ENV)
     assert marker in await _view(client, h2, "snapshot-marker.txt")
 
@@ -121,7 +123,7 @@ async def test_snapshot_restore_round_trip_via_blob(azurite_storage, make_client
     # The DSN's NAME is there; its VALUE (and its password) are redacted out of the output.
     assert "acceptancerolepassword" not in env.stdout
 
-    # `next dev` RESUMES on the restored workspace. Post-U6 this assertion is strictly stronger
+    # `next dev` RESUMES on the restored workspace. This assertion is strictly stronger
     # than it used to be: the supervisor's `ready` is no longer "the child printed its startup
     # marker" but "a GET of the app root was actually answered", so reaching it inside the same
     # 120s budget proves the restored workspace SERVES, not merely that it booted.
@@ -140,7 +142,7 @@ async def test_restore_missing_snapshot_raises(azurite_storage, make_client) -> 
         )
 
 
-# --- C4 ordering: snapshot -> teardown -> release, in that exact order -------------------------
+# --- ordering: snapshot -> teardown -> release, in that exact order ---------------------------
 @pytest.mark.integration
 async def test_checkpoint_ordering_is_snapshot_teardown_release(make_client) -> None:
     storage = FakeStorage()
@@ -151,13 +153,13 @@ async def test_checkpoint_ordering_is_snapshot_teardown_release(make_client) -> 
     h = await client.provision_new("userc", "appc", app_env=APP_ENV)
     await client.checkpoint_and_teardown(h, app_id=app_id, user_id="userc")
 
-    assert client.trace == ["snapshot", "teardown", "release"]  # strict C4 order
+    assert client.trace == ["snapshot", "teardown", "release"]  # strict order
     assert not client._lock.is_held("userc")  # released LAST — after the snapshot is durable
     assert snapshot_key(app_id) in storage.objects  # durable BEFORE the release
     assert h.fqdn not in client._procs  # the container was actually torn down
 
 
-# --- C4 abort-before-teardown: a put failure must NOT teardown or release the lock ------------
+# --- abort-before-teardown: a put failure must NOT teardown or release the lock --------------
 @pytest.mark.integration
 async def test_snapshot_put_failure_aborts_before_teardown(make_client) -> None:
     storage = ExplodingStorage()  # put() always raises
@@ -169,7 +171,7 @@ async def test_snapshot_put_failure_aborts_before_teardown(make_client) -> None:
     with pytest.raises(StorageError):
         await client.checkpoint_and_teardown(h, app_id=app_id, user_id="userd")
 
-    # The whole point of C4: the lock guards snapshot->teardown atomicity.
+    # The whole point of the ordering: the lock guards snapshot->teardown atomicity.
     assert client.trace == ["snapshot"]  # never reached teardown / release
     assert client._lock.is_held("userd")  # lock STAYS held — a second provision cannot race in
     assert h.fqdn in client._procs  # the container is still live (not torn down)

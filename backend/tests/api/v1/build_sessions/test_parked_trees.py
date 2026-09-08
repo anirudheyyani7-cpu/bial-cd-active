@@ -1,8 +1,8 @@
-"""The operator surface for the trees this plan sets aside (U25).
+"""The operator surface for the quarantined and diverted trees.
 
-U2's quarantine slot and U3's divert slot would otherwise be WRITE-ONLY: no reader, no retention,
+The quarantine slot and the divert slot would otherwise be WRITE-ONLY: no reader, no retention,
 no runbook. In a false-`REVERTED` case those objects hold the only copy of a citizen's newest
-work, and this plan names exactly that shape as a defect elsewhere — so it must not reproduce it.
+work, and that same shape has already caused a real defect elsewhere — so it must not reproduce it.
 
 THE ONE TO READ FIRST is `test_a_key_from_another_app_is_refused`. The promote route takes a key
 out of a request body and writes what it names into an app's recovery slot; without a scoping

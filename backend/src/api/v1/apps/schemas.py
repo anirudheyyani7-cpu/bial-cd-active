@@ -2,11 +2,6 @@
 
 camelCase over the wire (via the shared `CamelModel`), matching the SPA/TS
 convention the `/api/apps/*` clients already consume.
-
-`SubmitResponse` retired with the citizen submit route (U8, ASM18): the submit body
-became `services/approvals/submit.py`, whose `SubmissionReceipt` is a service-layer
-dataclass, not a wire schema — the publish gate (U9) reports the outcome through its
-own response shape.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ from src.db.models.app_registry import AppStatus
 from src.schemas import CamelModel
 
 # Withdraw takes NO request body: the target is fully named by the path (the app's
-# one pending submission), and there is nothing to parameterize about removal (P6).
+# one pending submission), and there is nothing to parameterize about removal.
 
 
 class WithdrawResponse(CamelModel):
@@ -41,7 +36,7 @@ class AppStatusResponse(CamelModel):
     submission_id: uuid.UUID | None
     commit_sha: str | None
     submitted_at: datetime | None
-    # "Your app is live" (R5): the manual-runbook marker, READ-ONLY here. Both are
+    # "Your app is live": the manual-runbook marker, READ-ONLY here. Both are
     # absent until a superadmin marks the app deployed, and `deployedUrl` stays null
     # if they recorded the deploy without an address — so the owner's Live link is
     # gated on the URL, not on the timestamp or on `status == approved`.

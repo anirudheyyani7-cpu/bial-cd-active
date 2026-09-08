@@ -1,62 +1,21 @@
 /**
- * THE APP STATUS PANEL (plan 002, U4) — the rail section the boards draw, always visible.
+ * THE APP STATUS PANEL — the rail section the boards draw, always visible: a coloured state
+ * pill, three provenance rows, one sentence, one action — nothing behind a popover.
  *
- * ═══ WHAT IT REPLACES ═══
+ * WHY THIS EXISTS: the panel and the chip (`PublishStatusChip.tsx`) must never disagree. Both
+ * read the one server `publishState` through `utils/publishPresentation.ts` — same words,
+ * colour, action, rows — but hold SEPARATE reads, deliberately: they differ in shape and
+ * lifetime, so sharing a component was the wrong seam. A same-tab `bial:deployment-changed`
+ * nudge reconciles the two reads (one extra poll only while a publish is in flight) — but it
+ * reconciles the READ, not the server's per-mount unsaved-work QUESTION, which no read carries.
+ * `hiddenSubtree.ts` keeps this panel mounted-but-invisible when the rail closes, which once let
+ * a stale question sit behind a closed rail while the freshly-mounted chip offered "Send for
+ * review" as though nothing were pending — so the question is retired when the rail closes,
+ * trading a re-typed declaration for two surfaces that can no longer contradict each other.
  *
- * Two sentences and a hidden popover. The rail showed the workspace's headline ("Your app is
- * saved.") and nothing about publishing at all; everything a citizen could learn about where
- * their app stood — which version is live, when it was approved, what they last saved — lived
- * inside a popover behind a chip, one row at a time, and had to be clicked for.
- *
- * The boards draw it open: a coloured state pill, three provenance rows with dates and short
- * build ids, one sentence, and one action. That is what this renders.
- *
- * ═══ THE PANEL AND THE CHIP CANNOT DISAGREE, AND THIS IS HOW ═══
- *
- * Both read the ONE server-computed `publishState` and both put it through
- * `utils/publishPresentation.ts` — the same words, the same colour, the same action, the same
- * rows. Neither renders the other and neither is a special case of the other; they differ in
- * shape and in lifetime, which is why sharing a component would have been the wrong seam.
- *
- * They hold SEPARATE READS, which is deliberate rather than an oversight. `usePublishState`'s
- * own docblock kept a same-tab `bial:deployment-changed` nudge alive for exactly this case,
- * noting that "the moment anything puts two publish surfaces in one document again it is the
- * difference between them agreeing and them contradicting each other". That moment is now. The
- * cost is one extra read per project screen: the poll runs only while a publish is in flight, so
- * a settled app costs one request per mount and nothing after it.
- *
- * THE NUDGE RECONCILES THE READ, NOT THE OUTSTANDING QUESTION, and the difference is the whole of
- * why this unit retires one. The server's unsaved-work question is per-mount state that no read
- * returns and the nudge does not carry, so a question raised HERE is invisible to the chip. Hide
- * details keeps this panel mounted and merely invisible — see `hiddenSubtree.ts` — which left the
- * question alive behind a rail nobody could see while the chip, mounted fresh, offered "Send for
- * review" as though nothing were pending. It is retired when the rail closes: the citizen loses a
- * declaration they have to re-enter, which is the smaller cost than two surfaces contradicting
- * each other and a stale question with a live button waiting when the rail reopens.
- *
- * ═══ THE SAVED ROW IS WHY THIS UNIT NEEDED A SERVER FIELD ═══
- *
- * Every other row comes from a column the status read already selects. The citizen's own last
- * save did not reach the browser at all — the server took its one object-store metadata HEAD,
- * computed the drift, and returned the verdict without the head. It returns the head and its
- * timestamp now, from the SAME read, with no container in the request path: the row has to
- * render on a project whose workspace is stopped, which is precisely where `save-state` — which
- * attaches to a container first — has nothing to say.
- *
- * ═══ WHAT PLAN 001 ADDED, AND WHY EACH IS HERE RATHER THAN ELSEWHERE ═══
- *
- * U14 — a COPY control on the live address (`LiveAddress`). Sharing a published app meant
- * opening a tab and copying the browser's address bar. It is gated on the same `url` the row
- * already carries, so a taken-offline app — whose address would 404 — cannot grow one.
- *
- * U15 — the reviewer's REJECTION NOTE as a row (`NoteRow`). It was already on the wire and
- * rendered only inside the declaration dialog, which a citizen opens when they believe they are
- * finished; it now sits above the state's action, where the person who has to act on it is
- * looking. Bounded and scrollable, never truncated.
- *
- * U16 — the LAST SAVED row is now ABSENT for a project that has never saved, rather than present
- * and reading "We could not tell". That decision lives in `publishPresentation.savedRow`; what
- * changed here is nothing at all, which is the point — the panel renders the rows it is given.
+ * The saved row's date/id come from the SAME status read as every other row (the store's
+ * metadata HEAD, no container in the path) — it must render even when the workspace is
+ * stopped, which is exactly where `save-state` (container-attached) has nothing to say.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Check, Copy, ExternalLink } from 'lucide-react'
@@ -78,25 +37,22 @@ import type { ProvenanceRow } from '../../utils/publishPresentation'
 export interface AppStatusPanelProps {
   projectId: string
   /**
-   * The section's own small-caps label, drawn by this component so the state pill can share its row.
+   * The section's own small-caps label, drawn by this component so the pill can share its row.
    *
-   * A NODE RATHER THAN A STRING, and it comes from the rail rather than being written here: the
-   * rail owns the treatment every one of its section labels shares, and a second definition of it
-   * here is how two of the three end up a half-point apart. What this component owns is the ROW —
-   * `PreviewOff`, `NothingBuilt` and `Main` all draw the label and the pill on one 25px band with
-   * the pill carried right. The pill was a `float-right` in the block BELOW the heading, and a
-   * float cannot rise onto a preceding block's line, so it dropped to its own row and left a stray
-   * band of empty rail in every state.
+   * A NODE, NOT A STRING — it comes from the rail, which owns the shared label treatment; a
+   * second definition here previously drifted a half-point out of sync. This component owns only
+   * the ROW: label and pill share one 25px band with the pill carried right, replacing a
+   * `float-right` that could not rise onto the heading's line and left a stray empty band.
    */
   label: ReactNode
 }
 
 /**
- * THE LIVE APP'S ADDRESS — open it, or take a copy of it (plan 001, U14, R34).
+ * THE LIVE APP'S ADDRESS — open it, or take a copy of it.
  *
  * The panel already linked the address correctly; sharing it meant opening the tab and
- * copying the browser's own address bar, which is the complaint `#188` records. The copy
- * control sits beside the link because it copies THAT address and nothing else.
+ * copying the browser's own address bar — the complaint this control answers. It sits beside
+ * the link because it copies THAT address and nothing else.
  *
  * IT IS RENDERED WHEREVER THE ROW OFFERS A URL, and that is the whole of its presence
  * rule. `provenanceRows` already decides where an address is worth pointing at — a
@@ -110,7 +66,7 @@ export interface AppStatusPanelProps {
  * before, and the platform said not one word about it. The address is printed in full so
  * the remedy is in the same place as the failure rather than "try the address bar".
  *
- * NOTHING IS ADDED TO THE PUBLISHED PAGE ITSELF (R33) — no provenance strip, no branding,
+ * NOTHING IS ADDED TO THE PUBLISHED PAGE ITSELF — no provenance strip, no branding,
  * no builder attribution. The link opens the citizen's app as it is.
  */
 function LiveAddress({ url }: { url: string }) {
@@ -174,7 +130,7 @@ function LiveAddress({ url }: { url: string }) {
 }
 
 /**
- * THE REVIEWER'S OWN WORDS, on the rail, without opening anything (plan 001, U15, R35).
+ * THE REVIEWER'S OWN WORDS, on the rail, without opening anything.
  *
  * The note reached the browser on every status read and rendered in exactly one place:
  * inside the declaration dialog, which a citizen opens when they believe they are
@@ -217,13 +173,12 @@ function SectionHead({ label, children }: { label: ReactNode; children?: ReactNo
 }
 
 /**
- * One provenance row: a fixed-width small-caps label, then the date, then the short build id.
+ * One provenance row: fixed-width small-caps label, then date, then short build id.
  *
  * "CANNOT TELL" IS A RENDERING, NOT A BLANK. The two halves are independently null — a bundle
  * written before the metadata stamp existed has a last-modified but no head, so the store can
- * say WHEN without saying WHICH — and neither absence may be filled in from the other or from
- * nothing. A row with no date at all says so in words rather than printing an em-dash a citizen
- * has to interpret.
+ * say WHEN without WHICH, and neither absence is filled from the other. No date at all says so
+ * in words, never an em-dash a citizen has to interpret.
  */
 function Row({ row }: { row: ProvenanceRow }) {
   const tone = row.tone === 'drift' ? 'text-status-amber-fg font-bold' : 'text-primary-900 font-semibold'

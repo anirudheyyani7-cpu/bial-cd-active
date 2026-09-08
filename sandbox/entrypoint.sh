@@ -1,8 +1,8 @@
 #!/bin/sh
 # Sandbox entrypoint. Runs as root (PID 1) so the supervisor can drop children to `appuser`.
 # The supervisor token stays in root's env; children get a scrubbed env (see supervisor/app.py).
-# LF-only per ADR-0015 (the image is BUILT on the Windows VM via `az acr build`; a CRLF
-# `#!/bin/sh\r` shebang makes the kernel exec `/bin/sh\r` → "no such file or directory").
+# LF-only (the image is BUILT on the Windows VM via `az acr build`; a CRLF `#!/bin/sh\r` shebang
+# makes the kernel exec `/bin/sh\r` → "no such file or directory").
 set -eu
 
 # NOTE: this script deliberately no longer touches the workspace. It used to `chown -R` +
@@ -13,8 +13,8 @@ set -eu
 # shorten. Worse, it MASKED any build-time ownership bug, which made the in-container ownership
 # tests self-fulfilling; without it they — and the image-level
 # test_image_workspace_is_appuser_owned_before_the_entrypoint_runs — are honest.
-# Anything that repopulates the workspace at runtime (the Track SANDBOX snapshot/restore path)
-# already runs as appuser via /exec, so it writes appuser-owned files by construction.
+# Anything that repopulates the workspace at runtime (the snapshot/restore path) already runs
+# as appuser via /exec, so it writes appuser-owned files by construction.
 # The supervisor reads WORKSPACE from the image ENV, not from this script (the old local
 # assignment here was never exported, so it is gone with its only consumer).
 

@@ -2,15 +2,11 @@
 
 Mirrors the object-storage accessor (`services/storage/accessor.py`): `get_redis()`
 reads `settings.redis`, builds ONE pooled `redis.asyncio` client, and memoises it;
-`aclose_redis()` closes the pool and drops the singleton on FastAPI lifespan
-shutdown (U9). Construction is lazy and None-safe — a dev/test boot with no
-`REDIS__*` env never opens a pool (D2), and `aclose_redis()` is a no-op when the
-pool was never used (mirrors `aclose_storage`).
-
-`decode_responses=True` so keys and hash fields round-trip as `str` (the C5
-builders emit `str`); the DSN is unwrapped from its `SecretStr` only here, at the
-SDK boundary (security.md).
-"""
+`aclose_redis()` closes the pool and drops the singleton on FastAPI lifespan shutdown.
+Construction is lazy and None-safe — a dev/test boot with no `REDIS__*` env never opens
+a pool, and `aclose_redis()` is a no-op then (mirrors `aclose_storage`). Keys/fields
+round-trip as `str` (`decode_responses=True`); the DSN is unwrapped from its `SecretStr`
+only here, at the SDK boundary."""
 
 from __future__ import annotations
 
@@ -34,34 +30,14 @@ class RedisNotConfiguredError(RuntimeError):
 
 
 def create_redis(config: RedisConfig) -> aioredis.Redis:
-    """Build a pooled async Redis client from a `RedisConfig`. No connection is
-    opened here — `redis.asyncio` connects lazily on the first command, so this is
-    safe to call without a live server (tests construct + close without connecting).
+    """Build a pooled async Redis client; no connection opens until the first command.
 
-    The `retry=` is EXPLICIT and load-bearing. `from_url` always constructs a
-    connection pool, which skips the branch of `Redis.__init__` that injects
-    redis-py's advertised default retry, so every client built here would otherwise
-    run `Retry(NoBackoff(), 0)` — a single attempt with no backoff. Two traps this
-    deliberately avoids: `retry_on_error` WITHOUT an explicit `retry` yields
-    `Retry(NoBackoff(), 1)` (one immediate hot retry, no delay), and
-    `retry_on_timeout` is deprecated since redis-py 6.0.0 — neither is passed.
-    `BusyLoadingError` subclasses `ConnectionError`, so it is already covered by
-    `Retry`'s default supported errors and needs no listing.
-
-    The `Retry` class MUST be `redis.asyncio.retry.Retry`, never the identically
-    named `redis.retry.Retry`. They are different classes, and the async connection
-    calls `await self.retry.call_with_retry(do, ...)` where `do` returns a COROUTINE
-    (`redis/asyncio/connection.py:351`). The sync class's `call_with_retry` is not a
-    coroutine function: its `try/except` sees only the coroutine being CREATED, never
-    awaited, so no error ever reaches its retry loop — it hands the coroutine straight
-    back and the caller awaits it outside any retry. The policy then looks correct on
-    `get_retry()` and silently retries nothing. Measured against a dead port:
-    0.012s / one attempt with the sync class, 0.395s / four attempts with this one.
-
-    TLS is carried by the DSN scheme (`rediss://`), never by kwargs here, so no TLS
-    setting differs between environments — the production gate in `src.config`
-    enforces the scheme. redis-py's verification defaults are already correct for
-    Azure Cache (CERT_REQUIRED, hostname check, system CA bundle)."""
+    `retry=` is EXPLICIT and load-bearing — `from_url` skips the branch that injects
+    redis-py's default retry, so an implicit client gets one attempt, no backoff (and
+    `retry_on_error` alone still gives only one immediate retry). MUST be
+    `redis.asyncio.retry.Retry`, never the sync `redis.retry.Retry`: the sync class's
+    `call_with_retry` isn't a coroutine function, so it hands the coroutine back
+    unawaited and silently retries nothing."""
     return aioredis.Redis.from_url(
         config.url.get_secret_value(),
         max_connections=config.max_connections,
@@ -100,8 +76,8 @@ def get_redis() -> aioredis.Redis:
 
 async def aclose_redis() -> None:
     """Close the pooled client and drop the singleton. Wired into the FastAPI
-    lifespan shutdown (U9). A no-op when the pool was never opened. The close is
-    isolated: if it raises we log it (fail-first.md — never a silent swallow) but
+    lifespan shutdown. A no-op when the pool was never opened. The close is
+    isolated: if it raises we log it — never a silent swallow — but
     STILL reset the singleton, so a restart never reuses a half-closed pool."""
     global _redis_singleton
     if _redis_singleton is None:

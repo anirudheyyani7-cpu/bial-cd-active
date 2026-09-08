@@ -1,37 +1,16 @@
 "use client";
 
 /**
- * BialErrorCapture — the C7 client-error-capture injection point (C6 §5), and the runtime-config
- * bootstrap.
+ * BialErrorCapture — publishes the injected runtime identity to `window.__BIAL_CONFIG` (see
+ * lib/bial-config.ts) and relays uncaught client errors to the framing parent.
  *
- * Imported FIRST in app/layout.tsx (above the app tree) so it installs before any feature code.
- * Two jobs:
- *   1. Publish the injected runtime identity to `window.__BIAL_CONFIG` (see lib/bial-config.ts).
- *      The `config` prop is read server-side from process.env by the layout (the BIAL_* env-vars
- *      survive the supervisor child-env scrub — D5) and handed across the RSC boundary; we set
- *      the global during the RENDER phase (not an effect) so it is in place before any CHILD
- *      effect runs — React commits effects child-first but runs renders parent-first, so a
- *      render-phase assignment here always beats a screen's initial fetch effect. Only non-secret
- *      labels travel this way: the app's data now lives in its own database, reached with Drizzle
- *      from SERVER code (db/index.ts), so the browser holds no data credential at all.
- *   2. Capture window `error`, `unhandledrejection`, and console.error/warn, relaying each to the
- *      parent frame via postMessage with an EXPLICIT targetOrigin (the portal origin — NEVER '*';
- *      C8 §3). Portal origin comes from the injected config (falling back to document.referrer's
- *      origin); if neither is known we DO NOT post (fail closed).
+ * Imported FIRST in app/layout.tsx, above the app tree. The config global is set during the
+ * RENDER phase, not an effect, so it is in place before any child effect runs — React commits
+ * effects child-first but renders parent-first. Only non-secret labels travel this way; the
+ * app's own data stays server-side, so the browser never holds a data credential.
  *
- * THE RECEIVING LEGS ARE ALL BUILT NOW (U13). This block said "the capture side is authored now
- * but consumed by NOBODY … Wave-1 additions", which stopped being true when the ingest shipped
- * and would tell a reader that deleting the relay costs nothing. The whole chain:
- *   1. this shim posts `bial:client-error` to the framing parent;
- *   2. `portal/src/utils/clientErrorRelay.ts` validates the origin and POSTs it to
- *      `/api/build-sessions/projects/{projectId}/client-error` (mounted on the portal frame by
- *      `components/chat/ConversationSurface.tsx`);
- *   3. the control plane serves that at `POST /v1/build-sessions/projects/{project_id}/client-error`
- *      and parks the report against the app (`services/orchestrator/client_errors.park_client_error`);
- *   4. the next verify drains it into the self-heal diagnostic
- *      (`selfheal.the_call_is_coming_from_inside_the_house`) — the class of failure where every
- *      server-side check is green and the app is dead in the browser anyway.
- * Emit; a reply is still not part of the contract — the report travels one way.
+ * Errors relay via postMessage with an EXPLICIT targetOrigin (the portal origin, never `'*'`); if
+ * none is known it does not post at all. The platform consumes this relay — it is not dead code.
  */
 
 import { useEffect } from "react";
@@ -64,6 +43,7 @@ function relay(payload: Omit<ClientError, "type" | "ts">): void {
   const targetOrigin = resolvePortalOrigin();
   if (!targetOrigin) return; // fail closed — never post to '*'
   const message: ClientError = { type: "bial:client-error", ts: Date.now(), ...payload };
+  // One-way by contract: the parent never answers, so nothing here waits for a reply.
   window.parent.postMessage(message, targetOrigin);
 }
 

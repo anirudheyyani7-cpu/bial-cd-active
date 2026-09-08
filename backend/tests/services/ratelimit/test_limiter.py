@@ -1,4 +1,4 @@
-"""In-process rate-limit substrate tests (R31).
+"""In-process rate-limit substrate tests.
 
 Two layers: the `InProcessRateLimiter` fixed-window counter is unit-tested with an
 injected clock (deterministic window rollover, key isolation, cap), and the

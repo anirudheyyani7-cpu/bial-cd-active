@@ -1,15 +1,14 @@
 /**
- * Create-a-project modal. Two client-side length guards that mirror the server's
- * limits so the user is corrected before a round-trip, not after a 422:
- *   - name is required and capped at 8 WORDS (#158 §14) — the server enforces the same
- *     rule with the same splitting, and 120 chars remains only as a paste backstop,
- *   - description is optional and capped at 2000.
- * The submit button stays disabled while either bound is exceeded, AND the submit
- * handler re-checks, so a programmatic 121-char value can never reach the network.
+ * Create-a-project modal. Two client-side length guards mirror the server's limits so
+ * the user is corrected before a round-trip, not after a 422: name is required and
+ * capped at 8 WORDS (server enforces the same split; 120 chars is only a paste
+ * backstop), description is optional and capped at 2000. The submit button stays
+ * disabled past either bound, AND the handler re-checks, so a programmatic 121-char
+ * value can never reach the network.
  *
- * When the server does reject, we surface the message the thrown `ApiError` carries
- * — which `readApiError` already pulled from whichever of the three envelopes the
- * backend chose — never a synthetic "Failed to create project (422)."
+ * On a server rejection, surface the message the thrown `ApiError` carries —
+ * `readApiError` already pulled it from whichever of the three envelopes the backend
+ * chose — never a synthetic "Failed to create project (422)."
  */
 import { useState } from 'react'
 import { countWords, MAX_PROJECT_NAME_WORDS } from '../../utils/words'
@@ -18,7 +17,7 @@ import { createProject, type Project } from '../../utils/projectApi'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 
 // The CHARACTER bound is now only a paste backstop at the column width — the limit a
-// person is told about is 8 WORDS (#158 §14), counted by the rule the server shares
+// person is told about is 8 WORDS, counted by the rule the server shares
 // (`src/core/words.py` <-> `utils/words.ts`). `maxLength` keeps an unbounded paste out of a
 // VARCHAR(120) column; the counter and the disabled button enforce the rule that matters.
 const NAME_MAX = 120
@@ -70,14 +69,14 @@ export default function ProjectCreateModal({ onClose, onCreated }: ProjectCreate
         if (!next && !busy) onClose()
       }}
     >
-      {/* NOT shadcn's `bg-black/80`, and not the kit's 12px blur either (#158 §9). A flat
+      {/* NOT shadcn's `bg-black/80`, and not the kit's 12px blur either. A flat
           scrim erases the page; a heavy blur costs you the row you were about to click. The
           panel earns attention from its own shadow and white, so the page behind it only
           needs softening. `-webkit-` stays for Safari: without it this degrades to a flat
           16% scrim, which is acceptable rather than broken. Overlay only — never the list
           behind it, because `backdrop-filter` is GPU work over everything underneath.
 
-          Passed as an override on the VENDORED dialog (§12) rather than a hand-rolled
+          Passed as an override on the VENDORED dialog rather than a hand-rolled
           `fixed inset-0`, so the panel also gets `role="dialog"`, `aria-modal`, a focus trap
           and Escape — none of which the hand-rolled shell had. */}
       <DialogContent

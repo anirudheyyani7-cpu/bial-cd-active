@@ -1,15 +1,8 @@
-"""Alembic round-trip for the destructive messages reset (0024, U4): head → 0023 → head
-against the real test DB — WITH seeded legacy data, because this revision's whole point is
-destroying it. At 0023 the legacy shape is recreated and seeded (a conversation carrying a
-`code` snapshot, a parts-shaped message, an attachment linked to the conversation); the
-upgrade must then prove:
-
-  * every conversation row is gone (and the legacy message with it);
-  * the attachment ROW survives with its conversation link severed to NULL (blob-aware
-    cleanup is the reclaimer's job — a migration must never strand a blob);
-  * `messages` is reborn in the native shape (entry_kind/visibility/mode/payload/meta;
-    role/parts gone) and `message_role` is dropped while the three new enums exist;
-  * `conversations` gains `mode` and loses `code`.
+"""Alembic round-trip for the destructive messages reset (0024): head → 0023 → head with
+seeded legacy data, since destroying it is 0024's whole point. Proves: every conversation row
+(and its legacy message) is gone; the attachment ROW survives with its conversation link
+severed to NULL — blob cleanup is the reclaimer's job, never a migration's; `messages` lands
+in the native shape with `message_role` dropped; `conversations` gains `mode` and loses `code`.
 
 Mirrors `test_data_records_drop_migration.py`: programmatic `alembic.command` off the shared
 `alembic.ini`, the DB returned to head in a `finally` so a failed assertion can't poison the

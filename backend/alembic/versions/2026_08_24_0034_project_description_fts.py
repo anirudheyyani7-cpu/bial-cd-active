@@ -1,24 +1,11 @@
-"""Full-text search over `projects.description` — the marketplace's search index (#145).
+"""Full-text search over `projects.description` — the marketplace's search index.
 
-NATIVE POSTGRES ONLY, and that is the whole point. There is no BM25 on Azure Database for
-PostgreSQL Flexible Server: neither ParadeDB `pg_search` nor Tiger Data `pg_textsearch` is
-on Microsoft's extension allowlist, and BM25 ships only on Azure HorizonDB, a different
-product. `pg_trgm` (typo tolerance) IS allowlisted but needs BIAL infra to change a server
-parameter before a migration can run — a blocking external dependency. So this uses
-`tsvector` + GIN + `websearch_to_tsquery` + `ts_rank_cd`, which is core Postgres: no
-extension, no server parameter, no infra request.
+NATIVE POSTGRES ONLY: no BM25 extension is on Azure Flexible Server's allowlist, and
+`pg_trgm` needs a BIAL infra approval first — so this uses `tsvector` + GIN +
+`websearch_to_tsquery` + `ts_rank_cd` instead. Not a compromise at this scale (~10-200 apps).
 
-Worth stating why that is fine rather than a compromise. BM25 beats `ts_rank_cd` on inverse
-document frequency, term-frequency saturation and document-length normalization — all three
-of which start to matter at thousands of documents. This catalog will hold roughly 10-200
-published apps, where the ranking formula is not what decides whether search works.
-
-GENERATED ... STORED rather than a trigger: the column cannot drift from the description it
-indexes, there is no trigger to forget on a future bulk update, and `downgrade` is two
-drops. `coalesce(description, '')` because the column is nullable — a NULL description
-yields an empty tsvector, which matches no query, which is exactly the documented behaviour
-(an app with no description is absent from search but still present in the unfiltered
-catalog).
+GENERATED ... STORED, not a trigger, so the column can't drift. `coalesce(description, '')`
+makes a NULL description an empty tsvector: absent from search, still in the catalog.
 
 Revision ID: 0034_project_description_fts
 Revises: 0033_harness_counters
@@ -39,7 +26,7 @@ _UNPUBLISHED_IDX = "ix_deployments_unpublished_collapse"
 
 
 def upgrade() -> None:
-    # LOCKING, for whoever runs this against production (#147 review).
+    # LOCKING, for whoever runs this against production.
     #
     # `ADD COLUMN ... GENERATED ALWAYS AS (...) STORED` is NOT the metadata-only fast path a
     # plain nullable `ADD COLUMN` gets: Postgres computes and stores the expression for every
@@ -59,7 +46,7 @@ def upgrade() -> None:
     # holds even an AccessShareLock when the ALTER queues, everything behind it stalls FIFO
     # rather than failing fast. Production alembic runs OUT OF BAND here, so the operator who
     # most needs that protection is the one least likely to be reading this file at the time
-    # — hence SET rather than recommended (#147 round 3).
+    # — hence SET rather than recommended.
     #
     # AND IT IS RESET AT THE END OF `upgrade()`, which is not optional. `SET LOCAL` is scoped
     # to the TRANSACTION, not to the revision, and `alembic/env.py` leaves
@@ -77,14 +64,13 @@ def upgrade() -> None:
     # Without them each collapse Seq Scans `deployments`, and that table is append-only with
     # no reaper — so the cost tracks TOTAL HISTORICAL DEPLOY ATTEMPTS across the platform's
     # life, not the 10-200 live apps this catalog is sized for. Measured on PG18 at 51k rows:
-    # ~100-180ms of DB time per request without, ~35ms with (#147 round 3).
+    # ~100-180ms of DB time per request without, ~35ms with.
     #
     # THESE RUN BEFORE THE `ALTER TABLE projects` BELOW, deliberately. Alembic wraps the
     # whole revision in ONE transaction, so every lock it takes is held until commit —
     # ordering the ALTER first would hold an ACCESS EXCLUSIVE lock on `projects`, the
     # busier table, for the entire duration of both index builds on `deployments`.
-    # Building here costs nothing and shortens that window to the ALTER itself
-    # (#147 round 3 review).
+    # Building here costs nothing and shortens that window to the ALTER itself.
     op.execute(
         f"""
         CREATE INDEX {_SUCCESS_IDX} ON deployments (app_id, id DESC)
@@ -118,7 +104,7 @@ def downgrade() -> None:
     # below takes ACCESS EXCLUSIVE on `projects` and queues behind any open reader, blocking
     # every request for that table while it waits. A rollback is exactly when someone is in a
     # hurry on a busy database, so the half that runs under pressure should not be the half
-    # without the timeout (#147 round 3 review). Reset at the end for the same
+    # without the timeout. Reset at the end for the same
     # `transaction_per_migration = False` reason.
     op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute(f"DROP INDEX IF EXISTS {_UNPUBLISHED_IDX}")

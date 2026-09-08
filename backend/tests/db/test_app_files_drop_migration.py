@@ -54,21 +54,18 @@ def _snapshot() -> dict[str, Any]:
 
 def test_drop_app_files_round_trip() -> None:
     config = _alembic_config()
-    command.upgrade(config, "head")  # normalize: at head, app_files + its enum are dropped
+    command.upgrade(config, "head")  # normalize
 
-    # At head (0017) the table and its native enum are gone.
     at_head = _snapshot()
     assert at_head["table"] is None
     assert at_head["enum_present"] is None
 
     try:
-        # Downgrade to just before the drop → the table + enum reappear (structure only).
         command.downgrade(config, _PRE_DROP_REVISION)
         restored = _snapshot()
         assert restored["table"] is not None
         assert restored["enum_present"] == 1
     finally:
-        # ALWAYS return to head so the rest of the suite sees the dropped schema.
         command.upgrade(config, "head")
 
     final = _snapshot()

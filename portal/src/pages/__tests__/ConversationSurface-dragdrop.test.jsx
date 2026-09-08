@@ -1,12 +1,8 @@
 /**
  * Drag-and-drop wiring on the conversation surface (A2).
  *
- * THIS WAS ONE HALF OF A PAIR. Two pages shared a hand-rolled `usePendingAttachments` hook — since
- * replaced by the library composer's staged-attachment adapter and deleted — and only the planning
- * one had coverage, so this file was written to cover the other against a different child set — a
- * pending-attachment preview row sharing a wrapper with a banners block, a switcher and a
- * composer-gate note. There is ONE surface now and one child set; the sibling suite went with
- * its page. The coverage is worth keeping, but it is no longer "the other half" of anything.
+ * A hand-rolled `usePendingAttachments` hook has since been replaced by the library composer's
+ * staged-attachment adapter; this file's coverage is what remains of that migration.
  *
  * (The file name still says `BuilderPage`. Every suite in this directory named that way now
  * renders `ConversationSurface` — see its own docstring for why one file absorbed both pages.
@@ -64,7 +60,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 /**
- * THE DROP TARGET IS THE DROPZONE, NOT THE FORM (plan 002, U5). It was one hand-rolled wrapper
+ * THE DROP TARGET IS THE DROPZONE, NOT THE FORM. It was one hand-rolled wrapper
  * carrying both roles; the library's dropzone wraps the box now and sets the same `data-dragging`
  * attribute, so what changed is which element the handlers are on — the property these scenarios
  * describe is unchanged, and still that a drop anywhere in the composer is claimed rather than
@@ -126,11 +122,10 @@ describe('BuilderPage — drop-target feedback', () => {
     expect(composer.getAttribute('data-dragging')).toBeNull()
   })
 
-  // The composer wrapper here carries SessionBanners, the mode switcher, and the
-  // composer-gate note ABOVE the actual input row — none of them are inside the plain
-  // textarea/button row. Same class of fix as ChatPage's: the drag handlers have to live on
-  // the wrapper that encloses ALL of that, not just the input row, or a drop landing on the
-  // pending-attachment chips falls through to the browser's default navigate-to-file handler.
+  // The composer wrapper here carries SessionBanners, the mode switcher, and the composer-gate
+  // note ABOVE the actual input row — the drag handlers have to live on the wrapper that encloses
+  // ALL of that, not just the input row, or a drop landing on the pending-attachment chips falls
+  // through to the browser's default navigate-to-file handler.
   it('claims a drop on the pending-attachment row too, not only the input row beneath it', async () => {
     const composer = await renderReady()
     dropFiles(composer, [new File(['x'.repeat(100)], 'photo.png', { type: 'image/png' })])

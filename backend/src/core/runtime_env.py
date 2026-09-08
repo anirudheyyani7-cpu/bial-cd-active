@@ -1,27 +1,22 @@
 """The one lazy accessor for this process's environment segment.
 
-WHY IT IS ITS OWN MODULE, AND WHY IT IMPORTS NOTHING. Two places need to know which environment
-this process is, and neither may ask `src.config` at import time: `src.config` reaches
-`src.settings.api`, which reaches both `src.services.redis.config` and the sandbox
-config — so a module-level import from either of those closes the cycle and makes `src.config`
-itself unimportable. Both had solved it the same way, separately, with the same paragraph of
-explanation written out twice: `redis/keys.py::_environment` and
-`sandbox/base.py::control_plane_segment`. Two copies of a subtle constraint is two places for it
-to be got wrong, and the next module needing the same trick would have made three.
+WHY THIS EXISTS — THE IMPORT CYCLE THIS AVOIDS. Two places need this value and neither may
+import `src.config` at module scope: `src.config` → `src.settings.api` → both
+`src.services.redis.config` and the sandbox config, so a module-level import from either closes
+the cycle and makes `src.config` unimportable. Both had solved it separately, with the same
+explanation written out twice (`redis/keys.py::_environment`,
+`sandbox/base.py::control_plane_segment`) — two copies of a subtle constraint is two places to
+get it wrong.
 
-This sits above every service package and has no module-scope imports, so anything may import it
-from anywhere. Both `src/__init__.py` and `src/core/__init__.py` are empty, so importing it
-executes this file and nothing else — which is the property that keeps it out of the cycle, and
-the reason `core/` is a legal home for it while any package with a populated `__init__` is not.
+NO module-scope imports, and both `src/__init__.py` and `src/core/__init__.py` are empty, so
+importing this executes only this file — the property that keeps it out of the cycle.
 
-RESOLVED PER CALL, NEVER MEMOIZED. The segment is a property of the running settings, not of
-import order, which no deployment controls; and the suite rebinds settings between cases.
+RESOLVED PER CALL, NEVER MEMOIZED: the segment is a property of the running settings, not import
+order, and the test suite rebinds settings between cases.
 
-THE TWO CALLERS MEAN DIFFERENT THINGS BY IT and keep their own names for it. The Redis key prefix
-scopes coordination state so a process pointed at the wrong instance cannot read another
-environment's fleet as a spare-list (C5); the `bial-control-plane` tag decides which control plane
-is entitled to judge a container (R22). They read the same value today, and nothing says they must
-forever — so neither is redefined in terms of the other.
+THE TWO CALLERS MEAN DIFFERENT THINGS BY IT — the Redis key prefix scopes coordination state; the
+`bial-control-plane` tag decides which control plane may judge a container. Same value today, but
+neither is redefined in terms of the other.
 """
 
 from __future__ import annotations

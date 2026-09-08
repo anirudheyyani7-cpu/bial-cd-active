@@ -1,51 +1,24 @@
-"""IS THIS APP LIVE? — the question, answered in one place.
+"""IS THIS APP LIVE? — one exact definition, used everywhere.
 
-"Live" was settled on the #158 call and it is a deployment fact, not a lifecycle one:
-
->   we have live = deployed / published — if the application is published and has url we
->   will show that status
-
-That is worth stating plainly because the obvious reading is wrong. `AppStatus.APPROVED`
-means an administrator said yes; it does not mean anything is serving. `PublishStatusChip`
-already keeps `Approved` and `Live` apart for exactly this reason, and a list that collapsed
-them would tell a citizen their app is live when it may never have been deployed at all.
-
-THREE SURFACES ASK THIS, and they must not drift:
-
-  * the marketplace catalog — an app is IN it because it is live (`marketplace/router.py`)
-  * the projects list's status column (#158 §10)
-  * the dashboard's "In production" count (#158 §1)
-
-A count computed over a different predicate than the rows it describes is the failure the
-marketplace docstring already argues against — page numbers you can click and find empty.
-Across surfaces the same mistake is quieter and worse: the dashboard says three are live and
+WHY THIS EXISTS: "live" is a deployment fact, not a lifecycle one — `AppStatus.APPROVED` means
+an admin said yes, not that anything is serving. Per the client: "we have live = deployed /
+published — if the application is published and has url we will show that status." THREE
+SURFACES read this and must never drift — the marketplace catalog, the projects list's status
+column, and the dashboard's "In production" count — or the dashboard says three are live while
 the list beneath it shows two.
 
-`deployments` is APPEND-ONLY — one row per deploy ATTEMPT, not one per app — so this is a
-COLLAPSE, never a flat filter, and it takes two of them:
+`deployments` is APPEND-ONLY (one row per ATTEMPT), so liveness is a COLLAPSE of two: the
+newest SUCCEEDED attempt with a URL (`last_success`), and the newest attempt bearing a takedown
+stamp, whatever its status (`last_unpublished` — `unpublish` stamps whichever row was newest at
+takedown time). Live = a `last_success` exists, no takedown landed at or after it (ids are
+UUIDv7/creation-ordered, so "after" is `<`), and the registry itself records no withdrawal.
 
-  * `last_success`  — the newest attempt that SUCCEEDED and carries a URL. That is
-    "published and has a url".
-  * `last_unpublished` — the newest attempt bearing a takedown stamp, WHATEVER its status.
-    `unpublish` stamps whichever row was newest at the time, so the question is not "does
-    the newest row carry a stamp" but "did a takedown land after the thing we are about to
-    call live".
-
-An app is live when a `last_success` row exists, no takedown landed at or after it, AND the
-registry does not record a withdrawal of its own. Because ids are UUIDv7 and
-creation-ordered, "after" is a straight `<` comparison.
-
-THE ORDERING INVARIANT THIS RESTS ON lives nowhere near here and breaks silently: `uuid`
-ordering equals creation order only because every row is minted by CPython's in-process
-monotonic `uuid7()` through `store._try_claim` (the only insert path), serialised per app by
-`uq_deployments_one_in_flight`, on a control plane that is SINGLE-REPLICA BY DESIGN. A
-second API replica reopens it — two hosts minting from independent clocks can interleave —
-and an out-of-order id breaks the comparison in both directions: an app shown live at a dead
-URL, or a live one shown as merely approved. Whoever scales the control plane revisits this,
-not just the deployment topology.
-
-Both partial indexes this relies on already exist (migration 0034), because the marketplace
-needed the same two collapses.
+THE ORDERING INVARIANT THIS RESTS ON: "after" as `<` holds only because every id is minted by
+CPython's in-process monotonic `uuid7()` through `store._try_claim`, serialised per app by
+`uq_deployments_one_in_flight`, on a SINGLE-REPLICA control plane. A second API replica breaks
+the comparison in both directions (an app shown live at a dead URL, or a live one shown as
+merely approved) — whoever scales the control plane must revisit this. Both partial indexes
+this relies on already exist (migration 0034), built for the marketplace's identical need.
 """
 
 from __future__ import annotations
@@ -60,22 +33,13 @@ from src.db.models.deployment import Deployment, DeploymentStatus
 
 
 def live_app_ids(*, owner_user_id: uuid.UUID | None = None) -> sa.Select[Any]:
-    """A SELECT of the `app_id`s that are live right now.
+    """A SELECT of the `app_id`s that are live right now — usable as an `IN (...)`, a LEFT
+    JOIN, or a `COUNT(*)`, so every surface reads the same definition.
 
-    Usable as a subquery on either side — `IN (...)`, a LEFT JOIN for a per-row flag, or a
-    `COUNT(*)` for the dashboard — so every surface reads the same definition rather than
-    re-deriving it.
-
-    `owner_user_id`, WHEN GIVEN, NARROWS THE COLLAPSE ITSELF rather than being applied by the
-    caller afterward — and that placement is the whole fix for a real bug (#173 round 4).
-    `list_projects`/`project_counts` used to build this UNSCOPED and filter by `user.id` in a
-    join outside it; the `DISTINCT ON` collapse below has no way to know that predicate exists,
-    so it evaluates over every deployment row the PLATFORM has ever recorded before the caller's
-    join narrows anything. Measured at 25,245 apps / 112,045 deployments: 60-200ms on the first
-    screen after sign-in, for one citizen's page, scaling with everyone else's deploy history
-    forever. Scoping here means the caller's `WHERE user_id = :me` is now INSIDE the thing that
-    scans deployments, not applied after.
-    """
+    `owner_user_id`, WHEN GIVEN, NARROWS THE COLLAPSE ITSELF, not applied by the caller after:
+    doing it outside used to scan every deployment row on the PLATFORM before scoping (measured
+    at 25,245 apps / 112,045 deployments: 60-200ms on first sign-in for one citizen's page,
+    growing forever)."""
 
     def _owned(query: sa.Select[Any]) -> sa.Select[Any]:
         if owner_user_id is None:
@@ -94,7 +58,7 @@ def live_app_ids(*, owner_user_id: uuid.UUID | None = None) -> sa.Select[Any]:
         # plan cannot prove `status = $1` implies `ix_deployments_success_collapse`'s
         # `status = 'succeeded'` predicate. It drops the index and Seq Scans a table that
         # grows with every deploy attempt the platform has ever made. Measured at 5.2k apps
-        # / 52k rows: 13-15ms for executions 1-5, then 27-30ms (#147 round 3).
+        # / 52k rows: 13-15ms for executions 1-5, then 27-30ms.
         #
         # `literal_execute` rather than `sa.text`: identical SQL, but the value stays the
         # ENUM, so renaming SUCCEEDED moves the predicate with it instead of leaving a

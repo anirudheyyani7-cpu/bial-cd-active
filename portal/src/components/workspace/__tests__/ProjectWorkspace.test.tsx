@@ -1,24 +1,11 @@
 /**
- * THE PROJECT SURFACE, RENDERED THROUGH THE REAL SHELL (Plan F, U1).
+ * WHY THIS EXISTS: the pane host is the shell's sibling, not the Outlet's child, so a suite that
+ * mounts the project page alone has no pane in its tree and stays green against a screen that
+ * frames nothing (`AppPaneHost`'s mechanism).
  *
- * ═══ WHY THIS FILE EXISTS SEPARATELY FROM `ProjectPage.test.tsx` ═══
- *
- * Everything below is invisible to a test that mounts the project page alone, and that is not a
- * detail — it is the shape of the defect this unit fixes. The pane host is a SIBLING of the shell's
- * Outlet, so a suite that renders only the Outlet's child has no pane in its tree at all and would
- * stay green against a project screen that frames nothing. R3's headline behaviour — open a
- * project, see the app — is a claim about two components at once.
- *
- * ═══ THE BUG THESE SCENARIOS ARE WRITTEN AGAINST ═══
- *
- * Before this unit the channel had exactly one publisher in the whole tree: the conversation
- * surface. The project page subscribed and never published. So on a fresh `/projects/:id` load,
- * with no conversation ever mounted, `AppPaneHost` hit its own "no pane and no address" early
- * return and rendered nothing — and every existing test passed, because nothing was looking.
- *
- * The second failure mode is the one a second publisher INTRODUCES rather than fixes: two surfaces
- * publishing to one channel can retire each other's work on the hop between them. Every continuity
- * assertion here is therefore paired with the round trip that would break it.
+ * The project surface is the SECOND publisher on the workspace channel — two surfaces publishing
+ * to one channel can retire each other's work on the hop between them. Every continuity assertion
+ * here is paired with the round trip that would break it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
@@ -60,7 +47,7 @@ vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
   relaunchPreview: api.relaunchPreview,
   saveProject: api.saveProject,
 }))
-// THE PUBLISH READ IS PART OF THIS SCREEN, not a stub (#205). The rail's APP STATUS panel holds
+// THE PUBLISH READ IS PART OF THIS SCREEN, not a stub. The rail's APP STATUS panel holds
 // one and the toolbar's chip holds another, and the LAST SAVED row this suite asserts about is a
 // FIELD OF THIS RESPONSE — so it is mocked at the wire, where a count of the reads is meaningful,
 // rather than at the hook, which is the seam the defect lived in.
@@ -115,7 +102,7 @@ const deployment = (publishState: PublishState = 'draft', over: Partial<Deployme
   savedHead: null,
   savedAt: null,
   // `null` is "the server did not say", which keeps the saved row — the neutral default
-  // for suites that are not about U16's never-saved omission.
+  // for suites that are not about the never-saved omission.
   savedState: null,
   ...over,
 })
@@ -128,10 +115,8 @@ const EMPTY_PANE: PaneView = {
 }
 
 /**
- * A chat, publishing its own address — the OTHER publisher on this channel.
- *
- * `pane` is the one thing the two KINDS differ on here (plan 002, U6): a build chat asks for the
- * app to be seen, a plan chat does not. Everything else about a conversation is the same on both.
+ * A chat, publishing its own address — the OTHER publisher on this channel. `pane` is the one
+ * thing the two kinds differ on: a build chat asks for the app to be seen, a plan chat does not.
  */
 function ChatSurface({ projectId = 'pA', pane = true }: { projectId?: string; pane?: boolean }) {
   useWorkspaceProject(projectId)
@@ -229,11 +214,8 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('R3 — loading a project address frames the running app, with no chat in the story', () => {
+describe('loading a project address frames the running app, with no chat in the story', () => {
   it('★ frames the app on a direct project load, with no conversation ever mounted', async () => {
-    // THE SCENARIO THE MISSING PUBLISHER WOULD FAIL, and the reason it has to run through the
-    // shell: `ProjectWorkspace` alone has no pane host in its tree, so mounting it by itself
-    // cannot observe a frame that never appeared.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -244,33 +226,23 @@ describe('R3 — loading a project address frames the running app, with no chat 
   })
 
   it('★ publishes a pane even for a project with NOTHING built, so the pane says so', async () => {
-    // The never-published early return must be unreachable from a project address, built or not.
-    // Two columns are the REST STATE of the project screen — a project with nothing built shows
-    // the empty-state sentence IN the pane, not a hidden pane the citizen has to interpret.
+    // Two columns are the REST STATE of the project screen — nothing built shows the empty-state
+    // sentence IN the pane, not a hidden pane the citizen has to interpret.
     api.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
 
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
-    // The pane is on screen and SAYING something — not a hidden column the citizen has to
-    // interpret. There is no frame, because there is nothing to frame; there is a sentence.
     expect(paneRegion()).toBeTruthy()
     expect(screen.getByTestId('app-pane-empty').textContent).toMatch(/describe what you want to build/i)
-    // ★ ONE AUTHOR FOR THE WORKSPACE SENTENCE (plan 002, U4). It was rendered twice — by the
-    // pane and by the rail's status card — and the rail's APP STATUS section is the publish
-    // panel the boards draw now. `getAllByText` would tolerate a second renderer; counting is
-    // what forbids one.
+    // Counting forbids a second renderer — `getAllByText` alone would tolerate one.
     expect(screen.queryAllByText(/describe what you want to build/i)).toHaveLength(1)
     expect(frame()).toBeNull()
     expect(frameWrapper()).toBeNull()
   })
 
-  it('★ AE1 — a saved, not-running project offers the ONE start control, on the project screen', () => {
-    // THE INVERSION THIS WHOLE PLAN TURNS ON, asserted where a citizen would meet it: through the
-    // real shell, at a project address, with no conversation in the story.
-    //
-    // It cannot live in `ProjectPage.test.tsx`. That suite renders the page WITHOUT the shell, so
-    // there is no pane in its tree at all and no assertion it can make would go red if the control
-    // disappeared — which is exactly the vacuous shape U9 exists to replace.
+  it('★ a saved, not-running project offers the ONE start control, on the project screen', () => {
+    // Cannot live in `ProjectPage.test.tsx`: that suite renders the page WITHOUT the shell, so
+    // there is no pane in its tree and no assertion there would go red if the control disappeared.
     //
     // Mutation receipt: stop rendering `state.action` in `AppPane`'s no-frame arm and this goes red,
     // along with eight scenarios in `AppPane.test.tsx`.
@@ -279,15 +251,14 @@ describe('R3 — loading a project address frames the running app, with no chat 
 
     return waitFor(() => {
       expect(screen.getByRole('button', { name: /launch application/i })).toBeTruthy()
-      // …and exactly one of them. The rail shows the same SENTENCE, deliberately, and no second
-      // control: R3 says one control starts the app, and two would race the same endpoint.
+      // Exactly one: two controls would race the same endpoint.
       expect(screen.getAllByRole('button', { name: /launch application/i })).toHaveLength(1)
     })
   })
 
   it('frames NOTHING when the read says the workspace is asleep', async () => {
-    // The address resolver is fed only the `alive` case, which is the one state whose `previewUrl`
-    // the wire calls framable. A pane framing the wrong thing is worse than a pane framing nothing.
+    // Only the `alive` state's `previewUrl` is framable — a pane framing the wrong thing is worse
+    // than a pane framing nothing.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'asleep', restorable: true, previewUrl: APP_URL }),
     )
@@ -298,7 +269,7 @@ describe('R3 — loading a project address frames the running app, with no chat 
   })
 })
 
-describe('★ AE4 — the project screen states no build outcome (#199)', () => {
+describe('★ the project screen states no build outcome', () => {
   it('★ frames a running app and claims NOTHING about a build, on screen or in the region', async () => {
     // ★ THE DEFECT: this screen published `completedLive: true` unconditionally, and that flag drew
     // "Build complete — your app is live below". A route where a build can NEVER run therefore
@@ -353,7 +324,7 @@ describe('★ AE4 — the project screen states no build outcome (#199)', () => 
   })
 })
 
-describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
+describe('★ the compile verdict, gated on liveness', () => {
   const alive = () =>
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
@@ -361,7 +332,7 @@ describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
   /** The pane's permanent live region, which is what the pane ANNOUNCES through. */
   const spoken = () => screen.getAllByRole('status').map((r) => r.textContent ?? '').join(' | ')
 
-  it('★ a build that failed to compile is NAMED, in the pane and in the live region (U5)', async () => {
+  it('★ a build that failed to compile is NAMED, in the pane and in the live region', async () => {
     // WHAT THIS ADDS, AND WHAT IT DOES NOT. The sentence already existed — one plain sentence with
     // one route back into the chat, already selected when the verdict is `failed`. There is no
     // second sentence, on purpose: two ways of saying the same thing is how a product ends up
@@ -382,11 +353,11 @@ describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
   })
 
   it('★ an UNREADABLE verdict asserts nothing in either direction — "not failure" is never success', async () => {
-    // R21a's rule, INHERITED rather than rebuilt: `unknown` is what the client answers for a
-    // refusal, an unreadable body, a thrown request or a container image older than the signal, and
-    // it must read as "no idea" — never as `clean`. The failure mode this rejects is the natural
+    // An inherited rule, not rebuilt here: `unknown` is what the client answers for a refusal, an
+    // unreadable body, a thrown request or a container image older than the signal, and it must
+    // read as "no idea" — never as `clean`. The failure mode this rejects is the natural
     // implementation: treat anything that is not `failed` as fine, and republish the very claim
-    // `#199` is about on exactly the reload where nothing had been verified.
+    // about a build outcome on exactly the reload where nothing had been verified.
     //
     // Mutation check: map the client's answer through `verdict === 'failed' ? 'failed' : 'clean'`
     // and this goes red — a mutant that reads plausible and is the whole point of the third value.
@@ -465,10 +436,10 @@ describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
   })
 
   it('★ the read is NOT ISSUED when the workspace is not alive — asserted on the request log', async () => {
-    // R3's actual constraint, which is narrower than the comment this replaced made it sound: the
-    // screen must not START a stopped container. The route already short-circuits before any
-    // attach when nothing is live, and the read is gated on the same liveness the save read is —
-    // so a dark pane costs nothing.
+    // The actual constraint here is narrower than it might sound: the screen must not START a
+    // stopped container. The route already short-circuits before any attach when nothing is
+    // live, and the read is gated on the same liveness the save read is — so a dark pane costs
+    // nothing.
     //
     // ON THE REQUEST LOG, NOT ON RENDERED TEXT. A screen that made the call and ignored the answer
     // renders identically to one that never asked, so only the log can tell them apart.
@@ -496,11 +467,10 @@ describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
   })
 })
 
-describe('AE4 — the app survives the round trip, in BOTH directions', () => {
+describe('the app survives the round trip, in BOTH directions', () => {
   it('project → chat → project keeps the SAME iframe node', async () => {
-    // The direction the existing shell suite does not exercise: it starts from a chat. A second
-    // publisher introduces the return trip, and the return trip is where a cold first commit can
-    // retire an address the departing surface left standing.
+    // The direction the existing shell suite doesn't exercise: it starts from a chat. The return
+    // trip is where a cold first commit can retire an address the departing surface left standing.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -518,10 +488,8 @@ describe('AE4 — the app survives the round trip, in BOTH directions', () => {
   })
 
   it('★ does not blank the pane while its own read is still in flight', async () => {
-    // The realistic way a second publisher breaks the return leg: this surface remounts cold, its
-    // read has not landed, and a naive publish of `{url: null}` retires the very address the chat
-    // left standing. `usePublishAddress`'s abstain rule is what prevents it — reimplementing the
-    // publish with a raw channel set is how that protection is lost.
+    // A naive publish of `{url: null}` on a cold remount would retire the address the chat left
+    // standing; `usePublishAddress`'s abstain rule is what prevents it.
     let resolveRead: (value: unknown) => void = () => {}
     api.fetchPreviewState.mockImplementation(
       () => new Promise((resolve) => { resolveRead = resolve }),
@@ -554,11 +522,10 @@ describe('AE4 — the app survives the round trip, in BOTH directions', () => {
   })
 })
 
-describe('AE37 — the stacked crossing is a class, not a remount', () => {
+describe('the stacked crossing is a class, not a remount', () => {
   it('expresses both layouts on ONE grid element, with no measurement anywhere', async () => {
-    // R13's crossing costs no `matchMedia` and no `ResizeObserver`: the container carries both
-    // directions as responsive classes, so the two-column ↔ stacked crossing cannot remount the
-    // frame — there is only ever one tree.
+    // No `matchMedia`, no `ResizeObserver`: the container carries both directions as responsive
+    // classes, so the crossing cannot remount the frame — there is only ever one tree.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -580,14 +547,10 @@ describe('AE37 — the stacked crossing is a class, not a remount', () => {
 
 describe('the collapse control — hidden, not unmounted, and never a one-way door', () => {
   it('★ lives in the TOOLBAR ROW, so it is still reachable once the rail is hidden', async () => {
-    // The failure this is written against: a toggle inside the rail. A collapsed rail is `w-0` and
-    // `invisible` — out of the tab order and out of the accessibility tree — so the control that
-    // would restore it would be unreachable, and nothing short of a reload could undo the press.
-    //
-    // It was in the PANE for exactly that reason, and plan 002's U2 moved it one step further out,
-    // to the row above both columns. The reachability property is unchanged and still asserted; the
-    // row is simply the one surface that survives a collapse AND the pane going away, so the
-    // control has one home in every state rather than appearing and disappearing with the frame.
+    // A toggle placed inside the rail itself would vanish when collapsed (`w-0` and `invisible`
+    // take it out of the tab order and the accessibility tree) — nothing short of a reload could
+    // undo the press. The row survives both a collapse and the pane going away, so the control
+    // has one home in every state.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -604,7 +567,6 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
     // be whitespace, not a word boundary.
     expect(rail().className).toMatch(/(^|\s)w-0(\s|$)/)
     expect(rail().className).toMatch(/invisible/)
-    // Still there, still pressable, now offering the other direction.
     const back = screen.getByRole('button', { name: /show details/i })
     expect(back.getAttribute('aria-expanded')).toBe('false')
     expect(back.getAttribute('aria-controls')).toBe(rail().id)
@@ -625,13 +587,9 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
   })
 
   it('★ is reachable on a project with NOTHING BUILT, where there is no frame to hang it on', async () => {
-    // THE BUG THIS CAUGHT, found by this suite rather than by review. The toggle was first
-    // published into the pane's toolbar slot — the same place the conversation surface puts its
-    // chat-panel toggle. That toolbar is rendered by `LivePreview`, which only mounts once there is
-    // something to frame, so a project with nothing built had NO toggle at all; and a rail
-    // collapsed while an app was running would have lost its way back the moment the container
-    // stopped. Its home has to be a surface that always renders — the pane's own outer shell then,
-    // the toolbar row now.
+    // The toggle can't live in the pane's toolbar slot: that toolbar is rendered by `LivePreview`,
+    // which only mounts once there is something to frame, so a project with nothing built would
+    // have NO toggle at all. Its home has to be a surface that always renders.
     api.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
@@ -639,7 +597,6 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
 
     fireEvent.click(screen.getByRole('button', { name: /hide details/i }))
     expect(rail().className).toMatch(/(^|\s)w-0(\s|$)/)
-    // …and back again, with no frame in the story at any point.
     fireEvent.click(screen.getByRole('button', { name: /show details/i }))
     expect(rail().className).not.toMatch(/(^|\s)w-0(\s|$)/)
   })
@@ -660,9 +617,8 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
 
 describe('the channel is left as the next surface needs to find it', () => {
   it('clears the pane and its visibility on the way out, and keeps the address', async () => {
-    // The channel's stated per-payload rules, now exercised by a SECOND publisher rather than only
-    // the first. Keeping the address is R8; clearing the pane is what stops a departed surface's
-    // chrome from being rendered over the next one's.
+    // The channel's per-payload rules, exercised from a SECOND publisher — the table in
+    // `workspaceChannel.ts` states them.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -679,7 +635,7 @@ describe('the channel is left as the next surface needs to find it', () => {
 })
 
 /**
- * WHAT THE SHELL DOES FOR A CHAT THAT WANTS NO PANE (plan 002, U6).
+ * WHAT THE SHELL DOES FOR A CHAT THAT WANTS NO PANE.
  *
  * The SURFACE half — that the panel fills the rail, that a plan chat centres its column, that the
  * board's footer line appears on one kind and not the other — is `ConversationSurface-panel.test.tsx`'s,
@@ -688,9 +644,7 @@ describe('the channel is left as the next surface needs to find it', () => {
  */
 describe('a chat that declares no pane', () => {
   it('★ takes the whole rail, and the frame stays mounted rather than being torn down', async () => {
-    // The hide treatment, never an unmount — the same node throughout, which is what makes the
-    // board's "nothing about the app is stopped or reloaded — it is only taken off the screen" a
-    // structural fact rather than a hope.
+    // The hide treatment, never an unmount: the same node throughout.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -704,7 +658,7 @@ describe('a chat that declares no pane', () => {
     expect(rail().className).not.toMatch(/lg:w-\[520px\]/)
     expect(frameWrapper()).toBeTruthy()
     expect(frame()).toBe(original)
-    // AWAITED, because the app is taken off the screen rather than snatched off it (plan 002, U6):
+    // AWAITED, because the app is taken off the screen rather than snatched off it:
     // the column holds its size for one animation while the card slides out, and only then does
     // the hide treatment land. The frame identity above is the assertion that must hold throughout.
     await waitFor(() => expect(frameWrapper()?.className).toMatch(/invisible/))
@@ -727,7 +681,7 @@ describe('a chat that declares no pane', () => {
 })
 
 /**
- * ★ LAST SAVED TELLS THE TRUTH AFTER A SAVE (plan 001, U18 — issue #205).
+ * ★ LAST SAVED TELLS THE TRUTH AFTER A SAVE.
  *
  * THE DEFECT. The rail's LAST SAVED row is drawn from `savedHead`/`savedAt`, which are fields of
  * the DEPLOYMENT read — and Save wrote a new bundle without telling that read anything. The row
@@ -785,7 +739,7 @@ const dirtyAndAlive = () => {
 const savedRow = () => screen.getByTestId('status-row-saved')
 const pressSave = async () => fireEvent.click(await screen.findByTestId('save-project'))
 
-describe('★ the LAST SAVED row after a save (#205)', () => {
+describe('★ the LAST SAVED row after a save', () => {
   it('★ moves off "We could not tell" on the FIRST save a project ever has', async () => {
     // A project with nothing saved yet: both halves of the row are null, so it says so in words.
     dirtyAndAlive()
@@ -821,7 +775,7 @@ describe('★ the LAST SAVED row after a save (#205)', () => {
   })
 
   it('★ keeps the row it already had when the re-read FAILS, rather than blanking the panel', async () => {
-    // THE RULE THE ISSUE DOES NOT GIVE. `usePublishState` sets `loadError` on any failure and the
+    // THE RULE NOBODY WROTE DOWN. `usePublishState` sets `loadError` on any failure and the
     // panel renders that branch FIRST — pill, every provenance row and the action all replaced by
     // one line — so a 500 on the read that follows a save would blank the whole section on a
     // screen that has just said "Saved". A stale row is worse than a fresh one and far better

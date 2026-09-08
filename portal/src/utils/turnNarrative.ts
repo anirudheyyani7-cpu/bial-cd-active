@@ -1,24 +1,13 @@
 /**
- * Turn frames → the C7 envelope shape, plus what the surface asks ABOUT a turn (U5, Plan D U17).
+ * Turn frames → the progress-envelope shape, plus what the surface asks ABOUT a turn. A build is
+ * a Write turn now, so its narrative arrives as `step`/`diagnostic`/`quota` turn frames instead of
+ * progress envelopes; ADAPTING rather than rewriting is deliberate — one mapping is how the two
+ * transports agree by construction, not by discipline.
  *
- * A build is a Write turn now, so its narrative arrives as `step` / `diagnostic` / `quota` turn
- * frames instead of C7 progress envelopes. ADAPTING rather than rewriting is deliberate: the two
- * transports must never tell different stories about what a build looks like, and one mapping is
- * how they agree by construction rather than by discipline.
- *
- * THE ENVELOPES NOW HAVE ONE READER, NOT TWO. `BuildProgress` — the pinned card that used to draw
- * them — is gone, and the transcript draws activity from the message parts themselves (Plan D's
- * `ActivityGroup`). What still needs the envelope shape is the legacy build-session feed and the
- * two questions the surface asks of a turn: what phase it is in (`turnPhase`, for the app pane)
- * and whether today's budget is spent (`atLimitSendState`, for the composer). Both moved here when
- * their old home was deleted, and both belong here for the same reason: envelopes are this
- * module's vocabulary, and neither the pane nor the composer should have to learn it.
- *
- * The mapping is small because the two vocabularies already describe the same thing. The one
- * place they genuinely differ is `diagnostic` → `error`: on the turn stream a diagnostic is
- * explicitly NOT a failure (a repair run follows), so its envelope carries `recovering: true`
- * and renders as a retry — collapsing it into the plain red `error` shape told the user their
- * build died four times on its way to succeeding.
+ * THE ENVELOPES HAVE ONE READER: the legacy build-session feed and the two questions the surface
+ * asks of a turn — `turnPhase` (app pane) and `atLimitSendState` (composer) — both live here so
+ * neither caller has to learn this module's vocabulary. The one place the two vocabularies
+ * genuinely differ (`diagnostic` → `error`) is explained at its mapping below.
  */
 import type { StepItem } from './turnStreamApi'
 import type {
@@ -78,7 +67,7 @@ export function narrativeEnvelopes(narrative: TurnNarrative): FeedEnvelope[] {
       // Fail to `server` rather than drop: an unrecognized source still carries a sentence
       // the user needs to see, and a swallowed diagnostic is a silent build failure.
       source: (ERROR_SOURCES.has(diagnostic.source) ? diagnostic.source : 'server') as ErrorSource,
-      // EMPTY, and deliberately. The target `ErrorEvent` is the LEGACY C7 feed's shape, which
+      // EMPTY, and deliberately. The target `ErrorEvent` is the LEGACY feed's shape, which
       // still has these two fields because that transport still carries them; the turn stream
       // does not send them any more, so there is nothing to map. They are written explicitly
       // rather than omitted because the field list above is what makes a dropped field a
@@ -110,24 +99,12 @@ export function narrativeEnvelopes(narrative: TurnNarrative): FeedEnvelope[] {
 }
 
 /**
- * The phase this turn is in, in the status vocabulary the app pane reads.
- *
- * `null` — nothing to say about the app, so the pane keeps whatever it already had. The ordering
- * below is the honest one: an unavailable workspace is terminal for this turn no matter what else
- * arrived, and a live preview outranks "still provisioning" because the user can SEE it.
- *
- * ══ `narrativeStatus`'s `isBuild` IS GONE, AND THE FRAMES ANSWER INSTEAD ══
- *
- * This used to be TOLD, by its caller, whether the turn was a build — because the surface knew the
- * chat's kind and the frames did not. There is ONE surface now and it consults no kind anywhere
- * (R72), so a parameter whose only honest source is "what sort of chat is this?" has no caller
- * left. It also arrived as the literal `true` at the one site that passed it, which made the
- * read-turn arm below unreachable in the shipped product.
- *
- * The frames already carry the distinction. A turn that WORKED ON THE APP emits steps, or a
- * preview, or a diagnostic about one; a turn that only answered a question attaches the same live
- * container (U5b) and emits nothing else. So the question is read off the narrative, and the two
- * arms are the same two arms as before — reached by evidence rather than by declaration.
+ * The phase this turn is in, in the status vocabulary the app pane reads. `null` means nothing
+ * to say — the pane keeps whatever it already had. Ordering is deliberate: an unavailable
+ * workspace is terminal no matter what else arrived, and a live preview outranks "still
+ * provisioning" because the user can SEE it. Takes no chat-kind parameter — the distinction
+ * between app work and a read-only answer is read off the frames themselves (see
+ * `touchedTheApp` below), not declared by a caller.
  */
 export function turnPhase(
   narrative: TurnNarrative,
@@ -154,7 +131,7 @@ export function turnPhase(
     // while it is still happening. Everything after it belongs to the answer.
     return running && narrative.workspace.state === 'preparing' ? 'provisioning' : null
   }
-  // A TURN THAT FAILED IS THE ONLY ONE THAT FAILED (`#96`). This read
+  // A TURN THAT FAILED IS THE ONLY ONE THAT FAILED. This read
   // `terminal === 'failed' || terminal === 'stopped'`, and that one line was the whole of the bug:
   // a citizen who pressed Stop watched their running app collapse to "The preview is no longer
   // running" over a container the backend had deliberately kept up. The backend does not make this
@@ -185,18 +162,11 @@ export interface AtLimitSendState {
 }
 
 /**
- * The SEND control's state while today's budget is spent — `null` when it is not.
- *
- * RE-HOMED FROM `BuildProgress.tsx`, which U17 deleted. It came HERE rather than to the composer
- * because it reads FEED ENVELOPES, which is this module's vocabulary and nothing a composer should
- * have to know about: the surface asks the question and hands the composer a finished sentence.
- *
- * THE COMPOSER ITSELF STAYS ENABLED, and that is the whole reason this describes the send control
- * rather than the composer. A citizen who is refused mid-thought has usually just typed something
- * they want to keep; disabling the textarea takes their draft hostage until midnight, and (KTD-3)
- * `disabled` on a focused element blurs it to `document.body`, dropping keyboard focus out of the
- * page entirely. They can still select, copy and paste their draft somewhere safe — they simply
- * cannot spend budget they do not have.
+ * The SEND control's state while today's budget is spent — `null` when it is not. Lives here
+ * (not in the composer) because it reads FEED ENVELOPES, this module's vocabulary; the surface
+ * asks and hands back a finished sentence. Describes the SEND control only, never the composer:
+ * a citizen refused mid-thought usually has a draft worth keeping, so the textarea stays live to
+ * select/copy/paste — take the composer down too and the draft is hostage until midnight.
  */
 export function atLimitSendState(envelopes: FeedEnvelope[]): AtLimitSendState | null {
   // NEWEST WINS, by seq rather than by array order. A reconnect replays the stream and a resumed
@@ -215,13 +185,11 @@ export function atLimitSendState(envelopes: FeedEnvelope[]): AtLimitSendState | 
 }
 
 /**
- * `resets_at` as a time a person can read, or `null` when it is not a usable instant.
- *
- * FALLS BACK RATHER THAN THROWING. The field is a wire value, and an unparseable one has already
- * reached a renderer in the existing tests — `new Date('x').toLocaleTimeString()` renders the
- * literal string "Invalid Date" into the citizen's banner, which is worse than saying nothing
- * specific at all. The caller's fallback ("after midnight") is true regardless of the wire value,
- * because the reset IS the next IST midnight.
+ * `resets_at` as a time a person can read, or `null` when it is not a usable instant. FALLS
+ * BACK rather than throwing: an unparseable wire value has already reached a renderer in the
+ * existing tests — `new Date('x').toLocaleTimeString()` renders the literal "Invalid Date" into
+ * the citizen's banner, worse than saying nothing. The caller's "after midnight" fallback is
+ * true regardless, since the reset IS the next IST midnight.
  */
 export function formatResetTime(isoUtc: string): string | null {
   const at = new Date(isoUtc)
@@ -229,7 +197,7 @@ export function formatResetTime(isoUtc: string): string | null {
   return at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-/** Dedup by `seq` (last-wins) and order by `seq` — C3 §4.2's replay property, kept. */
+/** Dedup by `seq` (last-wins) and order by `seq` — the replay property, kept. */
 function bySeq(envelopes: FeedEnvelope[]): FeedEnvelope[] {
   const latest = new Map<number, FeedEnvelope>()
   for (const env of envelopes) latest.set(env.seq, env)

@@ -33,9 +33,9 @@ jobs:
       - name: Test
         run: npm run test
 
-  # The backend had NO CI job at all, which is how a `mypy --strict` error reached a review
-  # (#120): every gate was run by hand, so a green check on a PR said nothing about the
-  # backend. ADR-0003 makes these gates mandatory — this is what makes them enforced.
+  # The backend previously had no CI job at all: every gate was run by hand, so a green check
+  # on a PR said nothing about the backend. These steps are what make the gates mandatory and
+  # enforced, not merely advisory.
   #
   # STATIC GATES ONLY, deliberately. They need no database, no Redis (tests fake it in
   # process) and no secrets, so this job is hermetic and cannot flake. `pytest` is NOT here

@@ -1,8 +1,6 @@
-// U15: `act()`'s catch branch now calls `onToast(message, 'problem')` — the severity
-// AdminPage's shared toast channel uses to render a failure differently from a
-// confirmation, so an administrator can tell which one they're looking at without
-// reading the words. Every failure-path `onToast` assertion below carries that second
-// argument; the success-path ones (a bare `onToast(okMsg)`) are unchanged.
+// `onToast(message, 'problem')` is the severity AdminPage's shared toast channel
+// uses to render a failure differently from a confirmation. Every failure-path
+// assertion below carries that second argument; success-path ones don't.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import AppRegistryPanel from '../AppRegistryPanel.jsx'
@@ -70,7 +68,7 @@ const declaration = ({
   explanation = 'The form only stores a staff name and a badge number, both kept in the app’s own database.',
 } = {}) => ({
   commits: { shipping, reviewed },
-  // U10's block, present ONLY on the pipeline's drift path — which is the only place the
+  // This block, present ONLY on the pipeline's drift path — which is the only place the
   // answered-about commit and the shipping commit ever differ. The `commits` pair cannot
   // express drift: the writer sets `reviewed` from the same head_sha as `shipping`.
   ...(answeredAbout === null ? {} : { drift: { answeredAbout, shipping } }),
@@ -120,7 +118,6 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
     expect(h.listApps).toHaveBeenCalledWith('pending')
-    // registry sub-tabs exist; the mock "Security Flags"/"under_review" vocabulary does not
     expect(screen.getByTestId('apps-tab-approved')).toBeTruthy()
     expect(screen.getByTestId('apps-tab-disabled')).toBeTruthy()
     expect(screen.queryByText('Security Flags')).toBeNull()
@@ -128,10 +125,8 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
   })
 
   it('warns that rejecting a LIVE app de-lists it, and says how to actually take it down', async () => {
-    // Rejecting sets a standing rejection, which the marketplace query reads — so the app
-    // vanishes from the catalog while its URL keeps serving, and only the OWNER can undo it
-    // by submitting again. Submit is legal from APPROVED, so an admin rejecting a
-    // re-submission of a running app was doing this blind (#147 round 3 review).
+    // Rejecting sets a standing rejection the marketplace query reads: the app vanishes
+    // from the catalog while its URL keeps serving, and only the owner can undo it.
     h.listApps.mockResolvedValue([{ ...PENDING, deployedUrl: 'https://live.example/' }])
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
@@ -173,9 +168,8 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     expect(screen.queryByTestId('review-submission-id')).toBeNull()
     expect(screen.getByTestId('review-criterion')).toBeTruthy()
 
-    // A MISSING submitted-at reads as missing, never as the epoch. Folding null into
-    // `new Date(0)` rendered "1/1/1970" directly above the Approve button, which an
-    // administrator reads as a fact about the submission rather than as absent data.
+    // A missing submitted-at must read as missing, never the epoch: folding null into
+    // `new Date(0)` rendered "1/1/1970" above the Approve button as if it were a fact.
     cleanup()
     h.listApps.mockResolvedValue([{ ...PENDING, submittedAt: null }])
     render(<AppRegistryPanel onToast={() => {}} />)
@@ -187,7 +181,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     // The false JSX-era claims are gone: no "pre-compiles" copy, no /apps/{id} link.
     expect(document.body.textContent).not.toMatch(/pre-compiles/i)
     expect(document.querySelector('a[href^="/apps/"]')).toBeNull()
-    // The dead bundle-download control (#118) is gone too — button and instruction both.
+    // The dead bundle-download control is gone too — button and instruction both.
     expect(screen.queryByTestId('download-bundle')).toBeNull()
     expect(document.body.textContent).not.toMatch(/download the submitted bundle/i)
   })
@@ -211,8 +205,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     fireEvent.click(screen.getByTestId('review-app-1'))
     fireEvent.click(screen.getByTestId('approve-btn'))
     await waitFor(() => expect(onToast).toHaveBeenCalledWith(copy, 'problem'))
-    // The modal stays OPEN on the 409 — the admin still needs the submission metadata
-    // to re-review; act() reports failure so onApprove does not setReview(null).
+    // The modal stays OPEN on the 409: act() reports failure, so onApprove never nulls the review.
     expect(screen.getByTestId('approve-btn')).toBeTruthy()
   })
 
@@ -231,7 +224,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     prompted.mockRestore()
   })
 
-  it('the URL prompt defaults to the recorded one and a blank answer keeps it (R5)', async () => {
+  it('the URL prompt defaults to the recorded one and a blank answer keeps it', async () => {
     const live = 'https://apps.bial.example.com/gate-ops'
     const prompted = vi.spyOn(window, 'prompt').mockReturnValue('')
     h.listApps.mockResolvedValue([{ ...APPROVED, deployedUrl: live }])
@@ -283,7 +276,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     ])
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
-    // The backend surfaces AdminAppOut.databaseBytes (R10) — the column must actually show it.
+    // The backend surfaces AdminAppOut.databaseBytes — the column must actually show it.
     expect(screen.getByTestId('db-bytes-app-sized').textContent).toBe('2.0 MB')
     // Null is "no number to show" (never provisioned / not ready / cluster unreachable), not 0 B.
     expect(screen.getByTestId('db-bytes-app-null').textContent).toBe('—')
@@ -299,15 +292,15 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
 })
 
 /**
- * U13 — the administrator's review screen.
+ * The administrator's review screen.
  *
  * What is IN DISPUTE leads, then the automatic check's reason for each, then the
- * developer's explanation (R15). Evidence locations never appear (OD-B). An item with no
+ * developer's explanation. Evidence locations never appear. An item with no
  * review says so rather than rendering blanks. And the whole thing stays operable: the
  * actions sit outside the scroll region, so a full six-category dispute cannot push
  * Approve off the bottom of a card that has no way to scroll to it.
  */
-describe('the review screen leads with the dispute (R15)', () => {
+describe('the review screen leads with the dispute', () => {
   it('shows the disputed categories, their reasons, and the explanation IN THAT ORDER', async () => {
     h.listApps.mockResolvedValue([{
       ...PENDING,
@@ -346,7 +339,7 @@ describe('the review screen leads with the dispute (R15)', () => {
     expect(screen.queryByTestId('dispute-financial_data')).toBeNull()
   })
 
-  it('states the criterion — the data, not the code (P3)', async () => {
+  it('states the criterion — the data, not the code', async () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await openReview()
     const criterion = screen.getByTestId('review-criterion').textContent
@@ -354,7 +347,7 @@ describe('the review screen leads with the dispute (R15)', () => {
     expect(criterion).toMatch(/not checking whether the code is correct/i)
   })
 
-  it('NEVER renders an evidence location (OD-B)', async () => {
+  it('NEVER renders an evidence location', async () => {
     // The declaration is structurally incapable of carrying one — but a future hand that
     // "helpfully" passed the evidence document through would break this, which is the
     // point of asserting it rather than trusting the shape.
@@ -516,7 +509,7 @@ describe('the scroll contract — Approve and Reject stay reachable', () => {
   })
 })
 
-describe('the rejection note is required, with a floor (P3)', () => {
+describe('the rejection note is required, with a floor', () => {
   it('disables Send rejection below 20 characters and says how far off it is', async () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await openReview()
@@ -602,7 +595,7 @@ describe('a submission withdrawn while the modal was open', () => {
   })
 })
 
-describe('closing the review puts focus somewhere real (R43, #187)', () => {
+describe('closing the review puts focus somewhere real', () => {
   // THE MODAL IS HAND-ROLLED — no Radix `DialogContent`, so no `FocusScope` capturing the
   // element that had focus and restoring it on unmount. Every route out of it dropped focus on
   // `<body>`, where the next Tab restarts at the top of the document rather than at the queue
@@ -675,7 +668,7 @@ describe('closing the review puts focus somewhere real (R43, #187)', () => {
   })
 })
 
-describe('the self-publish lineage has no runbook (R17a)', () => {
+describe('the self-publish lineage has no runbook', () => {
   it('an approved self-publish app shows neither Deploy needed nor Mark deployed', async () => {
     h.listApps.mockResolvedValue([{ ...APPROVED, approvalRoute: 'self_publish', redeployNeeded: false }])
     render(<AppRegistryPanel onToast={() => {}} />)
@@ -705,7 +698,7 @@ describe('the self-publish lineage has no runbook (R17a)', () => {
   })
 })
 
-describe('the waiting count is mirrored on the pending tab (P1)', () => {
+describe('the waiting count is mirrored on the pending tab', () => {
   it('renders the badge with its accessible name', async () => {
     h.fetchAppStatusCounts.mockResolvedValue({
       draft: 0, pending: 4, approved: 0, rejected: 0, disabled: 0,
@@ -790,9 +783,9 @@ describe('internal identifiers stay out of the administrator’s way', () => {
 })
 
 /**
- * U20 — the review queue shows how old the backlog is (#209).
+ * The review queue shows how old the backlog is.
  *
- * The pending list is ordered oldest-submission-first and pinned by a backend test (R16),
+ * The pending list is ordered oldest-submission-first and pinned by a backend test,
  * so the queue already encodes age in a row's POSITION — but nothing on screen said so,
  * and no row said how old. A submission waiting 43 days was drawn identically to one that
  * arrived a minute ago.
@@ -805,7 +798,7 @@ describe('internal identifiers stay out of the administrator’s way', () => {
  */
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString()
 
-describe('the review queue shows how old the backlog is (#209)', () => {
+describe('the review queue shows how old the backlog is', () => {
   it('a pending row says how long it has been waiting, with the exact moment underneath', async () => {
     const iso = daysAgo(43)
     h.listApps.mockResolvedValue([{ ...PENDING, submittedAt: iso }])
@@ -922,7 +915,7 @@ describe('the review queue shows how old the backlog is (#209)', () => {
   })
 })
 
-// --- the kill switch, widened to draft and rejected (#163) ---------------------------
+// --- the kill switch, widened to draft and rejected -----------------------------------
 
 const DRAFT = {
   ...PENDING,
@@ -963,7 +956,7 @@ describe('AppRegistryPanel — switching an app off', () => {
     fireEvent.click(screen.getByTestId('disable-app-4'))
 
     await waitFor(() => expect(h.disableApp).toHaveBeenCalledWith('app-4'))
-    // A bare confirmation, not the failure severity U15 added — and it names the app, so an
+    // A bare confirmation, not a failure-severity toast — and it names the app, so an
     // administrator with several rows on screen can see which one they just switched off.
     expect(onToast).toHaveBeenCalledWith('“Self Published Tool” disabled')
     expect(h.listApps).toHaveBeenCalledTimes(2) // the list reloads onto the new status
@@ -985,7 +978,7 @@ describe('AppRegistryPanel — switching an app off', () => {
   })
 })
 
-describe('★ the admin delete collects a reason (U23, R5)', () => {
+describe('★ the admin delete collects a reason', () => {
   // A `window.confirm` stood here and could collect nothing, while the route already REQUIRED a
   // 5-50 word justification — so every delete through this panel answered 422. It shipped green
   // because `deleteApp` is mocked wholesale in this file: both halves passed while disagreeing.

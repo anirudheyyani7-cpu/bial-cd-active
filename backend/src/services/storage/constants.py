@@ -2,11 +2,9 @@
 constants, not env config (12-factor: config is what varies between deploys).
 Changed only by a code edit + review, never by ops at runtime.
 
-(badger's per-segment / total object-key byte ceilings are dropped here: they
-guarded the multi-tenant `scoped_key`, whose forgeable string axes this
-single-tenant port replaces with UUID-typed key builders — a canonical UUID
-cannot carry `/`, `..`, or control chars, so the length/traversal guards have
-nothing left to guard. See `keys.py`.)
+No per-segment or total object-key byte ceiling lives here, deliberately: the key
+builders are UUID-typed, so a key cannot carry `/`, `..` or a control character and a
+length guard would have nothing left to guard.
 """
 
 from __future__ import annotations
@@ -16,32 +14,33 @@ from typing import Final
 
 from src.services.storage.errors import StorageSignError
 
-# Hard ceiling on signed read-URL lifetime. The ABC rejects any larger
-# `expires_in` with StorageSignError BEFORE delegating to the backend — fail
-# closed, never silently clamped. Matches the Azure Blob user-delegation SAS
-# 7-day maximum, so a leaked URL self-expires within a week.
+# Hard ceiling on signed read-URL lifetime, and authoritative for every SESSION SAS — the
+# blob-level signed URL and the container-scoped session mint alike. 7 days is Azure's own hard
+# cap on a user-delegation SAS, so a leaked URL self-expires within a week; `validate_sas_ttl`
+# rejects anything larger with StorageSignError BEFORE the backend is asked, fail closed, never
+# silently clamped.
 MAX_SIGNED_URL_TTL: Final = timedelta(days=7)
 
 
-# Lifetime of the DEPLOYED-app container credential (U2/R2) — deliberately NOT governed by
-# `MAX_SIGNED_URL_TTL`/`validate_sas_ttl` above, which stay authoritative for every SESSION SAS.
-# A deployed app must reach its own Blob container for as long as it is live, and no
-# user-delegation SAS can cover that (Azure hard-caps those at 7 days); an account-key service
-# SAS has no service-enforced expiry cap, so this one is minted from the account key against a
-# per-app STORED ACCESS POLICY — the only construct that keeps a service SAS revocable
-# (`AppContainerStore.mint_deploy_container_sas`).
+# Lifetime of the DEPLOYED-app container credential — deliberately NOT governed by the ceiling
+# above. A live app must reach its own Blob container for as long as it is deployed and no
+# user-delegation SAS can cover that, so this one is an account-key SERVICE SAS, which Azure
+# imposes no expiry cap on.
 #
-# A widening edit here silently extends the blast radius of a leaked deploy credential, so
-# `tests/services/storage/test_app_containers.py` fails if this exceeds 400 days. Raise the guard
-# consciously or not at all.
+# The exemption is only safe because the credential stays REVOCABLE, and Azure allows that one
+# way: a service SAS can be withdrawn only through a stored access policy it referenced AT MINT
+# TIME. So the token carries nothing but a per-app policy id, the policy carries the permissions
+# and expiry — deleting or back-dating it is the kill switch — and a fresh id on every mint issues
+# a genuinely different token that revokes its predecessor. An ad-hoc SAS would be irrevocable
+# short of rotating the account key, which kills every other app's credential too. A widening edit
+# here extends the blast radius of a leak, so `test_app_containers.py` fails if this exceeds 400
+# days.
 DEPLOY_SAS_TTL: Final = timedelta(days=365)
 
 
 def validate_sas_ttl(ttl: timedelta, *, provider: str, key: str) -> None:
-    """Fail-closed TTL guard shared by BOTH SAS/signed-URL paths — `ObjectStorage.signed_read_url`
-    (blob-level) and `AppContainerStore.mint_container_sas` (container-level). The TTL must be
-    positive and within `MAX_SIGNED_URL_TTL`; enforced in ONE place so the two paths can never
-    drift, and a leaked URL/SAS always self-expires within the ceiling."""
+    """Reject a non-positive TTL, or one past `MAX_SIGNED_URL_TTL`, with `StorageSignError`.
+    Both signing paths call this rather than checking inline, so the two cannot drift apart."""
     if ttl <= timedelta(0):
         raise StorageSignError("SAS TTL must be positive", provider=provider, key=key)
     if ttl > MAX_SIGNED_URL_TTL:

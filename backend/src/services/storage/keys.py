@@ -1,20 +1,13 @@
 """Single-tenant object-key builders + metadata normalization.
 
-Single-tenant (ADR-0004): there is no `org_id`. Isolation is by the owning
-`user_id` prefix, so badger's forgeable-string `ScopedStorage(org_id, project_id)`
-is replaced by UUID-typed builders. The builders take `uuid.UUID`, never `str`:
-a canonical UUID cannot contain `/`, `..`, or a control char, so the path-
-traversal and prefix-collision attacks the multi-tenant `scoped_key` had to
-defend against are structurally impossible here — the type IS the validation.
+Builders take `uuid.UUID`, never `str`: a canonical UUID cannot contain `/`, `..`, or a control
+char, so path traversal and prefix collision are structurally impossible — the type IS the
+validation, and widening a builder to `str` puts both attacks back.
 
-`assert_owned` is the fail-closed read-side guard: it re-checks that a stored key
-lives strictly under the caller's `att/{user_id}/` prefix, using a TRAILING-SLASH
-boundary (never a bare `startswith`) so one owner id can never be a prefix of
-another. A dropped ownership check is a cross-user leak, not a style nit.
-
-`normalize_metadata` / `normalize_metadata_key` are carried over verbatim from
-badger — the backend calls `normalize_metadata` before handing user metadata to
-the SDK, so the Azure metadata charset round-trips deterministically.
+`assert_owned` is the fail-closed read-side guard: it re-checks a stored key lives strictly
+under the caller's `att/{user_id}/` prefix via a TRAILING-SLASH boundary (never a bare
+`startswith`), so one owner id can never be a prefix of another. `normalize_metadata`/
+`normalize_metadata_key` run before metadata reaches the SDK, so the Azure charset round-trips.
 """
 
 from __future__ import annotations
@@ -51,17 +44,14 @@ def app_file_key(app_id: uuid.UUID, file_id: uuid.UUID) -> str:
     scoped by the owning app (whose own row is user-scoped), not directly by
     `user_id`, so they live under their own `apps/` namespace.
 
-    NO CURRENT WRITER: the old per-app file model (`app_files`) was dropped in migration
-    0017 (OPEN-SANDBOX), so nothing calls this today. The builder is kept — it still
-    correctly names the `apps/{app_id}/…` layout — but because whether any object exists
-    under `apps/` in a deployed environment cannot be answered from the repo, the U10
-    reconciling sweep treats this prefix as REPORT-ONLY (never deletes): safe if empty, a
-    silent permanent leak if not, so report first and let someone with tenant access decide."""
+    NO CURRENT WRITER: the per-app file model was dropped in migration 0017, so nothing
+    calls this today. Kept rather than deleted because it is still the only correct
+    spelling of the `apps/{app_id}/…` layout."""
     return f"apps/{app_id}/{file_id}"
 
 
 def container_name(app_id: uuid.UUID) -> str:
-    """Azure container name for an app's per-app Blob container: `app-{app_id}` (C9 §6). A UUID
+    """Azure container name for an app's per-app Blob container: `app-{app_id}`. A UUID
     renders as 36 lowercase hex-and-hyphen chars, so `app-{uuid}` is 40 chars — comfortably
     within Azure's container-name rules (3–63 chars, lowercase alnum/hyphen, starts with a letter,
     no consecutive or trailing hyphens): the `app-` prefix is a letter start, and a UUID's own
@@ -72,66 +62,51 @@ def container_name(app_id: uuid.UUID) -> str:
 
 
 def snapshot_key(app_id: uuid.UUID) -> str:
-    """Key for a build session's C4 git-bundle snapshot: `snapshots/{app_id}/app.bundle`.
+    """Key for a build session's git-bundle snapshot: `snapshots/{app_id}/app.bundle`.
     Overwrite-latest — one bundle per app (the current-tree snapshot the sandbox restore
-    pulls). WRITTEN only by the session API (C4), but no longer session-API-only on read:
-    `submit` (APPROVAL) copies it to an immutable `submission_key` — this key itself stays
-    mutable and is never what an approval pins. Lives under its own `snapshots/`
-    namespace, uuid-typed like `app_file_key`."""
+    pulls). Written only by the session API, but not read only by it: `submit` copies it
+    to an immutable `submission_key`, so this key stays mutable and is never what an
+    approval pins. Lives under its own `snapshots/` namespace, uuid-typed like
+    `app_file_key`."""
     return f"snapshots/{app_id}/app.bundle"
 
 
 def recovery_key(app_id: uuid.UUID) -> str:
     """Key for an app's AUTOSAVED tree: `recovery/{app_id}/app.bundle`.
 
-    A SEPARATE NAMESPACE FROM `snapshot_key`, and the separation is the whole point. KTD-5e
-    (user-confirmed 2026-07-30) made saving the user's explicit action: `finish_turn_sandbox`
-    stopped snapshotting because "every message became a new saved version, so there was no
-    such thing as trying something and walking away from it". Writing autosaves to
-    `snapshot_key` would reverse that decision by the back door — it is the bundle `submit`
-    copies and the one a relaunch restores, so an autosave there IS a save.
-
-    So durability and versioning are split, which is what every comparable product does:
-    the platform keeps you from losing work (here), the user decides what becomes a version
-    (`snapshot_key`). It IS restored in place of the saved bundle when it holds a newer tree
-    — see `SessionManager.newest_restore_source` — and that is resumption, not promotion:
-    `snapshot_key` is untouched, so `dirty` stays true and what becomes a saved VERSION is
-    still only ever the user's click. Restoring the saved tree over a newer recovery one was
-    a data-loss bug, not a safeguard: it discarded everything done since the last Save one
-    turn after a container was reclaimed.
-
-    Overwrite-latest like its sibling — this is a safety net, not a history."""
+    A separate namespace from `snapshot_key`, deliberately: Save is the user's explicit action, and
+    writing autosaves to `snapshot_key` would reverse that by the back door — it is the bundle
+    `submit` copies and a relaunch restores, so an autosave there IS a save. It IS restored in
+    place of the saved bundle when it holds a newer tree (`SessionManager.newest_restore_source`),
+    but that is resumption, not promotion: `snapshot_key` stays untouched, so `dirty` stays true
+    and only the user's click makes a VERSION. Overwrite-latest — a safety net, not a history."""
     return f"recovery/{app_id}/app.bundle"
 
 
 def quarantine_prefix(app_id: uuid.UUID) -> str:
-    """The `quarantine/{app_id}/` base for the trees U2 sets aside before a restore."""
+    """The `quarantine/{app_id}/` base for the trees set aside before a restore."""
     return f"quarantine/{app_id}/"
 
 
 def quarantine_key(app_id: uuid.UUID, taken_at: datetime) -> str:
-    """One tree U2 parked aside before restoring over it: `quarantine/{app_id}/{stamp}.bundle`.
+    """One tree parked aside before restoring over it: `quarantine/{app_id}/{stamp}.bundle`.
 
-    PER-OCCURRENCE, unlike its two overwrite-latest siblings, and that is the whole point. A
-    quarantine object is forensic evidence — in a false-`REVERTED` case it holds the only copy of
-    the user's newest work — so a second reversion must not be able to destroy the first one's
-    record. `recovery_key` and `snapshot_key` are safety nets and may overwrite; this is not.
-
-    SORTABLE, because the operator surface (U25) lists these and the useful order is
-    chronological. Microsecond precision is enough to be collision-free HERE and the reason is
-    structural rather than probabilistic: writes for one app are serialized by
-    `snapshot._serialized_per_app`, and a user holds one build slot at a time, so two quarantine
-    writes for one app cannot be in flight together."""
+    Per-occurrence, unlike its two overwrite-latest siblings: a quarantine object is forensic
+    evidence — in a false-`REVERTED` case, the only copy of the user's newest work — so a second
+    reversion must not destroy the first one's record. Sortable, for the operator surface's
+    chronological listing. Microsecond precision is collision-free structurally, not
+    probabilistically: writes for one app are serialized by `snapshot._serialized_per_app`, one
+    build slot per user, so two quarantine writes for one app can never be in flight together."""
     return f"{quarantine_prefix(app_id)}{_stamp(taken_at)}.bundle"
 
 
 def divert_prefix(app_id: uuid.UUID) -> str:
-    """The `divert/{app_id}/` base for the trees U3 refused to promote into the recovery slot."""
+    """The `divert/{app_id}/` base for trees the recovery guard refused to promote."""
     return f"divert/{app_id}/"
 
 
 def divert_key(app_id: uuid.UUID, taken_at: datetime) -> str:
-    """One tree U3 refused to write over a good recovery copy:
+    """One tree the recovery guard refused to write over a good recovery copy:
     `divert/{app_id}/{stamp}.bundle`.
 
     Mirrors `quarantine_key`, including the per-occurrence rule and for the same reason: a shared
@@ -156,18 +131,18 @@ def submissions_prefix(app_id: uuid.UUID) -> str:
     """The `submissions/{app_id}/` base for one app's immutable submission bundles.
     The TRAILING SLASH is load-bearing (as `owner_prefix` documents): it keeps the
     boundary honest under any future id shape, and the delete-path prefix sweep
-    (R23) lists exactly this."""
+    lists exactly this."""
     return f"submissions/{app_id}/"
 
 
 def submission_key(app_id: uuid.UUID, submission_id: uuid.UUID) -> str:
     """Key for ONE immutable submission bundle:
-    `submissions/{app_id}/{submission_id}.bundle`. Written exactly once at submit
-    (R1/R2) — immutability comes from key derivation (a fresh `submission_id` per
-    submit; ids are never reused), never from the store (`put` is overwrite-always).
-    Both axes are UUIDs, so the key is structurally traversal-safe — the type IS
-    the validation. The key is DERIVABLE from the registry row's
-    `(app_id, submission_id)`, so it is never stored (D1)."""
+    `submissions/{app_id}/{submission_id}.bundle`. Written exactly once at submit —
+    immutability comes from key derivation (a fresh `submission_id` per submit; ids
+    are never reused), never from the store (`put` is overwrite-always). Both axes
+    are UUIDs, so the key is structurally traversal-safe — the type IS the
+    validation. The key is DERIVABLE from the registry row's
+    `(app_id, submission_id)`, so it is never stored."""
     return f"{submissions_prefix(app_id)}{submission_id}.bundle"
 
 

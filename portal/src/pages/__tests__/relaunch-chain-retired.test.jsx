@@ -1,39 +1,27 @@
 /**
  * THE RELAUNCH CHAIN IS INERT — the characterization this unit was allowed to delete against.
  *
- * `RelaunchAffordance` and its four render sites went in Plan F, U4, and `LivePreview` was left
- * ACCEPTING `onRelaunch` and never reading it. Everything above that unread prop — the surface's
- * `handleRelaunch`, the session hook's `relaunch()`, the two `409` arms that set `blocked`, and the
- * block banner with its Force-end button — was therefore reachable-looking code hanging off a
- * callback nobody consumes.
+ * WHY THIS EXISTS
  *
- * WRITTEN BEFORE THE DELETION, AND IT STAYS GREEN AFTER IT. That is the whole contract of this
- * file: every assertion below holds identically on both sides of the commit, so a red here means
- * the deletion changed behaviour rather than removing dead weight.
+ * `RelaunchAffordance` and its four render sites went in, and `LivePreview` was left holding
+ * an unread `onRelaunch` prop. Everything above that unread prop — `handleRelaunch`, the
+ * session hook's `relaunch()`, the 409 arms that set `blocked`, and the block banner with its
+ * Force-end button — was reachable-looking code hanging off a callback nobody consumes.
  *
- * THE BLOCK BANNER HAD **TWO** PRODUCERS, and a test driven from only one proves nothing about the
- * half the same commit also deletes:
+ * Written BEFORE that deletion, and it stays green after it: every assertion below must hold
+ * identically on both sides of the commit, so a red here means the deletion changed behaviour
+ * rather than removing dead weight.
  *
- *   1. `start`'s 409    — `useBuildSession.start()` mapped `build_session_already_active` onto
- *                         `blocked`. Nothing calls `session.start()`; a composer send is a TURN.
- *   2. `relaunch`'s 409 — `useBuildSession.relaunch()` surfaced the SAME banner, by its own
- *                         comment ("relaunch never pre-empts a running build"). Nothing calls
- *                         `session.relaunch()` either: its one caller is wired to the unread prop.
+ * The block banner has TWO producers, and driving only one would prove nothing about the half
+ * the same commit also deletes: `start()`'s 409 (unreachable — a send is a TURN, nothing calls
+ * `session.start()`) and `relaunch()`'s 409 (its one caller is wired to the unread prop, BUT
+ * `relaunchPreview` itself is still called directly in production by `StartAppControl` and
+ * `RailComposer` — a LIVE path whose 409 must answer in the workspace, not the banner).
  *
- * Both are driven here. The second matters most, because `relaunchPreview` IS still called in
- * production — `StartAppControl` and `RailComposer` reach the module function directly, bypassing
- * the hook — so its 409 is a LIVE path, and what this pins is that the live path answers with the
- * workspace's own sentence rather than with the banner.
- *
- * EVERY ABSENCE IS PAIRED WITH A LIVENESS ASSERTION. "No banner" is also true of a surface that
- * threw on render, which is exactly how an assert-absence test false-greens.
- *
- * The frame scenarios are the dangerous half. `relaunching` was never a banner flag — it fed
- * `showRestoring`, `showTerminal`, `frameContext`, `framePending` and the frame's own reload
- * identity, i.e. four booleans that decide whether the iframe stays MOUNTED. Unmounting it kills a
- * container the server is still serving (`AppPaneHost.tsx` describes that failure at length), so
- * the framed cases below pin those derived values through their DOM consequences, on both sides of
- * the change.
+ * Every absence is paired with a liveness assertion, since "no banner" is also true of a
+ * surface that threw on render. And the frame scenarios are the dangerous half: `relaunching`
+ * fed the booleans deciding whether the iframe stays MOUNTED, and unmounting it kills a
+ * container the server is still serving (`AppPaneHost.tsx` has the failure mode at length).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
@@ -89,7 +77,7 @@ const SANDBOX_URL_2 = 'https://app-abc.example.azurecontainerapps.io/'
 const CHAT_ID = 'build-X'
 
 /**
- * The injected C3 client, assembled HERE rather than through `makeClient`, so this file decides
+ * The injected client, assembled HERE rather than through `makeClient`, so this file decides
  * which members exist — `makeClient` no longer carries `start` at all, and this scenario needs to
  * hand one in to prove nothing reaches it. An extra member on the bag is inert: the hook only ever
  * calls what it names.
@@ -104,12 +92,13 @@ const card = (container) => container.querySelector('[data-testid="device-card"]
 
 /** The banner this unit deletes, found by its rendered copy, not by a testid.
  *
- *  ITS FORCE-END BUTTON USED TO BE ASSERTED HERE TOO, and that assertion went with U33 rather than
- *  outliving its subject: the button was the banner's, so "no banner" already covers it here, and
- *  what a citizen can still see is pinned directly — and exhaustively over every prop the
- *  component accepts — by the RETIREMENT GUARD in `components/chat/__tests__/SessionBanners.test`.
- *  There is no force-end left to render from any state: U33 deleted the client, the hook wrapper
- *  and the backend route in one change. */
+ *  ITS FORCE-END BUTTON USED TO BE ASSERTED HERE TOO, and that assertion went with force-end
+ *  itself rather than outliving its subject: the button was the banner's, so "no banner" already
+ *  covers it here, and what a citizen can still see is pinned directly — and exhaustively over
+ *  every prop the component accepts — by the RETIREMENT GUARD in
+ *  `components/chat/__tests__/SessionBanners.test`.
+ *  There is no force-end left to render from any state: the client, the hook wrapper and the
+ *  backend route all went in one change. */
 const blockBanner = () => screen.queryByText(/you already have a build running/i)
 
 beforeEach(() => {
@@ -134,9 +123,9 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('the block banner cannot reach the tree — from EITHER producer', () => {
-  it('arm 1, start’s 409: a send is a TURN, so the C3 start that raised `blocked` never fires', async () => {
+  it('arm 1, start’s 409: a send is a TURN, so the start that raised `blocked` never fires', async () => {
     // The 409 is armed on the start the injected client exposes. If any path on this surface still
-    // provisioned a C3 session, this would raise the banner — which is exactly the point: none does.
+    // provisioned a session, this would raise the banner — which is exactly the point: none does.
     h.start.mockRejectedValue(new BuildSessionAlreadyActiveError('You already have a build running.', 'sess-9'))
     h.readTurnStream.mockImplementation(turnStreaming(planReply()))
 
@@ -146,7 +135,7 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
 
     // LIVENESS FIRST — a surface that threw on render would also have no banner.
     expect(screen.getByTestId('composer-input')).toBeTruthy()
-    expect(h.start).not.toHaveBeenCalled() // the reason the arm is unreachable, stated
+    expect(h.start).not.toHaveBeenCalled()
     expect(blockBanner()).toBeNull()
   })
 
@@ -176,7 +165,7 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
 })
 
 describe('frame survival — the case where an unmount kills a live container', () => {
-  // A framed, pardoned preview: `status: 'ended'` + `serving` is the #13/R2 state in which the
+  // A framed, pardoned preview: `status: 'ended'` + `serving` is the state in which the
   // server is STILL SERVING the container under an idle lease. `showTerminal` must stay false,
   // `frameContext` true and `framePending` true, or the iframe comes down over a live app.
   // (`serving` is what `completedLive` was renamed to when liveness moved onto the address — same

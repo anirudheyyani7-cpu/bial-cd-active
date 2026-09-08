@@ -1,51 +1,27 @@
 /**
- * THE publishing surface. One chip beside the project name, one server-computed field,
- * one sentence and at most one action (R37, R38, R39).
+ * THE publishing surface. One chip beside the project name, one server-computed field, one
+ * sentence and at most one action.
  *
- * IT REPLACES THREE CONTROLS THAT COULD DISAGREE — the Publish card, the Review & approval
- * card and the builder's toolbar button — and, more to the point, it replaces the thing
- * that made them disagree: each of them re-decided, in the browser, something the server
- * had already decided. That mirror has produced the same class of bug four times in this
- * one feature (`docs/solutions/ui-bugs/publish-dialog-scored-unmerged-answers-2026-08-21.md`),
- * most recently promising "this can publish automatically" beside a Publish button moments
- * before the server routed the app to an administrator. Nine labels were nine assertions
- * about server behaviour. They now have one source.
+ * WHY THIS EXISTS. It replaces three controls that could disagree — the Publish card, the
+ * Review & approval card and the builder toolbar button — because each re-decided in the
+ * browser something the server had already decided. That mirror produced the same class of
+ * bug four times, most recently promising "this can publish automatically" beside a Publish
+ * button moments before the server routed the app to an administrator. Nine labels were nine
+ * assertions about server behaviour; they now have one source (`presentationFor`, switching
+ * on `publishState` alone — see its call site below). Publishing behaviour itself is
+ * unchanged: the seven-rule ladder, the questionnaire and the two successes are as they were.
  *
- * SO THE ONE RULE HERE IS: `presentationFor` switches on `publishState` and on NOTHING
- * ELSE. No status, no `unpublishedAt`, no failure code, no approval lineage, no pin. The
- * other fields on the response are still read — but only to fill in a version row the
- * state has already asked for, never to decide which state it is.
+ * THE CONTRACT A FUTURE WORKSPACE HEADER INHERITS, so it can re-parent this component
+ * without reading its internals: takes a project id only (no router/rail/chat state);
+ * renders INLINE at intrinsic size (no absolute/fixed/sticky); its popover is PORTALLED to
+ * `document.body` — load-bearing today, the builder mount sits under four nested
+ * `overflow-hidden` ancestors; it owns its own read/refresh lifetime, so a second mount is
+ * correct, not merely tolerated (today's two mounts are sibling routes under one Outlet, so
+ * only ever one is live). The header's only job is to place it and drop the builder mount.
  *
- * PUBLISHING BEHAVIOUR IS UNCHANGED. The seven-rule ladder, the classification
- * questionnaire and the two successes are exactly as they were; what changed is that the
- * interface stopped guessing which of them a press will produce. The button states the
- * CEILING of what it will attempt, and the server's answer states what happened —
- * publishing directly where the button said "Send update for review" reads as the better
- * outcome, not as a contradiction.
- *
- * ── THE CONTRACT PLAN F INHERITS ────────────────────────────────────────────────────
- * Stated here so the workspace header can re-parent this component without reading a line
- * of its internals:
- *   · It takes a project id and nothing else. It reads no router state, no rail mode and
- *     no chat.
- *   · It renders INLINE at its intrinsic size — no absolute positioning, no fixed width,
- *     no sticky behaviour — so a container may lay it out however it likes.
- *   · Its popover is PORTALLED to the document body, so a header with clipped overflow or
- *     its own stacking context cannot hide it. This is load-bearing today: the builder
- *     mount sits under four nested `overflow-hidden` ancestors.
- *   · It owns its own read and its own refresh lifetime, so a SECOND mount would be correct
- *     rather than merely tolerated. There are two mount SITES today — this project page and
- *     the builder's pane toolbar — but they are sibling routes under one Outlet, so only
- *     ever one of them is live.
- *   · Plan F's only obligation is to place it beside the project name and drop the mount
- *     that dies with the builder page. Nothing here changes when F collapses the screens.
- * ────────────────────────────────────────────────────────────────────────────────────
- *
- * WHERE THE COPY COMES FROM. Nine sentences are the design canvas's own, from its
- * "The status chip, nine states" board. Four states have no artboard and their copy is
- * carried across from the tree or written here, each marked at its arm. Three deliberate
- * departures from the canvas are marked the same way — the canvas is authoritative for
- * register and wording, never for a claim the endpoints cannot honestly serve.
+ * Nine copy sentences are the design canvas's own ("The status chip, nine states"); four
+ * states with no artboard, and three deliberate departures from it, are marked at their arm —
+ * the canvas governs register and wording, never a claim the endpoints cannot honestly serve.
  */
 import { useCallback, useEffect, useId, useState } from 'react'
 import { ChevronDown, ExternalLink } from 'lucide-react'
@@ -64,7 +40,7 @@ import {
 } from '../utils/publishPresentation'
 import type { DeployOutcome, PublishState } from '../utils/deployApi'
 
-/* THE PRESENTATION LAYER MOVED TO `utils/publishPresentation.ts` (plan 002, U4). What lived
+/* THE PRESENTATION LAYER MOVED TO `utils/publishPresentation.ts`. What lived
    here — the action labels, the state-to-words map with all of its copy reasoning, the version
    rows and the date format — is now shared with the rail's APP STATUS panel, which the boards
    make the fuller of the two surfaces. Neither renders the other; both read the same decision,
@@ -72,15 +48,12 @@ import type { DeployOutcome, PublishState } from '../utils/deployApi'
    provenance rows are new there and belong to the same decision. */
 
 /**
- * The answer to a press, and there is exactly ONE treatment for it because there is only
- * ever one kind of thing here: a success. Both of the ladder's outcomes resolve — `202
- * started` and `200 routed_for_review` — and being sent for review is a success, not a
- * failure of the thing the citizen just asked for. Every REFUSAL throws instead, and the
- * questionnaire renders it beside its own button with the answers still on screen, which
- * is where a citizen who has to change something is already looking.
- *
- * So this region is never red and never carries an alert role. That is not a styling
- * choice to be tidied later — it is the property three retired tests pinned.
+ * The answer to a press: exactly ONE treatment, because there is only one kind of thing
+ * here — a success (both ladder outcomes, `202 started` and `200 routed_for_review`,
+ * resolve; review-routing is a success, not a failure of what the citizen asked for). Every
+ * REFUSAL throws instead and the questionnaire renders it beside its own button. So this
+ * region is never red and never carries an alert role — not a styling choice, but a
+ * property three retired tests pinned.
  */
 const STARTED_ANSWER = 'Publishing now — this takes a few minutes.'
 
@@ -132,6 +105,10 @@ export default function PublishStatusChip({
   )
 
   const state: PublishState | null = deployment?.publishState ?? null
+  // THE ONE RULE: `presentationFor` switches on `publishState` alone — no status, no
+  // `unpublishedAt`, no failure code, no approval lineage, no pin. Other response fields
+  // are still read, but only to fill a version row the state already asked for, never to
+  // decide which state it is.
   const presentation = state === null ? null : presentationFor(state)
   // The pill's own colour pair, from the same one field. `lookFor` is exhaustive over the
   // union, so a state the server adds is a compile error rather than an unpainted chip.
@@ -178,28 +155,19 @@ export default function PublishStatusChip({
   }, [saving, saveAndPublish, speak])
 
   /**
-   * ONE permanently-mounted, initially-empty polite live region, rendered in every arm
-   * below. A region injected together with its text is frequently not announced at all —
-   * the portal already states this convention at `LivePreview.tsx` — which is why it is
-   * mounted before it has anything to say and never unmounted.
-   *
-   * IT SPEAKS THE STATE, NOT ONLY THE ANSWERS. Both retired controls derived their live
-   * region straight from the loaded state, so a state that arrived while the citizen was
-   * looking at something else — a version approved overnight, a publish that routed from
-   * another tab, an administrator switching the app off — announced itself. Filling this
-   * only from `speak()` would have made it silent for any mount that did not itself press
-   * something, which is most of them. The answer wins while there is one, because it is
-   * the more specific thing to say about a press that just happened.
-   *
-   * It sits OUTSIDE the popover on purpose: an announcement is owed whether or not the
-   * popover happens to be open.
+   * ONE permanently-mounted, initially-empty polite live region (see `LivePreview.tsx` for
+   * why: text injected together with the mount is often not announced). Speaks the STATE,
+   * not only answers — a state arriving while the citizen looked elsewhere (approved
+   * overnight, routed from another tab, switched off by an admin) still announces itself;
+   * `speak()` alone would leave any mount that never itself pressed something silent. The
+   * answer wins while there is one (more specific). Sits OUTSIDE the popover: owed either way.
    */
   let announcement = answer ?? ''
   if (answer === null && loadError !== null) announcement = 'Publish status: unavailable'
   else if (answer === null && presentation !== null) {
     announcement = `Publish status: ${presentation.label}`
   }
-  // R31: THE WAIT ITSELF SPEAKS, and it takes precedence while it is running. `busyReason`
+  // THE WAIT ITSELF SPEAKS, and it takes precedence while it is running. `busyReason`
   // existed and was rendered ONLY as a `title` attribute — which is neither visible text nor an
   // exposed busy state, and is unreachable to a keyboard or a touch screen. So the one thing
   // this component said out loud was the publish OUTCOME: a citizen who pressed Save and
@@ -236,8 +204,8 @@ export default function PublishStatusChip({
               data-testid="publish-chip"
               aria-label="Publish status: unavailable"
               // The same 44px touch floor every other pressable occupant of the workspace toolbar
-              // carries below the stacking threshold (R38a) — this chip is a press, not a label,
-              // and in this branch it is the only way to reach "Check again".
+              // carries below the stacking threshold — this chip is a press, not a label, and in
+              // this branch it is the only way to reach "Check again".
               className="inline-flex items-center gap-1 rounded-md border border-bial-border bg-surface-muted px-2 py-0.5 text-xs font-semibold text-neutral transition hover:bg-white narrow:min-h-[44px]"
             >
               Status unavailable
@@ -296,7 +264,7 @@ export default function PublishStatusChip({
             data-testid="publish-chip"
             data-publish-state={state}
             // The state is IN the accessible name, so a screen reader user learns it
-            // without opening anything — R39's "visible without opening the chip" is not
+            // without opening anything — "visible without opening the chip" is not
             // a sighted-only guarantee.
             aria-label={`Publish status: ${presentation.label}`}
             // A 999px PILL WITH ITS OWN COLOUR PAIR AND A LEADING DOT, per the board that is
@@ -305,9 +273,9 @@ export default function PublishStatusChip({
             // identical to "Changes requested" and to "Didn't start". The colour is the
             // signal a citizen reads before they read anything.
             // ~26px tall, and wider than 44px on every one of the thirteen state words — so the
-            // touch floor below the stacking threshold is a HEIGHT only (R38a). `min-h` rather
-            // than padding, so the 999px pill, its dot and its chevron keep the exact proportions
-            // the board draws at every width above it.
+            // touch floor below the stacking threshold is a HEIGHT only. `min-h` rather than
+            // padding, so the 999px pill, its dot and its chevron keep the exact proportions the
+            // board draws at every width above it.
             className={`inline-flex items-center gap-[7px] rounded-full border border-[rgba(15,23,42,.07)] px-[11px] py-[5px] text-[11.5px] font-bold whitespace-nowrap transition hover:brightness-[.97] narrow:min-h-[44px] ${look.pill}`}
           >
             <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${look.dot}`} aria-hidden />
@@ -371,8 +339,8 @@ export default function PublishStatusChip({
                   type="button"
                   data-testid="publish-save-and-publish"
                   onClick={() => void doSaveAndPublish()}
-                  // R64/D1: marked unavailable, never hard-disabled. Disabling a control
-                  // that has focus blurs it to `document.body` (KTD-2), which is how a
+                  // Marked unavailable, never hard-disabled. Disabling a control
+                  // that has focus blurs it to `document.body`, which is how a
                   // keyboard user loses their place mid-flight. `doSaveAndPublish` is the
                   // enforcement; this is affordance only.
                   aria-disabled={saving}
@@ -415,7 +383,7 @@ export default function PublishStatusChip({
           )}
 
           {/* AT MOST ONE ACTION. A state with nothing to do renders NO button — not a
-              disabled one. R64's "mark unavailable rather than switch off" governs a
+              disabled one. "Mark unavailable rather than switch off" governs a
               control that is temporarily away and will come back, which is a different
               thing from a state where nothing can be done. */}
           {presentation.action !== null && unsaved === null && !confirmingWithdraw && (

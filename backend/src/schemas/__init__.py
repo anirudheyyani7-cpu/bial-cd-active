@@ -1,7 +1,7 @@
 """Cross-domain schema primitives: the single camelCase base (`CamelModel`) every
 API model subclasses, and the reusable OpenAPI error-response models + `responses=`
-builder. Public surface via explicit `from .x import Y as Y` re-exports
-(`.claude/rules/modules.md` — never `__all__`)."""
+builder. Public surface via explicit `from .x import Y as Y` re-exports, never
+`__all__`."""
 
 from src.schemas.base import CamelModel as CamelModel
 from src.schemas.marketplace import MarketplaceEntry as MarketplaceEntry

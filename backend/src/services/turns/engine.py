@@ -1,30 +1,27 @@
-"""The unified turn engine (U10 / R6 / R8): one detached run per message, one
+"""The unified turn engine: one detached run per message, one
 subscribable per-conversation event stream for chat AND build activity.
 
-Sending a message STARTS a turn server-side, detached from the HTTP connection — the
-subscriber transport (`api/v1/conversations/turns.py`) only OBSERVES. Generalized from the
-build feed's proven shape (`build_sessions/sse.py`, copy-not-share per D6): an append-only
-per-turn frame RING is the replay authority, subscriber queues are pure wakeups, and the
-terminal frame explicitly closes the transport. Deliberately NO Redis (single replica: a
-run dies with the process; Postgres is the durable log) — the ring is the one seam a
-Redis Streams buffer would replace for multi-replica later.
+WHY THIS EXISTS
+A message STARTS a turn server-side, detached from the HTTP connection: the subscriber
+transport (`api/v1/conversations/turns.py`) only OBSERVES. Generalized from the build feed's
+proven shape (`build_sessions/sse.py`, copy-not-share): an append-only per-turn frame RING is
+the replay authority, subscriber queues are pure wakeups, and the terminal frame explicitly
+closes the transport. Deliberately NO Redis: a run dies with the process, Postgres is the
+durable log, and the ring is the one seam a Streams buffer would replace for multi-replica later.
 
 Resume is catch-up-snapshot-then-tail: a subscriber that cannot prove gap-free continuity
-(fresh subscribe, F5 with cursor=0, or a cursor that fell out of the ring) gets ONE
-consolidated `snapshot` frame — the turn's persisted rows via the U6 projection plus the
-in-memory text/step tail — then the live frames. A subscriber that CAN prove continuity
-(same turn, cursor still in the ring) replays just the missed frames. Eviction is
-therefore never data loss: falling past the ring's tail degrades to a fresh snapshot,
-not a gap (the review's buffer-eviction finding, answered structurally).
+(fresh subscribe, F5 with cursor=0, or a stale cursor) gets ONE consolidated `snapshot` frame
+— persisted rows plus the in-memory text/step tail — then the live frames. One that CAN prove
+continuity (same turn, cursor still in the ring) replays just the missed frames; falling past
+the ring's tail degrades to a fresh snapshot, never a gap.
 
-Mode gating happens HERE (the server's record, never the client request): the run gets
-exactly `toolsets_for_kind(conversation.kind)` over the turn-pinned workspace, and the
-U9-composed instructions for that kind. Plan turns bill once for the whole turn,
-disconnect-safe by construction — the task IS the drain; Write turns arrive with U12's
-warm sessions and bill per step through the harness.
-
-Ownership: the engine holds the per-conversation guard (`turns/guard.py`) from claim to the
-task's `finally` — a crashed run can never wedge its conversation shut.
+Gating on the chat's kind happens HERE, off the server's record, never the client request:
+the run gets exactly `toolsets_for_kind(conversation.kind)` over the turn-pinned workspace,
+and the instructions composed for that kind. Plan turns bill once for the whole turn,
+disconnect-safe by construction — the task IS the drain; Write turns arrive with warm sessions
+and bill per step through the harness. Ownership: the engine holds the per-conversation guard
+(`turns/guard.py`) from claim to the task's `finally`, so a crashed run can never wedge its
+conversation shut.
 """
 
 from __future__ import annotations
@@ -228,7 +225,7 @@ _PERSIST_FAILED_MESSAGE = (
     "The reply could not be saved, so this turn was stopped. Try sending the message again."
 )
 
-# R9b — HOW THE PROVIDER SAYS "THAT PROMPT DID NOT FIT", and why anything reads it at all.
+# HOW THE PROVIDER SAYS "THAT PROMPT DID NOT FIT", and why anything reads it at all.
 #
 # `usage/context_window.enforce_context_limit` refuses an over-full conversation at the route,
 # before a word is persisted. It reads the token count the provider reported for the LAST turn
@@ -238,13 +235,11 @@ _PERSIST_FAILED_MESSAGE = (
 # the only reason this match exists. It is error handling, not a second estimate: it needs no
 # number, and it must never grow one.
 #
-# MEASURED THROUGH THIS EXACT STACK, NOT ASSUMED (2026-09-07, deployment `claude-opus-4-7` on
-# `bial-genai-vibecoding2`). An over-window send through pydantic-ai's `AnthropicModel` over
-# `AsyncAnthropicFoundry` raises `ModelHTTPError` — never the SDK's own `BadRequestError`, which
-# pydantic-ai wraps and re-raises — carrying `status_code == 400` and a parsed body of
-# `{'type': 'error', 'error': {'type': 'invalid_request_error', 'message':
-# 'prompt is too long: 1963668 tokens > 1000000 maximum'}, 'request_id': ...}`. The probe that
-# took that reading is beside the others in `.vulcan/token-usage-probe/`.
+# MEASURED THROUGH THIS EXACT STACK, NOT ASSUMED. An over-window send through pydantic-ai's
+# `AnthropicModel` over `AsyncAnthropicFoundry` raises `ModelHTTPError` — never the SDK's own
+# `BadRequestError`, which pydantic-ai wraps and re-raises — carrying `status_code == 400` and a
+# parsed body of `{'type': 'error', 'error': {'type': 'invalid_request_error', 'message':
+# 'prompt is too long: 1963668 tokens > 1000000 maximum'}, 'request_id': ...}`.
 #
 # THE STATUS IS NOT THE MATCH, AND THAT IS THE WHOLE CARE HERE. Every malformed request Foundry
 # refuses is a 400 — an unsupported media type, a bad tool schema, a password-protected PDF —
@@ -279,9 +274,7 @@ def _is_context_overflow(exc: ModelHTTPError) -> bool:
     return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)
 
 
-# =====================================================================================
-# U17/R24 — THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING
-# =====================================================================================
+# THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING.
 #
 # Both are the PLATFORM's words, never the agent's, and both are pinned here rather than asked
 # for in a prompt. An acknowledgement the model has to remember to write is an acknowledgement
@@ -293,7 +286,8 @@ def _is_context_overflow(exc: ModelHTTPError) -> bool:
 # into `state.steps`, which is what keeps it out of the persisted rows: a build's transcript must
 # not accumulate one "Getting started" per turn. It IS carried on the catch-up snapshot (held in
 # `state.acknowledgement`, retired by the first real step) — a client that subscribes a moment
-# after the turn starts would otherwise get a still screen, which is the whole point of U17.
+# after the turn starts would otherwise get a still screen, which is the whole point of the
+# acknowledgement.
 # Between two `TextPart`s of one response. Blank, not nothing: concatenating them raw ran the
 # last sentence of a block into the first word of the next ("…the workspace.Now let me…").
 TEXT_BLOCK_SEPARATOR: Final = "\n\n"
@@ -302,17 +296,13 @@ ACK_TEXT = "Getting started on that…"
 # The reserved tool name the acknowledgement rides under, so it is identifiable as the
 # harness's own row rather than a step the agent took.
 #
-# THE FILTERING IS ENTIRELY ON THIS SIDE, and the comment here used to say otherwise — it
-# claimed the portal keyed on the same string in `BuildProgress.tsx` to keep the ack out of a
-# finished build's step history. `BuildProgress.tsx` was deleted with the two-page era, and no
-# portal-side constant of that name ever existed in this repo. Nothing is missing: the ack is
-# held in `_TurnState.acknowledgement` rather than in `steps`, so it never reaches the
-# persisted rows, and it is cleared by the first real step. A reader who went looking for the
-# client-side half would have found nothing and reasonably concluded a filter had been lost.
+# THE FILTERING IS ENTIRELY ON THIS SIDE, and there is no client-side half to look for. The
+# ack is held in `_TurnState.acknowledgement` rather than in `steps`, so it never reaches the
+# persisted rows, and it is cleared by the first real step.
 ACK_TOOL = "__ack__"
 ACK_TOOL_CALL_ID = "__ack__"
 
-# THE STILLNESS THRESHOLD (R24). An operation still running after this long earns a
+# THE STILLNESS THRESHOLD. An operation still running after this long earns a
 # plain-language status line of its own, refreshed until it completes. Stated as a number
 # rather than as "a stated threshold": eight seconds is the point at which a screen with
 # nothing moving on it stops reading as "fast" and starts reading as "stuck", and it is
@@ -324,13 +314,13 @@ LONG_OPERATION_THRESHOLD_MS = 8_000
 # screen-reader announcement. The portal caps announcements at one per 10s on top of that.
 LONG_OPERATION_REFRESH_MS = 5_000
 
-# U18/R22 — WHAT A FINISHED BUILD SAYS WHEN THE AGENT HANDED US NOTHING TO SAY.
+# WHAT A FINISHED BUILD SAYS WHEN THE AGENT HANDED US NOTHING TO SAY.
 #
 # `declare_done` is terminal now, so the summary it carries is the whole of the completion
 # message — and a model that calls it with an empty string would otherwise end a working build
 # in silence. The fallback is never the model's own text: the alternative to a summary is a
 # sentence the harness wrote, not a scrape of whatever prose happened to precede the tool call,
-# because that prose is exactly the register this plan removes.
+# because that prose is exactly the register a completion message must not use.
 #
 # It says the two things a completion has to: the app is ready, and what the reader can do next.
 # Checked against the same no-jargon bar as `services/turns/copy.py` — no file, no command, no
@@ -345,14 +335,14 @@ _BUILD_FINISHED_FALLBACK = (
 # typo in either one would silently stop every card from being found.
 PENDING_META_KIND = META_PENDING
 
-# The one greppable name for "this turn's R10 liveness lease did not land" (U12). A constant
+# The one greppable name for "this turn's liveness lease did not land". A constant
 # rather than two inline literals because the two failure shapes — the store would not answer,
 # and there was no registry hash to attach the lease to — are one operational question ("is
 # anything protecting live builds right now?"), and an alert cannot be written against a
 # string that exists in two spellings. The reason is a field, not part of the event name.
 LEASE_RENEW_FAILED_EVENT = "liveness_lease_renew_failed"
 
-# The lock + heartbeat half of the same loop (#193), spelled with the SAME two log events
+# The lock + heartbeat half of the same loop, spelled with the SAME two log events
 # `SessionManager.on_progress` already writes for this exact pair of calls. Identical strings on
 # purpose: the lock now has two renewers, and "did a live build lose its lock?" is one
 # operational question that must not need two alerts to answer. Named here rather than inlined
@@ -375,19 +365,12 @@ def _deferred_call(output: object) -> ToolCallPart | None:
 def plan_argument_of(part: ToolCallPart) -> str | None:
     """The `plan` argument an offer was called with, stripped — WITHOUT the length ceiling.
 
-    A PRE-MIGRATION CALL TOOK NO ARGUMENTS AT ALL and reads as absent here, which is correct —
-    there is no plan in it to find. Those cards were all resolved by revision 0035, so nothing
-    live depends on this answer; the handoff refuses them by name.
-
-    Deliberately tolerant of a malformed argument object rather than raising: this runs on the
-    turn's own path, and a model that emitted unparseable JSON has produced no plan, which is
-    the same answer as an empty one and not a reason to fail a turn that otherwise worked.
-
-    SPLIT OUT SO THE REFUSAL COPY CAN ASK THE QUESTION RATHER THAN INFER THE ANSWER.
-    `transition._refusal_for` has to tell "there is no plan here" from "the plan is too long",
-    and it used to do that by reverse-engineering which of `plan_from_call`'s branches returned
-    `None` — correct only while there are exactly two. A third rejection reason added below
-    would have silently reported itself as "too long" to the one person it is not true for."""
+    Tolerant of a malformed argument object rather than raising: unparseable JSON means no plan,
+    the same answer as an empty one, and not a reason to fail an otherwise-working turn. (A pre-
+    migration call took no arguments and reads as absent too; revision 0035 resolved every one of
+    those cards.) Split out so `transition._refusal_for` can tell "no plan" from "plan too long" by
+    which branch of `plan_from_call` returned `None` — a third rejection reason here would
+    misreport itself as "too long"."""
     try:
         args = part.args_as_dict()
     except Exception:
@@ -399,7 +382,7 @@ def plan_argument_of(part: ToolCallPart) -> str | None:
 
 
 def plan_from_call(part: ToolCallPart) -> str | None:
-    """The plan an offer carries, or None when the call cannot be honoured (R28a / R44).
+    """The plan an offer carries, or None when the call cannot be honoured.
 
     TWO REFUSALS, AND BOTH ARE STRUCTURAL RATHER THAN CHECKS SOMEBODY REMEMBERS. An empty
     argument means the offer would carry nothing to build — the defect the retired prose
@@ -415,14 +398,12 @@ def plan_from_call(part: ToolCallPart) -> str | None:
 def _without_the_call(messages: list[ModelMessage], tool_call_id: str) -> list[ModelMessage]:
     """The run's persistable slice with one tool call removed, and any response it emptied.
 
-    WHY REMOVE IT RATHER THAN STORE IT AND SKIP IT LATER. "No offer is recorded" has to be true
-    at EVERY reader, and there are two that answer independently: `plan_options._scan`, which
-    finds pending cards from the row meta, and the projection, which draws the card from the
-    stored tool call itself. Leaving an unhonourable call on the wire and teaching each reader
-    to ignore it is two rules to keep in step, and the projection's rule would have to
-    distinguish a migrated call (no argument, still rendered) from a new one (no argument,
-    never rendered). Not writing it is one rule, at one place, and it leaves the dangling-call
-    repair nothing to stitch."""
+    Removed rather than stored-and-skipped: "no offer is recorded" has to be true at two
+    independent readers, `plan_options._scan` (row meta) and the projection (the stored call
+    itself), and teaching both to ignore an unhonourable call is two rules to keep in step —
+    the projection's would also have to tell a migrated call (no argument, still rendered)
+    from a new one (no argument, never rendered). Not writing it is one rule, and it leaves
+    the dangling-call repair nothing to stitch."""
     kept: list[ModelMessage] = []
     for message in messages:
         if not isinstance(message, ModelResponse):
@@ -441,17 +422,14 @@ def _without_the_call(messages: list[ModelMessage], tool_call_id: str) -> list[M
 
 
 def _persistable_messages(new_messages: list[ModelMessage]) -> list[ModelMessage]:
-    """The durable transcript slice of a run's `new_messages()`: every `ModelResponse`, PLUS
-    every `ModelRequest` that carries tool returns but NOT a fresh user prompt.
+    """The durable transcript slice of a run's `new_messages()`: every `ModelResponse`, PLUS every
+    `ModelRequest` that carries tool returns but NOT a fresh user prompt.
 
     Persisting the tool-return requests is load-bearing: they answer the `ToolCallPart`s the
-    responses make (read_file / search_files / run_command). Dropping them — as a
-    responses-only filter does — leaves each persisted call unanswered, so the reload's
-    dangling-call repair papers over a real, successful tool result with a synthesized
-    "interrupted" one, corrupting the replayed transcript. Requests bearing a `UserPromptPart`
-    are excluded: the user turn is already persisted before the run, and the ephemeral mode
-    reminder / force-options nudge ride `message_history` and must never fossilize into a row
-    (the `new_messages()` boundary the whole persistence design leans on)."""
+    responses make, and a responses-only filter leaves each call unanswered, so reload's dangling-
+    call repair papers over a real result with a synthesized "interrupted" one. Requests bearing a
+    `UserPromptPart` are excluded: the user turn is already persisted, and the ephemeral workspace
+    note injected onto `message_history` must never fossilize into a row."""
     kept: list[ModelMessage] = []
     for message in new_messages:
         if isinstance(message, ModelResponse):
@@ -464,7 +442,7 @@ def _persistable_messages(new_messages: list[ModelMessage]) -> list[ModelMessage
 
 
 # NOTHING HERE READS THE AGENT'S PROSE TO DECIDE PRODUCT STATE, and this is where three things
-# that did used to live (R23).
+# used to live.
 #
 # `_looks_plan_shaped` counted list items and looked for a trailing `?` to decide whether the
 # model had written a plan. When it said yes and no tool call had been made, a FORCED RETRY
@@ -500,40 +478,23 @@ every reader defaults it to zero rather than requiring it."""
 def _citizen_output_tokens(usage: RunUsage | RequestUsage) -> int:
     """The output tokens that are the CITIZEN's, with the platform's thinking taken back out.
 
-    THE OWNER'S RULING (2026-09-02): the meter shows what they spent on their app, not what the
-    platform spent thinking about it. Reasoning is a choice this platform made on their behalf —
-    they did not ask for it, cannot see it, and cannot turn it off — so charging their daily
-    allowance for it would make their own budget move for a reason they have no way to act on.
-
-    SUBTRACTED HERE, ONCE, so both readers of a turn's spend get it: the per-run ceiling and the
-    row the daily meter sums. Those two are deliberately one policy — a per-run bound and a
-    per-day bound that counted tokens differently would be two numbers the citizen is told are
-    the same word — and excluding reasoning from only one of them would break exactly that.
-    The consequence is real and worth stating: a reasoning-heavy build gets more room under the
-    run budget than it used to, because the budget now measures the same thing the meter does.
-
-    Floored at zero. The subtraction is arithmetic on two numbers the provider reports
-    separately, and a negative answer would mean one of them is wrong — in which case charging
-    nothing is the honest failure, not charging a negative."""
+    Reasoning is a choice the platform made on the citizen's behalf — they did not ask for it,
+    cannot see it, cannot turn it off — so charging their daily allowance for it would move their
+    budget for a reason they cannot act on. Subtracted HERE, ONCE, so the per-run ceiling and the
+    row the daily meter sums get the same policy. Floored at zero: a negative answer means the
+    provider's two numbers disagree, and charging nothing is the honest failure there."""
     return max(usage.output_tokens - usage.details.get(THINKING_TOKENS_KEY, 0), 0)
 
 
 def _run_spend(usage: RunUsage) -> int:
     """What this run has spent, weighted the way the citizen's daily meter weights it.
 
-    NOT `usage.total_tokens`. That is `input_tokens + output_tokens`, and under pydantic-ai
-    `input_tokens` is the grand-total prompt size with the cache buckets ALREADY FOLDED IN —
-    verified against the Anthropic mapper, where 10 fresh input tokens plus a 90k cache read
-    arrive as `input_tokens == 90_010`. A bound reading that raw number prices a cached prefix
-    at full rate on every step, which is precisely the mistake `billable_spend` records as a
-    2026-07-30 production incident: one calculator build booked 956k of a 1M daily cap on 68
-    tokens of real fresh input. A per-run bound repeating it would end honest builds early, and
-    would measure how many steps a build took rather than how much work it did — the very thing
-    `RUN_TOKEN_BUDGET`'s own docstring says the bound must not do.
-
-    ONE POLICY, TWO READERS. The weighting lives in `usage/gate.py` beside the daily meter's
-    column expression, because a per-run ceiling and a per-day ceiling that weighted tokens
-    differently would be two numbers described to the citizen as the same word."""
+    NOT `usage.total_tokens`: under pydantic-ai `input_tokens` already folds in the cache buckets
+    (10 fresh + a 90k cache read arrives as `input_tokens == 90_010`), so a raw bound prices a
+    cached prefix at full rate — the incident `billable_spend` records, where one calculator build
+    booked 956k of a 1M daily cap on 68 tokens of fresh input. Weighting lives in `usage/gate.py`
+    beside the daily meter's own column expression: two ceilings weighting tokens differently would
+    be two numbers described to the citizen as one word."""
     return weighted_spend(
         input_tokens=usage.input_tokens,
         output_tokens=_citizen_output_tokens(usage),
@@ -565,7 +526,7 @@ def _sandbox_unavailable_message(exc: Exception) -> str:
         # Hedge on the tri-state exactly as `reclaim_blocked_response` and the dialog do.
         # `dirty=None` means nobody could question that container — including the arm where we
         # could not even reach it — and stating "has unsaved changes" there asserts something
-        # the system does not know (#83 review, finding 10).
+        # the system does not know.
         unsaved = "has unsaved changes" if exc.dirty else "may have unsaved changes"
         return (
             f"“{exc.project_name}” is still open and {unsaved}. "
@@ -596,7 +557,7 @@ class _PersistFailedError(Exception):
 
 @dataclass(frozen=True)
 class ActiveTurnInfo:
-    """What the U6 conversation read reports: the in-flight turn and its newest seq (the
+    """What the conversation read reports: the in-flight turn and its newest seq (the
     cursor a subscriber resumes the event stream from)."""
 
     turn_id: uuid.UUID
@@ -652,12 +613,12 @@ class _TurnState:
     #: one who never left.
     parts: list[_TurnPart] = field(default_factory=list)
     steps: dict[str, StepItem] = field(default_factory=dict)  # tool_call_id → newest item
-    # U17's acknowledgement, held OUT of `steps` and beside it. The distinction the original
-    # comment collapsed: `steps` is what gets PERSISTED, so the ack must stay out of it — but the
-    # catch-up SNAPSHOT is the only way a subscriber ever learns about a frame emitted before it
-    # connected, and every client connects after `start_turn` has already run. Keeping the ack out
-    # of both meant it reached nobody. Cleared by the first real step, which is what "replaced by
-    # the first real step" has to mean on a transport where the ring frame is unreachable.
+    # The acknowledgement, held OUT of `steps` and beside it. `steps` is what gets PERSISTED, so
+    # the ack must stay out of it — but the catch-up SNAPSHOT is the only way a subscriber ever
+    # learns about a frame emitted before it connected, and every client connects after
+    # `start_turn` has already run. Keeping the ack out of both meant it reached nobody. Cleared
+    # by the first real step, which is what "replaced by the first real step" has to mean on a
+    # transport where the ring frame is unreachable.
     acknowledgement: StepItem | None = None
     # The "Writing up the plan…" status's call id, tracked for exactly the reason the ack above
     # is: it is a PLATFORM-owned status with no durable counterpart, so the only thing that can
@@ -675,7 +636,7 @@ class _TurnState:
     working: bool = False
     subscribers: set[asyncio.Queue[None]] = field(default_factory=set)
     task: asyncio.Task[None] | None = None
-    # U17 — the per-tool-call "this is still running" narrators, keyed by tool call id.
+    # The per-tool-call "this is still running" narrators, keyed by tool call id.
     # Cancelled the moment the call resolves (and again, synchronously, in `_finish`), then
     # AWAITED in the turn's `finally`: a narrator left running past the terminal would land a
     # step frame after the transport sent `[DONE]`.
@@ -701,14 +662,14 @@ class _TurnState:
     # project's live container (its docstring carries the two-workspace history this block used to
     # restate). `sandbox` is that container session — Build's eight sandbox-routed tools call it
     # and Plan's read tools reach the same session through `LiveSandboxWorkspace`. `write_session`
-    # is the manager's registry entry, kept so the terminal can hand it back (the P0 save).
+    # is the manager's registry entry, kept so the terminal can hand it back.
     # `preview_task` is the per-turn dev-server watcher — cancelled and AWAITED before the
     # terminal frame, or a late preview frame lands after `[DONE]`. All three are None only on a
     # turn whose attach never completed.
     sandbox: SandboxSession | None = None
     write_session: BuildSession | None = None
     preview_task: asyncio.Task[None] | None = None
-    # The R10 liveness lease renewal (C5 family 4). Started where the container is attached,
+    # The liveness lease renewal. Started where the container is attached,
     # released after it is handed back. `None` on a turn that never took a container — a turn
     # with nothing to keep alive must not stamp a lease over whoever does hold the user's slot.
     lease_task: asyncio.Task[None] | None = None
@@ -731,11 +692,11 @@ class _TurnState:
     preview_framed: bool = False
     # Has any turn on this app ever done real work? Resolved ONCE where the workspace is pinned
     # (one HEAD on the recovery slot) and carried, because it cannot change inside one turn and
-    # the self-heal loop asks the health verdict for it up to four times. It gates U6's content
+    # the self-heal loop asks the health verdict for it up to four times. It gates the content
     # check: a brand-new project is SUPPOSED to be showing the starter template, and checking it
     # would manufacture an accusation rather than catch one.
     had_prior_building_turns: bool = False
-    # U2 — `UNVERIFIED_TEXT` describes the state of the app, not an event, so it is said once
+    # `UNVERIFIED_TEXT` describes the state of the app, not an event, so it is said once
     # and then not again. Repeating it would train the reader to skip the one sentence most
     # likely to matter.
     said_it_could_not_check: bool = False
@@ -746,15 +707,16 @@ class _TurnState:
     # has to say which one this is — the engine cannot infer it from the prompt.
     expects_mutation: bool = False
     #: Did THIS turn bring a container up, rather than joining one already serving? Set at the
-    #: attach seam from `BuildSession.attached`, and read only by R103's numerator — a turn that
-    #: started nothing must not be able to report a start that reached a serving page.
+    #: attach seam from `BuildSession.attached`, and read only by the container-start success
+    #: ratio's numerator — a turn that started nothing must not be able to report a start that
+    #: reached a serving page.
     started_a_container: bool = False
-    #: Tokens this turn has spent across every `agent.iter` run it has made (U13/R91). A build
+    #: Tokens this turn has spent across every `agent.iter` run it has made. A build
     #: turn makes several — the first attempt plus each repair round — and the bound is on the
     #: TURN, because that is the thing that ends and says what remains. `run.usage` covers
     #: only the run in flight, so finished runs are folded here as they close.
     tokens_spent: int = 0
-    #: What the citizen last agreed to build first (U10/U12). Seeded from the conversation's own
+    #: What the citizen last agreed to build first. Seeded from the conversation's own
     #: rows at turn start and replaced by any proposal made during the turn — latest wins, the
     #: same rule the offer follows. Empty means nothing was ever proposed, which is the ordinary
     #: case and produces no closing remainder at all.
@@ -795,19 +757,14 @@ SessionFactory = async_sessionmaker[AsyncSession]
 
 
 def _what_it_is_showing(outcome: VerifyOutcome, *, ever_built: bool) -> str:
-    """Which of `DID_NOT_COME_TOGETHER_TEXT`'s three arms this verdict earns (U7, R13).
-
-    Read off the verdict rather than inferred, and the ordering is what makes each arm true rather
-    than merely plausible. Not serving comes first: an app that is down has no version to describe,
-    and calling it "an earlier version of itself" would send the citizen looking for a page nobody
-    is serving. Then the starter template, which is a specific and actionable thing to be shown.
-    The earlier-version arm is last because it is the residual — everything that is genuinely the
-    user's app, just without this change in it.
-
-    A verdict with no serving answer at all (the probe never came back) takes the same arm as one
-    that is down. That is a small over-claim and the honest one available: we could not reach the
-    app, and telling someone their app is fine on the strength of a check that never completed is
-    the failure this whole plan exists to remove."""
+    """Which of `DID_NOT_COME_TOGETHER_TEXT`'s three arms this verdict earns. Read off the
+    verdict, not inferred; ordering makes each arm true rather than merely plausible. Not
+    serving comes first, since a down app has no version to describe. Then the starter
+    template, a specific and actionable thing to show. The earlier-version arm is last, the
+    residual: everything genuinely the user's app, just without this change. A verdict with no
+    serving answer at all takes the same arm as one that is down — the honest small
+    over-claim, since telling someone their app is fine on a check that never completed is the
+    failure this exists to avoid."""
     if outcome.served is None or not (200 <= outcome.served.status < 400):
         return STILL_SHOWING_NOTHING
     if outcome.baseline is BaselineIdentity.STILL_THE_BASELINE:
@@ -871,7 +828,7 @@ class TurnEngine:
         return state
 
     def active_turn_info(self, conversation_id: uuid.UUID) -> ActiveTurnInfo | None:
-        """The U6 `activeTurn` answer: only a RUNNING turn counts."""
+        """The `activeTurn` answer: only a RUNNING turn counts."""
         state = self.peek(conversation_id)
         if state is None or state.status != "running":
             return None
@@ -897,24 +854,13 @@ class TurnEngine:
         expects_mutation: bool = False,
     ) -> uuid.UUID:
         """Claim the conversation, persist the user turn (caller-supplied writer, so the
-        route's typed seq-contention mapping stays where the route owns it), spawn the
-        detached run, return the turn id. Raises `ConversationBusyError` (guard) or whatever
-        `persist_user_turn` raises — with the claim released.
-
-        WRITE no longer refuses here (U5). A Write turn is an ordinary turn with more tools, and
-        `manager` + `sandbox_client` + `project_id` are what attach a live sandbox and resolve
-        which app it serves. THOSE ARE NO LONGER WRITE-ONLY NEEDS: `_pin_workspace` has one arm
-        and both kinds take the project's live container, so this paragraph's old reason for
-        keeping `sandbox_client` optional — "a deployment without a configured sandbox is a
-        supported state for Ask/Plan" — describes neither a live kind nor a live behaviour.
-        It stays optional only as a signature shape: the send route refuses a `None` sandbox
-        service outright, ahead of any claim or write (`api/v1/conversations/turns.py`'s R98
-        503), and `_attach_sandbox` fails loudly if one ever reaches it anyway.
-
-        `expects_mutation` is the Build-it caller's declaration that this turn OWES the user
-        a file change. It defaults False so every conversational turn keeps its existing
-        behaviour untouched; only the plan-card path opts in (see the mutation guard in
-        `_run_write`)."""
+        route's typed seq-contention mapping stays with the route), spawn the detached run,
+        and return the turn id. Raises `ConversationBusyError` or whatever `persist_user_turn`
+        raises, with the claim released. `sandbox_client` stays Optional only as a signature
+        shape now that both kinds attach a live container — the send route refuses a `None`
+        sandbox outright, and `_attach_sandbox` fails loudly if one ever reaches it anyway.
+        `expects_mutation` is the Build-it caller's declaration that this turn OWES a file
+        change; only the plan-card path opts in (see the mutation guard in `_run_write`)."""
         claim_conversation(conversation.id)
         try:
             await persist_user_turn()
@@ -926,7 +872,7 @@ class TurnEngine:
                 expects_mutation=expects_mutation,
             )
             self._by_conversation[conversation.id] = state
-            # U17/R24 — ANSWER THE SCREEN BEFORE ANYTHING CAN BE SLOW.
+            # ANSWER THE SCREEN BEFORE ANYTHING CAN BE SLOW.
             #
             # HERE, and not one line later, is the whole point: this runs before
             # `asyncio.create_task`, so there is no ordering to get wrong and no window in which
@@ -983,30 +929,14 @@ class TurnEngine:
     async def stop_user_turn_and_wait(
         self, user_id: uuid.UUID, *, timeout_s: float
     ) -> StopOutcome:
-        """Stop whatever turn this user is running, WAIT for it to actually unwind, and report
-        which of the three things happened.
+        """Stop this user's turn, WAIT for it to unwind, and report which of three things happened.
 
-        The "stop and switch" flow needs this and `stop_turn` cannot provide it, for
-        two reasons. It is keyed on a conversation the caller does not have — the refusal names
-        a PROJECT, and a Write turn's manager session carries no conversation id — and it
-        returns the instant `task.cancel()` is issued, which is the one thing a caller about to
-        tear the container down must not act on.
-
-        THE WAIT IS THE POINT. Cancellation is a request, not an event: the turn still has to
-        unwind its `finally`, emit its terminal frame, bill the tokens already spent and run
-        `finish_turn_sandbox` — and only that last step pops the user out of the manager's
-        `_active_by_user`, which is what makes the workspace releasable. Releasing before it
-        lands tears a container out from under a running task, the exact strand the build
-        session module exists to prevent.
-
-        SO THE RETURN VALUE IS READ FROM THE TASK, not from the fact that we asked. This used to
-        `return True` after the wait whether or not the wait had expired, which said "stopped"
-        about a turn still inside its `finally` — and the docstring above promised the opposite.
-        `timeout_s` bounds the wait, never the unwind: the shielded task keeps going, and a
-        later look answers correctly.
-
-        At most one turn can be running per user (`_claim_the_one_build_slot` refuses a second
-        allocation), so the scan below finds one or none."""
+        `stop_turn` cannot serve "stop and switch": it is keyed on a conversation the caller does
+        not have, and returns the instant `task.cancel()` is issued — before the turn's `finally`
+        bills tokens, emits its terminal frame and runs `finish_turn_sandbox`, which is what makes
+        the workspace releasable. Releasing earlier tears a container out from under a running
+        task. THE VERDICT IS READ FROM THE TASK, not from having asked: `stop_requested` alone
+        reads True mid-`finally`. `timeout_s` bounds the wait, not the shielded unwind."""
         state = next(
             (
                 s
@@ -1049,15 +979,12 @@ class TurnEngine:
         sandbox_client: SandboxClient | None,
     ) -> None:
         """The whole turn, detached: workspace pin → mode-gated run (streaming frames) →
-        transcript append → billing → terminal. Every
-        exit path funnels to exactly one terminal frame, the guard release, AND the billing of
-        whatever tokens the model actually consumed.
-
-        WRITE forks at the run (U5), not at the guard: same pin, same reminder, same terminal
-        arms, same `finally` — but a node-by-node self-heal loop in place of the single
-        `agent.run`, because a build meters and persists per model step rather than once at
-        the end. Everything around that fork is deliberately shared, so a fix to the terminal
-        handling can never apply to only one of the two."""
+        transcript append → billing → terminal. Every exit path funnels to exactly one
+        terminal frame, the guard release, AND the billing of whatever tokens the model
+        actually consumed. WRITE forks at the run, not at the guard: same pin, same
+        reminder, same terminal arms, same `finally` — but a node-by-node self-heal loop in
+        place of the single `agent.run`. Everything around that fork is shared, so a fix to
+        the terminal handling can never apply to only one of the two."""
         # One usage accumulator threaded through both the primary run and the forced retry
         # (they increment it in place). Because it survives the run, an explicit Stop that
         # cancels the model mid-flight — or a DB error after the model replied — still bills the
@@ -1096,13 +1023,14 @@ class TurnEngine:
         async def _fail_generically() -> None:
             """How a turn ends when it broke for a reason the citizen cannot act on.
 
-            A CLOSURE BECAUSE THE SPECIFIC ARM HAS TO BE ABLE TO HAND AN ERROR BACK. R9b's
-            match sits ahead of the broad handler and catches a whole exception CLASS, most of
-            which is not its business — and it cannot simply `raise` the rest onward, because a
-            sibling `except` never catches what another one raises. Re-raising would carry an
-            unrelated provider error clean out of this method, past the billing and past the
-            terminal frame, leaving the turn "running" for every subscriber until their stall
-            timeout. So the two arms share one ending rather than one of them having none."""
+            A CLOSURE BECAUSE THE SPECIFIC ARM HAS TO BE ABLE TO HAND AN ERROR BACK. The
+            context-overflow match below sits ahead of the broad handler and catches a whole
+            exception CLASS, most of which is not its business — and it cannot simply `raise` the
+            rest onward, because a sibling `except` never catches what another one raises.
+            Re-raising would carry an unrelated provider error clean out of this method, past the
+            billing and past the terminal frame, leaving the turn "running" for every subscriber
+            until their stall timeout. So the two arms share one ending rather than one of them
+            having none."""
             _log.exception(
                 "turn_run_failed",
                 conversation_id=str(state.conversation_id),
@@ -1126,20 +1054,17 @@ class TurnEngine:
                 manager=manager,
                 sandbox_client=sandbox_client,
             )
-            # U8 / R14 — THE WORKSPACE NOTE, UNCONDITIONALLY, on every turn that pinned a
-            # sandbox: an ephemeral tail on `message_history`, structurally excluded from the
-            # persisted rows because `new_messages()` never contains injected history.
+            # THE WORKSPACE NOTE, UNCONDITIONALLY, on every turn that pinned a sandbox: an
+            # ephemeral tail on `message_history`, structurally excluded from the persisted rows
+            # because `new_messages()` never contains injected history.
             #
-            # It is the ONLY thing injected here now. The per-turn restatement that used to
-            # ride beside it — "you are in Plan mode", on a cadence — went with the modes it
-            # restated: a chat's kind is fixed at creation, and the toolset is what carries
-            # which chat this is. This note stayed because it is a different claim: it tells
-            # the model a FACT about the app that its history cannot know, and it holds on
-            # every turn rather than one in four.
+            # It is the ONLY thing injected here, and it is injected on EVERY turn rather than on
+            # a cadence, because it tells the model a fact about the app that its history cannot
+            # know — one that can change between any two turns.
             if workspace is not None:
                 note = await self._workspace_note(state)
                 history = [*history, ModelRequest(parts=[UserPromptPart(content=note)])]
-            # WHAT WAS AGREED, READ OUT OF THE CONVERSATION ITSELF (U12/R90). No column, no
+            # WHAT WAS AGREED, READ OUT OF THE CONVERSATION ITSELF. No column, no
             # table, no project field: the agreement is the arguments of the last honourable
             # proposal call in these rows, which is the same bounded route the plan travels. A
             # Plan chat that proposed and a Build chat that then builds are two conversations,
@@ -1166,15 +1091,8 @@ class TurnEngine:
                 # a Plan run the streaming node loop and the per-step billing it has no steps
                 # for, so the fork is a shape, not a behaviour.
                 #
-                # The other questions belong to the run configurator and are answered there:
-                # `agent/toolsets.py` decides what the model CAN DO, `agent/mode_prompts.py`
-                # what it is TOLD. Nothing downstream of either may ask again — U1 deleted the
-                # `output_type` branch below for exactly that reason.
-                #
-                # NO COUNT IS CLAIMED HERE ON PURPOSE. This comment used to say "three sites
-                # are the closed set" while `ChatKind`'s own docstring said "exactly two", and
-                # both were wrong against the tree. A census belongs somewhere that goes red
-                # when it stops being true, not in a sentence that cannot.
+                # What the model CAN DO and what it is TOLD are decided in `agent/toolsets.py`
+                # and `agent/mode_prompts.py`, and nothing downstream of either asks again.
                 #
                 # A Build turn bills PER MODEL STEP, inside the loop — `record_usage` is
                 # called once per step and that is the only fold. Claiming the turn as
@@ -1201,12 +1119,10 @@ class TurnEngine:
                         workspace=workspace,
                     )
                     toolsets = toolsets_for_kind(state.kind, _workspace_of).toolsets
-                    # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT (U1/R69/N2). A
-                    # run can only end deferred if a tool that DEFERS was registered on it, and
+                    # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT. A run can only
+                    # end deferred if a tool that DEFERS was registered on it, and
                     # `present_plan_options` — the one `CallDeferred` in the tree — is on the
-                    # Plan arm and nowhere else. Asking the kind a second time here re-decided
-                    # something the line above had just decided, and the two could only ever
-                    # agree; what it bought instead was a branch an auditor has to read.
+                    # Plan arm and nowhere else.
                     #
                     # Widening costs nothing on a run that produced text: pydantic-ai strips
                     # `DeferredToolRequests` out of the output types and keeps a single flag,
@@ -1247,7 +1163,7 @@ class TurnEngine:
                     persistable = _persistable_messages(result.new_messages())
                     deferred = _deferred_call(result.output)
 
-                    # AN OFFER IS EITHER HONOURABLE OR IT IS NOT WRITTEN AT ALL (R28a / R44).
+                    # AN OFFER IS EITHER HONOURABLE OR IT IS NOT WRITTEN AT ALL.
                     # An empty plan, one past the stored-message ceiling, or a pre-migration
                     # call with no argument leaves nothing to press — so the call comes off
                     # what is persisted, no pending record is written, and the turn says so in
@@ -1280,12 +1196,9 @@ class TurnEngine:
                     ] = [(persistable, self._pending_meta(deferred), MessageEntryKind.TURN)]
 
                     # NO SECOND MODEL REQUEST IS ISSUED HERE, and none is issued anywhere as a
-                    # consequence of what the model wrote. The forced retry that used to sit at
-                    # this point re-ran the turn with the offer tool as the only thing the model
-                    # could reach, on the strength of a prose heuristic — see the note where
-                    # that heuristic used to be defined.
+                    # consequence of what the model wrote.
 
-                    # WRITE-BEFORE-DONE (U5 policy): the reply must be durable before the
+                    # WRITE-BEFORE-DONE: the reply must be durable before the
                     # turn may claim success. A failure of the persist seam is DISTINCT from
                     # a model failure — it raises the typed `_PersistFailedError` so the
                     # subscriber sees the "could not be saved" message, not the generic one.
@@ -1321,10 +1234,10 @@ class TurnEngine:
                             # did before — the citizen's transcript is unchanged; only the
                             # model's copy is gone.
                             #
-                            # NO SECOND LIVE HOME. Plan 009 is building the durable, typed home
-                            # for platform speech on the turn-terminal row; when it lands this
-                            # is the row it adopts. Routing the sentence to a live-only banner
-                            # in the meantime would give the citizen the same words twice.
+                            # NO SECOND LIVE HOME. A durable, typed home for platform speech is
+                            # coming to the turn-terminal row; when it lands this is the row it
+                            # adopts. Routing the sentence to a live-only banner in the meantime
+                            # would give the citizen the same words twice.
                             await append_batch(
                                 db,
                                 user_id=state.user_id,
@@ -1389,7 +1302,7 @@ class TurnEngine:
             )
             self._finish(state, "failed")
         except ModelHTTPError as exc:
-            # R9b — THE ONE OVERFLOW NO PRE-FLIGHT CAN CATCH, answered in the platform's words.
+            # THE ONE OVERFLOW NO PRE-FLIGHT CAN CATCH, answered in the platform's words.
             #
             # AHEAD OF THE BROAD ARM, AND NARROW INSIDE IT. Only a refusal that says the prompt
             # did not fit is translated; every other provider error — a 429, a 500, a 400 about
@@ -1440,12 +1353,12 @@ class TurnEngine:
             # Idempotent by construction: the Write path's stop leaves `preview_task` None
             # and this backstop finds nothing to do.
             await self._stop_preview_watcher(state)
-            # U17 — and the status-line narrators with it, for the same reason and on every
+            # The status-line narrators go too, for the same reason and on every
             # arm. `_finish` already cancelled them; this is where they are actually awaited,
             # so none is still unwinding when the transport closes.
             await self._drain_long_operations(state)
             # THE RELEASE, on every single terminal arm — completed, stopped, persist-failed,
-            # named-end, or a genuine bug. NO SAVE happens here (KTD-5e): the bundle reaches
+            # named-end, or a genuine bug. NO SAVE happens here: the bundle reaches
             # Blob only on the user's Save click (`save_project_snapshot`). What
             # `finish_turn_sandbox` does is free the build slot and pardon the container, so
             # the preview stays up and the next message can start — anything that reaches
@@ -1485,15 +1398,15 @@ class TurnEngine:
                 # build slot, turning a clean wait on the guard into a 409 on the slot.
                 #
                 # FIRST in this block, though — ahead of the lease release below — and that
-                # ordering is the same P0 lesson as the shield above. `_stop_liveness_lease`
+                # ordering is the same lesson as the shield above. `_stop_liveness_lease`
                 # awaits, so on the stopped path a second cancellation can propagate out of
                 # it; if the guard release sat after it, that would skip `release_conversation`
                 # and every later turn in the conversation would answer 409 for the rest of
                 # the process's life. Nothing depends on the lease outliving the guard: the
                 # next turn's reconcile-on-start certifies death and deletes it anyway.
                 release_conversation(state.conversation_id)
-                # The R10 lease goes LAST, once the container has actually been handed back
-                # (U12). Releasing it before `finish_turn_sandbox` would leave that snapshot
+                # The lease goes LAST, once the container has actually been handed back.
+                # Releasing it before `finish_turn_sandbox` would leave that snapshot
                 # -and-pardon sequence — which can easily outlive the 90-second heartbeat TTL
                 # — exposed to a concurrent sweep with nothing at all vouching for it.
                 await self._stop_liveness_lease(state)
@@ -1508,47 +1421,14 @@ class TurnEngine:
         manager: SessionManager,
         sandbox_client: SandboxClient | None,
     ) -> ReadOnlyWorkspace:
-        """Resolve the turn-pinned read surface ONCE, for BOTH KINDS: the project's live
-        container.
+        """Resolve the turn-pinned read surface ONCE, for BOTH KINDS: the project's live container.
+        (`api/v1/conversations/turns.py` quotes that first sentence — keep in sync.)
 
-        (`api/v1/conversations/turns.py` quotes that first sentence — keep the two in sync. The
-        paragraphs below stay in the old Ask/Plan/Write vocabulary on purpose: they are HISTORY,
-        and what they explain is why there is one arm here at all.)
-
-        Ask and Plan used to read a different thing entirely — a git checkout of the app's
-        saved bundle, unpacked onto the control-plane server's own disk. Two problems with
-        that, and only one of them was staleness. It described a COPY: anything the agent had
-        done since the last save was invisible, and an answer about the copy could be
-        confidently wrong about the app the user was looking at. And the copy is a bare
-        checkout, so nothing in it could ever be run — no dependencies, no build, no dev
-        server. One workspace for every mode removes both by construction, and the
-        coherence question ("does Ask see what Write just did?") stops being something we
-        have to keep getting right.
-
-        A NEW PROJECT GETS THE CONTAINER TOO (user, 2026-07-30). An earlier cut of this
-        withheld it until a snapshot existed, on the grounds that a fresh project's container
-        is the golden template and Ask might describe scaffolding as the user's work. That is
-        the wrong trade: Plan writing the FIRST build is exactly when the agent most needs to
-        run real commands against a real tree, and a mode that cannot do that produces a plan
-        built on nothing. The template is a truthful answer about a project with no code yet —
-        the model can see it is a template. Withholding the tree was the more misleading
-        option, and it is gone.
-
-        NOTHING PINS A VERSION HERE ANY MORE. A Plan turn used to stamp the snapshot's head
-        onto its options card so Build-it could warn that the app had moved underneath the
-        plan, and the writer sat inside a branch on the chat's kind — the last of those. What
-        the pin bought is paid for better and for more cases: the instruction to follow the
-        code's reality where it differs from what the plan assumed lives in the Build chat's
-        own prompt, which works for a plan built weeks later rather than only when two snapshot
-        heads happen to differ.
-
-        AUDIT-2026-09-03 · canvas-divergence: the Removals board removes "the sandbox in
-        planning", saying a Plan chat reads the latest copy of the app instead and stops
-        holding a container — this method resolves the project's LIVE container for both
-        kinds, with one arm and no branch — redrawing that board row to match what ships
-        settles it and retires this marker with the guard in
-        `tests/services/turns/test_pin_workspace_one_arm.py`, which fails if the branch the
-        board describes is ever put back."""
+        HISTORY: Ask and Plan used to read a git checkout of the saved bundle — a COPY, stale the
+        moment the agent changed anything, and unrunnable besides. A new project gets the live
+        container too, since withholding it only made Plan's first build run on nothing. Nothing
+        pins a version here any more: that warning is paid for better in the Build chat's own
+        prompt, which works weeks later rather than only when two snapshot heads differ."""
         attach = partial(
             self._attach_sandbox,
             state,
@@ -1558,7 +1438,7 @@ class TurnEngine:
             sandbox_client=sandbox_client,
         )
         # ONE ARM. There is no branch here at all any more — every turn, in both kinds,
-        # resolves the project's LIVE container and nothing else (R18).
+        # resolves the project's LIVE container and nothing else.
         #
         # What used to sit above this was the last way a chat could answer from a saved copy:
         # `sandbox_client is None and this is not a Build chat` fell through to extracting the
@@ -1566,21 +1446,19 @@ class TurnEngine:
         # None` is a deployment fact wearing a branch on the kind — and the behaviour it bought
         # was a silent downgrade: the citizen asked about their app and got an answer about a
         # copy of it, with nothing on screen to say which. The same fact is now asked one layer
-        # up, where a person can be told about it (R98, `api/v1/conversations/turns.py`), so a
+        # up, where a person can be told about it (`api/v1/conversations/turns.py`), so a
         # send that cannot reach a workspace is refused before it is spent.
         return LiveSandboxWorkspace(session=await attach())
 
     # -- the WRITE run -------------------------------------------------------------------
 
     async def _say_what_the_workspace_did(self, state: _TurnState, news: RecoveryNews) -> None:
-        """Turn the integrity gate's finding into the one sentence the citizen reads (U2).
+        """Turn the integrity gate's finding into the one sentence the citizen reads.
 
-        THE MANAGER KNOWS WHAT HAPPENED; THIS KNOWS HOW TO SAY IT. The gate cannot import these
-        strings — `services.turns` reaches `build_sessions`, so an import back would close the
-        cycle — and it should not want to: which words a citizen sees is a product decision that
-        belongs beside the rest of them.
-
-        `UNVERIFIED` IS SAID ONCE PER TURN AND THEN NOT AGAIN. It describes the state of the app
+        THE MANAGER KNOWS WHAT HAPPENED; THIS KNOWS HOW TO SAY IT. The gate cannot import
+        these strings — `services.turns` reaches `build_sessions`, so an import back would
+        close the cycle — and which words a citizen sees is a product decision besides.
+        `UNVERIFIED` IS SAID ONCE PER TURN, NEVER AGAIN: it describes the state of the app
         rather than an event, so repeating it would train the reader to skip the one sentence
         most likely to matter."""
         if news is RecoveryNews.UNVERIFIED:
@@ -1607,15 +1485,12 @@ class TurnEngine:
     ) -> SandboxSession:
         """Get this turn a live sandbox, narrating the wait.
 
-        Provisioning or restoring takes 30-60s, which is why it happens HERE — detached,
-        after the 202 — rather than inside the request. A citizen watching a spinner on a
-        POST that has not answered in a minute assumes the product is broken; a citizen
-        watching "Getting your workspace ready" knows what is happening. That is the whole
-        reason `WorkspaceFrame` exists.
-
-        Fails LOUDLY. `SnapshotUnavailableError` in particular must never degrade into a
-        fresh blank template: the model would start editing an empty app and commit the
-        result over the user's real one."""
+        Provisioning or restoring takes 30-60s, which is why it happens HERE — detached, after the
+        202 — rather than inside the request: a citizen watching "Getting your workspace ready"
+        knows what is happening, one watching an unanswered POST assumes it is broken. That is the
+        whole reason `WorkspaceFrame` exists. Fails LOUDLY: `SnapshotUnavailableError` must never
+        degrade into a fresh blank template, or the model starts editing an empty app and commits
+        over the real one."""
         if sandbox_client is None:
             raise _WriteEndedError(
                 "sandbox_unavailable",
@@ -1650,7 +1525,7 @@ class TurnEngine:
                     # container identically), and reading it as "always writing" once made a
                     # read-only question refuse the Save button and claim the app was building.
                     may_write=toolsets_for_kind(state.kind, _workspace_of, _sandbox_of).may_write,
-                    # U2 — THE SENTENCE HAS TO ARRIVE BEFORE THE SLOW WORK, not after it. The
+                    # THE SENTENCE HAS TO ARRIVE BEFORE THE SLOW WORK, not after it. The
                     # recovery path adds tens of seconds of otherwise-silent latency, and the
                     # gate calls this the moment it knows, from inside the attach.
                     announce=partial(self._say_what_the_workspace_did, state),
@@ -1687,7 +1562,7 @@ class TurnEngine:
             raise _WriteEndedError("sandbox_unavailable", message) from exc
 
         if not session.attached:
-            # R103's DENOMINATOR, FOR THE SEAM PLAN E CANNOT SEE. `relaunch_preview` counts the
+            # THE CONTAINER-START SUCCESS RATIO'S DENOMINATOR. `relaunch_preview` counts the
             # explicit start control; this counts the other way a container comes up — on the way
             # to answering a question, which is how most of them come up. One name, two writers,
             # and neither fires on the other's path: `relaunch_preview` is never called from a
@@ -1696,28 +1571,27 @@ class TurnEngine:
             # `not session.attached` IS THE WHOLE CONDITION, and it is why `attached` had to be
             # forwarded onto the session at all. This method runs on EVERY turn of EVERY kind,
             # and on most of them the container is already up and serving — those turns started
-            # nothing. Counting them would make the denominator "turns" and hand R103 a ratio
-            # near 1 that means nothing. What is left is exactly the two arms that bring a
+            # nothing. Counting them would make the denominator "turns" and hand the ratio a
+            # value near 1 that means nothing. What is left is exactly the two arms that bring a
             # container up: a fresh provision and a restore.
             #
             # ABOVE THE TWO INTEGRITY HOLDS BELOW ON PURPOSE. An UNRECOVERABLE or a RESTORED
             # turn ends without running the agent — but a container did come up, and it will
-            # never reach the numerator. That gap is precisely what R103 exists to expose, so
-            # excluding these from the denominator would hide it.
+            # never reach the numerator. That gap is precisely what this ratio exists to expose,
+            # so excluding these from the denominator would hide it.
             #
-            # No duration row here, restating Plan E's reasoning rather than reversing it: a
-            # 15-second attach budget and a 120-second cold budget averaged together produce a
-            # number that describes neither. R102 asks how long a COLD start takes, and that is
-            # E's seam.
+            # No duration row here: a 15-second attach budget and a 120-second cold budget
+            # averaged together produce a number that describes neither. How long a COLD start
+            # takes is a separate concern.
             state.started_a_container = True
             await count(HarnessCounter.APP_START_ATTEMPTED, app_id=session.app_id)
         if session.news is RecoveryNews.UNRECOVERABLE:
-            # AE3. Nothing was put back, and the container is showing a template. The one thing
+            # Nothing was put back, and the container is showing a template. The one thing
             # that must not happen is the agent building on it and the turn-end copy making that
             # permanent, so the turn ends here.
             raise _WriteEndedError("workspace_unrecoverable", NOT_RECOVERED_TEXT)
         if session.restored:
-            # THE HELD MESSAGE (R5). The instruction was written against a workspace that no
+            # THE HELD MESSAGE. The instruction was written against a workspace that no
             # longer exists; running it now would execute an instruction whose premise was true
             # when it was typed and false when it ran. The citizen re-sends when they have looked
             # at what came back.
@@ -1732,7 +1606,7 @@ class TurnEngine:
             # and a second feed would draw every step twice.
             emitter=None,
         )
-        # U13 — FENCE OFF ANY BROWSER CRASH REPORT THAT PREDATES THIS TURN. A report describes
+        # FENCE OFF ANY BROWSER CRASH REPORT THAT PREDATES THIS TURN. A report describes
         # the tree the browser was rendering when it crashed, and this turn is about to change
         # that tree; draining it at the end would fail a verify on a fault the agent may have
         # just fixed. The gap between turns is not even a quiet one: the pane reloads its frame
@@ -1746,7 +1620,7 @@ class TurnEngine:
                 app_name=session.handle.app_name,
                 discarded=discarded,
             )
-        # U6 — HAS THIS APP EVER BEEN BUILT? One HEAD on the recovery slot, resolved here because
+        # HAS THIS APP EVER BEEN BUILT? One HEAD on the recovery slot, resolved here because
         # this is where the turn already holds the app id and because the answer cannot change
         # while the turn runs. It gates the content half of the health verdict: a brand-new
         # project is legitimately showing the starter template, and the whole point of the check
@@ -1760,7 +1634,8 @@ class TurnEngine:
         # strictly AFTER the agent had finished, instead of alongside its first request. Worse
         # for a turn the model only READS in: the mutation guard returns before verify, so the
         # server was never started at all and no preview ever appeared. The legacy harness has
-        # always done this at attach (`harness.py:201`); this brings unified chat to parity.
+        # always done this at attach (it called `dev_start` right after attaching);
+        # this brings unified chat to parity.
         #
         # Best-effort BY DESIGN. This is an optimization, never a gate: `verify`'s dead-child
         # rescue is the backstop, so a supervisor blip costs the preview a few seconds and not
@@ -1778,7 +1653,7 @@ class TurnEngine:
                 exc_info=True,
             )
         state.preview_task = asyncio.create_task(self._watch_preview(state))
-        # AND THE LIVENESS LEASE, from the moment this turn owns the container (R10/U12).
+        # AND THE LIVENESS LEASE, from the moment this turn owns the container.
         # Same lifecycle as the watcher above — a background task the turn owns, stopped in
         # its `finally`, idempotent — because the reasoning is the same: it exists only for
         # as long as there is a container to say something about.
@@ -1796,22 +1671,14 @@ class TurnEngine:
         model: Model,
         session_factory: SessionFactory,
     ) -> None:
-        """The self-heal loop: run, verify, repair, repeat until the app is objectively
-        green and the model has said it is done — or a bound stops us.
+        """Run, verify, repair — until the app is green AND the model says done, or a bound stops.
 
-        Both halves of that gate are load-bearing. `declare_done` alone is the model's
-        opinion, and a model that has just written a type error is not a reliable witness;
-        `green` alone would end the turn mid-thought the first time the tree happened to
-        compile. Only the conjunction means finished.
-
-        U18/R30 CHANGES WHAT HAPPENS ON THE PASSING SIDE OF THAT GATE, AND NOTHING ELSE ABOUT
-        IT. The conjunction is untouched — a failing verdict after `declare_done` still sends
-        the turn into repair exactly as before. What is gone is the round-trip the passing side
-        used to buy: the model called the tool, was told to stand by, and was then asked for one
-        more full request whose entire product was a closing paragraph. That paragraph is the
-        message the 2026-08-18 build wrote in 2,397 words of file paths and framework names.
-        The summary the tool already carries says the same thing in the register the reader
-        actually has, so the harness renders THAT and ends the turn on it."""
+        The self-heal loop. Both halves of that gate are load-bearing: `declare_done` alone is the
+        model's opinion (unreliable right after it wrote a type error), `green` alone would end the
+        turn mid-thought the moment the tree happened to compile. Only the conjunction means done.
+        Passing buys no extra round-trip: the model used to be asked for a whole further request
+        whose only product was a closing paragraph in its own register, and `declare_done`'s
+        summary says it in the reader's."""
         sandbox = state.sandbox
         if sandbox is None:  # `_pin_workspace` sets it or raises; belt for the impossible
             raise _WriteEndedError("sandbox_unavailable", _TURN_FAILED_MESSAGE)
@@ -1828,7 +1695,7 @@ class TurnEngine:
         try:
             while True:
                 if time.monotonic() - loop_started > RUN_WALL_CLOCK_DEADLINE_S:
-                    # ONE ENDING FOR ALL THREE BOUNDS (U13/R91). What stood here named the
+                    # ONE ENDING FOR ALL THREE BOUNDS. What stood here named the
                     # bound and then told the citizen to "click Save to keep them" — the exact
                     # sentence `at_limit_ending`'s docstring records as the one that secured
                     # nothing and asserted something nobody had checked. This arm is the one
@@ -1848,14 +1715,14 @@ class TurnEngine:
                     # between them. `load_history` ignores visibility so the model still
                     # reads it; the projection skips hidden rows so the citizen never does.
                     await self._persist_write_reprompt(state, turn_prompt, session_factory)
-                # Per-iteration; the flag means "this run". THE SUMMARY IS RESET WITH IT (U18),
+                # Per-iteration; the flag means "this run". THE SUMMARY IS RESET WITH IT,
                 # because the two are one fact: a summary written before a verdict that came
                 # back red describes a build that then failed, and leaving it standing would let
                 # a later `declare_done` with an empty summary end the turn on stale praise for
                 # work that had to be repaired.
                 sandbox.done_requested = False
                 sandbox.done_summary = ""
-                # U9 / R15 — MARK "NOW" IN THE CONTAINER BEFORE THE AGENT RUNS. Everything the
+                # MARK "NOW" IN THE CONTAINER BEFORE THE AGENT RUNS. Everything the
                 # dev server prints after this point is about a tree the agent is currently
                 # changing; everything before it may be about one it has already fixed. The
                 # health verdict asks the difference before it buys a repair round-trip.
@@ -1876,8 +1743,8 @@ class TurnEngine:
                     )
                 except UsageLimitExceeded as exc:
                     # The model burned its per-run request ceiling — usually a loop, not a
-                    # hard problem. It ends the same way the other two internal ceilings do
-                    # (U13/R91): the tree is secured first, one sentence that names no bound,
+                    # hard problem. It ends the same way the other two internal ceilings do:
+                    # the tree is secured first, one sentence that names no bound,
                     # and the remainder from what was agreed. `end_reason` keeps which bound
                     # fired distinguishable for the person who can act on it.
                     raise _WriteEndedError(
@@ -1892,20 +1759,17 @@ class TurnEngine:
                 # `tsc` run to confirm nothing changed, then nudge the model to keep going.
                 #
                 # …UNLESS the turn was asked to build. The same zero-mutation outcome means
-                # opposite things on the two paths, and the bare `return` gave BOTH of them
-                # the caller's `_finish(state, "completed")`: a real build once spent 65k
-                # tokens, wrote not one file, and told the citizen "Build complete — your app
-                # is live below" over a container still serving the golden template. A build
-                # that produced nothing is a failure and has to end as one.
+                # opposite things on the two paths, and a bare `return` gives BOTH of them the
+                # caller's `_finish(state, "completed")` — which announces a finished build over
+                # a container still serving the golden template. A build that produced nothing
+                # is a failure and has to end as one.
                 #
                 # …and on the build path the guard asks a NARROWER question, because
                 # `done_requested` is not evidence of a mutation — it is the model's own claim to
-                # have finished, and `declare_done` used to set `workspace_touched` alongside it.
-                # A model that wrote nothing and simply declared itself done therefore satisfied
-                # both halves of this disjunction and walked straight back into "Build complete —
-                # your app is live below" over an untouched template. That is the same lie the
-                # guard was added to stop, reached by asking the accused for a character
-                # reference. On a turn that EXPECTS a mutation, only a real write counts.
+                # have finished. A model that wrote nothing and simply declared itself done would
+                # otherwise satisfy both halves of this disjunction and reach that same false
+                # announcement by asking the accused for a character reference. On a turn that
+                # EXPECTS a mutation, only a real write counts.
                 mutated = sandbox.workspace_touched
                 if not (mutated or sandbox.done_requested):
                     if state.expects_mutation:
@@ -1967,11 +1831,11 @@ class TurnEngine:
                 # outstanding there is nothing for it to gate and the loop carries on as
                 # before. Nothing here spends a repair attempt on it.
                 if not outcome.green and outcome.state is not HealthState.INDETERMINATE:
-                    # U25/R32 — THE HEADLINE NUMBER: how often the platform would have told a
+                    # THE HEADLINE NUMBER: how often the platform would have told a
                     # citizen their app was finished when it was not. Counted only on a POSITIVE
                     # verdict of "not finished" — an unanswerable one blocked nothing, it merely
-                    # asked again, and folding the two together would make the number that
-                    # measures this plan's whole point unreadable.
+                    # asked again, and folding the two together would make the number this
+                    # counter exists to produce unreadable.
                     #
                     # Fire-and-forget by construction (`count` owns its own session and swallows
                     # everything), because a counter that can fail the turn it is counting is
@@ -2003,7 +1867,7 @@ class TurnEngine:
                     # always synthesizes an error above) and the model simply never called
                     # `declare_done` — telling THAT user their app "still has an error"
                     # sends them hunting for a defect that does not exist. Neither arm may
-                    # claim the work is "saved": there is no auto-save (KTD-5e) — the
+                    # claim the work is "saved": there is no auto-save — the
                     # changes sit in the workspace until the user's Save click.
                     if error is None:
                         raise _WriteEndedError(
@@ -2012,7 +1876,7 @@ class TurnEngine:
                             "before wrapping up. Your changes are still in the workspace — "
                             "click Save to keep them, or send a message to continue.",
                         )
-                    # U7 / R13 — THE HONEST ENDING. The sentence it replaces named a defect
+                    # THE HONEST ENDING. The sentence it replaces named a defect
                     # ("your app still has an error") and left the citizen to work out what they
                     # were looking at; this one says what the app is currently showing, from the
                     # verdict rather than from a guess, because that is what decides what they
@@ -2026,12 +1890,12 @@ class TurnEngine:
                         ),
                     )
                 if error is not None:
-                    # U13 / R17 — A CLIENT-CLASS REPORT IS AGENT INPUT, NOT NARRATIVE. The whole
+                    # A CLIENT-CLASS REPORT IS AGENT INPUT, NOT NARRATIVE. The whole
                     # user-visible consequence of a browser-side crash is that the completion
                     # claim does not appear; the report itself was written by code inside the
-                    # generated app, and this plan removes developer surfaces rather than adding
-                    # one. It still repairs — `build_repair_prompt` below is reached exactly as
-                    # for any other source — it just does not narrate.
+                    # generated app, and the citizen is shown no developer surfaces. It still
+                    # repairs — `build_repair_prompt` below is reached exactly as for any other
+                    # source — it just does not narrate.
                     #
                     # THE TRAP, and it is why this guard is here and not in `verify`: making
                     # `verify` return `green=False, error=None` for this class would look like
@@ -2126,7 +1990,7 @@ class TurnEngine:
             while not isinstance(node, End):
                 if Agent.is_model_request_node(node):
                     # THE SESSION CLOSES BEFORE THE ENDING IS BUILT, which is why the `try`
-                    # is on the outside now (U24). `at_limit_ending` bundles and uploads the
+                    # is on the outside now. `at_limit_ending` bundles and uploads the
                     # citizen's tree, and doing that inside the `async with` would pin a
                     # pooled connection for the duration of a container round trip — on the
                     # one path where every user who hits their cap in the same hour arrives
@@ -2136,7 +2000,7 @@ class TurnEngine:
                             await enforce_daily_limit(gate_db, state.user_id)
                     except DailyTokenLimitExceededError as exc:
                         # The request never fires. Graceful, not a crash: the work so
-                        # far is real, and U24 makes it DURABLE here rather than leaving it
+                        # far is real, and it is already durable rather than leaving it
                         # to whether the exit path's best-effort autosave happens to succeed.
                         limit, used = exc.limit, exc.used
                         resets_at = next_ist_midnight_iso()
@@ -2153,8 +2017,8 @@ class TurnEngine:
                             "quota_exceeded",
                             (await at_limit_ending(state.sandbox)).message,
                         ) from exc
-                    # THE PLATFORM'S OWN BOUND, at the same seam and for the same reason
-                    # (U13/R91). Inside the loop, before the request fires, where the run's
+                    # THE PLATFORM'S OWN BOUND, at the same seam and for the same reason.
+                    # Inside the loop, before the request fires, where the run's
                     # accumulated spend is already known and nothing can skip it. The citizen
                     # can see the meter and the agent cannot, so this is the only party that
                     # can hold the line — and it is a number rather than an instruction
@@ -2207,7 +2071,7 @@ class TurnEngine:
                         persisted_from=persisted_from,
                         session_factory=session_factory,
                     )
-                    # U18/R30 — AND THIS IS WHERE `declare_done` STOPS BUYING A ROUND-TRIP.
+                    # AND THIS IS WHERE `declare_done` STOPS BUYING A ROUND-TRIP.
                     # `node` is already the NEXT model request; walking into it spends a full
                     # request whose only product is a closing paragraph the harness has just
                     # stopped rendering. Cut here instead — the verdict still decides whether
@@ -2229,7 +2093,7 @@ class TurnEngine:
                 else:
                     # The user-prompt node: no model call, no tools, nothing to stream.
                     node = await run.next(node)
-                    # The cursor's true origin (KTD-7). The node above just CLEANED the
+                    # The cursor's true origin. The node above just CLEANED the
                     # injected history — consecutive ModelRequests merged, the list shrunk —
                     # so the pre-clean `len(messages)` seeded outside the loop overshoots,
                     # and the first persist would skip the run's first ModelResponse: the
@@ -2262,7 +2126,7 @@ class TurnEngine:
                     persisted_from=persisted_from,
                     session_factory=session_factory,
                 )
-            # FOLD THIS RUN'S SPEND ON THE WAY OUT (U13). Inside the `async with`, so it runs
+            # FOLD THIS RUN'S SPEND ON THE WAY OUT. Inside the `async with`, so it runs
             # on the cut-short arm and the completed one alike — a repair round that stopped
             # early still spent what it spent, and a bound that forgot it would reset on every
             # repair, which is the runaway shape it exists to stop.
@@ -2337,25 +2201,14 @@ class TurnEngine:
         sandbox: SandboxSession,
         session_factory: SessionFactory,
     ) -> None:
-        """THE COMPLETION MESSAGE, WRITTEN FROM `done_summary` (U18/R22).
+        """THE COMPLETION MESSAGE, WRITTEN FROM `done_summary`.
 
-        THE FIELD WAS ALWAYS WRITTEN AND NEVER READ. `declare_done` has stored its `summary`
-        since the tool existed and three model-facing prompts have asked for it; the reader is
-        what was missing, so what the citizen actually read at the end of a build was whatever
-        free-form paragraph the model produced on one more round-trip. On 2026-08-18 that
-        paragraph was file paths and framework names. Rendering the field instead is the whole
-        of this change: same fact, a bounded field the prompt shapes, and no request bought to
-        obtain it.
-
-        BOTH FRAMES AND THE ROW, because the completion has to survive a reload. `_push_text`
-        puts it on the live stream and onto the turn's parts for a mid-turn re-snapshot; the
-        row is what the transcript projects tomorrow. Persisting it also closes the exchange
-        honestly — cutting the run at the tool leaves a tool return with no response after it,
-        and this is that response.
-
-        THE PERSIST MAY FAIL THE TURN, deliberately, and it is the same rule the rest of Write
-        already keeps: a reply that was not stored has not been given. Silently swallowing it
-        would end a build with a completion on screen that vanishes on the next reload."""
+        `declare_done` stores its `summary`, so the sentence ending a build is a bounded field the
+        prompt shapes — not the free-form paragraph of file paths and framework names the citizen
+        used to read. BOTH FRAME AND ROW: `_push_text` puts it on the live stream for a mid-turn
+        re-snapshot, the row is what reload projects, and persisting it closes the exchange
+        (cutting the run at the tool leaves a return with no response). THE PERSIST MAY FAIL THE
+        TURN: a reply not stored has not been given."""
         text = sandbox.done_summary.strip() or _BUILD_FINISHED_FALLBACK
         remainder = self._what_is_still_outstanding(
             state, workspace_touched=sandbox.workspace_touched
@@ -2384,35 +2237,14 @@ class TurnEngine:
             raise _PersistFailedError from exc
 
     async def _bounded_run_ending(self, state: _TurnState) -> str:
-        """THREE BOUNDS, ONE ENDING (U13/R91) — durable first, then the sentence, then what
-        is left.
-
-        Request count, wall clock and spend can each end a run, and R91 asks one thing of all
-        three: end where the app works, and say what remains. Which internal ceiling fired is
-        not something a citizen can act on differently — the next move is the same message
-        either way — so it lives in `end_reason` and the logs, where the person who CAN act on
-        it looks, and never in the copy.
-
-        THE OTHER TWO ARMS USED TO SECURE NOTHING. They told the citizen "your changes are
-        still in the workspace — click Save to keep them", which is verbatim the sentence
-        `at_limit_ending`'s docstring records as securing nothing and asserting something
-        nobody had checked. Whether the work survived depended on the exit path's best-effort
-        autosave, which is deliberately swallowed — so on the day it failed, the citizen had
-        already been told it had not. Routing all three through the one securing function is
-        what makes the reassurance true rather than hopeful.
-
-        ONE SECURING FUNCTION, NOT THREE. A divergent snapshot-then-teardown ordering here
-        loses a citizen's tree, which is why `at_limit_ending` takes the sentence as a
-        parameter rather than each caller growing its own copy of the ordering.
-
-        THE DAILY QUOTA IS NOT ONE OF THESE. It is the citizen's own budget, it resets at
-        midnight, and it keeps its own sentence — telling someone to wait until midnight when
-        they could carry on right now is the confusion `SPENT_ENOUGH_TEXT` exists to avoid.
-        Its bytes are pinned by a regression test for exactly that reason.
-
-        NO SANDBOX MEANS NOTHING WAS BUILT. `workspace_touched` is False when the turn never
-        took a container, which is the truthful input to the tri-state below rather than a
-        default standing in for a missing fact."""
+        """THREE BOUNDS, ONE ENDING: durable first, then the sentence, then what is left.
+        Request count, wall clock and spend can each end a run; which one fired is not
+        something a citizen can act on differently, so it lives in `end_reason` and the logs,
+        never in the copy. All three route through one securing function, `at_limit_ending`,
+        so "your changes are still in the workspace" is verified rather than resting on a
+        best-effort autosave that could fail silently. The daily quota is NOT one of these: it
+        is the citizen's own budget, resets at midnight, and keeps its own sentence.
+        `workspace_touched=False` truthfully means nothing was built."""
         message = (await at_limit_ending(state.sandbox, sentence=SPENT_ENOUGH_TEXT)).message
         remainder = self._what_is_still_outstanding(
             state,
@@ -2425,34 +2257,14 @@ class TurnEngine:
     def _what_is_still_outstanding(
         self, state: _TurnState, *, workspace_touched: bool
     ) -> str | None:
-        """R89 — what was agreed and not built, from the platform's own record, or None.
-
-        THREE ANSWERS, AND THE THIRD IS WHY THIS IS NOT SIMPLY `agreed − marked`. The agreed
-        half is genuinely platform-held: it is the arguments of the proposal the citizen read.
-        The finished half is AGENT-SUPPLIED, and that is exactly where this design could have
-        shipped a lie — an agent that built all four pieces and marked none is
-        indistinguishable, from the marks alone, from one that built nothing. "These four
-        remain", in the platform's own voice, is a false fact the citizen has no reason to
-        doubt, and strictly worse than the agent's own recollection, which is what this unit
-        exists to replace.
-
-        So the claim is keyed on something the platform DOES hold — `workspace_touched`, the
-        turn's only evidence that anything was actually built:
-
-        * marks landed  → name `agreed − marked`. The ordinary path.
-        * no marks, nothing touched → name the whole agreed list. True, and platform-derived.
-        * no marks, work landed → say we could not tell, and name nothing as outstanding.
-
-        The same tri-state discipline the workspace note keeps, where "could not tell" is never
-        collapsed into a verdict.
-
-        NO AGREEMENT MEANS NO SENTENCE. Most turns never propose a slice, and a closing account
-        that appends an empty section to every build would be noise on all of them.
-
-        TAKES THE FACT, NOT THE SESSION. `workspace_touched` is the only thing this reads off
-        the run, and a parameter that says so IS the whole dependency — a `SandboxSession` here
-        would suggest the rule could grow to consult the container, which is the one thing it
-        must not do."""
+        """What was agreed and not built, from the platform's own record, or None.
+        Not simply `agreed − marked`: the finished half is AGENT-SUPPLIED, and an agent that
+        built everything but marked nothing is indistinguishable from one that built nothing.
+        Keyed instead on `workspace_touched`, the turn's only platform-held evidence anything
+        was built: marks landed → `agreed − marked`; no marks and nothing touched → the whole
+        agreed list; no marks but work landed → say we could not tell, naming nothing
+        outstanding. No agreement means no sentence, and only `workspace_touched` is read off
+        the run — never the sandbox session itself."""
         if not state.agreed_pieces:
             return None
         if not state.finished_pieces:
@@ -2497,29 +2309,14 @@ class TurnEngine:
             )
 
     async def _workspace_note(self, state: _TurnState) -> str:
-        """What this app's workspace is doing RIGHT NOW, as a private note for the model (U8/R14).
-
-        THE CHEAP HALF OF THE HEALTH VERDICT, and cheap is a requirement rather than a preference:
-        this runs on every turn in BOTH chat kinds, including a one-line Plan question, so it must
-        not cost what `verify` costs. A bounded readiness poll plus one exec — no `tsc`, no full
-        readiness budget, and no serving GET that would block on a cold first-route compile.
-
-        "STILL STARTING UP" IS REPORTED AS "COULD NOT TELL", NOT AS "DOWN". `dev_start` fires at
-        attach, and Next's first route compile is measured at 5-7s, so a note composed the instant
-        after would call almost every cold turn's app dead. `Readiness.STILL_TRYING` is exactly
-        that state and it maps to the honest answer.
-
-        The baseline check runs for a brand-new project too, unlike the health verdict's, and the
-        difference is what each one is FOR: the verdict decides whether to block a completion
-        claim, where accusing an unbuilt app of showing the template would be a false positive;
-        the note tells the model what the user is looking at, where "there is no app on the home
-        page yet" is true, useful, and exactly what the note itself goes on to say — that is
-        `mode_prompts._WORKSPACE_STILL_TEMPLATE`, which is kind-blind and rides both composed
-        prompts. This used to credit "Ask mode's own segment"; there is no Ask kind, and no
-        per-kind segment says this at all — the note is the single statement of it.
-
-        NEVER RAISES. A note that could fail would take the turn down with it, and every failure
-        already has a value: not knowing."""
+        """What this app's workspace is doing RIGHT NOW, as a private note for the model. THE CHEAP
+        HALF OF THE HEALTH VERDICT: runs on every turn in both chat kinds, so it must not cost what
+        `verify` costs — a bounded readiness poll plus one exec, no `tsc`. "STILL STARTING UP"
+        reports as "COULD NOT TELL", never "DOWN", since a note composed inside `dev_start`'s 5-7s
+        compile window would otherwise call every cold turn's app dead. Unlike the verdict, the
+        baseline check also runs for a brand-new project: a false positive there is costly, while
+        the note just tells the model what the user is looking at, true even for an unbuilt app.
+        NEVER RAISES — a failure's value is not knowing."""
         sandbox = state.sandbox
         if sandbox is None:
             return workspace_note(serving=None, still_the_template=None)
@@ -2554,12 +2351,11 @@ class TurnEngine:
         phase: Literal["started", "finished"],
         verdict: HealthState | None = None,
     ) -> None:
-        """The verify spinner. Synthetic and never persisted — it is a progress affordance
-        for a 30s wait, not part of the record, and it is correct for it to vanish on
-        reload.
+        """The verify spinner. Synthetic and never persisted — it is a progress affordance for a
+        30s wait, not part of the record, and it is correct for it to vanish on reload.
 
         THREE FINISHED ARMS, not two, and the third is why this takes the verdict rather than a
-        bool (U6). "Not working yet" over a check that could not be REACHED tells the citizen their
+        bool. "Not working yet" over a check that could not be REACHED tells the citizen their
         app is broken on the strength of our own timeout — the platform blaming the app for its
         own silence, which is the same shape of untruth as claiming a build finished when it did
         not. An unreachable verdict resolves the spinner neutrally and says so."""
@@ -2593,25 +2389,13 @@ class TurnEngine:
 
     async def _emit_preview_ready(self, state: _TurnState, preview_url: str | None) -> None:
         """The single chokepoint BOTH Write-path preview emits pass through — verify's and the
-        watcher's — which is exactly why the warm request belongs here and not where readiness
-        is discovered. `_watch_preview` polls `/dev/status` on its own 1s cadence and will see
-        `ready` independently of anything verify concludes, so warming at the point of
-        DISCOVERY races the watcher. Warming at the emit cannot be raced, and the
-        `claim_preview_frame` guard upstream means it happens once per turn, not once per
-        observer.
-
-        The warm call gates nothing (R6) — it cannot raise and it cannot veto the frame. It also
-        cannot COST the frame, which is what the `finally` is for. The caller has already burned
-        the one-shot `claim_preview_frame()` guard by the time it gets here, so a cancellation
-        landing inside the (up to 8s) warm request would leave the frame permanently claimed and
-        never emitted — the citizen loses the preview for the whole turn, and the guard means no
-        later poll will re-claim it. `_stop_preview_watcher` cancels this task at every terminal,
-        so that window is walked on ordinary turn ends, not just on exotic ones.
-
-        Emitting from a cancellation unwind is seq-safe because `_emit` is fully SYNCHRONOUS: it
-        assigns `state.seq`, appends to the ring and wakes subscribers with `put_nowait`, with no
-        await anywhere. So the frame is on the ring before `_stop_preview_watcher`'s `await task`
-        returns, which is what preserves terminal ordering."""
+        watcher's. Warming here, at the emit rather than at discovery, cannot race
+        `_watch_preview`'s own 1s poll, and `claim_preview_frame` upstream means it fires once
+        per turn. The warm call gates nothing — it cannot raise or veto the frame — and the
+        `finally` covers its cost: without it, a cancellation mid-warm would leave the frame
+        permanently claimed and never emitted, since the one-shot guard means no later poll
+        re-claims it. `_emit` is fully SYNCHRONOUS, no `await` anywhere, so terminal ordering
+        holds even from a cancelled unwind."""
         sandbox = state.sandbox
         try:
             if sandbox is not None:
@@ -2626,19 +2410,13 @@ class TurnEngine:
 
     async def _poll_compile_state(self, state: _TurnState, sandbox: SandboxSession) -> None:
         """Ask the container what it is compiling and publish it — the signal the preview pane
-        covers its frame with (R17/R18).
-
-        RIDES THE PREVIEW WATCHER rather than owning a loop. The watcher already polls once a
-        second for the whole turn, which is the cadence "appears and clears within seconds"
-        needs; a second task would double the timers, the cancellation paths and the ways a
-        frame can land after the terminal, and buy nothing.
-
-        EMITTED ON CHANGE. The ring is sized for narrative, and one frame per poll would be
-        several hundred per build — the compile state is a level, not an event.
-
-        `compile_state` NEVER RAISES (see the client), so there is nothing to catch here. That
-        is deliberate: an exception on this path would kill the watcher that also owns crash
-        detection, trading a covered preview for an undetected dead dev server."""
+        covers its frame with. Rides the preview watcher rather than owning a loop: it already
+        polls once a second for the whole turn, the cadence "appears and clears within
+        seconds" needs, so a second loop would double the timers and cancellation paths for
+        nothing. Emitted on change, since the ring is sized for narrative and one frame per
+        poll would be hundreds per build. `compile_state` NEVER RAISES, so nothing is caught
+        here — an exception on this path would kill the watcher that also owns crash
+        detection."""
         report = await sandbox.sandbox_client.compile_state(sandbox.handle)
         if report.protocol_drifted and state.compile_drift_generation != report.connect_generation:
             # Once per SUCCESSFUL connect. The alarm says the frame vocabulary moved upstream,
@@ -2657,18 +2435,15 @@ class TurnEngine:
         self._emit(state, lambda seq: CompileFrame(seq=seq, state=report.state))
 
     async def _watch_preview(self, state: _TurnState) -> None:
-        """Poll the dev server so the preview appears the moment it is servable, and so a
-        crash is REPORTED rather than left as a blank iframe.
+        """Poll the dev server so the preview appears the moment it is servable, and so a crash is
+        REPORTED rather than left as a blank iframe.
 
-        This has to live server-side: `/dev/status` is bearer-guarded, so the browser cannot
-        ask, and only the server holds the supervisor token. Every failure is swallowed — a
-        watcher that raised would take the build down with it over a polling blip.
-
-        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` — see that constant. This
-        is the only watcher left (the harness had a second one), and any future second watcher
-        must read that same constant: two watchers emit the same signal to the same pane, so a
-        debounce on one of them only would make the crash edge depend on which code path built
-        the app."""
+        Lives server-side because `/dev/status` is bearer-guarded — only the server holds the
+        supervisor token. Every failure is swallowed; a watcher that raised would take the build
+        down over a polling blip. The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` —
+        this is the only watcher left, and any future second watcher must read that same
+        constant: two watchers emitting the same signal to the same pane, debounced on only one
+        of them, would make the crash edge depend on which code path built the app."""
         sandbox = state.sandbox
         if sandbox is None:
             return
@@ -2693,7 +2468,8 @@ class TurnEngine:
                     # the url to (re)mount its iframe on.
                     await self._emit_preview_ready(state, sandbox.handle.preview_url)
                 if first_serve and state.started_a_container:
-                    # R103's NUMERATOR, and this is the only place the turn learns the answer.
+                    # THE CONTAINER-START SUCCESS RATIO'S NUMERATOR, and this is the only place
+                    # the turn learns the answer.
                     # `ready` here means a request to the app root was actually SERVED — the
                     # same definition `relaunch_preview` gates its own numerator on, so the two
                     # writers are counting the same event.
@@ -2706,8 +2482,8 @@ class TurnEngine:
                     # NOT `session.handle.ready`, which looks like this fact and is not one: on
                     # both birth arms it is hard-coded False, and on the attach arm it is a
                     # `/dev/status` snapshot taken BEFORE this turn's own `dev_start`. Reading
-                    # it at the attach seam would report a near-zero success rate and make R103
-                    # measure the container's birth rather than the app's.
+                    # it at the attach seam would report a near-zero success rate and measure
+                    # the container's birth rather than the app's.
                     #
                     # GATED ON THE CLAIM, NOT ON `_emit_preview_ready`. Two emitters call that
                     # method — this watcher and the self-heal verify — and this watcher calls it
@@ -2739,14 +2515,11 @@ class TurnEngine:
         """One last compile poll when the turn ends mid-build, so the pane is not left holding a
         cover nothing will ever lower.
 
-        `building` cannot outlive the turn that caused it, but the watcher that reports it is
-        cancelled at the terminal — so a turn that ends in the second between "compiling" and
-        "compiled" strands the preview under "Putting the latest change together…" with no
-        remaining producer. One poll usually settles it to `clean` or `failed`, either of which
-        resolves the pane correctly.
-
-        ONLY on `building`, so the common path pays nothing. If it is STILL building afterwards
-        the cover stays up, which is at least honest — and the next turn resolves it."""
+        The watcher that reports `building` is cancelled at the terminal, so a turn that ends
+        between "compiling" and "compiled" would otherwise strand the preview with no remaining
+        producer. One poll usually settles it to `clean` or `failed`. Runs ONLY on `building`,
+        so the common path pays nothing; if it is STILL building afterwards the cover stays up
+        — honest, and the next turn resolves it."""
         sandbox = state.sandbox
         if sandbox is None or state.compile_state is not CompileState.BUILDING:
             return
@@ -2776,39 +2549,14 @@ class TurnEngine:
             )
 
     async def _hold_liveness_lease(self, state: _TurnState) -> None:
-        """Publish, on a wall clock, that a build is happening inside this user's container —
-        for a reader that is not this process (R10, C5 family 4, ADR-0029 §8).
-
-        THE PROBLEM IT SOLVES. The heartbeat is seeded ONCE per turn against a 90-second TTL,
-        so from roughly a minute and a half into any build the only thing keeping the
-        reconciliation sweep off a live container is `sweep_all`'s in-process `live_users`
-        set — which is empty in every other process. That is why nothing capable of
-        destroying a container may run outside the API process until this loop exists: a
-        sweep on the worker would have torn down in-flight builds on its first pass.
-
-        Wall clock, never `time.monotonic()`: a monotonic reading is meaningless outside the
-        process that took it, and being readable from another process IS the feature. The
-        write carries a TTL, so a lease abandoned by a process that died mid-renewal expires
-        instead of pinning the container forever — the registry hash's missing TTL is the
-        root cause of the whole reclamation problem and must not be repeated here.
-
-        IT RENEWS THE LOCK AND THE HEARTBEAT TOO (#193), and that is not a bonus — it is the
-        only clock either of them has. `manager.on_progress` renews them once per non-terminal
-        progress envelope, which is FRAME-DRIVEN: a build that spends longer than the 90-second
-        heartbeat TTL inside a single tool call emits nothing, renews nothing, and silently drops
-        the one-sandbox-per-user lock out from under itself — observed as a build past fifteen
-        minutes losing its slot with the heartbeat key simply gone. This loop already ticks on a
-        wall clock well inside that TTL, so the renewal rides it rather than growing a third
-        timer. (The C3 `LOCK_RENEW_CADENCE_SECONDS` / `HEARTBEAT_CADENCE_SECONDS` constants stay
-        reader-less: the cadence here is the lease's.)
-
-        BEST-EFFORT, BUT NEVER SILENT. A Redis blip may not take a ten-minute build down, so
-        every failure is caught and the loop carries on. What it may not do is let the turn
-        proceed BELIEVING itself protected with nothing written, so both failure shapes are
-        logged under one greppable event: a store that would not answer, and a renewal that
-        found no registry hash to attach itself to. The lock arm is caught SEPARATELY from the
-        lease arm for the same reason: they are two independent protections, and one store
-        error must not cost the turn the other one's renewal for the whole tick."""
+        """Publishes that a build is live in this user's container. The heartbeat seeds once a turn
+        on a 90s TTL; past that only `sweep_all`'s in-process `live_users` set keeps the sweep off
+        it — empty in every other process — so nothing that can destroy a container may run outside
+        the API process until this exists. Wall clock, never `time.monotonic()`: cross-process
+        readable, and its TTL expires an abandoned lease rather than pinning the container. ALSO
+        RENEWS THE LOCK AND HEARTBEAT, their only clock: `on_progress` renews both per frame, so a
+        tool call past the TTL silently drops the lock. Best-effort, never silent: both failures
+        logged, lock arm caught apart from lease so one store error costs only its own renewal."""
         if state.sandbox is None:
             # NO CONTAINER, NOTHING TO VOUCH FOR — the same guard, for the same reason, as
             # `_watch_preview`'s. The lease is keyed by USER, not by turn, so a turn that
@@ -2869,19 +2617,14 @@ class TurnEngine:
             await asyncio.sleep(LIVENESS_LEASE_RENEW_CADENCE_SECONDS)
 
     async def _stop_liveness_lease(self, state: _TurnState) -> None:
-        """Stop renewing and drop the lease. Idempotent — the turn's `finally` is reached by
-        five different terminal arms, and a second call finds nothing to do.
+        """Stop renewing and drop the lease. Idempotent — the turn's `finally` is reached by five
+        different terminal arms, and a second call finds nothing to do.
 
-        RELEASED AFTER THE SANDBOX FINALIZE, NEVER BEFORE IT — which is the one way this
-        differs from `_stop_preview_watcher`, and the difference is deliberate. The watcher
-        dies first because a frame landing after the terminal is lost; the lease is the
-        opposite shape, because releasing it early opens a reap window over
-        `finish_turn_sandbox` — which snapshots and can comfortably outlive the 90-second
-        heartbeat TTL that would otherwise be the container's only cover.
-
-        Failures are swallowed rather than raised: this runs on the terminal path, where the
-        remaining work is releasing the conversation guard, and a Redis blip must not wedge a
-        conversation shut. The cost of not landing is bounded by the lease's own TTL."""
+        RELEASED AFTER THE SANDBOX FINALIZE, unlike `_stop_preview_watcher` (which dies first
+        because a late frame is lost): releasing the lease early opens a reap window over
+        `finish_turn_sandbox`, which can outlive the 90-second heartbeat TTL that is otherwise the
+        container's only cover. Failures are swallowed — a Redis blip must not wedge the
+        conversation guard shut, and the cost of not landing is bounded by the lease's own TTL."""
         task = state.lease_task
         if task is None:
             # NOTHING WAS PUBLISHED, SO NOTHING MAY BE REVOKED. The key is per-USER, not
@@ -2916,43 +2659,29 @@ class TurnEngine:
         """The row meta for a batch that carries the pending options call: the card's id, and
         nothing else.
 
-        TWO SHORT SCALARS, AND NOT THE PLAN. `meta` is JSONB that a redaction pass walks, and
-        putting up to 64,000 characters of plan here would be a third durable copy of a string
-        the tool call's own `args` already holds authoritatively. A copy that can silently
-        disagree with the call it describes is worse than no copy — every reader goes to the
-        args instead.
-
-        THE SNAPSHOT PIN IS GONE TOO (U6). It recorded the app's head at plan time so Build-it
-        could warn that the app had moved underneath the plan. Its only writer sat inside a
-        mode branch, and what it bought is paid for better: the instruction to follow the
-        code's reality where it differs from what the plan assumed now lives in the Build
-        chat's own prompt, where it works for a plan built weeks later rather than only when
-        two snapshot heads happen to differ."""
+        NOT THE PLAN: `meta` is JSONB a redaction pass walks, and putting up to 64,000 characters
+        of plan here would be a third durable copy of a string the tool call's own `args` already
+        holds authoritatively — one that could silently disagree with it. NOT A SNAPSHOT HEAD
+        either: the "app moved underneath the plan" warning that would buy is paid for better in
+        the Build chat's own prompt, which works for a plan built weeks later."""
         if deferred is None:
             return None
         return {"kind": PENDING_META_KIND, "toolCallId": deferred.tool_call_id}
 
     # NOTHING SYNTHESIZES A CARD ANY MORE. `_synthesize_options` used to fabricate one — a
-    # hidden `plan_options_pending` system row with `synthesized: True` — when the heuristic
-    # said a plan had been written and neither the run nor the forced retry had called the
-    # tool, so that "the buttons ALWAYS appear". They appeared under plans nobody had agreed
-    # to. `plan_options._scan` still READS the synthesized shape, and must: rows written by
-    # the retired writer are in the database, and revision 0035 resolved their cards rather
-    # than deleting them.
+    # hidden `plan_options_pending` system row with `synthesized: True`. `plan_options._scan`
+    # still READS the synthesized shape, and must: rows written by the retired writer are in
+    # the database, and revision 0035 resolved their cards rather than deleting them.
 
     def _emit_plan_status(self, state: _TurnState, tool_call_id: str) -> None:
-        """The "writing up the plan" line, held in `state.steps` so a client that subscribes
-        mid-argument sees it in the catch-up snapshot like any other in-flight step.
+        """The "writing up the plan" line, held in `state.steps` so a client that subscribes mid-
+        argument sees it in the catch-up snapshot like any other in-flight step.
 
-        IT HAS NO DURABLE COUNTERPART, and that is deliberate rather than an omission: a status
-        that exists only while a turn is streaming has nothing to say on a reloaded transcript,
-        which shows the plan and the offer and never the moment before them. Same reasoning as
-        the turn's opening acknowledgement, which is also never persisted.
-
-        REMEMBERED ON THE STATE, so the terminal can withdraw it. Nothing else in `state.steps`
-        is the platform's to retract — every other entry is a real tool step whose row is
-        authoritative — so `_finish` cannot find this one by looking, and a Plan turn that fails
-        or is stopped mid-argument would otherwise leave it spinning under a turn that is over."""
+        NO DURABLE COUNTERPART, deliberately: a status that exists only while streaming has nothing
+        to say on a reloaded transcript — same reasoning as the turn's opening acknowledgement.
+        REMEMBERED ON THE STATE so the terminal can withdraw it: every other `state.steps` entry is
+        a real tool step with an authoritative row, so `_finish` cannot find this one by looking,
+        and a Plan turn failing mid-argument would otherwise leave it spinning."""
         item = StepItem(
             seq=0,  # transient: no row, so no row seq
             tool=PLAN_OPTIONS_TOOL,
@@ -2981,14 +2710,11 @@ class TurnEngine:
     ) -> Callable[[RunContext[ChatDeps], AsyncIterable[AgentStreamEvent]], Awaitable[None]]:
         """The pydantic-ai event_stream_handler: model/tool events → typed frames.
 
-        PLAN ONLY — it is passed at the single `chat_agent.run` the Plan arm makes, and Build
-        drives its own node loop (`_run_write_once`) and calls `_on_event` directly. It used to
-        read ASK/PLAN; there is one read kind now, not two. There is nothing to reconcile at the
-        end of an iteration any more: pydantic-ai invokes this handler once per NODE, and a
-        response's text and its tool calls arrive from two different nodes, text first — which
-        is exactly the order the citizen reads them in, so each event goes straight out as it
-        lands.
-        """
+        PLAN ONLY — passed at the single `chat_agent.run` the Plan arm makes; Build drives its
+        own node loop (`_run_write_once`) and calls `_on_event` directly. pydantic-ai invokes
+        this once per NODE, and a response's text and tool calls arrive from two different
+        nodes, text first — the order the citizen reads them in, so each event goes straight
+        out as it lands."""
 
         async def handle(
             _ctx: RunContext[ChatDeps], events: AsyncIterable[AgentStreamEvent]
@@ -3071,7 +2797,7 @@ class TurnEngine:
                 spoken = update_from_args(event.part.args)
                 if spoken:
                     self._push_text(state, spoken)
-                # THE MARK, RECORDED FROM THE SAME CALL that carried the words (U12), and
+                # THE MARK, RECORDED FROM THE SAME CALL that carried the words, and
                 # CHECKED HERE RATHER THAN TRUSTED FROM THE BODY.
                 #
                 # A call event is emitted while pydantic-ai validates the batch — every
@@ -3080,12 +2806,12 @@ class TurnEngine:
                 # nobody agreed to has NOT happened at this point. An earlier version of this
                 # site assumed it had.
                 #
-                # THE COST OF BEING WRONG IS THE TRI-STATE, not an untidy set. The remainder
-                # picks its honest "I could not tell" arm on `not finished_pieces`, so one
-                # hallucinated mark makes the set truthy and turns "could not tell" into
-                # "still to do: <everything agreed>" — the platform asserting in its own voice
-                # that finished work is outstanding, which is the exact false fact U12 exists
-                # to prevent, arriving through the one door that skipped the check.
+                # THE COST OF BEING WRONG IS THE TRI-STATE, not an untidy set. The remainder picks
+                # its honest "I could not tell" arm on `not finished_pieces`, so one hallucinated
+                # mark makes the set truthy and turns "could not tell" into "still to do:
+                # <everything agreed>" — the platform asserting in its own voice that finished work
+                # is outstanding, which is the exact false fact this tri-state exists to prevent,
+                # arriving through the one door that skipped the check.
                 #
                 # So it validates for itself, like the proposal branch below: what survives is
                 # a subset of what was agreed, whatever the model sent and whenever the body
@@ -3126,7 +2852,7 @@ class TurnEngine:
                     ),
                 )
 
-    # -- the long-operation status line (U17 / R24) --------------------------------------
+    # -- the long-operation status line --------------------------------------
 
     def _start_long_operation(self, state: _TurnState, tool_call_id: str, *, hidden: bool) -> None:
         """Arm the stillness narrator for one tool call.
@@ -3151,20 +2877,13 @@ class TurnEngine:
 
     async def _narrate_long_operation(self, state: _TurnState, tool_call_id: str) -> None:
         """One live status row for an operation that has outrun `LONG_OPERATION_THRESHOLD_MS`.
-
-        THE HARNESS SAYS THIS, NOT THE AGENT — which is why it lives here and not in a prompt.
-        The composite operations U21 and U23 introduce are precisely the ones that REMOVE the
-        per-step narration filling these gaps today, so a citizen watching a three-minute
-        install would otherwise watch a row that stopped changing several minutes ago.
-
-        It re-emits the SAME step (same `tool_call_id`, still `phase="started"`) with the
-        restated label, so it replaces the row in place — one live line, never a second one
-        accumulating beside it — and the ordinary `finished` frame clears it. The base label is
-        deliberately left untouched in `state.steps`: re-deriving from it keeps the text
-        byte-identical across refreshes, and keeps a mid-turn reconnect's snapshot clean.
-
-        Under the threshold nothing is emitted at all. A fast turn must not flicker a status
-        line on and off — a line that appears for 300ms reads as a glitch, not as reassurance."""
+        THE HARNESS SAYS THIS, NOT THE AGENT. The composite tool operations that removed
+        per-step narration are precisely the ones that leave these gaps, so a citizen
+        watching a three-minute install would otherwise watch a row frozen for minutes. It
+        re-emits the SAME step (`tool_call_id`, still `phase="started"`) with a restated
+        label, replacing the row in place rather than stacking a second one; the base label
+        stays untouched in `state.steps` so re-deriving stays byte-identical across
+        refreshes. Under the threshold nothing is emitted: a 300ms flicker is a glitch."""
         try:
             await asyncio.sleep(LONG_OPERATION_THRESHOLD_MS / 1000)
             while True:
@@ -3215,23 +2934,11 @@ class TurnEngine:
     def _retire_acknowledgement(self, state: _TurnState) -> None:
         """Take the opening acknowledgement off the screen, on the wire and in the snapshot.
 
-        THE ACK'S REAL DEFECT WAS THAT NOTHING RETRACTED IT. Clearing `state.acknowledgement`
-        retires it from the catch-up snapshot, so a client that subscribed LATER never saw it —
-        but a client that was already connected received it as a live step frame and had no way
-        to learn it was over. It sat in that turn's activity group as a step that never
-        resolved, which is a group that never seals: "Getting started on that…" beside a build
-        that finished ten minutes ago.
-
-        IT RIDES `hidden`, and that is the cheapest correct answer rather than a shortcut. The
-        frame union is closed and the browser drops what it does not recognise, so a new frame
-        KIND would need the wire schema, the parser and the reducer changed together. `hidden`
-        already means "do not draw this", is already filtered on both paths, and already keys
-        by tool-call id — so re-emitting the same id hidden replaces the row in place and it
-        leaves the feed. The first frame still reaches the browser before the first model
-        request, which is the guarantee the ack exists for and the one thing that must not
-        change.
-
-        IDEMPOTENT: a turn whose ack was already retired emits nothing, so the plan-status arm
+        Clearing `state.acknowledgement` alone only hides it from a LATE subscriber's catch-up
+        snapshot — a client already connected got it as a live step frame and has no way to learn
+        it is over, leaving "Getting started on that…" under a build that finished long ago. So it
+        RIDES `hidden`: re-emitting the same id hidden replaces the row in place on a path both
+        readers already filter, cheaper than a new frame kind. IDEMPOTENT, so the plan-status arm
         and the first real step cannot both retract it and leave two frames behind."""
         ack = state.acknowledgement
         if ack is None:
@@ -3248,22 +2955,12 @@ class TurnEngine:
     def _retract_step(self, state: _TurnState, tool_call_id: str) -> None:
         """Withdraw a step from the snapshot AND from the feed a tab is already watching.
 
-        `drop_step` alone is only half of a withdrawal, and it is the half a LATE subscriber
-        sees: the catch-up snapshot is built from `state.steps`, so removing the entry is
-        enough for a client that had not subscribed yet. A client that was already connected
-        received the started frame and has no way to learn the step is over — it sits in that
-        turn's activity group as a step that never resolves, which is a group that never
-        seals. That is the acknowledgement's defect exactly, and this is the same answer:
-        re-emit the same id `finished` and hidden, which replaces the row in place and takes
-        it off the screen on a path both emitters already filter.
-
-        NOT USED BY THE EVICTION at the steps cap: an evicted step is a REAL step that ran and
-        whose row is authoritative — trimming the snapshot to bound memory must not tell a
-        watching tab that the work never happened.
-
-        IDEMPOTENT, and the plan status's own bookkeeping is cleared here so it stays that way:
-        the offer arm withdraws the status when the plan lands, and the terminal must then find
-        nothing left to withdraw rather than emit a second hidden frame for the same id."""
+        `drop_step` alone only covers a LATE subscriber's catch-up snapshot; a client already
+        connected got the started frame and has no way to learn the step is over. Same defect as
+        the acknowledgement's, same fix: re-emit the id `finished` and hidden. NOT USED BY THE
+        STEPS-CAP EVICTION — an evicted step is a REAL step whose row is authoritative, and
+        bounding memory must not tell a watching tab the work never happened. IDEMPOTENT: the plan-
+        status bookkeeping is cleared here too."""
         item = state.steps.get(tool_call_id)
         state.drop_step(tool_call_id)
         if state.plan_status_tool_call_id == tool_call_id:
@@ -3283,18 +2980,12 @@ class TurnEngine:
     def _set_working(self, state: _TurnState, working: bool) -> None:
         """Turn the working status on or off, and frame the CHANGE only.
 
-        THE FLAG RIDES THE TURN, NOT A MESSAGE, and that is the seam an earlier draft of this
-        got wrong. The browser's status renderer is reached only when a message actually
-        carries a part of the reasoning kind, so a boolean alone renders nothing — what the
-        chat surface does with this is synthesise a CONTENT-FREE reasoning part at the TAIL of
-        the streaming message while it is true — the model is thinking at the end of what it has
-        written so far, and pinning the part to the head put "Working on your app" above
-        paragraphs the citizen had already read, which made the whole turn appear to jump down
-        the screen. Content-free is the point: the part carries no text, so "status only, never
-        the reasoning" is structural rather than a promise.
-
-        EDGE-TRIGGERED. Reasoning arrives as a stream of deltas, and a frame per delta would
-        put thousands of identical frames through a ring sized for a turn's whole narrative."""
+        THE FLAG RIDES THE TURN, NOT A MESSAGE — an earlier draft got this seam wrong. The browser
+        synthesises a CONTENT-FREE reasoning part at the TAIL of the streaming message while this
+        is true; pinning it to the head instead put "Working on your app" above paragraphs already
+        read, making the turn jump down the screen. Content-free is the point: no text, so "status
+        only" is structural. EDGE-TRIGGERED, because a frame per reasoning delta would flood the
+        ring."""
         if state.working == working:
             return
         state.working = working
@@ -3303,25 +2994,12 @@ class TurnEngine:
     def _open_step(self, state: _TurnState, tool_call_id: str, item: StepItem) -> None:
         """Record a step, its POSITION in the turn, and announce it on the wire.
 
-        A step arrives twice — started, then finished — and the second must replace the first
-        in place rather than move it: a step that jumped to the end when it resolved would
-        reorder the turn under a citizen who is watching it. So the map is written every
-        time and the ref is appended only once.
-
-        RETIRING THE ACK IS PART OF TAKING A POSITION, which is why it lives here rather than
-        at each caller. The ack is REPLACED, not accumulated beside — in the snapshot a later
-        subscriber reads AND in the feed an earlier one is already watching, which is the half
-        that was missing — so a caller that forgot the line would leave a row that never
-        resolves under a group that never seals. `_push_text`, the other sink that takes a
-        position in the turn, enforces the same rule the same way.
-
-        THE STARTED FRAME GOES OUT FROM HERE TOO, for the same reason: recording a step and
-        announcing it are one act, and both callers were spelling out the identical three
-        statements. `_emit` is synchronous, so the order a caller used to write by hand —
-        retraction, then the working flag if it changed, then the step — is the order this
-        produces. The turn's other `phase="started"` emitters (the acknowledgement itself, the
-        verify step, the long-operation narrator's re-emit) deliberately do not come through
-        here: none of them takes a position in `parts`."""
+        A step arrives twice — started, then finished — and the second must replace the first in
+        place, not move it, or a citizen watching would see the turn reorder: the map is written
+        every time, the ref appended once. RETIRING THE ACK LIVES HERE rather than at each caller,
+        so no caller can forget it and leave a row that never resolves under a group that never
+        seals; `_push_text` enforces it the same way. The started frame goes out from here too, and
+        `_emit` being synchronous keeps retraction, working flag, then step in order."""
         self._retire_acknowledgement(state)
         # A step means the model has stopped thinking and started doing.
         self._set_working(state, False)
@@ -3336,24 +3014,12 @@ class TurnEngine:
     def _push_text(self, state: _TurnState, text: str, *, new_block: bool = True) -> None:
         """Prose to the citizen: onto the turn's ordered parts AND onto the wire, at once.
 
-        THE ONE TEXT SINK, AND IT NO LONGER HOLDS ANYTHING. Prose written in the same
-        response as a tool call used to accumulate in a `pending_text` buffer and be deleted
-        the moment the call arrived, on the rule that text beside a tool call is the model
-        narrating its way there. That rule threw away the explanation between the receipts —
-        the opposite of the voice this product is for — so the buffer, its discard and its
-        flush are gone and every paragraph goes straight through.
-
-        `new_block` is what makes the live feed match a reloaded one. The reload projection
-        emits ONE item per stored `TextPart`; here a `PartStartEvent` opens a block and every
-        delta after it extends the same one, so a stretch of writing is one block on both
-        paths. A delta that arrives when the newest part is a STEP opens a block anyway —
-        appending to a sealed block would silently reorder the turn — and the frame says so,
-        so the browser splits at exactly the same place.
-
-        DELIBERATELY UNGATED. Platform-rendered blocks travel this way too: the plan, a
-        voice-channel line, a first-slice proposal, the closing completion message. They are
-        rendered by the platform from a tool call's arguments and are always their own block,
-        which is the default this signature carries."""
+        THE ONE TEXT SINK, holding nothing itself any more: prose beside a tool call used to be
+        buffered and discarded as mere narration — which threw away real explanation, the opposite
+        of this product's voice. `new_block` keeps the live feed matching a reloaded one: reload
+        emits ONE item per stored `TextPart`, so a `PartStartEvent` opens a block here and every
+        delta extends it, splitting where a STEP would force a reload to split. UNGATED by default
+        — platform-rendered blocks are always their own block too."""
         # THE ACK IS OVER THE MOMENT THERE ARE WORDS ON SCREEN. A turn that answers in prose
         # and calls nothing would otherwise keep the opening row under an answer the citizen is
         # already reading — and the board's rule for that turn is that it shows nothing at all
@@ -3431,7 +3097,7 @@ class TurnEngine:
     def _finish(
         self, state: _TurnState, status: Literal["completed", "failed", "stopped"]
     ) -> None:
-        # U17 — the status-line narrators are silenced BEFORE the terminal frame, synchronously.
+        # The status-line narrators are silenced BEFORE the terminal frame, synchronously.
         # A narrator is always parked on a sleep, so cancelling here means the CancelledError
         # lands at that sleep and it can never reach `_emit` again: no status row after the
         # terminal, with no await in between for one to slip through. The `finally` then awaits
@@ -3479,21 +3145,12 @@ class TurnEngine:
     ) -> None:
         """One hidden `system_event` row saying how this turn ended.
 
-        BOTH KINDS, UNCONDITIONALLY, and nothing here reads `state.kind`: a Plan turn and a
-        Build turn resume the same way or one of them has the weaker path, and the weaker one
-        is always the one nobody notices until a citizen is looking at a frozen transcript.
-
-        NOTHING IS WRITTEN FOR A TURN THAT DID NOT REACH A TERMINAL — a process killed
-        mid-flight never gets here at all, which is the point: the absence of this row IS the
-        ended-unknown signal, and a row written on the way out of an unfinished turn would
-        destroy it.
-
-        BEST-EFFORT, AND SAID SO. This runs in the terminal path, after the reply is already
-        durable and after the subscriber has already been told the turn ended. A raise here
-        would take down the release and the watcher teardown below it — a leaked container and
-        a hung feed — to protect a row whose only job is to make a LATER reload truthful. So it
-        is logged and swallowed, exactly as `write_build_outcome` treats seq contention, and a
-        reload that finds no terminal falls back to the honest ended-unknown reading."""
+        BOTH KINDS, UNCONDITIONALLY — nothing here reads `state.kind`, since a weaker path for one
+        of them is the kind nobody notices until a citizen is looking at a frozen transcript.
+        NOTHING IS WRITTEN FOR A TURN THAT DID NOT REACH A TERMINAL: the absence of this row IS the
+        ended-unknown signal. BEST-EFFORT: a raise here, after the reply is durable and the
+        subscriber told, would take down the release and watcher teardown below it for a row whose
+        only job is a LATER reload. Logged and swallowed."""
         if state.status not in ("completed", "failed", "stopped"):
             return
         try:
@@ -3544,9 +3201,12 @@ class TurnEngine:
         self, state: _TurnState | None, *, items: list[DisplayItem] | None = None
     ) -> SnapshotFrame:
         """The consolidated catch-up frame. `items` (the turn's persisted rows, projected)
-        are resolved by the ROUTE before the stream commits — a mid-stream gap re-snapshot
-        carries the in-memory tail only (TODO(U12): persisted mid-turn step rows join when
-        Write turns ride this transport)."""
+        are resolved by the ROUTE before the stream commits.
+
+        KNOWN AND OPEN: a mid-stream gap re-snapshot carries the in-memory tail only. It is
+        the one path that never re-reads the database, so a step already evicted by the ring
+        cap cannot be recovered on it — a client that reconnects after a long gap sees the
+        tail and not the evicted middle."""
         if state is None:
             return SnapshotFrame(seq=0, turn_id=None, turn_status="idle")
         # THE ACK GOES FIRST, and this is the only place it can. It is emitted at `seq == 1`

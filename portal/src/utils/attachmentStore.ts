@@ -1,47 +1,14 @@
 /**
- * Parts-model transform helpers (the byte store is gone — bytes live server-side
- * via attachmentApi.js). This module knows how the neutral `parts[]` content
- * model maps onto the Anthropic request shape and onto display.
+ * Parts-model transform helpers (bytes live server-side via attachmentApi.js). Maps `parts[]` onto
+ * the Anthropic request shape and onto display. A part is prose; text carrying an INLINE csv/txt
+ * attachment (re-inlined every turn); or a `file` whose bytes sit in the object store —
+ * `image`/`document` bytes reach the model as-is, `office` (.docx/.xlsx) bytes NEVER do (the
+ * server-extracted Markdown goes instead, as a sticky text block), and neither do `deck` (.pptx)
+ * bytes: the model sees an INTERNAL converted PDF by `pdfFileId`, and the user only the .pptx.
  *
- * A message's `parts[]` is one of:
- *   - { type:'text', text }                              — user/assistant prose
- *   - { type:'text', text, attachment:{attachmentId,name,mediaType,size} }
- *                                                        — an inline csv/txt
- *                                                          attachment (content in
- *                                                          `text`, shown as a chip,
- *                                                          re-inlined every turn)
- *   - { type:'file', attachmentId, key, kind:'image'|'document', name, mediaType, size }
- *                                                        — image/PDF bytes in the
- *                                                          object store
- *   - { type:'file', kind:'office', format:'word'|'excel', attachmentId, key,
- *       name, mediaType, size, text, truncated }
- *                                                        — a HYBRID: the original
- *                                                          .docx/.xlsx bytes live
- *                                                          in the object store (chip
- *                                                          re-downloads them) but are
- *                                                          NEVER sent to the model;
- *                                                          the server-extracted
- *                                                          Markdown (`text`) is sent
- *                                                          as a sticky text block.
- *   - { type:'file', kind:'deck', attachmentId, key, name, mediaType, size,
- *       pdfFileId, pageCount }
- *                                                        — a .pptx: the original
- *                                                          bytes live in the object
- *                                                          store (chip re-downloads
- *                                                          them); the model sees a
- *                                                          sticky vision `document`
- *                                                          block referencing the
- *                                                          INTERNAL converted PDF by
- *                                                          `pdfFileId` (never the
- *                                                          .pptx, never base64). The
- *                                                          PDF is invisible to the
- *                                                          user — only the .pptx is
- *                                                          ever surfaced.
- *
- * The send path is byte-free entirely (U7): the browser sends only the new message —
- * typed prose, fenced attachment text, and OWNED refs for stored binaries
- * (`wireMessageFromParts`); the server rehydrates bytes and replays history from its
- * own store.
+ * The send path is byte-free: the browser sends only the new message — prose, fenced attachment
+ * text, and OWNED refs for stored binaries (`wireMessageFromParts`); the server rehydrates bytes
+ * and replays history from its own store.
  */
 import { TEXT_MEDIA_TYPES } from './attachmentInput'
 import type { PendingAttachment } from './attachmentInput'
@@ -49,7 +16,7 @@ import { uploadAttachment as defaultUpload, deleteAttachment as defaultDelete } 
 import type { MessagePart, TextPart } from './messageTypes'
 
 /** The chip descriptor `attachmentsFromParts` builds — traced from its one real
- * consumer, `AttachmentChips.jsx`'s own doc comment: `{ attachmentId, kind,
+ * consumer, `AttachmentChips.tsx`'s own doc comment: `{ attachmentId, kind,
  * name, mediaType, format?, truncated? }`, plus `truncationNote` (read here,
  * used for the chip's tooltip). */
 export interface AttachmentDescriptor {
@@ -62,7 +29,7 @@ export interface AttachmentDescriptor {
   truncationNote?: string
 }
 
-/** The U7 stateless wire message `wireMessageFromParts` resolves to. */
+/** The stateless wire message `wireMessageFromParts` resolves to. */
 export interface WireMessage {
   text: string
   attachmentTexts?: string[]
@@ -140,19 +107,14 @@ export function countAttachments(messages: unknown): number {
 }
 
 /**
- * Map ONE user turn's `parts[]` to the U7 stateless wire message:
- * `{ text, attachmentTexts, attachmentIds }`.
- *
- * The full-transcript Anthropic assembly (`assembleApiMessages`) died with R9 — the server
- * loads history from its own store, so the browser sends only the NEW message:
- *  - typed prose → `text`
- *  - inline text attachments + office extractions → complete `<attachment>` fences in
- *    `attachmentTexts` (the same sanitize/neutralize guards as before — the server treats
- *    them as opaque data blocks)
- *  - image/PDF file parts → `attachmentIds` (owned refs; the SERVER rehydrates the stored
- *    bytes at send — no base64 rides the chat body any more)
- *  - deck parts → dropped (deck attachments are disabled server-side; the retired
- *    Files-API `file_id` path has no stateless equivalent)
+ * Map ONE user turn's `parts[]` to the stateless wire message `{ text, attachmentTexts,
+ * attachmentIds }`. The full-transcript Anthropic assembly is gone — the server loads
+ * history itself, so the browser sends only the NEW message:
+ *  - typed prose → `text`.
+ *  - inline text attachments + office extractions → `<attachment>` fences in
+ *    `attachmentTexts` (server treats them as opaque data).
+ *  - image/PDF file parts → `attachmentIds` (owned refs; SERVER rehydrates bytes).
+ *  - deck parts → dropped (disabled server-side; no stateless equivalent).
  */
 export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
   const attachmentTexts: string[] = []
@@ -183,15 +145,11 @@ export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
 }
 
 /**
- * Build a user turn's `parts[]` from the composer: uploads each image/PDF (via
- * `upload`, returning a file ref) and inlines each csv/txt as a text-attachment
- * part; the typed prose becomes the final text part. Attachment parts come first
- * (display chips above text, and Anthropic file-before-text ordering at assembly).
- * An upload failure propagates so the caller can abort the send.
- *
- * @param {string} text                       the typed message
- * @param {Array}  pendingAttachments         [{id,name,mediaType,size,base64}]
- * @param {Function} [upload]                  uploadAttachment (injectable for tests)
+ * Build a user turn's `parts[]` from the composer: uploads each image/PDF (via `upload`,
+ * returning a file ref) and inlines each csv/txt as a text-attachment part; typed prose
+ * becomes the final text part. Attachment parts come first (chips above text, and
+ * Anthropic file-before-text ordering). An upload failure propagates so the caller can
+ * abort the send.
  */
 export async function buildUserParts(
   text: string,

@@ -1,30 +1,14 @@
 """Journey: attachment upload → turn → the bytes actually reach the model.
 
-The SPA lets a user attach an image to a chat turn: the file is first uploaded to
-`POST /v1/attachments` (persisted owner-scoped in the object store), and then — because
-Azure-hosted Foundry has no Files API — the server rehydrates that owned REFERENCE back to
-real bytes at send time and inlines them into the turn's prompt (`prompt_content`,
-`api/v1/conversations/_shared.py`). This journey proves the whole chain end to end:
+Proves the full chain: upload → stored blob == raw → download == raw → send with the attachment
+id → model receives `BinaryContent(raw)`. Because Azure-hosted Foundry has no Files API, the
+server rehydrates the owned attachment reference into real bytes at send time — the load-bearing
+assertion is the last hop: the stored reference must arrive at the model as a
+`pydantic_ai.BinaryContent` (image/png) carrying the EXACT uploaded bytes.
 
-    upload(raw)  →  stored blob == raw  →  download == raw  →  send with the attachment id
-                                                              →  model receives BinaryContent(raw)
-
-The load-bearing assertion is the last hop: the stored reference must arrive at the model as
-a `pydantic_ai.BinaryContent` (image/png) carrying the EXACT uploaded bytes, inside the
-`UserPromptPart` the agent hands the model. If the attachment did not reach the model, the
-generated app could not be "influenced" by the image at all.
-
-The send step USED to be the retired `POST /v1/claude` relay; it is now
-`POST /v1/conversations/{id}/turns`. The chain is the same one — the rehydrator and
-`prompt_content` were always shared plumbing — so what moved is the door, not the property.
-
-`TestModel` does not expose the `list[ModelMessage]` it was handed, so — as in the sibling
-`test_journey_multiturn_generate` — the capturing turn uses pydantic-ai's message-recording
-sibling test model `FunctionModel`, whose `stream_function` receives the exact messages the
-agent passed the model. Both are injected the same way via `set_chat_model`.
-
-This is a CORRECT-behaviour journey: the attachment→model path is intact, so it MUST PASS on
-a correct product.
+`TestModel` cannot expose the messages it was handed, so — as in the sibling
+`test_journey_multiturn_generate` — this uses `FunctionModel`, whose `stream_function` receives
+the exact messages passed to the model. CORRECT-behaviour journey: MUST PASS on a correct product.
 """
 
 from __future__ import annotations
@@ -78,7 +62,7 @@ def _fresh_engine():  # noqa: ANN201
 @pytest.fixture(autouse=True)
 def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     """A sandbox client on both seams — a turn refuses 503 `workspace_unavailable` without
-    one (R98). Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
+    one. Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
     reach; `fake_redis` rides along because binding a workspace is what makes the send
     route's reclaim preflight reachable, and that preflight reads the coordination store."""
     from src.api.v1.build_sessions.deps import sandbox_dependency, sandbox_or_none_dependency
@@ -120,7 +104,7 @@ def set_chat_model(app):  # noqa: ANN001, ANN201
 
 
 async def _auth(db_session: Any, **overrides: Any):
-    """Cookie + CSRF headers (the U7 conversation-create step is CSRF-protected) and the
+    """Cookie + CSRF headers (the conversation-create step is CSRF-protected) and the
     user (the journey seeds a project for the create)."""
     user = await UserFactory.create(db_session, **overrides)
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
@@ -129,9 +113,9 @@ async def _auth(db_session: Any, **overrides: Any):
 
 
 def _answer_of(sse: str) -> str:
-    """The assistant's whole answer out of a turn-stream body: the snapshot's `textSoFar`
-    plus every `text_delta` after it. A settled turn replays as snapshot-only and a live one
-    tails deltas, so summing both is what makes the assertion independent of which happened."""
+    """The assistant's whole answer out of a turn-stream body: the snapshot's text parts plus
+    every `text_delta` after it. A settled turn replays as snapshot-only and a live one tails
+    deltas, so summing both is what makes the assertion independent of which happened."""
     text = ""
     for line in sse.splitlines():
         if not line.startswith("data: "):
@@ -141,9 +125,8 @@ def _answer_of(sse: str) -> str:
             continue
         frame = json.loads(payload)
         if frame.get("type") == "snapshot":
-            # The snapshot carries the turn's ORDERED parts now — text blocks interleaved with
-            # steps — rather than the flat `textSoFar` string it replaced. Joining the text ones
-            # reassembles the same answer.
+            # The snapshot carries ORDERED parts — text blocks interleaved with steps — so
+            # joining the text ones reassembles the same answer.
             text += "".join(part["text"] for part in frame["parts"] if part["type"] == "text")
         elif frame.get("type") == "text_delta":
             text += frame["text"]
@@ -179,7 +162,6 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
 
     attachment_id = "att_gate_floorplan_1"
 
-    # --- 1. Upload the image attachment → 201, persisted owner-scoped -----------------
     up = await client.post(
         "/v1/attachments",
         headers=headers,
@@ -200,15 +182,12 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
     # The exact bytes landed in the store under the owner-scoped key (not a dangling row).
     assert store.objects[key] == _RAW_PNG
 
-    # --- 2. Download round-trips the exact bytes (content-type sniffed from magic) -----
     down = await client.get(f"/v1/attachments/{attachment_id}", headers=headers)
     assert down.status_code == 200
     assert down.content == _RAW_PNG
     assert down.headers["content-type"] == "image/png"
 
-    # --- 3. The chat turn inlines the SAME image and streams a generation --------------
-    # Capture the exact `list[ModelMessage]` the agent handed the model (TestModel hides it,
-    # so use FunctionModel — pydantic-ai's message-recording test model).
+    # Capture the exact messages the agent handed the model.
     seen: list[list[ModelMessage]] = []
 
     async def _record(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
@@ -217,9 +196,8 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
 
     set_chat_model(FunctionModel(stream_function=_record))
 
-    # U7: the SPA sends only the new message — the typed text plus the OWNED reference to
-    # the stored upload. The server rehydrates the reference to real bytes at send. The
-    # conversation must exist first (`POST /v1/conversations`, the U7 ordering).
+    # the SPA sends only the new message — text plus the OWNED reference to the stored
+    # upload; the conversation must exist first (`POST /v1/conversations`).
     from tests.factories import ProjectFactory
 
     project = await ProjectFactory.create(db_session, user.id)
@@ -254,8 +232,7 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
     )
     assert chat.text.endswith("data: [DONE]\n\n")
 
-    # --- 4. LOAD-BEARING: the image arrived at the model as BinaryContent(raw) ----------
-    # The turn settled above, so the model call finished.
+    # LOAD-BEARING: the image must have arrived at the model as BinaryContent(raw).
     assert len(seen) == 1, "the agent must have been handed exactly one model request"
     history = seen[0]
 
@@ -281,7 +258,6 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
     # ...carrying the EXACT bytes we uploaded — the attachment genuinely reached the model.
     assert binary.data == _RAW_PNG
 
-    # --- 5. Cross-user isolation: user B cannot read user A's attachment ----------------
     headers_b, _ = await _auth(db_session, email="intruder@rvaiglobal.com")
     leak = await client.get(f"/v1/attachments/{attachment_id}", headers=headers_b)
     assert leak.status_code == 404  # owner-scoped; the same id is not a shared handle

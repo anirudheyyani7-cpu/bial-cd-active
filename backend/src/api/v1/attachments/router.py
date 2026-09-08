@@ -1,15 +1,13 @@
-"""Attachment HTTP endpoints — image/PDF upload / download / delete (R16, R4).
+"""Attachment HTTP endpoints — image/PDF upload / download / delete.
 
 Byte-matches the Express `/api/attachments` contract (`server/attachments.js`): one base64
 file per request, server-side allowlist + magic-byte validation, a 4 MB per-file cap, a 50 MB
-per-user byte quota, owner-scoped object keys, and the `{error:{message}}` / `{ok:true}`
-envelopes. Text is never uploaded (it travels inline); office/deck branches land in U11.
+per-user byte quota, object keys scoped by `user_id` and re-guarded with `assert_owned`, and
+the `{error:{message}}` / `{ok:true}` envelopes. Text is never uploaded (it travels inline);
+office and deck uploads take their own branches, rendered to a form the model can read before
+anything is stored.
 
-Identity is the authenticated caller; object keys are `att/{user_id}/{uuid}` (traversal-safe,
-UUID axes) and every read/delete is scoped by `user_id` AND re-guarded with `assert_owned`.
-The object store is injected via `storage_dependency` so tests swap an in-memory fake.
-
-A PDF is additionally admitted by PAGE COUNT (`MAX_PDF_PAGES`, D4) — bytes cannot stand in for
+A PDF is additionally admitted by PAGE COUNT (`MAX_PDF_PAGES`) — bytes cannot stand in for
 pages, and the window charge a document carries is sized to the cap rather than to its size.
 """
 
@@ -80,7 +78,7 @@ MAX_PDF_PAGES: Final = 30
 
 A text PDF runs about 1.3 KB a page and a scanned one about 300 KB, so the same 4 MB spans
 roughly 13 pages to 3,200. The document that pushed a conversation to 77% of its hard context
-limit was 79 KB (#194) — comfortably inside every size bound the platform had.
+limit was 79 KB — comfortably inside every size bound the platform had.
 
 THE NUMBER IS SET FROM WHAT A PAGE COSTS, ~2,500 tokens measured, against the per-conversation
 ceiling. Thirty pages is ~75,000 tokens — the large majority of business documents, and still
@@ -100,8 +98,8 @@ IT IS ONE SENTENCE FOR THREE OUTCOMES — over the cap, unreadable, and too slow
 that is a decision, not an oversight. There is nothing true and useful the platform can tell
 someone about a PDF it could not read, and any second sentence would have to reach for the
 vocabulary this one exists to keep out: page objects, parsers, cross-reference tables, bytes.
-The real cause is logged server-side, which is where an operator can act on it
-(`.claude/rules/security.md`: user-facing messages only, details in the log).
+The real cause is logged server-side, which is where an operator can act on it: the citizen
+gets the sentence and no internals, the log gets the detail.
 
 It is built from `MAX_PDF_PAGES` so the number a citizen is told and the number enforced cannot
 drift apart."""
@@ -207,16 +205,13 @@ def _sniff_media_type(data: bytes) -> str | None:
 async def _resolve_conversation_link(
     db: DbSession, user_id: uuid.UUID, raw: Any
 ) -> uuid.UUID | None:
-    """Resolve an optional client-supplied `conversationId` to an OWNED conversation's id,
-    to stamp on the attachment row (R10 / U9).
+    """Resolve an optional client-supplied `conversationId` to an OWNED conversation's id.
 
-    Absent (or explicit `null`) → `None`: the row stores `conversation_id = NULL`, so existing
-    clients that send no conversationId keep working. A PRESENT value is resolved owner-scoped,
-    mirroring `conversations/router.py::_load_owned`: a malformed token is a 400; a well-formed
-    id the caller does not own is indistinguishable from a nonexistent one and gets the same
-    non-leaking 404 (ADR-0004). This is referential integrity, not a tenancy fix — the row is
-    still written and read under the caller's own `user_id`; the check stops a caller hanging
-    their upload off a stranger's (or a nonexistent) conversation."""
+    Absent (or explicit `null`) → `None` and the row stores `conversation_id = NULL`, so a
+    client that sends no conversationId keeps working. Resolving a PRESENT one is referential
+    integrity, NOT the tenancy boundary — the row is written and read under the caller's own
+    `user_id` either way; what it buys is that an upload cannot be hung off a stranger's, or a
+    nonexistent, conversation."""
     if raw is None:
         return None
     if not isinstance(raw, str) or not _ID_RE.match(raw):
@@ -246,8 +241,8 @@ async def _store_attachment_bytes(
 ) -> dict[str, Any]:
     """Enforce the per-user quota and store the bytes owner-scoped; return the Express file-part
     ref. Idempotent on a repeated id (reuses the row + key). Raises `AppApiError(413)` on an
-    over-quota write (was a sentinel return). NOTE: the quota check-then-store has a
-    concurrent-overspend window (as in the daily gate) — hardening deferred.
+    over-quota write. NOTE: the quota check-then-store has a concurrent-overspend window (as in
+    the daily gate) — hardening deferred.
 
     `conversation_id` is stamped on the CREATE branch. On an idempotent re-upload it re-links
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
@@ -306,7 +301,7 @@ async def _store_attachment_bytes(
 
 def _decode_bounded(b64: Any) -> bytes:
     """Decode a base64 body and enforce the 4 MB decoded cap (shared by office/deck).
-    Raises `AppApiError` (was a sentinel return)."""
+    Raises `AppApiError`."""
     if not isinstance(b64, str) or not b64:
         raise AppApiError(400, "Invalid attachment: missing bytes.")
     try:
@@ -322,9 +317,9 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
     """Refuse a PDF longer than `MAX_PDF_PAGES`, BEFORE anything is stored.
 
     ★ THE COUNT RUNS IN THE KILLABLE GOVERNOR, NEVER IN THIS HANDLER, and that is the load-
-    bearing half of this function. `.claude/rules/security.md` is explicit — treat uploaded
-    attachments as untrusted, validate at the boundary, SANDBOX PARSING — and a PDF is the
-    worst-behaved thing this route accepts: a Flate bomb, a circular object graph, a
+    bearing half of this function. The standing rule for uploads is explicit — treat them as
+    untrusted, validate at the boundary, SANDBOX PARSING — and a PDF is the worst-behaved
+    thing this route accepts: a Flate bomb, a circular object graph, a
     cross-reference stream declaring millions of entries are all reachable inside 4 MB, and the
     last of those costs eight kilobytes and tens of seconds. Read on the event loop, one upload
     stalls the worker serving every other citizen's request. Read through `run_parse`, it is a
@@ -334,7 +329,7 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
     EVERY FAILURE WEARS ONE ANSWER. Over the cap, unreadable, killed at the deadline, contained
     OOM — all four are `PDF_TOO_LONG_TEXT` and a 413. The alternative is telling a citizen
     which of the platform's internal failure modes their file hit, which is both useless to
-    them and the leak `.claude/rules/security.md` forbids; the distinguishing detail goes to
+    them and the internals leak that same rule forbids; the distinguishing detail goes to
     the log instead — `pdf_page_check_failed` (the parser's `code`/`status`) or
     `pdf_over_page_cap` (`pages`/`cap`).
 
@@ -374,8 +369,8 @@ async def _handle_office_upload(
 
     The extraction runs in the shared killable parse governor (`run_parse`) — NOT in-process —
     so an untrusted docx/xlsx whose compressed bytes pass the 4 MB cap but inflate to gigabytes
-    can never OOM the shared API worker (A.U11 review invariant); a contained OOM/timeout maps
-    to 413, a corrupt file to 400."""
+    can never OOM the shared API worker; a contained OOM/timeout maps to 413, a corrupt file
+    to 400."""
     data = _decode_bounded(body.get("base64"))
     office_format = office_format_for(media_type)
     if office_format is None:
@@ -414,10 +409,9 @@ async def _handle_deck_upload(
     body: dict[str, Any],
 ) -> JSONResponse:
     """pptx: gated on a configured Gotenberg. Convert FIRST (validates structure/zip-bomb/page-cap
-    without storing), then store the original .pptx and the derived PDF. Under Azure-hosted Foundry
-    there is no Anthropic Files API, so the PDF lives in the object store and the chat path
-    rehydrates + inlines it — the exact deck-part replay is finalized with the Foundry hosting-mode
-    decision (ADR-0026); deck is disabled by default (unset GOTENBERG_URL) until then."""
+    without storing), then store the original .pptx and the derived PDF. Azure-hosted Foundry has
+    no Files API, so a deck cannot be handed over by reference: the PDF lives in the object store
+    and the chat path rehydrates and inlines it. Deck is off by default (unset GOTENBERG_URL)."""
     if not deck_attachments_enabled():
         raise AppApiError(501, "PowerPoint attachments aren't enabled.")
     data = _decode_bounded(body.get("base64"))
@@ -569,7 +563,6 @@ async def download_attachment(
     att = await _load_owned(db, user.id, attachment_id)
     if att is None:
         raise AppApiError(404, "Attachment not found.")
-    # Defense in depth: the query already scoped by user_id; re-assert the key is in scope.
     assert_owned(att.storage_key, user.id)
     try:
         data = await storage.get(att.storage_key)
@@ -607,6 +600,5 @@ async def delete_attachment(
             await _safe_delete_pdf(storage, att.storage_key + ".pdf")
         await db.delete(att)
         await db.commit()
-    # A deck's internal Files-API pdfFileId release lands with U11/U13 (Files API). Delete is
-    # always idempotent and 200, even when the id is unknown (Express behavior).
+    # Delete is always idempotent and 200, even when the id is unknown (Express behavior).
     return JSONResponse(content={"ok": True})

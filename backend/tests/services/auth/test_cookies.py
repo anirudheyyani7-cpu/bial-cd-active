@@ -1,4 +1,4 @@
-"""Cookie name + Secure-prefix environment-awareness tests (KD-4).
+"""Cookie name + Secure-prefix environment-awareness tests.
 
 `cookie_secure()` derives Secure from `settings.auth.cookie_secure` if set, else
 `settings.is_production`. The `__Host-`/`__Secure-` prefixes require Secure, so
@@ -12,7 +12,6 @@ import pytest
 import src.services.auth.cookies as cookies
 from src.config import Settings
 
-# A minimal valid AUTH__* block, mirroring tests/test_config.py.
 _AUTH: dict[str, object] = {
     "tenant_id": "11111111-1111-1111-1111-111111111111",
     "client_id": "22222222-2222-2222-2222-222222222222",

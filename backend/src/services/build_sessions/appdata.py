@@ -1,36 +1,14 @@
 """App-row resolution + the base provision-env builder.
 
-`resolve_app_for_project` maps a project to its single `app_registry` row (minting the
-`bial_…` app-key on the first build, reusing it forever after — continuity), scoped by
-the owning `user_id` (ADR-0004), and returns the app id. `build_app_env` produces the
-two always-present `BIAL_*` env vars the sandbox injects at provision and re-injects on
-restore:
+`resolve_app_for_project` maps a project to its single `app_registry` row — minting the
+`bial_…` app-key on first build, reusing it forever after — scoped by the owning `user_id`.
+`build_app_env` returns the two vars injected at provision and re-injected on
+restore: `BIAL_APP_ID`, the only structural read of `app_env`, and `BIAL_PORTAL_ORIGIN`,
+the Caddy `frame-ancestors` origin, which fails closed when unset.
 
-* `BIAL_APP_ID` — the app's identity, and the only structural read of `app_env`
-  (`sandbox/client.restore_from_snapshot`).
-* `BIAL_PORTAL_ORIGIN` — the C8 Caddy `frame-ancestors` origin (fails closed to an empty
-  ancestor list when unset). Its value is the bare origin of `settings.FRONTEND_URL`.
-
-`BIAL_APP_CREDENTIAL` and `BIAL_DATA_BASE_URL` are GONE (U6): the shared data plane they
-addressed no longer exists, and an app's data now lives in its own PostgreSQL database
-reached through `BIAL_DATABASE_URL` (see `appdb_env.py`). The `app_key` COLUMN survives —
-`GET /apps/{id}/status` still returns it — it is simply no longer injected.
-
-The two names this builder DOES produce — `BIAL_APP_ID` and `BIAL_PORTAL_ORIGIN` — are both on
-the C1 child-env scrub allowlist (`_INJECTED_ENV` → `_BIAL_INJECTED_KEYS`, D5/C6), so both reach
-`next dev`. (This line read "Both names survive …" directly under the paragraph about the two
-RETIRED vars, which reads as a claim that the retired pair still gets through. They do not: the
-allowlist is built from `_INJECTED_ENV` and neither name is in it.)
-
-WHAT IS *NOT* HERE, AND MUST NOT BE. `BIAL_BASE_PATH` and `BIAL_APPS_HOSTNAME` — the address a
-generated app is served at — are injected by `sandbox/client._provision_container`, not by this
-builder, and the reason is that `deploy/env.py` calls `build_app_env` too. A base path added
-here would ship an `sbx-` value into published containers whose images were built with a `pub-`
-one, so every published app would be configured for an address that does not exist. The
-provision seam is also the narrower place: it is the one point both a fresh provision and a
-restore pass through, so a relaunched sandbox comes back at the same path for free.
-The one-app-per-project upsert is REPLICATED inline (KTD-6) rather than extracted from
-another domain's router — refactoring it would edit another domain's file (anti-collision).
+`BIAL_BASE_PATH` and `BIAL_APPS_HOSTNAME` belong to `sandbox/client._provision_container`:
+`deploy/env.py` calls `build_app_env` too, so a base path added here would ship an `sbx-`
+value into published containers built with a `pub-` one. The database half: `appdb_env.py`.
 """
 
 from __future__ import annotations
@@ -49,7 +27,7 @@ from src.db.models.app_registry import AppRegistry, AppStatus, mint_app_key
 from src.services.projects import owned_project_or_404
 from src.services.sandbox import SandboxNotConfiguredError
 
-# THE SWITCHED-OFF REFUSAL, in one place because two surfaces say it (R41a, #163): the gate
+# THE SWITCHED-OFF REFUSAL, in one place because two surfaces say it: the gate
 # below, and the pre-read in `api/v1/conversations/turns.py` that lets a citizen read this
 # sentence at the moment of sending rather than meet it as a dead turn. The pre-read is a
 # MESSAGE, not a second enforcement point — remove it and the platform still refuses here.
@@ -72,11 +50,11 @@ async def resolve_app_for_project(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> uuid.UUID:
     """Resolve the project's ONE app (mint on first build, reuse thereafter) and return its
-    id. Owner-scoped (ADR-0004). The CALLER owns the commit (U5). The upsert still mints
+    id. Owner-scoped. The CALLER owns the commit. The upsert still mints
     `app_key` on insert — the key is read back by `GET /apps/{id}/status`, not by callers
     of this function.
 
-    THIS IS WHERE A SWITCHED-OFF APP STOPS (R41a, #163), and it is the ONE place it stops.
+    THIS IS WHERE A SWITCHED-OFF APP STOPS, and it is the ONE place it stops.
     Every door into a container comes through here, and there are exactly two of them:
     `relaunch_preview` — the explicit start control the citizen presses — and
     `ensure_sandbox`, which `services/turns/engine.py` routes EVERY turn kind through, Ask,
@@ -104,7 +82,7 @@ async def resolve_app_for_project(
     bump the DO-UPDATE made is never committed — the caller owns the commit and every one of
     them raises straight past it, with `get_db` rolling the request transaction back."""
     project = await owned_project_or_404(db, user_id, project_id)
-    # The frozen one-app-per-project upsert (KTD-6): a first build INSERTs + mints the
+    # The frozen one-app-per-project upsert: a first build INSERTs + mints the
     # key; a repeat DO-UPDATEs (bumps `updated_at`) and returns the SAME row + original
     # key. The owner-guarded WHERE means the DO-UPDATE only touches the caller's own app.
     # No `conversation_id` here — a build session is project-first, not conversation-bound.
@@ -144,8 +122,8 @@ async def resolve_app_for_project(
 
 
 def _origin(url: str) -> str:
-    """The bare origin (`scheme://host[:port]`, no path / trailing slash) of a URL, per
-    C8 §1 — `FRONTEND_URL` is a plain `str`, not guaranteed path-free."""
+    """The bare origin (`scheme://host[:port]`, no path / trailing slash) of a URL —
+    `FRONTEND_URL` is a plain `str`, not guaranteed path-free."""
     parts = urlsplit(url)
     if parts.scheme and parts.netloc:
         return f"{parts.scheme}://{parts.netloc}"
@@ -154,7 +132,7 @@ def _origin(url: str) -> str:
 
 def build_app_env(app_id: uuid.UUID) -> dict[str, str]:
     """The two always-present `BIAL_*` env vars injected into the sandbox at provision and
-    re-injected on restore (the app identity + the C8 `BIAL_PORTAL_ORIGIN`). Requires a
+    re-injected on restore (the app identity + the `BIAL_PORTAL_ORIGIN`). Requires a
     configured sandbox (the router's 503 gate runs first, so this is reached only in the
     configured path) — the check stays because a sandbox-less caller has no business
     building a sandbox env at all, and it is the seam the 503 test pins."""

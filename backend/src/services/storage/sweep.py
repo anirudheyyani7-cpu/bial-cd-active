@@ -1,4 +1,4 @@
-"""Post-commit blob sweeping for the delete endpoints (KD-3).
+"""Post-commit blob sweeping for the delete endpoints.
 
 The rows are already committed-deleted when a sweep runs, so NOTHING here may
 surface: a raised error would 500 a delete that in fact succeeded and abandon the
@@ -7,7 +7,7 @@ transport-level errors (e.g. `azure.core.exceptions.ServiceResponseError` — re
 sent, response lost) escape that hierarchy, so the guard here is deliberately
 broad.
 
-WHAT HAPPENS TO A KEY THAT FAILS, precisely (U22, R7a): it is named on
+WHAT HAPPENS TO A KEY THAT FAILS, precisely: it is named on
 `TEARDOWN_ARTEFACT_SURVIVED_EVENT` and returned to the caller, and then a human deletes it or
 nobody does. This module used to say a residual blob was "a bounded orphan" for "a future
 blob-GC" — the trail exists, but no timer reads it: the only scheduled destroyer in this
@@ -39,9 +39,9 @@ async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> list[str]
     """Best-effort post-commit delete of every key, run concurrently behind a bounded
     semaphore; log-and-continue on ANY failure. Each delete swallows its own error, so one
     dropped key never cancels a sibling and nothing surfaces to 500 an already-committed
-    delete (KD-3).
+    delete.
 
-    RETURNS THE KEYS THAT SURVIVED (U22). The return is additive — a caller that only wants
+    RETURNS THE KEYS THAT SURVIVED. The return is additive — a caller that only wants
     the sweep can still ignore it — and it exists because the delete path owes the record a
     list of what is still out there, which a log line the record cannot read does not give
     it."""
@@ -70,14 +70,14 @@ async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> list[str]
 async def sweep_app_containers(
     store: AppContainerStore | None, app_ids: list[uuid.UUID]
 ) -> list[uuid.UUID]:
-    """Best-effort post-commit delete of every app's per-app Blob container (KTD-7), run
+    """Best-effort post-commit delete of every app's per-app Blob container, run
     concurrently behind the same bounded semaphore; log-and-continue on ANY failure so one
     orphaned container never cancels a sibling and nothing surfaces to 500 an already-committed
-    project delete (KD-3). Returns the app ids whose container may still exist (U22).
+    project delete. Returns the app ids whose container may still exist.
 
     Early-returns NO SURVIVORS when the store is disabled (`None`) — even with a non-empty id
-    list — because dev/test has no object store to sweep (KTD-2), so there is no container to
-    have survived. That is the one skip here that is genuinely a no-op rather than a leak."""
+    list — because dev/test has no object store to sweep, so there is no container to have
+    survived. That is the one skip here that is genuinely a no-op rather than a leak."""
     if store is None:
         return []
     if not app_ids:

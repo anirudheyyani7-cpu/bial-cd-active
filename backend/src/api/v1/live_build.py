@@ -1,68 +1,33 @@
-"""The shared "is a build session live right now?" guard, used by every destructive
-owner-facing route that a concurrent build would race (U8).
+"""The shared "is a build session live right now?" guard, used by every destructive owner-facing
+route a concurrent build would race — copying a snapshot mid-build captures the wrong tree, and
+deleting mid-build destroys uncommitted work. Asked in one place, by the submit service, the
+deploy route, and `projects.delete_project`.
 
-Several callers need the same question answered and owe the user the same three answers,
-so the question is asked in ONE place: the submit service (`services/approvals/submit` —
-copying a snapshot out from under a live build captures the previous build's bundle —
-valid bytes, wrong tree, undetectable by any header check), the deploy route, and
-`projects.delete_project` (deleting a project mid-build destroys
-every file change since the last snapshot, and snapshots are written only at finalize —
-R9's silent race).
+SCOPE. The lock is keyed on the USER, not the app — a bare `lock_is_held` answers "is this user
+building ANYTHING?", the wrong question when one user has several projects. Pass `app_id` for the
+narrow per-app answer; every current caller does. Omitting it is a decision to justify.
 
-WHY IT LIVES HERE, in `api/v1/`, and not in a service package (KD-5). `services/redis/`
-is the cycle-free home for the *error taxonomy* (`services/redis/errors.py`), and this
-guard composes it — but the guard itself is build-session domain logic that must reach
-`lock_is_held` / `read_registry` / `app_name_for`, and `services/build_sessions` imports
-`services/redis`, so a module-level import either way is a cycle. It is therefore a shared
-`api/v1/` helper (the `api/v1/pagination.py` precedent: cross-domain, HTTP-shaped, owned by
-no single domain package) that keeps the LAZY import `apps/router.py` already carried.
+THREE ANSWERS, AND THE FIRST IS THE SURPRISING ONE. `RedisNotConfiguredError` means PROCEED:
+with no Redis there is no build-session subsystem at all, so no lock can be held (dev and test
+only — production requires Redis at the settings gate). `RedisError` means 503: the store exists
+and failed to answer, so the check decided nothing, and any error or ambiguity denies. A lock
+genuinely held means 409, in the caller's own words.
 
-THE THREE ANSWERS (KD-1's two-tier taxonomy, plus the guard's own):
+WHY THIS EXISTS — do not read a passing guard as "no container is serving this app". A
+relaunched preview holds no lock by design (`manager.py::relaunch_preview` releases the
+per-user lock on exit; the container's lifetime is owned by an explicit stay of execution on
+the registry hash instead, `locks.py::grant_stay_of_execution`), so the container-still-serving
+state is precisely the state where `lock_is_held` is False — this guard returns without
+refusing, and it is the CALLER's job to deal with whatever is still running.
 
-* `RedisNotConfiguredError` → PROCEED. With no Redis there is no build-session subsystem
-  at all, so no lock can be held (dev/test only — production requires Redis at the
-  settings gate).
-* `RedisError` → 503. The store exists and failed to answer, so the check decided
-  nothing (`.claude/rules/fail-first.md`: any error or ambiguity denies).
-* A lock genuinely held → 409, in the caller's own words.
-
-SCOPE — read this before reusing the helper. The lock is keyed on the USER
-(`bial:sandbox:lock:{user_id}`) and carries no app or project axis, so a bare
-`lock_is_held` answers "is this user building ANYTHING?", which is the wrong question for
-a per-resource guard: with one app per project and many projects per user, building
-project A would 409 a delete of unrelated project B. Callers that own a specific app pass
-`app_id` and get the narrow answer — and every current caller does (project delete, the
-deploy route, and the submit service, whose U8 narrowing retired the last deliberately
-coarse call: `services/approvals/submit.py` records why the user-wide refusal is not to
-be restored). `app_id` stays optional for a future caller that genuinely wants the
-per-user answer, but omitting it is now a decision to justify, not the default. See
-`_the_live_session_is_this_app` for how the narrowing resolves, and for why it fails CLOSED.
-
-WHAT THIS GUARD DOES **NOT** COVER — do not read a passing guard as "no container is
-serving this app". A relaunched preview holds NO lock by design (`manager.py`'s
-`relaunch_preview`: the scope "RELEASES the per-user lock on exit", and the container's
-lifetime is owned by an explicit stay of execution on the registry hash instead,
-`locks.py::grant_stay_of_execution`). So the container-still-serving state is PRECISELY
-the state where `lock_is_held` is False: this guard returns without refusing, and it is the
-CALLER's job to deal with whatever is still running. That gap is recorded in
-`docs/solutions/architecture-patterns/long-lived-resource-lifecycle-ownership-triad-2026-07-19.md`.
-
-CLOSED ON THE DELETE PATH, AND ONLY THERE (#184). `projects.delete_project` now reaps the
-container itself: post-commit it asks the registry whether it still names this project's
-app and, if it does, hands it to `reap_user` — the one teardown sequence — under the
-per-user start lock. Closed in the CALLER rather than here, because this guard's answer
-("nothing is building") is true and a delete is the only caller that wants the container
-gone; submit and deploy still only want the refusal. Two things this doc used to say about
-the fix were wrong and are worth correcting rather than deleting: it needs no
-`preview_stay_until` read (the stay is the reaper's business, not the delete's), and it
-needs no `SandboxDep` — `delete_project` takes `OptionalSandbox`, so a sandbox-off
-deployment still deletes instead of 500ing at dependency-solve time. The reap stays
-best-effort, so a busy start lock, an unconfigured sandbox or a Redis blip still leave the
-container standing — and NOTHING AUTOMATIC COMES FOR IT. This used to say "the scheduled
-sweep", which is true of exactly one environment: `may_destroy_on_this_control_plane` gates
-that sweep's destroy half on `environment == "production"`. Everywhere else the container
-runs on, which is why the delete path alarms and files a `project:teardown-incomplete` audit
-row naming what survived rather than trusting a sweeper that will not run. Pinned by
+CLOSED ON THE DELETE PATH, AND ONLY THERE. `projects.delete_project` reaps the container
+itself: post-commit it asks the registry whether it still names this project's app and, if
+so, hands it to `reap_user` under the per-user start lock — best-effort, so a busy start
+lock, an unconfigured sandbox, or a Redis blip still leave the container standing, and
+nothing automatic comes for it outside production: `may_destroy_on_this_control_plane`
+gates the scheduled sweep's destroy half on `environment == "production"`, so the delete
+path alarms and files a `project:teardown-incomplete` audit row naming what survived.
+Submit and deploy still only want the refusal, so the gap stays open for them. Pinned by
 `test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
 
@@ -88,29 +53,19 @@ _log = structlog.get_logger()
 
 
 class ReclaimBlockedError(CamelModel):
-    """The #83 409 body. Carries the OCCUPYING project so the client can name it and offer to
-    save it — "something else is using your workspace" without saying WHAT leaves the user
-    with no move to make."""
+    """The blocked-reclaim 409 body: the occupying project, and what is happening inside it."""
 
     message: str
     code: str
-    project_id: str  # → `projectId`: the project holding the slot
-    project_name: str  # → `projectName`: what to call it on screen
+    project_id: str
+    project_name: str
     dirty: bool | None  # True = known unsaved work; None = we could not tell
-    # → `building`: an agent is WRITING in there right now, so this is not a "you have unsaved
-    # changes" choice. `dirty` is null whenever this is true and means "not asked" rather than
-    # "could not tell" — probing a tree mid-write produces an answer true for no instant that
-    # matters. The client must render a different dialog: the remedy is to stop the build
-    # first, and Save/Release both refuse until it has stopped.
+    # `dirty` is null whenever `building` is true, and there it means "not asked" rather than
+    # "could not tell": probing a tree mid-write produces an answer true for no instant that
+    # matters.
     building: bool
-    # → `agentWorking`: an agent is mid-turn in there, of ANY kind. DELIBERATELY WIDER than
-    # `building` and deliberately a SEPARATE field: `building` marks only turns whose toolset
-    # can write, because widening that one put a hammer icon and two Stop buttons in front of a
-    # citizen who had asked a question. The hand-over dialog needs the wide answer for a
-    # different sentence — "their agent is working, transferring will stop it" — and it must be
-    # able to say that over a workspace it has just reported as holding nothing to lose. So the
-    # two travel together: `building` decides WHICH dialog, `agentWorking` decides what that
-    # dialog says is happening right now.
+    # Wider than `building` and carried beside it, never folded in: `building` decides WHICH
+    # dialog the client renders, `agentWorking` decides what that dialog says is happening now.
     agent_working: bool
 
 
@@ -119,40 +74,27 @@ class ReclaimBlockedEnvelope(CamelModel):
     409 a turn, start or relaunch returns when taking the one sandbox slot would destroy another
     project's work.
 
-    Lives here rather than in `build_sessions/router.py` because two routers now answer it:
-    the turn route (`conversations/turns.py`, the path a user actually walks) and relaunch."""
+    Lives in this shared module rather than in one domain router because more than one router
+    answers it."""
 
     error: ReclaimBlockedError
 
 
 def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
-    """#83 — the telling that used to be missing.
+    """Format the blocked-reclaim 409. Every entry point that can raise it comes through here,
+    so they cannot drift into differently-worded answers.
 
-    Names the PROJECT, not the mechanism: a gate agent cannot act on "the sandbox slot is
-    held". `dirty=None` (we reached the container but it would not answer) reads as unsaved on
-    purpose — the copy hedges rather than promising, because claiming work is safe when nobody
-    could check is the one wrong answer available here.
+    Names the PROJECT, not the mechanism. `dirty=None` (the container would not answer) reads
+    as unsaved on purpose: claiming work is safe when nobody could check is the one wrong answer
+    here. Two message shapes because only one situation is about saving — a project whose agent
+    is mid-build cannot be released until the build stops, so "has unsaved changes" would point
+    at a Save button the server will refuse.
 
-    TWO SENTENCES, because there are two situations and only one of them is about saving. A
-    project whose agent is mid-build has no settled tree to describe and cannot be released at
-    all until the build stops, so telling that user their project "has unsaved changes" is both
-    untrue and a dead end — it points at a Save button the server will refuse.
-
-    THE PREFLIGHT FOR THE HAND-OVER IS THIS BODY, and that is what `agentWorking` is here for.
-    The hand-over dialog has to name both projects and say whether the other one's agent is
-    mid-thought BEFORE the citizen chooses, and the alternative — teaching the cheap state poll
-    to answer it — cannot: that read is contractually forbidden from the container round trip
-    the unsaved-work half needs. Every refusal on the send path is side-effect-free before
-    anything is persisted, so asking by sending is legitimate, and all THREE entry points come
-    through this one function — which is what makes the answer identical on all three rather than
-    correct on the one that was tested. They are: the send (`conversations/turns.py::start_turn`),
-    the plan offer's build action (`conversations/transition.py::build_it`), and relaunch
-    (`build_sessions/router.py::relaunch_preview`). It was FOUR for one day: `start_build` was
-    added as the counter-example to the sentence above it — it raised uncaught and answered 500
-    (#183), a door into the hand-over dialog that crashed instead of asking, while this docstring
-    claimed every door answered identically — and the route has since been deleted along with the
-    rest of the standalone build stack. The number is part of the claim, so it moves when a call
-    site is added OR removed."""
+    The hand-over dialog needs this same answer before the citizen chooses, and asking by
+    SENDING is legitimate because every refusal on the send path is side-effect-free before
+    anything is persisted. So all three routes that can raise it — send, the plan offer's build
+    action, and relaunch — come through this one function rather than each wording its own; the
+    count moves when a call site is added or removed."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:
@@ -181,16 +123,13 @@ async def refuse_while_build_session_live(
     app_id: uuid.UUID | None = None,
     conflict_code: str | None = None,
 ) -> None:
-    """Raise 409 `conflict_message` while this user has a live build session, 503 when
-    Redis cannot say, and return normally otherwise.
+    """Raise 409 `conflict_message` while this user has a live build session, 503 when Redis
+    cannot say, and return normally otherwise.
 
-    Pass `app_id` to narrow the refusal to a live session building THAT app; omit it for
-    the coarse per-user refusal (any live build blocks the action).
-
-    `conflict_code` gives the refusal a stable machine-readable code. Optional because the
-    two older callers never had one; the publish route passes it so an agent can tell
-    "a build is running, wait and retry" from every other 409 on that endpoint without
-    string-matching prose.
+    Pass `app_id` to narrow the refusal to a live session building THAT app; omit it for the
+    coarse per-user refusal. `conflict_code` gives the refusal a stable machine-readable code —
+    optional since the two older callers never had one; the publish route passes it so an agent
+    can tell "a build is running, wait and retry" from every other 409 without string-matching.
     """
     # Lazy import: a module-level `services.build_sessions` import cycles at load time
     # (build_sessions/__init__ → locks → api.build_sessions schemas → its router → deps
@@ -211,23 +150,12 @@ async def _the_live_session_is_this_app(
 ) -> bool:
     """Does the live session the lock represents belong to `app_id`?
 
-    The lock carries no app axis, so the app identity is recovered from the sandbox
-    REGISTRY hash, whose `app_name` field is a pure, stable function of the app id
-    (`app_name_for(app_id)` — `sbx-` + 28 hex chars, written by the sandbox client at
-    provision time). Equal name ⇒ the live session is this app's.
-
-    FAILS CLOSED, deliberately. "The lock is held but the registry does not resolve to an
-    app" is AMBIGUITY, not evidence of innocence, and it has a real cause: `_start_locked`
-    takes the lock BEFORE it provisions the container that writes the registry hash, so
-    that window reads exactly this way — lock held, registry absent. Proceeding there is
-    the silent race R9 forbids (the delete lands mid-provision), so an unresolvable
-    registry returns True and the caller refuses. Only a registry that positively names a
-    DIFFERENT app buys a proceed.
-
-    (A Redis ERROR while reading the registry is not this branch: `read_registry` is bare
-    by module policy, so it propagates to `build_coordination_or_503` and becomes a 503 —
-    "cannot answer" and "answers something else" stay distinct, per KD-1.)
-    """
+    The lock carries no app axis, so identity comes from the sandbox REGISTRY hash's `app_name`
+    (a pure function of the app id). FAILS CLOSED: "lock held but registry unresolved" is
+    AMBIGUITY, not innocence — exactly how `_start_locked`'s lock-before-provision window reads —
+    so it returns True (refuse) rather than let a delete land mid-provision. Only a registry
+    naming a DIFFERENT app proceeds. (A Redis error is not this branch — `read_registry` is bare
+    and propagates to a 503.)"""
     from src.services.build_sessions import app_name_for, read_registry
 
     registry = await read_registry(redis, user_id)

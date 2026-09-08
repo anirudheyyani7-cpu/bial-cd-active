@@ -9,9 +9,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 
 // A plain suggestion list, not an enforced enum — the endpoint that consumes a value
 // still accepts any positive integer up to MAX_DAILY_TOKEN_LIMIT (custom values stay
-// legal). No backend-side twin: the one that used to live in services/usage/limits.py
-// had zero consumers there and existed only to be hand-mirrored here, so it was
-// deleted rather than kept in sync by hand with nothing reading it.
+// legal). No backend-side twin: mirroring this list in services/usage/limits.py would have
+// zero consumers there and would exist only to be kept in sync by hand with nothing reading it.
 const SUGGESTED_DAILY_TOKEN_LIMITS = [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]
 const CUSTOM_VALUE = 'custom'
 
@@ -29,18 +28,12 @@ export interface GlobalLimitsPanelProps {
 }
 
 /**
- * Admin "Global Limits" panel — apply one daily-token-limit value to either every
- * user system-wide or a hand-picked subset, in a single bulk request.
- *
- * Two explicit modes, not a hybrid "select all that match, except these": "All
- * users" sends `userIds: null` straight to the backend (which resolves the roster
- * itself, so it covers literally everyone, not just what's loaded here); "Selected
- * users" renders a checkbox table over the same background-loaded roster
- * `UsersLimitsPanel` uses, and only ever sends the ids actually ticked.
- *
- * The value picker is one control, not two disconnected ones: picking a preset from
- * the dropdown fills the number input, which the admin can still hand-edit before
- * applying.
+ * Admin "Global Limits" panel — apply one daily-token-limit value to either
+ * every user system-wide or a hand-picked subset, in one bulk request. "All
+ * users" sends `userIds: null` (backend resolves the roster, covering
+ * everyone); "Selected users" checks rows off the same background-loaded
+ * roster `UsersLimitsPanel` uses. The value picker is one control: a preset
+ * fills the number input, which stays hand-editable before applying.
  */
 export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
   const [mode, setMode] = useState<Mode>('all')
@@ -324,10 +317,11 @@ export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
 
           {/* A failed background page must never silently vanish (fail-first), and it must
               never look like the whole roster is in when it isn't — shown above the table,
-              not tucked below it. Ported from `UsersLimitsPanel.tsx:613-646`. Gated on
-              `users.length > 0`: on a FIRST-page failure `isPartial` can also be true (hasMore
-              starts `true` and is never reset on failure), and the dedicated empty-error block
-              below already covers that zero-users case — without this gate both rendered at
+              not tucked below it. Ported from the partial-roster banner in
+              `UsersLimitsPanel.tsx`. Gated on `users.length > 0`: on a FIRST-page failure
+              `isPartial` can also be true (hasMore starts `true` and is never reset on
+              failure), and the dedicated empty-error block below already covers that
+              zero-users case — without this gate both rendered at
               once, and this banner's Retry was disabled forever (appliedQuery stays `null`,
               never equal to `q`). */}
           {isPartial && users.length > 0 && (

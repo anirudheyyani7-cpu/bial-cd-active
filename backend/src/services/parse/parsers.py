@@ -1,19 +1,14 @@
-"""Kind dispatch for untrusted-file parsing (R26), run inside the killable process governor.
+"""Kind dispatch for untrusted-file parsing, run inside the killable process governor.
 
-The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`) and the
-PDF page count (`count_pdf_pages`), all driven by `api/v1/attachments/router.py`. The office
-extraction itself lives in `services/extract/office.py`; this module's job is to order the
-bounds around it and map its errors.
-
-The four bounds (untrusted-file-parsing learning): (1) the decoded-size cap is enforced
-by the caller before parsing (the attachments upload limits — the old per-app parse HTTP
-endpoint was retired with the open-sandbox pivot, but this parse SERVICE stays, driven by
-`attachments/router.py`); (2) the zip-bomb guard runs here BEFORE any inflate and the
-structural gate runs first inside the extract — Plan A's shared `zip_safety` + `office`
-validators; (3) a row/col range-clamp is applied BEFORE iterating, by `office.py`'s
-`MAX_SHEET_ROWS`/text cap; (4) the whole dispatch runs inside the killable process governor
-(`governor.py`). Errors are the shared `FileParseError` (carries status + code, e.g.
-413/`FILE_TOO_LARGE`, 415/`UNSUPPORTED_TYPE`).
+Live kinds: chat office→Markdown extracts (`extract_word`/`extract_excel`) and PDF page count
+(`count_pdf_pages`), driven by `api/v1/attachments/router.py`; extraction lives in
+`services/extract/office.py`; this module orders the bounds and maps errors. Four bounds: (1)
+decoded-size cap enforced by the caller before parsing (the old per-app parse endpoint was retired
+with the open-sandbox pivot, but this SERVICE stays); (2) zip-bomb guard runs here BEFORE any
+inflate, the structural gate runs first inside extract — shared `zip_safety` + `office` validators;
+(3) row/col clamp applied BEFORE iterating, via `office.py`'s `MAX_SHEET_ROWS`/text cap; (4) the
+dispatch runs inside `governor.py`. Errors are the shared `FileParseError`, which carries a status
+and a code (413/`FILE_TOO_LARGE`, 415/`UNSUPPORTED_TYPE`).
 """
 
 from __future__ import annotations
@@ -64,7 +59,7 @@ def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
     page objects live in a compressed object stream — the one failure mode an admission cap
     cannot have, because under-counting is what admits the document the charge cannot cover.
     The deck path keeps its scan and its own 100-page limit; the two caps disagreeing is
-    deliberate (D4) and is revisited when decks are enabled.
+    deliberate and is revisited when decks are enabled.
 
     ★ THE PAGE TREE IS WALKED, AND `len(reader.pages)` DOES NOT WALK IT FOR AN ENCRYPTED FILE.
     This line used to read `len(reader.pages)` and this docblock used to claim the count was
@@ -75,11 +70,11 @@ def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
     decryption. So the shortcut was permanent for encrypted files, and since pypdf opens a
     permission-restricted document automatically (empty user password), 120 KB declaring one
     page and carrying twenty thousand was counted as one and admitted straight past the
-    30-page cap (#194). `_flatten` is the traversal the unencrypted path already took, so the
-    fix is to stop asking the question that has a wrong answer rather than to hand-roll a
-    second walk beside the library's — a home-grown one has to reproduce pypdf's
-    ancestor-path cycle guard exactly or hang forever on a leaf-less loop. `list_only=True`
-    skips materialising each page's inherited attributes; nothing here reads a page.
+    30-page cap. `_flatten` is the traversal the unencrypted path already took, so the fix is
+    to stop asking the question that has a wrong answer rather than to hand-roll a second walk
+    beside the library's — a home-grown one has to reproduce pypdf's ancestor-path cycle guard
+    exactly or hang forever on a leaf-less loop. `list_only=True` skips materialising each
+    page's inherited attributes; nothing here reads a page.
 
     pypdf's own traversal limits (depth, entry count) turn a page-tree bomb into an exception
     here rather than a hang, and everything it can still raise — a truncated file, a broken

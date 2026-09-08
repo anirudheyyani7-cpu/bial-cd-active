@@ -7,7 +7,7 @@ import { test, expect, type Page } from '@playwright/test'
  * counted and named against real rows, and that `/apps/{appId}` genuinely leaves the SPA rather
  * than matching a client route.
  *
- * Only `/auth/me` is mocked (no live Entra tenant in CI, KD-9); everything else is driven.
+ * Only `/auth/me` is mocked (no live Entra tenant in CI); everything else is driven.
  * Run through the portal on :5173, never the backend on :8000 — the refresh cookie is
  * Path-scoped to /api/v1/auth/refresh and will not be sent otherwise.
  */
@@ -50,8 +50,8 @@ test.describe('project-first journey', () => {
     const chatUrl = page.url()
 
     await page.goto('/projects')
-    // F-10 fixed: the card is a plain container now, so the delete button's accessible name is
-    // unambiguous again — no strict-mode double match against an outer role="button".
+    // The card is a plain container, so the delete button's accessible name is unambiguous —
+    // no strict-mode double match against an outer role="button".
     await page.getByRole('button', { name: `Delete ${name}` }).click()
 
     // The dialog states what it destroys — including the project's own database, which is
@@ -87,18 +87,18 @@ test.describe('project-first journey', () => {
 })
 
 /**
- * Two findings from agc129's review of #86 (the description editor pop-up) that are
+ * Two findings from a prior review of the description editor pop-up that are
  * structurally invisible to Vitest, so they need a real browser:
  *
  *  - jsdom never blurs a disabled element, so the busy-state focus collapse that broke
- *    Tab-containment and Escape (405a1d6) cannot reproduce there.
+ *    Tab-containment and Escape cannot reproduce there.
  *  - jsdom has no layout/paint engine (and ProjectPage.test.tsx stubs Navbar to null), so
  *    the overlay-renders-beneath-the-sticky-navbar bug cannot reproduce there either.
  *
  * Neither test drives a real model turn — no build needed for either check — so they run
  * under the suite's default 90s timeout rather than the 420s one above.
  */
-test.describe('description editor — keyboard focus + stacking (#86 review)', () => {
+test.describe('description editor — keyboard focus + stacking', () => {
   test('Tab stays contained inside the dialog once a busy request disables every other focusable', async ({ page }) => {
     await createProject(page, `E2E Focus Trap ${Date.now()}`)
 

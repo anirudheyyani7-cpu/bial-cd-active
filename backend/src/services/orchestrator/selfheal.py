@@ -1,37 +1,14 @@
-"""The between-runs self-heal verify (KD-5 / KD-6 / KD-7 / KD-8).
+"""The between-runs self-heal verify.
 
-After each `agent.iter` run the harness runs a CHEAP, harness-driven verify — `tsc --noEmit` over
-the C2 command op and the `dev_logs` cursor tail — and decides the gate. Completion is an OBJECTIVE
-green signal (`tsc` clean AND the dev server ready AND a clean log tail), never the model's word
-alone (KD-6). `next build` is NOT run in Wave-1 (the production build is a DEPLOY concern, D2). A
-slow-but-healthy dev server is distinguished from a stuck one by a bounded readiness poll before
-any run is burned (open-Q F). A red signal becomes a redacted `BuildError` the loop re-seeds as the
-next run's prompt (KD-5).
+After each `agent.iter` run the harness runs a CHEAP verify — `tsc --noEmit` plus the `dev_logs`
+tail — and decides the gate. Completion is OBJECTIVE, never the model's word; `next build` is not
+run here (a deploy concern); a bounded readiness poll tells a slow-but-healthy dev server from a
+stuck one; a red signal becomes a redacted `BuildError` the loop re-seeds as the next prompt.
 
-Every one of those signals is asked of the SERVER, and an app can satisfy all of them and still
-throw in the browser before it paints. U13 adds the missing witness: the app's own error reporter
-POSTs what it caught, `client_errors` parks it, and `verify` drains it here — so a reported
-browser-side crash is a not-green verdict exactly like a failed type-check (R17, AE11). This is
-the ONE authority both loops consult, which is why the runtime half lands here rather than at
-either call site: `turns/engine.py` runs the live path and `harness.py` the vestigial one, and a
-health rule that only one of them knew would be a health rule with an escape hatch.
-
-U6 adds the two halves R9 asks for and a third VALUE. The halves: the app's own root is fetched
-over HTTP (`what_is_it_serving`) so a 500 can no longer ship green past a readiness probe that
-fail-opens on it, and `app/page.tsx` is compared against the repository's ROOT COMMIT so an app
-still serving the golden template can no longer be called finished — the nine-minute false
-"Build complete" of 2026-08-18. The value is `INDETERMINATE`: a readiness budget that ran out and
-a serving probe that timed out are "we could not tell", not "it is broken", and feeding either to
-the model as a defect spent a repair run on a fault that may never have existed. `verify` asks
-again instead; only `HEALTHY` is green.
-
-A DEAD dev child gets the IT Crowd treatment first — "have you tried turning it off and on
-again?": verify captures the child's last output + exit code (the ring resets on restart), calls
-`dev_start` once, and only then polls readiness. Before this rescue, nothing in the system ever
-restarted a dead child — not the supervisor, not the harness, and the agent is forbidden to — so
-one startup crash burned the whole self-heal budget re-prompting the agent to fix a rendering bug
-that did not exist (the 2026-07-30 calculator build: 3 repair runs, ~875k tokens, dead process).
-"""
+Server-side signals only answer "is a Next app running here", so verify also checks what the app's
+root actually serves, whether `app/page.tsx` is still the workspace's first commit, and what the
+browser's own error reporter caught. It is the ONE authority both loops consult; a dead dev child
+is restarted once before its readiness is judged."""
 
 from __future__ import annotations
 
@@ -78,7 +55,7 @@ _CRASH_MARKERS = (
 )
 
 # The nudge that re-seeds a run that ended green but without declaring done — not an error, just
-# "keep going" (it still consumes a self-heal budget so the loop stays bounded, KD-7).
+# "keep going" (it still consumes a self-heal budget so the loop stays bounded).
 CONTINUE_PROMPT = (
     "The app is not finished yet — you ended your turn without calling `declare_done`. Continue "
     "building the requested features, then call `declare_done` when the app is complete."
@@ -86,8 +63,7 @@ CONTINUE_PROMPT = (
 
 # The synthesized diagnostic for "tsc clean, no crash marker, but the dev server never became
 # ready" — an app that throws on load, hangs at startup, or renders blank without printing a
-# recognized crash marker. Without it the loop would misread this state as "green but not done"
-# (KD-5/KD-6).
+# recognized crash marker. Without it the loop would misread this state as "green but not done".
 _DEV_NOT_READY_DETAIL = (
     "The dev server did not report ready within the readiness budget, and no type-check or "
     "compile error was found. The app most likely throws during render, hangs at startup, or "
@@ -100,7 +76,7 @@ _DEV_NOT_READY_DETAIL = (
 
 def dev_not_ready_error() -> BuildError:
     """A synthesized SERVER `BuildError` for the 'tsc clean, no crash marker, but the dev server
-    never became ready' state (KD-5). Without it the self-heal repair prompt would misfire as a
+    never became ready' state. Without it the self-heal repair prompt would misfire as a
     'you forgot declare_done' nudge and a budget-exhausted escalation would be diagnostic-free."""
     return from_server(_DEV_NOT_READY_DETAIL)
 
@@ -115,7 +91,7 @@ def dev_died_error(
 ) -> BuildError:
     """The HONEST diagnostic for a dev child found dead at verify: name the process failure and
     its exit code instead of guessing at a rendering bug — the misattribution that sent the
-    build agent on a 3-run wild-goose chase (2026-07-30). Routed through `from_server` so the
+    build agent on a 3-run wild-goose chase. Routed through `from_server` so the
     dead child's last output is redacted like any other server tail."""
     exit_clause = f"exit code {exit_code}" if exit_code is not None else "exit code unknown"
     restart_clause = (
@@ -135,7 +111,7 @@ def dev_died_error(
     return from_server(detail)
 
 
-# U6 / R9 — THE SERVING HALF. The supervisor's readiness probe fail-opens on 4xx/5xx by explicit
+# THE SERVING HALF. The supervisor's readiness probe fail-opens on 4xx/5xx by explicit
 # design (`_dev_port_serving`), and `someone_has_to_go_first`'s status is contractually
 # non-load-bearing, so neither of them can carry this. An app whose root answers 500 has to be
 # called broken by something, and this is the diagnostic that says so.
@@ -177,15 +153,13 @@ def config_tampered_error() -> BuildError:
 
 def served_badly_error(status: int) -> BuildError:
     """The diagnostic for "the dev server is up, the types are clean, and the app's own home page
-    answers with an error" (U6, R9). Routed through `from_server` because the status came from the
+    answers with an error". Routed through `from_server` because the status came from the
     app's own route, which is sandbox output like any other."""
     return from_server(_SERVED_BADLY_DETAIL.format(status=status))
 
 
-# U6 / R9 — THE CONTENT HALF. On 2026-08-18 "Build complete — your app is live below" sat above the
-# untouched starter template for nine minutes. Every server-side signal was green, because every
-# server-side signal answers "is a Next app running here" and none of them answers "is it THEIR
-# app". This one does, and it is the diagnostic the model gets when the answer is no.
+# THE CONTENT HALF — the diagnostic the model gets when every server-side signal is clean and the
+# app on screen is still not the user's app.
 _STILL_THE_STARTER_PAGE_DETAIL = (
     "The app's home page (`app/page.tsx`) is still byte-for-byte the starter template the "
     "workspace was created with — nothing the user asked for is on the page they will actually "
@@ -197,8 +171,8 @@ _STILL_THE_STARTER_PAGE_DETAIL = (
 
 
 def still_the_starter_page_error() -> BuildError:
-    """The diagnostic for an app that responds perfectly and is still the golden template (U6,
-    AE6). `from_server` for consistency with its siblings; nothing about it is app-authored, but
+    """The diagnostic for an app that responds perfectly and is still the golden template.
+    `from_server` for consistency with its siblings; nothing about it is app-authored, but
     routing every synthesized diagnostic through one door is what keeps the redaction contract
     from having exceptions."""
     return from_server(_STILL_THE_STARTER_PAGE_DETAIL)
@@ -232,20 +206,13 @@ explains it. With no crash they are dropped, which is what "the app is noisy but
 
 
 def the_call_is_coming_from_inside_the_house(reports: list[ClientErrorReport]) -> BuildError:
-    """The diagnostic for "every server-side check is clean and the app is still broken" (U13,
-    R17 runtime half).
+    """The diagnostic for "every server-side check is clean and the app is still broken".
 
-    Named for what these reports mean: the dev server answered, `tsc` is clean, the log tail is
-    quiet, `/dev/status` says ready — and the app is dead anyway, because the failure was inside
-    the browser the whole time. That class is invisible to every signal the harness polls, which
-    is precisely why suppressing the framework's runtime overlay could otherwise turn a crash the
-    user could SEE into a success nobody could see at all.
-
-    The blob assembled here is app-authored text and is handled as such by `from_client`: redacted
-    on the same single path as any other sandbox output, then wrapped in a data-only frame. The
-    numbering matters more than it looks — a crash loop reports the same fault repeatedly, and an
-    explicit `[1] … [2] …` is what stops the model reading a repeated stack as several distinct
-    faults to chase."""
+    Named because the browser is where the failure hid: every server-side signal came back clean,
+    which is precisely why suppressing the framework's runtime overlay could otherwise turn a crash
+    the user could SEE into a success nobody could see. The blob assembled here is app-authored
+    text, redacted via `from_client` like any other sandbox output — the `[1] … [2] …` numbering
+    stops a crash loop's repeated fault from reading as several distinct faults to chase."""
     # Crashes first, then whatever else the browser said. A warning logged moments before a crash
     # is frequently the thing that explains it, so the context is worth carrying — but it is
     # carried BEHIND the crash, because the crash is what the agent has to fix.
@@ -260,19 +227,14 @@ def the_call_is_coming_from_inside_the_house(reports: list[ClientErrorReport]) -
 
 
 class HealthState(enum.StrEnum):
-    """The harness's read of an app's health — THREE values, and the third is the point (U6, R10).
+    """The harness's read of an app's health — THREE values, and the third is the point.
 
-    This verdict was a boolean, and a boolean cannot tell "the app is broken" apart from "we could
-    not find out". Every way of not finding out — a readiness poll whose budget ran out, a serving
-    probe that timed out, a content check with no baseline to compare against — was folded into
-    "red" and handed to the model as a defect to fix. It then spent a repair run, the user's
-    tokens and the user's time on a fault that may never have existed, and three of the four repair
-    cycles in the 2026-08-18 demo were exactly that.
-
-    Naming discipline, inherited from `durable_copy.CopyState`: `INDETERMINATE` must not be
-    skimmable as either of the other two. It is not a soft red and it is not a cautious green. It
-    means ASK AGAIN — and, specifically, it never revokes a reveal already granted and never
-    reaches a teardown, a restore or a reclaim."""
+    A boolean cannot tell "the app is broken" apart from "we could not find out". Every way of
+    not finding out — a readiness budget that ran out, a serving probe that timed out, a content
+    check with no baseline — was folded into "red" and handed to the model as a defect, spending
+    a repair run on a fault that may never have existed. `INDETERMINATE` must not be skimmable as
+    either of the other two: not a soft red, not a cautious green. It means ASK AGAIN, and it
+    never revokes a reveal already granted or reaches a teardown, a restore or a reclaim."""
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
@@ -294,8 +256,8 @@ class VerifyOutcome:
     # The framable preview URL once the dev server is ready.
     preview_url: str | None
     # What the app's own root actually answered, and with what. RAW EVIDENCE kept beside the
-    # derived verdict, per the 2026-08-02 learning where a derived metric produced a false
-    # accusation that the raw field disproved in one step. `None` means the probe could not ask —
+    # derived verdict, because a derived metric once produced a false accusation that the raw
+    # field disproved in one step. `None` means the probe could not ask —
     # which is an INDETERMINATE input, never a broken app.
     served: ServedPage | None = None
     # Whether the app's root route is still byte-identical to the seeded baseline. `None` when the
@@ -304,20 +266,18 @@ class VerifyOutcome:
     baseline: BaselineIdentity | None = None
     # WHICH check could not be answered, on an INDETERMINATE verdict — `None` on every other.
     #
-    # THE THREE ARE NOT THE SAME KIND OF SILENCE, and collapsing them cost this a round of
-    # review. A serving probe that never came back, or a baseline with no root commit to compare
-    # against, describes an app that is up and answering: "we could not confirm this change went
-    # in" is true of it. A READINESS budget that ran out describes an app that is not serving at
-    # all — and once patience is spent, thirty seconds of not coming up, three times over, has
-    # stopped being our impatience and become a fact about the app. Telling that citizen their
-    # app "looks like it's running" would be a new false claim, in the plan whose entire purpose
-    # is removing one.
+    # THE THREE ARE NOT THE SAME KIND OF SILENCE. A serving probe that never came back, or a
+    # baseline with no root commit to compare against, describes an app that is up and answering:
+    # "we could not confirm this change went in" is true of it. A READINESS budget that ran out
+    # describes an app that is not serving at all — and once patience is spent, thirty seconds of
+    # not coming up, three times over, has stopped being our impatience and become a fact about the
+    # app. Telling that citizen their app "looks like it's running" would be a new false claim.
     unanswered: Unanswered | None = None
     # The browser crash reports this pass consumed. Carried on the outcome so `verify` can hand
     # them to a later pass rather than letting a discarded one take them to the grave — see
     # `_verify_once`'s `carried_reports`.
     client_reports: tuple[ClientErrorReport, ...] = ()
-    # U9 — does this red verdict rest on the DEV LOG, as opposed to something derived fresh in
+    # Does this red verdict rest on the DEV LOG, as opposed to something derived fresh in
     # this pass? Only log evidence can be older than the agent's last edit: a type-check, a
     # serving status and a baseline comparison are all produced during the pass that reads them,
     # while the log tail accumulates and a restart resets the ring underneath the cursor. False on
@@ -327,12 +287,12 @@ class VerifyOutcome:
     @property
     def green(self) -> bool:
         """tsc clean AND dev ready AND a clean log tail AND no browser crash AND the app serves
-        AND it is no longer the starter page (KD-6, R9).
+        AND it is no longer the starter page.
 
         A PROPERTY rather than a field, for the reason `durable_copy.CopyVerdict.may_destroy`
         exists: `state is HealthState.HEALTHY` spelled out at every call site is a chance at each
         one to write `is not UNHEALTHY` instead — which would read an INDETERMINATE verdict as a
-        completion claim, the exact class of lie this plan removes."""
+        completion claim."""
         return self.state is HealthState.HEALTHY
 
 
@@ -401,7 +361,7 @@ async def where_are_we(
 ) -> Readiness:
     """Poll `dev_status` until the dev server is `ready` (a slow-but-healthy startup), the process
     dies (`running=False` → not slow, genuinely down), or the poll budget is spent. Bounded, so a
-    readiness wait never burns a repair run (open-Q F)."""
+    readiness wait never burns a repair run."""
     for attempt in range(max_polls):
         status = await sandbox_client.dev_status(handle)
         if status.ready:
@@ -425,25 +385,14 @@ async def verify(
     indeterminate_retries: int = VERIFY_INDETERMINATE_RETRIES,
     indeterminate_backoff_s: float = VERIFY_INDETERMINATE_BACKOFF_S,
 ) -> tuple[VerifyOutcome, int]:
-    """The health verdict, asked with patience: run `_verify_once`, and when it comes back
-    INDETERMINATE ask again rather than reporting a defect (U6, R10, AE8).
-
-    THE RETRY LIVES HERE, not at either loop, and that is deliberate. `selfheal` is the ONE health
-    authority both harnesses consult precisely so a verdict cannot mean two things depending on
-    which loop built the app; a patience budget applied in `turns/engine.py` and forgotten in
-    `harness.py` would be a health rule with an escape hatch. It is also why the retry cannot live
-    inside `_verify_once`, which has to stay a single honest pass so a test can observe one.
-
-    `log_cursor` is threaded through every attempt, so a retry reads only what is genuinely new
-    and a crash printed during the first pass is not re-reported by the second — and the browser
-    crash reports a discarded pass consumed are carried into the next one, or a pass that is
-    thrown away would take a real crash with it.
-
-    ONE CONVERSION HAPPENS AT EXHAUSTION and it is narrow: a readiness budget that has now run out
-    several times over has stopped being our impatience and become a fact about the app, so it
-    becomes the diagnosis this loop has always given for it. The other two unanswerable checks
-    describe an app that IS serving and are returned as they are — inventing a startup fault for
-    one of those is the misdiagnosis U6 exists to remove."""
+    """The health verdict, asked with patience: run `_verify_once`, retrying on INDETERMINATE
+    instead of reporting a defect. THE RETRY LIVES HERE — not in `_verify_once` (which must stay a
+    single honest pass a test can observe) and not in either loop, since `selfheal` is the ONE
+    health authority both harnesses consult. `log_cursor` threads through every attempt so a retry
+    reads only what's new, and a discarded pass's browser-crash reports carry into the next rather
+    than being lost. ONLY a readiness budget converts to a defect at exhaustion, once it has become
+    a fact about the app; the other two unanswerable checks describe an app that IS serving and
+    return as-is, never invented into a startup fault."""
     attempts_left = indeterminate_retries
     rechecked = False
     first_pass = True
@@ -468,12 +417,12 @@ async def verify(
         )
         first_pass = False
         carried = outcome.client_reports
-        # U9 / R15 — ONE AUTHORITATIVE RE-CHECK BEFORE A REPAIR ROUND-TRIP IS BOUGHT. Three of the
-        # four repair cycles in the 2026-08-18 demo were the platform re-reporting errors it had
-        # already fixed, and the mechanism is structural: `log_cursor` bounds the read by log
-        # POSITION rather than by agent action, a dev-server restart resets the ring underneath it,
-        # and a dead child's last words are deliberately carried forward. So a crash printed before
-        # the agent's edit can be read after it and charged as a fresh defect.
+        # ONE AUTHORITATIVE RE-CHECK BEFORE A REPAIR ROUND-TRIP IS BOUGHT. The platform can charge
+        # the agent for errors it has already fixed, and the mechanism is structural: `log_cursor`
+        # bounds the read by log POSITION rather than by agent action, a dev-server restart resets
+        # the ring underneath it, and a dead child's last words are deliberately carried forward.
+        # So a crash printed before the agent's edit can be read after it and charged as a fresh
+        # defect.
         #
         # Gated on the EVIDENCE, not on the verdict, and that gate is what keeps this both cheap
         # and safe: a failed type-check, a 500 from the root route and a baseline comparison are
@@ -539,15 +488,12 @@ async def _ask_the_container_what_it_is_showing(
 ) -> BaselineIdentity:
     """`integrity.baseline_identity`, reached through a function-scoped import.
 
-    THE IMPORT IS IN HERE BECAUSE THE PACKAGES ARE CIRCULAR, and the cycle is real rather than
-    incidental: `src.services.build_sessions.__init__` reaches `appdata` → `services.projects` →
-    `agent.agent` → `services.orchestrator.__init__` → this module. A module-level import here
-    therefore fails at interpreter start, not at call time. It is the ONE direction that is
-    circular: `build_sessions` may import from here-adjacent leaves freely, and does — `manager`
-    and `reaper` both import `integrity` at module level.
-
-    The type comes from `integrity_types`, a leaf module with no imports of its own, so the
-    signature is honest at import time and only the CALL is deferred."""
+    THE IMPORT IS HERE BECAUSE THE PACKAGES ARE CIRCULAR: `build_sessions.__init__` reaches
+    `appdata` → `services.projects` → `agent.agent` → `orchestrator.__init__` → this module, so a
+    module-level import here would fail at interpreter start — the ONE circular direction
+    (`build_sessions` imports `integrity` at module level freely elsewhere: `manager`, `reaper`).
+    The type comes from `integrity_types`, a leaf module with no imports, so the signature stays
+    honest at import time and only the CALL is deferred."""
     from src.services.build_sessions.integrity import baseline_identity
 
     return await baseline_identity(sandbox_client, handle)
@@ -580,7 +526,7 @@ async def _verify_once(
 
     # The dead-child rescue: `running=False` with nothing serving the port means the child is
     # genuinely down — restart it rather than diagnose it. Order matters: the last output and
-    # exit code are captured BEFORE `dev_start`, because a successful start resets the C1 log
+    # exit code are captured BEFORE `dev_start`, because a successful start resets the log
     # ring (and with it the cursor space).
     status = await _try_try_again(lambda: sandbox_client.dev_status(handle))
     dev_died = not status.running and not status.ready
@@ -613,7 +559,7 @@ async def _verify_once(
     )
     dev_ready = readiness is Readiness.READY
 
-    # MAKE THE ERROR EXIST BEFORE WE GO LOOKING FOR IT (U4, R4). A whole class of Next compile
+    # MAKE THE ERROR EXIST BEFORE WE GO LOOKING FOR IT. A whole class of Next compile
     # errors — a Server Component reaching for a client-only hook is the canonical one — passes
     # `tsc --noEmit` cleanly, writes NOTHING to `/dev/logs`, and leaves `/dev/status` reporting
     # ready. Every check above says green, and the citizen gets a blank page. Next only emits its
@@ -628,8 +574,8 @@ async def _verify_once(
     # Gated on `dev_ready` because "after readiness" is a precondition, not just an ordering: a
     # server that never came up has nothing to answer with, so asking spends the helper's whole
     # budget to learn what the poll above already established — up to three times per build, on
-    # exactly the red path where the user is already waiting longest. The case U4 exists for is
-    # the opposite one: ready is TRUE, `tsc` is clean, and the page is still blank.
+    # exactly the red path where the user is already waiting longest. This check exists for the
+    # opposite case: ready is TRUE, `tsc` is clean, and the page is still blank.
     served: ServedPage | None = None
     baseline: BaselineIdentity | None = None
     if dev_ready:
@@ -638,13 +584,10 @@ async def _verify_once(
         # into the log before the read below — but this one keeps a bounded head of the answer,
         # and the status is now LOAD-BEARING rather than merely logged.
         #
-        # THE PROMOTION IS THE POINT, and the note it replaces said what it would cost: the old
-        # comment recorded that a root route answering 500 shipped green because the verdict was
-        # five hard-coded text markers against the dev log, and left promoting it as "a
-        # behavioural decision for the owner". R9 is that decision, made. It also explains why the
-        # call could not simply stay as it was: `someone_has_to_go_first` is contractually
-        # non-load-bearing (R6) and its docstring says no caller may make a decision on what it
-        # returns, so reading a verdict off it would have converted a promise into a lie.
+        # THE PROMOTION IS THE POINT, and it is why the call could not simply stay as it was:
+        # `someone_has_to_go_first` is contractually non-load-bearing and its docstring says no
+        # caller may make a decision on what it returns, so reading a verdict off it would have
+        # converted a promise into a lie.
         served = await sandbox_client.what_is_it_serving(handle)
         if served is None:
             logger.warning("verify_serving_probe_unanswered", app=handle.app_name, tsc_ok=tsc_ok)
@@ -664,17 +607,17 @@ async def _verify_once(
 
     logs = await _try_try_again(lambda: sandbox_client.dev_logs(handle, since=log_cursor))
     # Bound the tail fed to crash detection + redaction: a single unbounded dev-log blob must not
-    # reach the (linear-but-synchronous) redactor unbounded (LOG_TAIL_MAX_LINES, KD-10). The dead
+    # reach the (linear-but-synchronous) redactor unbounded (LOG_TAIL_MAX_LINES). The dead
     # child's captured lines stay in the window — a crash marker in its last words is the true
-    # diagnostic even when the restarted child comes up clean (KD-6: the tail must be clean).
+    # diagnostic even when the restarted child comes up clean (the tail must be clean).
     tail = (died_lines + logs.lines)[-LOG_TAIL_MAX_LINES:]
     server_crash = detect_server_crash(tail)
 
-    # U13 / R17 — THE RUNTIME HALF OF THE HEALTH VERDICT. Everything above this line is asked of
+    # THE RUNTIME HALF OF THE HEALTH VERDICT. Everything above this line is asked of
     # the SERVER; a Next app can pass all of it and still throw before it paints a single pixel,
     # and the only witness to that is the browser. The app's own error reporter has been relaying
-    # those crashes to the framing portal since Stage 0 with nobody listening; the ingest route
-    # parks what the portal forwards, and this is where it is collected.
+    # those crashes to the framing portal since it was added, with nobody listening; the ingest
+    # route parks what the portal forwards, and this is where it is collected.
     #
     # DRAINED unconditionally, including on the arms below where a compile error already outranks
     # it. A report counts against exactly one verdict: left parked, one browser crash would fail
@@ -682,12 +625,12 @@ async def _verify_once(
     # while the agent fixed it on the first pass. If the crash is still there after the repair,
     # the browser is still framing the app and says so again.
     # CARRIED, not merely drained. `drain_client_errors` is destructive and `verify` may run this
-    # more than once — for its INDETERMINATE patience and for U9's re-check — so a report consumed
-    # by a pass that is then discarded is gone from the pass that actually decides. That is a
-    # browser crash flipping the verdict from UNHEALTHY to HEALTHY between two looks at the same
-    # app: the false green this plan exists to remove, reintroduced by the fix for a different
-    # one. "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER,
-    # never about each attempt at it.
+    # more than once — for its INDETERMINATE patience and for the stale-log-evidence re-check — so
+    # a report consumed by a pass that is then discarded is gone from the pass that actually
+    # decides. That is a browser crash flipping the verdict from UNHEALTHY to HEALTHY between two
+    # looks at the same app: a false green, reintroduced by the fix for a different one.
+    # "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER, never
+    # about each attempt at it.
     client_reports = [*carried_reports, *drain_client_errors(handle.app_name)]
     # Only a CRASH gates the verdict — see `NON_FATAL_CLIENT_SOURCES`. Both lists are kept: the
     # fatal ones decide, the full set is what the agent gets to read when they decide red.
@@ -717,10 +660,10 @@ async def _verify_once(
         # clean empty window would mean "we did not look", not "it is fixed".
         rests_on_log_evidence = dev_ready
     elif dev_died and not dev_ready:
-        # NOT re-checkable, and the distinction is the whole safety of U9. A crash MARKER is
-        # re-produced by requesting the route again, so a second pass can tell a stale one from a
-        # current one. A dead child's last words cannot be: nothing re-emits them, so a re-check
-        # would read an empty window and call the death fixed.
+        # NOT re-checkable, and that distinction is the whole safety of the stale-log-evidence
+        # re-check. A crash MARKER is re-produced by requesting the route again, so a second pass
+        # can tell a stale one from a current one. A dead child's last words cannot be: nothing
+        # re-emits them, so a re-check would read an empty window and call the death fixed.
         state = HealthState.UNHEALTHY
         error = dev_died_error(
             exit_code=status.exit_code,
@@ -737,8 +680,9 @@ async def _verify_once(
         error = the_call_is_coming_from_inside_the_house(client_reports)
     elif readiness is Readiness.STILL_TRYING:
         # THE POLL BUDGET RAN OUT OVER A PROCESS STILL REPORTING `running`. Not a defect — we
-        # stopped waiting, the app did not stop starting. This was red before U6 and cost a
-        # repair run, a diagnostic the agent could not act on, and the user's tokens (AE8).
+        # stopped waiting, the app did not stop starting. Before this INDETERMINATE state existed
+        # this was reported as a hard failure, costing a repair run, a diagnostic the agent could
+        # not act on, and the user's tokens.
         state = HealthState.INDETERMINATE
         unanswered = Unanswered.READINESS
     elif not dev_ready:
@@ -752,7 +696,7 @@ async def _verify_once(
         state = HealthState.INDETERMINATE
         unanswered = Unanswered.SERVING
     elif not (200 <= served.status < 400):
-        # R9's serving half. A 3xx counts as serving: the route compiled and answered, which is
+        # The serving half. A 3xx counts as serving: the route compiled and answered, which is
         # the whole question — an agent that replaced the root with a redirect built something.
         #
         # ASK WHY BEFORE SAYING WHAT. A 4xx here has two very different causes and only one of
@@ -776,8 +720,8 @@ async def _verify_once(
         state = HealthState.INDETERMINATE
         unanswered = Unanswered.BASELINE
     elif baseline is BaselineIdentity.STILL_THE_BASELINE:
-        # R9's content half, and the 2026-08-18 headline. Every server-side check above came back
-        # clean and the citizen is looking at the golden template.
+        # The content half. Every server-side check above came back clean and the citizen is
+        # looking at the golden template.
         state = HealthState.UNHEALTHY
         error = still_the_starter_page_error()
 
@@ -793,9 +737,9 @@ async def _verify_once(
         fatal_client_reports=len(fatal_reports),
         served_status=served.status if served else None,
         baseline=baseline,
-        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT (the 2026-08-02 learning). Structlog is its
-        # home until the counters table lands with the operational surface; a reader asking "but
-        # what was it actually serving?" must not have to reproduce the run to find out.
+        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT. It also reaches
+        # the harness counters, which record `served_head` from this same verdict; a reader asking
+        # "but what was it actually serving?" must not have to reproduce the run to find out.
         served_head=served.head if served else None,
     )
     preview_url = handle.preview_url if dev_ready else None

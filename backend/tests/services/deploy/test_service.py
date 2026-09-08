@@ -1,15 +1,14 @@
 """The deploy pipeline, end to end against fakes.
 
-No Azure, no registry, no sandbox. What is under test is the ORDER and the OUTCOMES: that a
-successful deploy leaves a settled row with a URL and tells the citizen, that each distinct
-failure leaves a distinct code and a sentence they can act on, and — the one that would be
-expensive to get wrong — that a failed deploy never claims success.
+No Azure, no registry, no sandbox. Under test is the ORDER and the OUTCOMES: a successful
+deploy leaves a settled row with a URL and tells the citizen, each failure leaves a distinct
+code and an actionable sentence, and — the one that would be expensive to get wrong — a failed
+deploy never claims success.
 
-The sandbox assertions are the sharpest tests here. The pipeline must never provision or
-restore one: `restore_from_snapshot` tears a container down BEFORE it pulls the bundle, and
-a confirmed-absent snapshot falls through to a blank golden template that would build
-cleanly, deploy successfully, and replace the citizen's app with the starter — with a green
-checkmark on it.
+The sandbox assertions are the sharpest here: the pipeline must never provision or restore one.
+`restore_from_snapshot` tears a container down before pulling the bundle, so a confirmed-absent
+snapshot falling through to a blank golden template would build, deploy, and replace the
+citizen's app with the starter — silently, behind a green checkmark.
 """
 
 from __future__ import annotations
@@ -87,14 +86,12 @@ class FakeImages:
 class ScriptedReviewer:
     """The review runner's two verbs, over the REAL review store.
 
-    No model and no detached task — the run settles inside `start` — but everything the
-    pipeline then reads is a genuine row written through `classification/store`, in U6's
-    document shape. A reviewer that simply handed back a dataclass would green the
-    re-check while proving nothing about how a stored review is read.
+    No model, no detached task — the run settles inside `start` — but every row read back is
+    written through `classification/store`, in its real document shape, so a reviewer that just
+    returned a dataclass would prove nothing about how a stored review is actually read.
 
-    It records what it was ASKED, which is where two of U10's obligations are pinned: the
-    root it was handed (the pipeline's own extraction, never a second download) and the
-    deployment's step at that moment (the re-check has a phase of its own)."""
+    Records what it was ASKED: the extraction root it was handed, and the deployment's step at
+    that moment (the re-check runs under its own phase)."""
 
     def __init__(self) -> None:
         self.verdicts: dict[str, Any] | None = None
@@ -138,7 +135,8 @@ class ScriptedReviewer:
 
 
 def review_doc(**by_key: str) -> dict[str, Any]:
-    """A stored verdicts document in U6's exact shape, all-No unless told otherwise."""
+    """A stored verdicts document in `classification/store`'s exact shape, all-No unless told
+    otherwise."""
     return {
         "source": "review",
         "questions": {
@@ -366,10 +364,8 @@ async def test_a_deploy_with_no_conversation_still_succeeds(wire, db_session) ->
 
 
 async def test_the_pipeline_never_provisions_or_restores_a_sandbox(wire, db_session) -> None:
-    """`restore_from_snapshot` tears the container down BEFORE it pulls the bundle, and a
-    confirmed-absent snapshot falls through to a blank golden template — which would build,
-    deploy, and replace the citizen's app with the starter under a green checkmark. The
-    pipeline reads the bundle from object storage and leaves the sandbox alone."""
+    """The sandbox danger the module docstring names: the pipeline has no sandbox dependency
+    at all, so neither a provision nor a restore can happen by accident."""
     user, app, _conversation = await _project(db_session)
     await _run(wire, db_session, user, app)
 
@@ -499,13 +495,13 @@ async def test_a_secret_in_a_failure_detail_is_redacted(wire, db_session) -> Non
     assert "hunter2" not in (row.failure_detail or "")
 
 
-# --- U10: the expected commit -----------------------------------------------------
+# --- the expected commit -----------------------------------------------------
 
 
 async def test_a_deploy_whose_tree_is_not_the_examined_commit_fails_closed(
     wire, db_session
 ) -> None:
-    """THE PIN (R12/R13). The gate decided about one commit; a save landed before the
+    """THE PIN. The gate decided about one commit; a save landed before the
     pipeline extracted, so the tree is another. Publishing it would put unexamined code
     behind a decision made about something else — the single thing this feature exists to
     prevent — so it fails closed and nothing is built."""
@@ -546,11 +542,11 @@ async def test_a_publish_with_no_drift_never_asks_for_a_review(wire, db_session)
     assert row.status is DeploymentStatus.SUCCEEDED
 
 
-# --- U10: the drift re-check ------------------------------------------------------
+# --- the drift re-check ------------------------------------------------------
 
 
 async def test_a_re_checked_version_the_review_agrees_with_goes_live(wire, db_session) -> None:
-    """AE5 — the save-and-publish happy path. The new version's review raises nothing the
+    """The save-and-publish happy path. The new version's review raises nothing the
     submitted answers did not already carry, so publishing continues to a live URL."""
     user, app, _conversation = await _project(db_session)
     await _saved_bundle(wire, app)
@@ -565,9 +561,6 @@ async def test_a_re_checked_version_the_review_agrees_with_goes_live(wire, db_se
     )
 
     assert row.status is DeploymentStatus.SUCCEEDED
-    # THE ADDRESS A PERSON IS GIVEN — the public apps host with the app's key in the path, not
-    # the container's own name. BIAL's Container Apps environment is internal and publishes no
-    # public DNS, so a colleague sent `https://pub-….azurecontainerapps.io` cannot resolve it.
     assert row.url == f"https://citizenapps.bialairport.com/a/{published_app_name(app.id)}"
     fresh = await db_session.get(AppRegistry, app.id, populate_existing=True)
     assert fresh.status is AppStatus.DRAFT  # never entered the queue
@@ -625,7 +618,7 @@ async def test_the_re_check_runs_under_a_step_of_its_own(wire, db_session) -> No
 
 
 async def test_a_new_yes_stops_publishing_and_queues_that_exact_version(wire, db_session) -> None:
-    """AE5a — the re-check raises a weighted Yes the submitted answers lacked. Publishing
+    """The re-check raises a weighted Yes the submitted answers lacked. Publishing
     stops, the app is queued at the commit that was examined, and the citizen is told what
     changed in the words they saw on the form."""
     user, app, conversation = await _project(db_session)
@@ -660,8 +653,8 @@ async def test_a_new_yes_stops_publishing_and_queues_that_exact_version(wire, db
 
 
 async def test_the_queued_declaration_carries_the_drift_facts(wire, db_session) -> None:
-    """U13 renders the distinction this block exists for: the citizen's answers — and the
-    explanation R10 compelled — were written about ANOTHER commit, and nobody was at the
+    """The review screen renders the distinction this block exists for: the citizen's answers —
+    and the mandatory explanation — were written about ANOTHER commit, and nobody was at the
     form when this version was examined."""
     user, app, _conversation = await _project(db_session)
     await _saved_bundle(wire, app)
@@ -682,12 +675,11 @@ async def test_the_queued_declaration_carries_the_drift_facts(wire, db_session) 
     assert drift["shipping"] == _HEAD
     assert drift["newlyRaised"] == ["health_data"]
     assert drift["routedBy"] == "pipeline_recheck"
-    # U9's shape is kept whole, and `reviewed` is now the version actually reviewed.
+    # The shape is kept whole, and `reviewed` is now the version actually reviewed.
     assert fresh.declaration["commits"] == {"shipping": _HEAD, "reviewed": _HEAD}
     assert fresh.declaration["merged"]["answers"]["health_data"] is True
     assert fresh.declaration["citizen"]["explanation"] is not None
-    # U13's plain-language reasons come from THIS re-check, about the version actually
-    # queued — and the row they were read from is overwritten by the citizen's very next
+    # From THIS re-check: the row they're read from is overwritten by the citizen's next
     # save, so the admin screen has no other correct source for them.
     assert fresh.declaration["review"]["reasons"]["health_data"] == (
         "Plain-language reason for health_data."
@@ -695,7 +687,7 @@ async def test_the_queued_declaration_carries_the_drift_facts(wire, db_session) 
 
 
 async def test_the_pipeline_records_its_own_gate_decision(wire, db_session) -> None:
-    """R22 — every gate decision is on record, including the ones made minutes after the
+    """Every gate decision is on record, including the ones made minutes after the
     request that started them, under the same action and the same actor."""
     user, app, _conversation = await _project(db_session)
     await _saved_bundle(wire, app)
@@ -722,18 +714,10 @@ async def test_the_pipeline_records_its_own_gate_decision(wire, db_session) -> N
 async def test_a_review_that_clears_a_yes_the_citizen_declared_still_routes(
     wire, db_session
 ) -> None:
-    """A review No does NOT clear a citizen Yes — it never has anywhere else in this
-    feature, and this branch is no exception.
-
-    THIS TEST ASSERTED THE OPPOSITE UNTIL THE BYPASS WAS FOUND, on the plan's U10 scenario
-    "the new version's review clears a Yes the citizen declared — publishing continues".
-    That scenario contradicts two things the plan itself fixes harder: its own merge table,
-    where citizen Yes + review No merges to Yes with `citizen_yes_over_review_no` recorded
-    (a review can never talk a citizen out of their own declaration — ASM17: the merge only
-    ever ADDS routing), and ladder rule 6, which this branch stands in for. Publishing here
-    would mean a weighted Yes reached a live URL with no administrator, which is the whole
-    thing the feature exists to prevent. So it routes, and the disagreement travels with
-    it for the administrator to rule on."""
+    """A review No does not clear a citizen Yes: the merge table only ever ADDS routing —
+    citizen Yes + review No merges to Yes, recorded as `citizen_yes_over_review_no` — and
+    this branch stands in for ladder rule 6. Publishing here would put a weighted Yes on a
+    live URL with no administrator, so it routes and the disagreement travels with it."""
     user, app, conversation = await _project(db_session)
     await _saved_bundle(wire, app)
     wire.reviewer.verdicts = review_doc()  # the review now says No to everything
@@ -772,7 +756,7 @@ async def test_a_review_that_clears_a_yes_the_citizen_declared_still_routes(
 
 
 async def test_a_failed_re_check_routes_rather_than_publishing(wire, db_session) -> None:
-    """R20's rule 4, standing on the far side of the 202: no genuinely-complete review for
+    """Ladder rule 4, standing on the far side of the 202: no genuinely-complete review for
     this version is exactly the "unavailable" state the gate routes on. Letting it publish
     because a failed review names no categories would make failure the cheapest way
     through the gate."""

@@ -1,12 +1,10 @@
-"""Projects HTTP endpoints — user-scoped CRUD for the parent container (R1, R3, R5–R7).
+"""Projects HTTP endpoints — user-scoped CRUD for the parent container.
 
-A project is the home a citizen developer builds one tool inside (KD-4). Identity is always
-the authenticated caller; every query is scoped by `user_id` (a dropped predicate is a
-cross-user leak — a cross-user id is a 404, never a leak, ADR-0004). List is keyset-paginated
-+ searchable (KD-1); delete cascades through the blob-aware, rollback-safe U6 service (KD-3).
+A project is the home a citizen developer builds one tool inside. Delete cascades through the
+blob-aware, rollback-safe project-delete service.
 
 Errors use the ported `{"error": {"message": ...}}` shape (`AppApiError`), documented with
-the shared `error_responses(...)` + `AUTH_401` builders (KD-7).
+the shared `error_responses(...)` + `AUTH_401` builders.
 """
 
 from __future__ import annotations
@@ -96,14 +94,12 @@ StorageDep = Annotated[ObjectStorage, Depends(storage_dependency)]
 
 def container_store_dependency() -> AppContainerStore | None:
     """The per-app container store for the cascade container sweep, or `None` when object storage
-    is unconfigured (dev/test). Deliberately NOT mirroring `storage_dependency` (which raises via
-    `get_storage()`): the sweep is None-tolerant so a delete still succeeds with storage off
-    (KTD-2); in prod `_require_storage_in_production` guarantees a store. A dependency (not a bare
-    call) so tests swap a fake via `dependency_overrides`."""
+    is unconfigured (dev/test) — `| None` unlike `StorageDep`, so the delete still succeeds with
+    the container sweep skipped. A dependency rather than a bare `get_app_container_store()` call
+    so tests can swap a fake through `dependency_overrides`."""
     return get_app_container_store()
 
 
-# `| None`-tolerant, unlike StorageDep — the container sweep no-ops when storage is disabled.
 ContainerStoreDep = Annotated[AppContainerStore | None, Depends(container_store_dependency)]
 
 
@@ -139,9 +135,9 @@ def _to_response(
 async def _project_app(
     db: DbSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> tuple[uuid.UUID | None, AppStatus | None]:
-    """The project's ONE app's (id, status) — read-only discovery for the response
-    (one app per project, KD-4) — or (None, None) for a fresh project. Owner-scoped
-    like every query (ADR-0004)."""
+    """The project's ONE app's (id, status) — read-only discovery for the response (one app
+    per project, which is what makes `.one_or_none()` safe) — or (None, None) for a fresh
+    project."""
     row = (
         await db.execute(
             sa.select(AppRegistry.id, AppRegistry.status).where(
@@ -156,12 +152,11 @@ async def _serving_now(db: DbSession, app_id: uuid.UUID | None) -> bool:
     """Is this ONE app live right now?
 
     The single-row form of the list's collapse, reading the SAME `live_app_ids` definition
-    rather than re-deriving it — the drift `liveness.py` exists to prevent is not only
-    between surfaces, it is between the list and the detail view of the same project.
-
-    `None` means the project has no app at all, which is a confirmed False rather than an
-    unknown: nothing can be serving.
-    """
+    rather than re-deriving it. `None` means the project has no app at all, which is a
+    confirmed False rather than an unknown: nothing can be serving."""
+    # Re-deriving liveness here instead of reading the shared collapse is the drift
+    # `liveness.py` exists to prevent — not only between surfaces, but between the list and
+    # the detail view of the same project.
     if app_id is None:
         return False
     live = live_app_ids().subquery()
@@ -170,21 +165,19 @@ async def _serving_now(db: DbSession, app_id: uuid.UUID | None) -> bool:
 
 @router.post("", status_code=status.HTTP_201_CREATED, responses=error_responses(AUTH_401))
 async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) -> ProjectResponse:
-    """Create a project owned by the caller, then provision its own database (ADR-0028).
+    """Create a project owned by the caller, then provision its own database.
 
-    `name` is stripped/bounded and an empty/whitespace `description` is normalized to NULL
-    at the schema boundary (KD-8).
-
-    The provision runs AFTER the commit and is BEST-EFFORT, both deliberately.
-    After, because `ensure_project_database` commits its own claim and its own terminal
-    marker — running it first would commit this request's half-built transaction.
-    Best-effort, because a substrate hiccup must never strand or 500 a project the user
-    already owns: the response is a normal 201 and the next build's lazy ensure
-    (`provision_app_database`) re-runs the idempotent sequence.
-
-    The app row is NOT minted here — it stays lazily created at first build, so a fresh
-    project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
-    """
+    `name` is stripped/bounded and an empty/whitespace `description` is normalized to NULL at
+    the schema boundary. The database provision is best-effort: a substrate hiccup still
+    answers a normal 201, and the project is usable."""
+    # The app row is NOT minted here — it stays lazily created at first build, so a fresh
+    # project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
+    #
+    # The provision runs AFTER the commit and is BEST-EFFORT, both deliberately. After,
+    # because `ensure_project_database` commits its own claim and its own terminal marker —
+    # running it first would commit this request's half-built transaction. Best-effort,
+    # because a substrate hiccup must never strand or 500 a project the user already owns:
+    # the next build's lazy ensure (`provision_app_database`) re-runs the idempotent sequence.
     project = Project(user_id=user.id, name=body.name, description=body.description)
     db.add(project)
     await db.flush()
@@ -199,19 +192,17 @@ async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) 
 
 
 async def _provision_database_or_shrug(db: DbSession, project_id: uuid.UUID) -> None:
-    """Provision the project's database; on failure log and carry on (never 500).
-
-    Resolved lazily INSIDE the body rather than through a `Depends`, so an unconfigured or
-    unreachable substrate can never turn create-project into a dependency-solve 500
-    (commit 6be7a9c closed exactly that class of bug).
-
-    Only the exception TYPE is logged, never its message: a failing `CREATE ROLE` surfaces
-    as a SQLAlchemy `DBAPIError` whose string carries the offending `[SQL: ...]` — which
-    for that one statement contains the role's password literal.
-    """
+    """Provision the project's database; on failure log and carry on (never 500)."""
+    # Resolved inside the body rather than through a `Depends`, which would be solved before
+    # this route's first statement: an unconfigured or unreachable substrate would then 500 a
+    # create that in fact succeeded.
+    #
+    # Only the exception TYPE is logged, never its message: a failing `CREATE ROLE` surfaces
+    # as a SQLAlchemy `DBAPIError` whose string carries the offending `[SQL: ...]` — which
+    # for that one statement contains the role's password literal.
     try:
         await ensure_project_database(db, project_id)
-    except Exception as exc:  # noqa: BLE001 — degraded state, not a failed create (R4)
+    except Exception as exc:  # noqa: BLE001 — degraded state, not a failed create
         logger.warning(
             "project_database_provision_failed",
             project_id=str(project_id),
@@ -234,46 +225,41 @@ async def list_projects(
     q: SearchQuery = None,
 ) -> ProjectListResponse:
     """One NUMBERED page of the caller's projects, newest-first, optionally filtered by a
-    case-insensitive name/description substring (R6).
+    case-insensitive name/description substring.
 
-    IT PAGES BY OFFSET, and `pagination.py` says the platform does not. #158 §2 specifies
-    numbered pages and a rows-per-page selector — `Showing 1-8 of 12`, `Page 1 of 2` — and
-    neither is expressible without a `total`, which keyset deliberately does not provide.
-
-    THE MARKETPLACE'S ARGUMENT DOES NOT TRANSFER, and reaching for it would be the quiet
-    kind of wrong. That one reads: "KD-1's keyset rule protects a list you are writing to,
-    this catalog is read-only and small". This list is written to — `create` and `delete`
-    both act on it, and under `ORDER BY id DESC` a new project lands at position 0, which is
-    the worst case for OFFSET rather than a benign one.
-
-    What makes it acceptable here is different and narrower: the list is OWNER-SCOPED and
-    effectively SINGLE-WRITER. Every row is `WHERE user_id = :me`, and the only person who
-    inserts or deletes rows in it is the person reading it. So the skew KD-1 guards against
-    — a busy shared table shifting under a stranger's page walk — is here a citizen with two
-    tabs open, creating a project in one while paging in the other. That is a real window
-    and it is bounded by one person's own actions, which is a different risk from the one
-    the rule was written for.
-
-    `total` is a SEPARATE READ from the page under READ COMMITTED, not one snapshot, so a
-    create landing between them can make the count and the rows disagree for one render.
-    The client is expected to say something true when they do, rather than assert either
-    number over the other.
-
-    A page past the end returns an empty `items` with the real `total`, not a 404: paging
-    past the end while a project is deleted elsewhere is ordinary, not an error.
-    """
+    `total` is read separately from the page, so a create landing between the two reads can
+    make the count and the rows disagree for one render; say something true when they do
+    rather than asserting either number. A page past the end is an empty `items` with the
+    real `total`, not a 404."""
+    # IT PAGES BY OFFSET, and `pagination.py` says the platform does not. Numbered pages and
+    # a rows-per-page selector — `Showing 1-8 of 12`, `Page 1 of 2` — are the product
+    # requirement, and neither is expressible without a `total`, which keyset does not provide.
+    #
+    # THE MARKETPLACE'S ARGUMENT DOES NOT TRANSFER, and reaching for it would be the quiet kind
+    # of wrong. That one reads: "the keyset rule protects a list you are writing to, this
+    # catalog is read-only and small". This list IS written to — create and delete both act on
+    # it, and under `ORDER BY id DESC` a new project lands at position 0, the worst case for
+    # OFFSET rather than a benign one.
+    #
+    # What makes OFFSET acceptable here is narrower: the list is OWNER-SCOPED and effectively
+    # SINGLE-WRITER. Every row is `WHERE user_id = :me`, and the only person inserting or
+    # deleting rows in it is the person reading it. The skew the keyset rule guards against — a
+    # busy shared table shifting under a stranger's page walk — is here one citizen with two
+    # tabs open. A real window, but bounded by one person's own actions.
+    #
+    # The `total`/page split is under READ COMMITTED, two reads and not one snapshot.
     page = clean_page(page)
     search = clean_search(q)
     limit = clean_limit(limit)
     # LEFT-JOIN the project's ONE app (uq_app_registry_project) so the page carries the
     # read-only appId/appStatus discovery without an N+1; the outer join keeps app-less
-    # projects, and the app side carries its own owner scope (ADR-0004).
+    # projects listed.
     # ONE JOIN, not one request per row. The status column needs to know whether each app is
     # SERVING, and "live = deployed / published, with a url" is a deployment fact rather than
-    # a lifecycle one (#158). `PublishStatusChip` gets it from `getDeployment(projectId)`,
+    # a lifecycle one. `PublishStatusChip` gets it from `getDeployment(projectId)`,
     # which is fine for one project page and is an N-way fan-out on a list — so the list
     # reads the same definition set-wise instead, via the shared `live_app_ids` collapse.
-    # SCOPED to this owner, and the scoping happens INSIDE the collapse (round-4 fix): an
+    # SCOPED to this owner, and the scoping happens INSIDE the collapse: an
     # unscoped `live_app_ids()` filtered afterward by `user.id` still evaluates the
     # `DISTINCT ON` over every deployment row the PLATFORM has, because the join here cannot
     # tell the collapse to narrow first. Measured at 25,245 apps / 112,045 deployments as a
@@ -299,7 +285,7 @@ async def list_projects(
         )
     # THE COUNT DOES NOT NEED EITHER JOIN, and carrying them was the other half of the same
     # cost: neither can change how many rows match. `AppRegistry.project_id` is unique
-    # (`uq_app_registry_project`, KD-4 — one app per project), and `live.c.app_id` is unique
+    # (`uq_app_registry_project` — one app per project), and `live.c.app_id` is unique
     # per collapse, so a project row survives an outer join to either exactly once. The count
     # runs over the SAME predicate as the page (owner + search), just without the columns
     # that predicate does not need — a total computed over a different predicate is the
@@ -332,22 +318,20 @@ async def list_projects(
 
 @router.get("/counts", responses=error_responses(AUTH_401))
 async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsResponse:
-    """The three numbers above the project list (#158 §1).
+    """The three numbers above the project list.
 
-    DECLARED BEFORE `/{project_id}`, and that ordering is load-bearing: FastAPI matches in
-    declaration order, so a `/counts` registered after the parameterised route would be
-    swallowed by it and answer 422 on a UUID parse instead.
-
-    Owner-scoped like every route here (ADR-0004) — these are the citizen's own projects,
-    unlike `/admin/apps/counts`, which counts across owners.
-
-    Three aggregates over one owner's rows, no row projection and no per-app probing. The
-    liveness half reads the SHARED `live_app_ids` collapse, which is the whole reason this
-    is not three ad-hoc queries: the list's status column reads the same definition, so
-    "3 in production" above a list showing two live apps is not expressible.
-    """
-    # SCOPED to this owner inside the collapse — see `live_app_ids`'s docstring and
-    # `list_projects`'s identical fix; this route had the same unscoped-collapse cost.
+    These are the citizen's OWN projects; `/admin/apps/counts` is the across-owners count, so
+    the two answer different questions and are not each other's cross-check."""
+    # DECLARED BEFORE `/{project_id}`, and that ordering is load-bearing: FastAPI matches in
+    # declaration order, so a `/counts` registered after the parameterised route would be
+    # swallowed by it and answer 422 on a UUID parse instead.
+    #
+    # Three aggregates over one owner's rows, no row projection and no per-app probing. The
+    # liveness half reads the SHARED `live_app_ids` collapse, which is the whole reason this is
+    # not three ad-hoc queries: the list's status column reads the same definition, so
+    # "3 in production" above a list showing two live apps is not expressible.
+    # SCOPED to this owner inside the collapse, for the same reason as `list_projects` — see
+    # `live_app_ids`'s docstring.
     live = live_app_ids(owner_user_id=user.id).subquery()
 
     # PROJECTS, not `app_registry` rows. The product calls a project an application — the
@@ -390,11 +374,11 @@ async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsRespo
 async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -> ProjectResponse:
     project = await owned_project_or_404(db, user.id, project_id)
     app_id, app_status = await _project_app(db, user.id, project.id)
-    # N7 — the ONE surface that offers Relaunch, so the one that pays for the head-check.
+    # This is the ONE surface that offers Relaunch, so the one that pays for the head-check.
     # No app row means no bundle can exist, and that is a CONFIRMED absent rather than an
     # unknown: skipping the store call here is an answer, not an omission.
     #
-    # `restorable_presence`, NOT `snapshot_presence` (R18): the saved bundle alone missed the
+    # `restorable_presence`, NOT `snapshot_presence`: the saved bundle alone missed the
     # builder who worked for an hour and never pressed Save, and told them their project had
     # nothing to restore while the platform sat on their entire workspace. This is also the
     # exact predicate `preview-state` answers with, so a cold page load and the 45-second poll
@@ -438,9 +422,9 @@ async def patch_project(
     return _to_response(project, app_id, app_status, is_serving=await _serving_now(db, app_id))
 
 
-# Names the LIVE SESSION as the reason and the action that clears it (R9/D4: refuse, never
+# Names the LIVE SESSION as the reason and the action that clears it: refuse, never
 # force — forcing would destroy every file change since the last snapshot, and snapshots are
-# written only at finalize, so the user would get no signal their work was unsaved).
+# written only at finalize, so the user would get no signal their work was unsaved.
 _BUILD_LIVE_DELETE_MSG = (
     "A build session is still running for this project — end it before deleting."
 )
@@ -516,21 +500,21 @@ async def _reap_the_project_sandbox_or_shrug(
     user_id: uuid.UUID,
     app_id: uuid.UUID | None,
 ) -> str | None:
-    """Take the deleted project's sandbox container down with it (#184). NEVER RAISES.
+    """Take the deleted project's sandbox container down with it. NEVER RAISES.
 
     Returns the name of a container that is STILL STANDING, or `None` when nothing of this
-    project's is left running — which the caller turns into the teardown record (U22). A skip
+    project's is left running — which the caller turns into the teardown record. A skip
     that leaves nothing behind (no app, no sandbox configured, a registry naming somebody
     else's container) returns `None`, because nothing survived: only a real leak is reported.
 
     Post-commit and best-effort, like every other sweep on this path: the rows are already
     gone, so anything that fails here leaves a RUNNING CONTAINER for a human to kill, never a
-    500 on a delete that in fact succeeded. It used to say "a logged orphan for the scheduled
-    sweep"; there is no scheduled sweep that will take this one. `sweep_all` runs on a timer,
-    but `may_destroy_on_this_control_plane` gates the destroy half on `environment ==
-    "production"`, and no other reconciler on this path is on a timer at all — the storage and
-    database ones are operator-invoked (and the database one deletes nothing), and the
-    reclamation janitor's destroy flag is off everywhere. Hence the alarm, and hence the record.
+    500 on a delete that in fact succeeded. There is no scheduled sweep that will take this
+    one: `sweep_all` runs on a timer, but `may_destroy_on_this_control_plane` gates the destroy
+    half on `environment == "production"`, and no other reconciler on this path is on a timer
+    at all — the storage and database ones are operator-invoked (and the database one deletes
+    nothing), and the reclamation janitor's destroy flag is off everywhere. Hence the alarm,
+    and hence the record.
     `reap_user` guards only `SandboxError` around the teardown — its Redis calls are bare by
     module policy — so the explicit `except Exception` below is the mechanism, not the
     intention (it mirrors `salt_the_earth`'s own posture).
@@ -573,9 +557,7 @@ async def _reap_the_project_sandbox_or_shrug(
         # `SandboxNotConfiguredError` before the route body, where no `except` of the route's
         # can reach it, so it would 500 every delete on a sandbox-off deployment — including
         # the whole test suite, whose `.env.test` carries no `SANDBOX__*`. Sandbox-off means
-        # nothing was ever running, so the skip is also the right answer. See
-        # `docs/solutions/design-patterns/
-        # eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`.
+        # nothing was ever running, so the skip is also the right answer.
         logger.info(
             "project_delete_sandbox_reap_skipped_unconfigured",
             app_id=str(app_id),
@@ -615,10 +597,9 @@ async def _reap_the_project_sandbox_or_shrug(
                 return None
             # THE CONTAINER IS STILL UP AND STILL BILLING, and outside production nothing will
             # come for it — `may_destroy_on_this_control_plane` gates the scheduled reap on
-            # `environment == "production"`. This line used to say "the scheduled sweep
-            # reclaims this container", which was true of exactly one environment and read as
-            # true of all of them. An UNREADABLE registry lands here too, deliberately: not
-            # knowing is not the same as knowing there is nothing.
+            # `environment == "production"`, so only that one environment ever reclaims it. An
+            # UNREADABLE registry lands here too, deliberately: not knowing is not the same as
+            # knowing there is nothing.
             logger.warning(
                 TEARDOWN_ARTEFACT_SURVIVED_EVENT,
                 artefact="sandbox_container",
@@ -690,15 +671,13 @@ async def _reap_the_project_sandbox_or_shrug(
                 return app_name_for(app_id)
         finally:
             lock.release()
-    except Exception:  # noqa: BLE001 — post-commit: an alarm and a record, never a 500 (R3)
+    except Exception:  # noqa: BLE001 — post-commit: an alarm and a record, never a 500
         # SAME QUESTION AS THE TIMEOUT ARM, and for the same reason: a Redis blip on the way in
-        # is not evidence that this project had a container. If the registry can be read now
-        # and does not name ours, nothing of this project's survived and the record must not
-        # say otherwise. Unreadable or ours -> report, which is where an actual failed teardown
-        # lands.
-        # Same rule as the timeout arm, and for the same reason: a Redis blip on the way in is
-        # not evidence about what is standing, and neither is an empty hash while a provision
-        # may be mid-flight. Only another project's name rules ours out.
+        # is not evidence about what is standing, and neither is an empty hash while a provision
+        # may be mid-flight. Only another project's name rules ours out — if the registry can be
+        # read now and names someone else's, nothing of this project's survived and the record
+        # must not say otherwise. Unreadable or ours -> report, which is where an actual failed
+        # teardown lands.
         if await _whose_container_is_registered(user_id, app_id) is _WhoseContainer.SOMEONE_ELSES:
             logger.info(
                 "project_delete_sandbox_reap_skipped_not_ours",
@@ -742,53 +721,55 @@ async def delete_project(
 ) -> OkResponse:
     """Cascade-delete the project and every child it owns.
 
-    IT TAKES A BODY, which is unusual for DELETE and worth naming. #158 §13.2 requires the
-    person deleting to state WHY, in 5-50 words, and a 50-word reason does not belong in a
-    query string. RFC 9110 says content on a DELETE has no defined semantics, and httpx
-    declines to offer `json=` on `.delete()` for that reason — tests use `.request("DELETE",
-    ...)`. nginx and the container ingress both forward the body, and the portal is the only
-    client, so this is safe here; it is recorded rather than assumed. The alternative, a
-    `POST /{id}/delete` matching `disable`/`unpublish`, is a bigger contract change than
-    adding a required field to the route that already exists. Rows are deleted inside the
-    transaction and committed; object-store blobs AND each app's per-app Blob container are swept
-    only AFTER commit, best-effort, so a rolled-back delete never destroys a blob/container a
-    restored row still points at (KD-3). The two sweeps hit two different stores (KTD-7).
-
-    The submissions prefixes are re-enumerated AFTER the commit and folded into the sweep list
-    (R8/R12), so a bundle written between the cascade's pre-commit gather and the commit is
-    still swept instead of surviving under an app id whose row is gone. The narrower residual —
-    a write landing after that re-walk — is NOT closed here; see `delete_project_cascade`.
-
-    A live build session for THIS project's app refuses the delete (409, R9) rather than
-    racing it. The guard is app-scoped, so a build in one project never blocks the delete of
-    another. It does NOT cover a relaunched preview, which holds no lock by design — and that
-    is what the post-commit sandbox reap is for (#184, `_reap_the_project_sandbox_or_shrug`):
-    once the rows are committed, the registry is asked whether it still names THIS project's
-    container and, if it does, `reap_user` takes it down. Before it, a citizen who deleted a
-    project they had just previewed left the container running at roughly $2.60/day until
-    they next built something.
-
-    THE FORCE-DROP IS STILL THE GUARANTEE, and the reap does not demote it. The reap is
-    best-effort and skippable by design — an unconfigured sandbox, a busy start lock or a
-    Redis blip all leave the container standing, and outside production nothing automatic
-    takes it down (the scheduled reap's destroy half is production-only) — and a DEPLOYED or
-    published container was never in the sandbox registry to be found at all. So the project's
-    own database is torn down with `salt_the_earth` (sever, then `DROP DATABASE ... WITH
-    (FORCE)`) exactly as before: whatever is still holding live connections at delete time,
-    the force-drop is what guarantees it stops reading. It runs post-commit and never raises:
-    the rows are already gone, so a failed drop is a leak a HUMAN has to clear — the
-    per-project-database reconciler is operator-invoked and report-only, so nothing collects
-    it on its own — never a 500 on a delete that in fact succeeded.
-
-    WHAT SURVIVED IS ON THE RECORD (U22/R7). Each post-commit arm reports what it could not
-    destroy; anything left standing raises `TEARDOWN_ARTEFACT_SURVIVED_EVENT` and lands, once,
-    in a `project:teardown-incomplete` audit row naming every surviving artefact. The CITIZEN
-    is not told, deliberately: for them a delete is done when the code, the files and the
-    database are gone, and this platform has no notification path to promise an operator has
-    been alerted. The response is `{"ok": true}` either way."""
+    Requires a body stating WHY, in 5-50 words, which is recorded as a tombstone. Rows are
+    deleted inside the transaction and committed; object-store blobs, each app's per-app Blob
+    container, and the project's own PostgreSQL database are torn down only AFTER the commit,
+    best-effort. A live build session for THIS project's app refuses the delete with 409
+    rather than racing it."""
+    # IT TAKES A BODY, which is unusual for DELETE and worth naming. A 50-word reason does not
+    # belong in a query string. RFC 9110 says content on a DELETE has no defined semantics, and
+    # httpx declines to offer `json=` on `.delete()` for that reason — tests use
+    # `.request("DELETE", ...)`. nginx and the container ingress both forward the body, and the
+    # portal is the only client, so this is safe here; it is recorded rather than assumed. The
+    # alternative, a `POST /{id}/delete` matching `disable`/`unpublish`, is a bigger contract
+    # change than adding a required field to the route that already exists.
+    #
+    # Post-commit sweeping is what makes a rolled-back delete safe: it never destroys a
+    # blob/container a restored row still points at. The two sweeps hit two different stores.
+    # The submissions prefixes are re-enumerated AFTER the commit and folded into the sweep
+    # list, so a bundle written between the cascade's pre-commit gather and the commit is still
+    # swept instead of surviving under an app id whose row is gone. The narrower residual — a
+    # write landing after that re-walk — is NOT closed here; see `delete_project_cascade`.
+    #
+    # The 409 guard is app-scoped, so a build in one project never blocks the delete of
+    # another. It does NOT cover a relaunched preview, which holds no lock by design — and
+    # that is what the post-commit sandbox reap is for (`_reap_the_project_sandbox_or_shrug`):
+    # once the rows are committed, the registry is asked whether it still names THIS project's
+    # container and, if it does, `reap_user` takes it down. Before it, a citizen who deleted a
+    # project they had just previewed left the container running at roughly $2.60/day until
+    # they next built something.
+    #
+    # THE FORCE-DROP IS STILL THE GUARANTEE, and the reap does not demote it. The reap is
+    # best-effort and skippable by design — an unconfigured sandbox, a busy start lock or a
+    # Redis blip all leave the container standing, and outside production nothing automatic
+    # takes it down (the scheduled reap's destroy half is production-only) — and a DEPLOYED or
+    # published container was never in the sandbox registry to be found at all. So the
+    # project's own database is torn down with `salt_the_earth` (sever, then `DROP DATABASE
+    # ... WITH (FORCE)`) exactly as before: whatever is still holding live connections at
+    # delete time, the force-drop is what guarantees it stops reading. It runs post-commit and
+    # never raises: the rows are already gone, so a failed drop is a leak a human has to
+    # clear — the per-project-database reconciler is operator-invoked and report-only, so
+    # nothing collects it on its own — never a 500 on a delete that in fact succeeded.
+    #
+    # WHAT SURVIVED IS ON THE RECORD. Each post-commit arm reports what it could not destroy;
+    # anything left standing raises `TEARDOWN_ARTEFACT_SURVIVED_EVENT` and lands, once, in a
+    # `project:teardown-incomplete` audit row naming every surviving artefact. The citizen is
+    # not told, deliberately: for them a delete is done when the code, the files and the
+    # database are gone, and this platform has no notification path to promise an operator has
+    # been alerted. The response is `{"ok": true}` either way.
     project = await owned_project_or_404(db, user.id, project_id)
-    # READ FIRST, BEFORE ANYTHING ELSE IN THIS FUNCTION RUNS (#184). This is the only copy of
-    # the description that will exist after the cascade: it lives on the `projects` row
+    # READ FIRST, BEFORE ANYTHING ELSE IN THIS FUNCTION RUNS. This is the only copy of the
+    # description that will exist after the cascade: it lives on the `projects` row
     # `delete_project_cascade` deletes, and `description_tsv` is a lossy `to_tsvector` of it
     # rather than a second copy. The tombstone insert below is only PENDING until the
     # cascade's autoflush, so binding the value into a local HERE — rather than reaching for
@@ -800,7 +781,7 @@ async def delete_project(
     # defaults also make; see there for why that asymmetry is deliberate and why none of the
     # three is load-bearing alone.
     doomed_description = project.description or ""
-    # THE TOMBSTONE, written before the cascade removes what it describes (#158 §13.3).
+    # THE TOMBSTONE, written before the cascade removes what it describes.
     # Inside the caller's transaction, so a rolled-back delete leaves no record of a
     # deletion that did not happen — and a committed one always has its reason.
     #
@@ -820,9 +801,9 @@ async def delete_project(
         )
         or 0
     )
-    # R9: refuse while this project's app is being built. Owner-scoped discovery (ADR-0004);
-    # a project with no app row can have no build session, so the guard is skipped rather
-    # than fired — an app-less project must not inherit another project's live build.
+    # Refuse while this project's app is being built. A project with no app row can have no
+    # build session, so the guard is skipped rather than fired — an app-less project must not
+    # inherit another project's live build.
     app_id, _app_status = await _project_app(db, user.id, project.id)
     if app_id is not None:
         await refuse_while_build_session_live(
@@ -830,7 +811,7 @@ async def delete_project(
         )
     # The database handles, as plain scalars, BEFORE the cascade: deleting the project
     # cascades its `project_databases` row away, so post-commit there is nothing left to
-    # read them from — the same reason `app_container_ids` are plain UUIDs (KD-8).
+    # read them from — the same reason `app_container_ids` are plain UUIDs.
     handles = await teardown_handles(db, project.id)
     # Captured before the cascade, for the same reason as the chat count: `handles` is read
     # from a row the cascade deletes.
@@ -873,7 +854,7 @@ async def delete_project(
             resource_id=str(project_id),
         )
         if handles is not None:
-            # NAMES only (D11) — never the DSN. `appId` is what makes this project-scoped
+            # NAMES only — never the DSN. `appId` is what makes this project-scoped
             # row visible in the app's audit drawer (`admin.read_audit` matches on it); an
             # app-less project simply has no app to file it under.
             detail: dict[str, str] = {"dbName": handles.db_name, "roleName": handles.role_name}
@@ -920,7 +901,7 @@ async def delete_project(
             survivors.append(("app_database", handles.db_name))
     # Post-commit, pre-sweep: re-walk the submission prefixes so the sweep list reflects the
     # store as it is NOW. `app_container_ids` are plain UUIDs captured pre-commit, so reading
-    # them here triggers no `expire_on_commit` lazy I/O (KD-8). Dedup preserves order and keeps
+    # them here triggers no `expire_on_commit` lazy I/O. Dedup preserves order and keeps
     # the pre-commit list in play even if the re-walk fails (it logs rather than raising).
     resweep = await resweep_submission_prefixes(storage, cleanup.app_container_ids)
     survivors.extend(
@@ -950,7 +931,7 @@ async def delete_project(
     )
     # ...and the image the published container was built from. Deleting a project must not
     # leave the citizen's compiled source sitting in the registry under a name nothing in the
-    # database points at any more (#184, R1/R6). Derived, never stored — see `registry_delete`.
+    # database points at any more. Derived, never stored — see `registry_delete`.
     #
     # ONLY THE APPS THAT COULD HAVE ONE, captured pre-commit by the cascade: a registry that
     # refuses the delete credential answers 401/403 for every id it is handed, so sweeping apps
@@ -976,13 +957,13 @@ async def delete_project(
 
 # THE DESCRIPTION GENERATOR'S ONLY PER-USER SPEND BOUND, and the reason it needs one:
 # what this route spends is deliberately recorded under `review` and never counted back
-# into the citizen's daily budget (R14) — the platform's reasoning about their code is
+# into the citizen's daily budget — the platform's reasoning about their code is
 # not theirs to pay for. That exemption travelled here from the classification review;
 # the BOUND that made it safe there did not. Without one, `enforce_daily_limit` admits
 # call N for every N, and each call ships up to 600,000 characters of app source to the
 # premium deployment — from a citizen who may have already exhausted their build budget.
 #
-# Six in a quarter of an hour is far more than revising a description ever needs (R19's
+# Six in a quarter of an hour is far more than revising a description ever needs (the
 # revise loop is a person reading a paragraph and pressing again), and the refusal costs
 # nothing that cannot be retried: the description that exists stays, and the button works
 # again shortly.
@@ -1034,12 +1015,12 @@ _DESCRIPTION_RATE_MESSAGE = (
 async def generate_description(
     project_id: uuid.UUID, user: CurrentUser, db: DbSession, model: ModelDep
 ) -> ProjectResponse | JSONResponse:
-    """Generate (or revise) the project description from its app's code (KD-5). Reads the
-    project's ONE app's `current_code` (KD-4/9); a fresh project (no app / NULL code) is a
+    """Generate (or revise) the project description from its app's code. Reads the
+    project's ONE app's `current_code`; a fresh project (no app / NULL code) is a
     409 "nothing to generate from yet". A citizen already at their daily limit is refused
-    here, but what this generates does not itself come out of that limit (R14); if a
-    description already exists it is fed in so generation revises it (R19). The result is
-    length-capped (KD-8) and stored on the project."""
+    here, but what this generates does not itself come out of that limit; if a
+    description already exists it is fed in so generation revises it. The result is
+    length-capped and stored on the project."""
     project = await owned_project_or_404(db, user.id, project_id)
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
@@ -1058,7 +1039,7 @@ async def generate_description(
     # GATED LIKE A NORMAL TURN, BILLED UNLIKE ONE. The check runs BEFORE the model call and
     # answers with the 5-key 429 body, so someone out of budget is told the same thing here as
     # anywhere else. What this turn then spends is recorded under `review` and never counted
-    # back into that budget (R14, `services/projects/describe.py`) — the platform's reasoning
+    # back into that budget (see `services/projects/describe.py`) — the platform's reasoning
     # about the citizen's code is not the citizen's to pay for.
     try:
         await enforce_daily_limit(db, user.id)

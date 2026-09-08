@@ -1,5 +1,6 @@
-"""In-process rate-limit substrate (R31).
+"""In-process rate-limit substrate.
 
+WHY THIS EXISTS
 A small fixed-window limiter mirroring the Express `express-rate-limit` wiring
 (`portal/server/{feedback,attachments,app-parse}.js`): a per-key request counter
 that resets every window, a 429 whose body matches the ported `{"error":{"message"}}`
@@ -10,16 +11,15 @@ resolves it (and any `current_user` / app id it needs) before the gate body runs
 Store caveat (parity with express-rate-limit's default MemoryStore): the counter
 lives in THIS worker's memory, so the ceiling is PER-REPLICA. Correct under a
 single replica; a multi-replica deployment needs a shared (Redis) store, which is
-deferred until the platform scales out. Redis itself is a live dependency (the C5 sandbox
+deferred until the platform scales out. Redis itself is a live dependency (sandbox
 lock/heartbeat/registry) and is probed at startup and on `/v1/health`. `install_rate_limiting`
 logs this assumption at startup.
 
-This store is ONE OF TWO reasons the App Service replica count cannot be raised, and it is now
-the remaining one: ADR-0029's wall-clock liveness lease (R10) removes the other (an in-process
-`live_users` set that a second replica would be blind to). Raising the replica count is
-follow-up work that has to solve THIS. Corrected 2026-08-11: this paragraph used to disclaim
-"NOT under ADR-0011 — that ADR defers the TASK QUEUE". ADR-0011 is Accepted; the disclaimer's
-point still stands (a task queue would not fix a per-replica counter) but its premise is gone.
+This store is now the SOLE reason the App Service replica count cannot be raised: the other
+reason — an in-process `live_users` set a second replica would be blind to — is already removed
+by the wall-clock liveness lease. Raising the replica count is follow-up work that has to solve
+THIS, and a task queue would not fix it either, since the problem is a per-replica counter, not
+missing background work.
 """
 
 from __future__ import annotations
@@ -141,15 +141,14 @@ async def rate_limit_exception_handler(request: Request, exc: Exception) -> JSON
 
 def install_rate_limiting(app: FastAPI) -> None:
     """Register the 429 handler and log the single-replica assumption at startup.
-    Called once from the app factory; the in-process store is per-worker, so a
-    multi-replica deployment needs a shared store (Redis, deferred)."""
+    Called once from the app factory."""
     app.add_exception_handler(RateLimitExceededError, rate_limit_exception_handler)
     logger.info(
         "rate_limit_store_in_process",
         detail=(
             "In-process rate-limit store: the ceiling is per-replica. A multi-replica "
             "deployment needs a shared (Redis) store — deferred until the platform "
-            "scales out, and now the remaining blocker to doing so (ADR-0029 R10 "
-            "removed the other)."
+            "scales out, and now the LAST thing standing in the way of that — the "
+            "other blocker to scaling out has already been removed."
         ),
     )

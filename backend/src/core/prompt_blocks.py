@@ -1,20 +1,22 @@
+# The assigned string constants here are prompt text the model reads verbatim; the docstrings
+# beneath them describe that text and reach no one. Edit a constant only as prompt content.
 """Shared prompt blocks — the single source the prompt system composes from.
 
 A LEAF module (imports nothing from src.services) by design. It was factored out when there were
-TWO prompt systems — `orchestrator/prompt.py` (BRAIN's standalone build prompt) and
-`services/agent/mode_prompts.py` (the U9 mode segments) — because routing the share through
-either package's `__init__` chain created a real import cycle
+two prompt systems — the standalone build harness's build prompt and
+`services/agent/mode_prompts.py` (the mode segments) — because routing the share through either
+package's `__init__` chain created a real import cycle
 (agent -> mode_prompts -> orchestrator -> ... -> projects -> agent). The standalone build prompt
 was deleted with its harness; `mode_prompts.py` is the one consumer left. Keep this module a leaf
 anyway: the cycle it dodges is still live, and every block here is a wording that must exist
-exactly once. `DATA_INTEGRITY_RULES` is U1's data-safety wording — written once, reused everywhere
+exactly once. `DATA_INTEGRITY_RULES` is the data-safety wording — written once, reused everywhere
 (never copy the text).
 """
 
 from __future__ import annotations
 
-# The golden-template file manifest (C6) — hard-coded so the model never needs a computed repo
-# map (KD-10). Mirrors `sandbox/template/`. Everything is an editable starting point (R19) EXCEPT
+# The golden-template file manifest — hard-coded so the model never needs a computed repo
+# map. Mirrors `sandbox/template/`. Everything is an editable starting point EXCEPT
 # `next.config.ts`, which the platform owns: it carries the app's assigned base path, and an app
 # whose config loses it serves at `/` while the router asks for `/a/<key>/` — a preview that
 # loads a blank page while every automated check still reports healthy. The file itself stays
@@ -73,13 +75,13 @@ finishing each piece to something usable before starting the next.
 As each agreed piece lands, say so through `tell_the_user` and pass that piece's name as \
 `finished`. That is how the closing account knows what is left; without it the platform can \
 only say it could not tell."""
-"""R83–R88 — when to negotiate scope, and when negotiating is itself the failure.
+"""When to negotiate scope, and when negotiating is itself the failure.
 
 THE TRIGGER IS THE AGENT'S JUDGEMENT, DELIBERATELY. "Is this new work arriving in bulk, or a
 question, a fix, or the next round?" is a categorisation, and categorisation is what a model is
 for. The platform does not read the user's message to detect an oversized request — doing so
-would be the anti-pattern this plan names everywhere else, and it would be wrong on the cases
-that matter most.
+would be the same keyword-matching anti-pattern avoided everywhere else, and it would be wrong
+on the cases that matter most.
 
 THERE IS NO CEILING ANY MORE, in this text or in the tool body. A number here decided how much
 of what the model had produced a citizen was allowed to see, and a proposal that named one
@@ -95,7 +97,7 @@ in the same turn. Nothing in code chooses between those; the toolset already did
 
 BUILD_THIS_PLAN_LABEL = "Build this plan"
 KEEP_PLANNING_LABEL = "Keep planning"
-"""The two buttons under a plan, and the ONE spelling of each (R-15, client-approved).
+"""The two buttons under a plan, and the ONE spelling of each (client-approved).
 
 THREE SURFACES MUST CARRY THE IDENTICAL STRINGS: the prompt segment that tells the model what
 the user will see, the offer tool's own description (which the model reads on every request),
@@ -112,11 +114,11 @@ what the platform records, and renaming a label must never migrate a record.
 synonym worth keeping alive in a comment."""
 
 APPLY_SCHEMA_CHANGE_TOOL = "apply_schema_change"
-"""The ONE sanctioned channel for a schema change, and the ONE spelling of it (U23 / R29 / F4).
+"""The ONE sanctioned channel for a schema change, and the ONE spelling of it.
 
 It replaced a two-command sequence the prompt used to dictate step by step
 (`npx drizzle-kit generate --name <what_changed>`, then `npm run db:migrate`), and the reason is
-the measurement U20 recorded against the template's pinned `drizzle-kit@0.31.10`:
+a measurement recorded against the template's pinned `drizzle-kit@0.31.10`:
 
 - WITHOUT `--name`, an unambiguous diff generates fine and exits 0 — it just names the file at
   random (`drizzle/0001_special_fantastic_four.sql`). So the flag buys a READABLE migration
@@ -159,14 +161,14 @@ There are no other tabs, pages, file browsers, settings screens, or export menus
 point the user somewhere or describe what the portal can do, name only surfaces from that \
 list; if you are unsure whether something exists in the portal, say so plainly rather than \
 directing the user to it."""
-"""R5's truthful portal self-description, single-sourced here for BOTH prompt systems.
+"""The truthful portal self-description, single-sourced here for BOTH prompt systems.
 
 The walkthrough caught the model inventing portal features and sending users to views that do
 not exist, so the fix is a closed-world statement of what IS there. The legacy relay carried its
 own copy of this wording, which is the duplicate that made "single-sourced" worth saying; it went
 with the relay, and this is now the only one. The wording is the unified chat layout's, where the
-right pane is the APP and nothing else (R10).
-The surface list is verified against `portal/src/App.jsx`'s actual routes — extend it when the
+right pane is the APP and nothing else.
+The surface list is verified against `portal/src/App.tsx`'s actual routes — extend it when the
 portal grows a surface, never before."""
 
 _DATA_INTEGRITY_RULE = """\
@@ -193,7 +195,7 @@ goes with it, and your done-summary must say so plainly."""
 DATA_INTEGRITY_RULES = (
     _DATA_INTEGRITY_RULE + _SQL_SENTINEL_CLAUSE + _NO_INVENTED_ROWS_RULE + _SCHEMA_CHANGE_RULE
 )
-"""The single source of the data-safety wording (U1 → reused by the U9 mode-prompt BASE): the
+"""The single source of the data-safety wording (reused by the mode-prompt BASE): the
 truthful may-hold-records claim, the never-mutate rule, the no-invented-rows rule, and the
 migrations-are-the-channel rule for feature-removing schema changes. BYTE-IDENTICAL to the one
 literal this used to be — the Build prompt did not move."""
@@ -239,17 +241,17 @@ on."
 
 Each of them does the same thing: it says what the user can now do, or what just became true \
 for their app, and leaves the machinery out."""
-"""R32 — the audience contract shown rather than stated, and it goes FIRST in every prompt.
+"""The audience contract shown rather than stated, and it goes FIRST in every prompt.
 
 WHY EXAMPLES AND WHY HERE. `NARRATION_VOICE` states the contract well and has been ignored twice
-in production, both times mid-turn: 2,397 words of paths and framework nouns on the 2026-08-18
-demo, and one terse aside — "Layout has Toaster already. The build should be clean." — as the
-first thing a citizen read on an ordinary successful build (#185). The second is the shape this
-block is aimed at: not a monologue under stress, but a half-thought between two tool calls, which
-reads as a note to yourself and lands in someone's chat. A rule the model has to apply to its own
-next sentence is harder to follow than a sentence it can pattern-match against, so the three
-contrast pairs cover the three moments it has actually failed at — the opening, the gap between
-two steps, and the recovery from an error.
+in production, both times mid-turn: 2,397 words of paths and framework nouns on a demo build, and
+one terse aside — "Layout has Toaster already. The build should be clean." — as the first thing a
+citizen read on an ordinary successful build. The second is the shape this block is aimed at: not
+a monologue under stress, but a half-thought between two tool calls, which reads as a note to
+yourself and lands in someone's chat. A rule the model has to apply to its own next sentence is
+harder to follow than a sentence it can pattern-match against, so the three contrast pairs cover
+the three moments it has actually failed at — the opening, the gap between two steps, and the
+recovery from an error.
 
 IT LEADS THE COMPOSED PROMPT ON PURPOSE, and that placement is the unit. `NARRATION_VOICE` is
 some 530 words in on a Plan prompt and 570 on a Build one — behind the portal description and the
@@ -257,9 +259,9 @@ data rules. The site that composes a prompt (`mode_prompts._base`) therefore nam
 before anything else, and the voice block's closing sentence points back at it. Moving it down the
 prompt is the regression to watch for.
 
-NO TEST ASSERTS IT IS PRESENT, deliberately (D13). "The composed prompt contains the examples" is
-the exact assertion that let the August leak ship green through 3,300 tests: it proves the
-instruction was written, which nobody doubted, and says nothing about what the model then wrote.
+NO TEST ASSERTS IT IS PRESENT, deliberately. "The composed prompt contains the examples" is the
+exact assertion that let the demo leak ship green through 3,300 tests: it proves the instruction
+was written, which nobody doubted, and says nothing about what the model then wrote.
 `test_voice_channel.py::test_the_word_prompt_appears_in_no_claim_that_the_contract_holds` is the
 guard against that habit coming back. This is verified the way the leak was found — by reading
 real output — and a later prompt edit that undoes it is an accepted, stated risk."""
@@ -277,18 +279,18 @@ carry on — a setback you recovered from is one plain sentence. The work itself
 by step as you do it, so the technical account already exists; what you write here is what the \
 user reads. The examples at the top of this prompt are what all of that sounds like in \
 practice."""
-"""R79/R80/R81 — the audience contract. ONE statement of how the agent talks to the user, and
+"""The audience contract. ONE statement of how the agent talks to the user, and
 every chat kind inherits it.
 
-WHY IT EXISTS: the build side carried NO audience instruction at all. The 2026-08-18 demo build
+WHY IT EXISTS: the build side carried NO audience instruction at all. A demo build once
 wrote 2,397 words of file paths, commands, library names, and framework concepts to a citizen who
 had asked for an app — while the planning side, the one with a plain-language contract, read fine.
-R23 holds: the technical work and its step-by-step record are untouched, which is exactly why the
+The technical work and its step-by-step record stay untouched, which is exactly why the
 narration can afford to be short.
 
-IT IS KIND-BLIND ON PURPOSE (U5/R79). It used to be Build's alone, and the planning prompt carried
+IT IS KIND-BLIND ON PURPOSE. It used to be Build's alone, and the planning prompt carried
 its own paragraph saying the same thing in different words — two wordings of one contract, which
-is the drift R79 forbids. Everything about WHO is being written for, and in what register, is
+is the drift this rule forbids. Everything about WHO is being written for, and in what register, is
 here and is identical in both.
 
 IT RESTRICTS THE AUDIENCE, NEVER THE VOCABULARY, and that is why it survived the pass that
@@ -297,7 +299,7 @@ long it may write; it tells it who is reading. Two live incidents came from taki
 a build wrote 2,397 words of file paths and framework concepts to a citizen who had asked for
 an app — so it stays as written.
 
-THE SHORT-LINES CLAUSE IS #185's, and it is the one sentence this block was missing. Both prior
+THE SHORT-LINES CLAUSE is the one sentence this block was missing. Both prior
 readings of "your messages" took it to mean the things the agent addresses to the user — so a
 terse aside between two tool calls ("Layout has Toaster already") did not feel like a message at
 all, and went out unedited as the first thing the citizen read. There is no channel that swallows
@@ -320,22 +322,22 @@ and renders. You have the full tool surface: the read tools, a real shell throug
 `run_command`, and the write tools below."""
 """Write's purpose/identity opener (pattern 3) — the paragraph the standalone `BUILD_SYSTEM_PROMPT`
 used to type out for itself, factored here when the two Write prompts were made to share one
-source (KTD-5a). One prompt is left; the block stays where a leaf module can hold it."""
+source. One prompt is left; the block stays where a leaf module can hold it."""
 
-# The working-rules blocks are factored so the U9 mode prompts (`services/agent/
+# The working-rules blocks are factored so the mode prompts (`services/agent/
 # mode_prompts.py`) compose Write mode from the SAME text — single source, no drift.
 # HEAD ends before DATA INTEGRITY (which BASE carries once in mode composition) and TAIL
 # resumes after it.
 # THE AUDIENCE CONTRACT (`NARRATION_VOICE`) IS NOT HERE — it is kind-blind, and the site
 # that names it is `mode_prompts._base()`. Its examples (`NARRATION_EXAMPLES`) are named at that
-# same site and must LEAD the prompt, which is a
-# second reason neither belongs in a block that lands this far down. TAIL used to carry a
+# same site and must LEAD the prompt, which is a second reason neither belongs in a block that
+# lands this far down. TAIL used to carry a
 # per-kind sentence about message LENGTH beside it; that sentence and its planning twin are
 # gone, along with the closing-message vocabulary rule, because a prompt that tells the agent
 # how long it may write and which words it may not use is deciding what a citizen is allowed to
 # read. Who is being written for is still stated, and still in exactly one place.
 #
-# THE TYPE-CHECK LINE IS A PROHIBITION, NOT A PERMISSION (U19 / R25), and softening it back is a
+# THE TYPE-CHECK LINE IS A PROHIBITION, NOT A PERMISSION, and softening it back is a
 # regression. It used to end "you do not need to run `tsc` yourself, though you may" — which is
 # an invitation dressed as a reassurance, and the model took it: it re-derived, at 20-40 s and a
 # full context window of output a turn, the exact diagnostic the harness hands it for free the
@@ -442,7 +444,7 @@ excluded).
 would otherwise be watching a still screen.
 - `propose_first_slice` — When a request arrives with a lot of separate things in it, \
 propose what to build first."""
-"""GENERATED, NOT WRITTEN (U20 / R26) — a checked-in snapshot of
+"""GENERATED, NOT WRITTEN — a checked-in snapshot of
 `services/agent/toolsets.render_tool_surface(ChatKind.BUILD)`, which renders one line per
 tool from the tool definitions pydantic-ai hands the model at registration.
 
@@ -450,26 +452,24 @@ It is pasted here rather than computed because THIS MODULE IS A LEAF (see the fi
 `services.*` import from `core/` closes the cycle the whole file exists to avoid. So the guarantee
 is enforced by test instead — `test_prompt.py`'s drift check recomputes it and fails on any
 difference, including one that is only in the WORDING. Regenerate and re-paste with the one-liner
-in `toolsets.py`'s U20 comment.
+beside `render_tool_surface` in `toolsets.py`.
 
-★ IT IS NOW ACCURATE EVERYWHERE, and it was not before. `BUILD_WORKING_RULES_TAIL` used to carry
-this block into TWO prompts: `mode_prompts._WRITE_SEGMENT`, which registers all twelve tools named
-above, and the standalone `orchestrator/prompt.BUILD_SYSTEM_PROMPT`, whose `build_agent` was
-constructed with `toolsets=[sandbox_toolset(...)]` and nothing else — eight. That arm was told on
-every request that it had `list_files`, `search_files`, `tell_the_user` and `propose_first_slice`,
-and calling any of them got the runtime's unknown-tool rejection. The defect is gone because the
-harness is: the bare `POST` on `/v1/build-sessions` and everything reachable only from it
-were deleted, so
+★ IT IS ACCURATE EVERYWHERE NOW. `BUILD_WORKING_RULES_TAIL` used to carry this block into two
+prompts: `mode_prompts._WRITE_SEGMENT`, which registers all twelve tools named above, and the
+standalone build harness's system prompt, whose agent was constructed with
+`toolsets=[sandbox_toolset(...)]` and nothing else — eight. That arm was told on every request
+that it had `list_files`, `search_files`, `tell_the_user` and `propose_first_slice`, and calling
+any of them got the runtime's unknown-tool rejection. The defect is gone because the harness is:
+the bare `POST` on `/v1/build-sessions` and everything reachable only from it were deleted, so
 `_WRITE_SEGMENT` is the ONLY consumer of this block and the twelve names match the twelve
-registrations. The guard that watched the discrepancy
-(`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`) went with
-it, by its own design — its docstring said it would go red the day the harness was deleted.
+registrations. The guard that watched the discrepancy went with it, by its own design — its
+docstring said it would go red the day the harness was deleted.
 
 WHY IT HAD TO STOP BEING PROSE. The hand-written block named six tools while the Write arm handed
 the model eight — `list_files` and `search_files` were absent from the prompt for their whole
-life. Worse, U18 changed what `declare_done` DOES while the sentence describing it still promised
-a follow-up round-trip; a name-set comparison is structurally blind to that, and the generated
-line is not, because it IS the tool's description.
+life. Worse, a later change to what `declare_done` DOES left the sentence describing it still
+promising a follow-up round-trip; a name-set comparison is structurally blind to that, and the
+generated line is not, because it IS the tool's description.
 
 The line breaks above are `\\`-continued so the constant stays one line per tool no matter how the
 source is wrapped — `render_tool_surface` emits exactly one `\\n` between entries, and a real

@@ -1,26 +1,22 @@
 """Resolve deployments whose pipeline stopped beating.
 
-The control plane restarts on every platform deploy, and a pipeline runs for minutes — so a
-deploy straddling a restart is not an edge case, it is the expected case during a rollout.
-Its task dies with the process, its row stays `running`, and nothing else in the system
-knows whether the container app actually came up.
+The control plane restarts on every platform deploy, and a pipeline runs for minutes — a
+deploy straddling a restart is the expected case during a rollout: its task dies with the
+process, its row stays `running`, and nothing else knows whether the container app came up.
 
-ARM is the authority on what is live; the row is the authority on what we were TRYING to do.
-This compares them, and the asymmetry between the two answers is the whole design:
+WHY THIS EXISTS: ARM is the authority on what is live; the row is the authority on what we
+were TRYING to do. Comparing them:
 
-  digest matches   -> the deploy SUCCEEDED and we died before writing it down. Promote it.
-  digest differs   -> a PREVIOUS deploy is live; ours never landed. Fail the row and LEAVE
-                      THE APP ALONE — it is the citizen's currently-serving version.
+  digest matches   -> deploy SUCCEEDED, we died before writing it down. Promote it.
+  digest differs   -> a PREVIOUS deploy is live; ours never landed. Fail the row, LEAVE THE
+                      APP ALONE — it is the citizen's currently-serving version.
   confirmed absent -> nothing came up. Fail the row.
-  ARM unreachable  -> leave the row exactly as it is. Never guess.
-
-That last line is the one that matters most. `get_app_fqdn` returns `None` only for a
-CONFIRMED absence and raises on a transient failure, precisely so a throttled request can
-never read as "gone" — and a reconciler that collapsed the two would eventually mark a live
-app failed, or worse, offer to delete it.
+  ARM unreachable  -> leave the row exactly as it is. Never guess — `get_app_fqdn` returns
+                      `None` only for a CONFIRMED absence and raises on a transient failure,
+                      so a throttled request can never read as "gone".
 
 A reconciler may PROMOTE a row it did not write. It may never DELETE a container app it
-cannot prove it created, and the digest is that proof.
+cannot prove it created — the digest is that proof.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Interactive API docs are disabled in production (U17): the enriched OpenAPI spec
+"""Interactive API docs are disabled in production: the enriched OpenAPI spec
 (error taxonomy, named codes, admin route enumeration) must not be served pre-auth."""
 
 from __future__ import annotations
@@ -39,10 +39,9 @@ async def test_openapi_served_in_development(monkeypatch) -> None:
 async def test_openapi_json_in_production_serves_spa_index_not_schema(
     monkeypatch, tmp_path: pathlib.Path
 ) -> None:
-    # In production `openapi_url=None`, so `/openapi.json` is NOT an API route. With the
-    # SPA mounted, that path is a non-reserved root → the history fallback serves
-    # index.html. The prod-fidelity guard: a pre-auth `/openapi.json` returns the SPA
-    # shell (200 text/html), never the enriched schema.
+    # In production `openapi_url=None`, so `/openapi.json` isn't an API route — the SPA's
+    # history fallback serves index.html instead, so a pre-auth request never sees the
+    # enriched schema, only the SPA shell.
     (tmp_path / "index.html").write_text("<!doctype html><title>SPA</title><div id=root></div>")
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
     monkeypatch.setattr(settings, "spa_dist_dir", tmp_path)

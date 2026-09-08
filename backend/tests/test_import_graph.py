@@ -1,12 +1,11 @@
 """The import graph must let a NON-FastAPI process import `src/`.
 
-WHY THIS EXISTS. Reclamation moves out of the API process onto a Taskiq worker (ADR-0011,
-ADR-0029). That worker imports `src.services.build_sessions.reaper` and
-`src.services.deploy.reconcile` without ever building a FastAPI app. Before U3 those imports
-FAILED — not because the services needed the API, but because
-`src/api/v1/build_sessions/__init__.py` re-exported `deps` and `router` at package level, so
-touching any C7 schema dragged the whole route tree in behind it. Those six lines were dead:
-every real consumer already imported the submodule.
+WHY THIS EXISTS. Reclamation moves out of the API process onto a Taskiq worker. That worker
+imports `src.services.build_sessions.reaper` and `src.services.deploy.reconcile` without ever
+building a FastAPI app. Those imports used to FAIL — not because the services needed the API,
+but because `src/api/v1/build_sessions/__init__.py` re-exported `deps` and `router` at package
+level, so touching any of its schemas dragged the whole route tree in behind it. Those six lines
+were dead: every real consumer already imported the submodule.
 
 WHY A SUBPROCESS, AND WHY IT IS NOT CEREMONY. `tests/conftest.py` imports `src.main` before any
 test runs, so by the time an in-process assertion executes, every module it could ask about is
@@ -14,9 +13,10 @@ already in `sys.modules` and the test passes no matter what the import graph doe
 interpreter proves the standalone import. `-B` keeps the run from writing bytecode back.
 
 WHAT WOULD BREAK THIS. Re-adding a package-level `deps`/`router` re-export to
-`src/api/v1/build_sessions/__init__.py` — mutation-checked once by hand when U3 landed, and the
-reason `test_the_package_does_not_drag_in_the_route_tree` asserts on loaded SUBMODULES rather
-than on source text: a source-text check passes against a re-export spelled a new way.
+`src/api/v1/build_sessions/__init__.py` — mutation-checked once by hand when that re-export was
+removed, and the reason `test_the_package_does_not_drag_in_the_route_tree` asserts on loaded
+SUBMODULES rather than on source text: a source-text check passes against a re-export spelled a
+new way.
 """
 
 from __future__ import annotations
@@ -46,7 +46,8 @@ def _import_in_fresh_interpreter(snippet: str) -> subprocess.CompletedProcess[st
 
 
 def test_the_reaper_imports_without_the_fastapi_app() -> None:
-    """The worker's reclamation task imports this. Before U3 it raised on a cold interpreter."""
+    """The worker's reclamation task imports this. It used to raise on a cold interpreter, before
+    `build_sessions/__init__.py` stopped re-exporting `deps`/`router`."""
     result = _import_in_fresh_interpreter(
         "import importlib;"
         " importlib.import_module('src.services.build_sessions.reaper');"
@@ -59,24 +60,14 @@ def test_the_reaper_imports_without_the_fastapi_app() -> None:
 
 
 def test_the_integrity_verdict_carries_nothing_heavy_of_its_own() -> None:
-    """U1 — `manager.py` AND `reaper.py` both import this module at module level, so it must not
-    reach back into either of them, or into the orchestrator.
-
-    LOADED BY FILE PATH, DELIBERATELY, and this is the honest version of the claim. Importing
-    `src.services.build_sessions.integrity` by name runs the PACKAGE `__init__`, which imports
-    `manager` -> `appdata` -> `services.projects` -> `agent.agent` and therefore `pydantic_ai` —
-    that is already true of `reaper` today and is not this module's doing. What this test pins is
-    the property that IS this module's doing: its own module-level imports stay cheap, so it can
-    never become the reason a worker loads the agent stack, and it can never close the
-    `build_sessions` <-> `orchestrator` cycle that forced `selfheal` and `harness` to defer
-    theirs.
-
-    NOT ASSERTED, because it would be a false claim: `fastapi` still arrives, pulled in by
-    `src.services.sandbox` and `src.services.storage`, which every module in this area already
-    loads. The three names below are the ones this module could plausibly grow and must not.
-
-    Mutation check: add `from src.services.build_sessions.manager import SessionManager` (or any
-    `src.services.orchestrator` import) at the top of `integrity.py` and this goes red."""
+    """`manager.py` AND `reaper.py` both import this module at module level, so it must not
+    reach back into either of them, or into the orchestrator. LOADED BY FILE PATH, DELIBERATELY:
+    importing by name runs the PACKAGE `__init__`, which already drags in `pydantic_ai` via
+    `manager` — true of `reaper` today and not this module's doing. What IS this module's doing
+    is staying cheap enough to never become the reason a worker loads the agent stack.
+    NOT ASSERTED: `fastapi` still arrives via `sandbox`/`storage`, which every module here loads.
+    Mutation check: add an `orchestrator` (or `manager`) import to `integrity.py` and this
+    goes red."""
     result = _import_in_fresh_interpreter(
         "import importlib.util, sys;"
         " spec = importlib.util.spec_from_file_location("
@@ -101,20 +92,14 @@ def test_the_integrity_verdict_carries_nothing_heavy_of_its_own() -> None:
 
 
 def test_the_environment_accessor_stays_outside_the_settings_cycle() -> None:
-    """THE CYCLE IS THE WHOLE REASON `src/core/runtime_env.py` EXISTS.
+    """THE CYCLE IS THE WHOLE REASON `src/core/runtime_env.py` EXISTS: `src.config` reaches
+    `src.settings.api`, which reaches both `src.services.redis.config` and the sandbox config, so
+    a module that needs "which environment is this" cannot ask `settings` at import time. One
+    leaf accessor replaces the per-module workarounds, and it stays safe only while it imports
+    nothing at module scope.
 
-    `src.config` reaches `src.settings.api`, which reaches both
-    `src.services.redis.config` and the sandbox config. So the modules that need "which
-    environment is this" — the Redis
-    key prefix and the `bial-control-plane` tag — cannot ask at import time, and each had written
-    its own function-scoped import with the same paragraph of explanation. One leaf accessor
-    replaces both, and it is only safe while it imports NOTHING at module scope.
-
-    Asserted on a cold interpreter for the reason this whole file exists: `conftest` imports
-    `src.main` first, so in-process every module is already resolved and a cycle proves nothing.
-
-    Mutation-check: hoist `from src.config import settings` to the top of `src/core/runtime_env.py`
-    and this goes red."""
+    Mutation-check: hoist `from src.config import settings` to the top of
+    `src/core/runtime_env.py` and this goes red."""
     result = _import_in_fresh_interpreter(
         "import importlib, sys;"
         " importlib.import_module('src.core.runtime_env');"
@@ -131,7 +116,7 @@ def test_the_environment_accessor_stays_outside_the_settings_cycle() -> None:
 
 
 def test_deploy_reconcile_imports_without_the_fastapi_app() -> None:
-    """The first passenger on the scheduler (U6) — proven importable before it is scheduled."""
+    """The first passenger on the scheduler — proven importable before it is scheduled."""
     result = _import_in_fresh_interpreter(
         "import importlib; importlib.import_module('src.services.deploy.reconcile'); print('ok')"
     )
@@ -143,7 +128,7 @@ def test_deploy_reconcile_imports_without_the_fastapi_app() -> None:
 
 
 def test_the_package_does_not_drag_in_the_route_tree() -> None:
-    """THE REGRESSION GUARD. Importing the build-sessions package for a C7 schema must not load
+    """THE REGRESSION GUARD. Importing the build-sessions package for a schema must not load
     its `router` or `deps` submodules.
 
     Asserted on `sys.modules` rather than on the text of `__init__.py`, because the failure mode
@@ -166,8 +151,9 @@ def test_the_package_does_not_drag_in_the_route_tree() -> None:
     )
 
 
-def test_the_c7_schema_re_exports_survive() -> None:
-    """The other half of U3: C7 freezes these shapes AT THIS LOCATION, so the cleanup must not
+def test_the_build_session_schema_re_exports_survive() -> None:
+    """The other half of the `deps`/`router` cleanup: these schemas (`ProgressEnvelope`,
+    `RunBuild`, `StartBuildRequest`) are frozen AT THIS LOCATION, so that cleanup must not
     have taken them with it."""
     result = _import_in_fresh_interpreter(
         "from src.api.v1.build_sessions import ProgressEnvelope, RunBuild, StartBuildRequest;"
@@ -180,9 +166,9 @@ def test_the_c7_schema_re_exports_survive() -> None:
 
 def test_the_app_still_builds_with_its_full_route_surface() -> None:
     """The app is the other consumer of that package, and it reaches the router by SUBMODULE
-    import (`src/api/v1/router.py`), which U3 did not touch. Pinned on the C3 build-session
-    surface specifically: that is the contract the removed `router` re-export sat next to, so a
-    regression would show up here first.
+    import (`src/api/v1/router.py`), which the `deps`/`router` cleanup did not touch. Pinned on
+    the build-session route surface specifically: that is the contract the removed `router`
+    re-export sat next to, so a regression would show up here first.
 
     `app.openapi()` rather than `app.routes` — this FastAPI defers router inclusion behind
     `_IncludedRouter`, so `app.routes` reports a handful of top-level entries and would pass
@@ -193,31 +179,29 @@ def test_the_app_still_builds_with_its_full_route_surface() -> None:
     paths = list(app.openapi().get("paths", {}))
     build_session_paths = [p for p in paths if "build-session" in p]
 
-    # 19 since U13 added `projects/{project_id}/client-error` (the app's own in-browser report),
-    # U11 added `projects/{project_id}/compile-state` (the compile signal for a tab with no live
-    # turn — the turn stream's producer stops at the terminal), and U4 added
-    # `projects/{project_id}/workspace-check` (the idle-tab integrity probe, for the reversion
-    # that happens while nobody is sending messages), and U25 added the two superadmin operator
-    # routes for the trees U2 and U3 park (`internal/apps/{app_id}/parked` and `.../promote`) —
-    # without a reader those objects would be write-only, and in a false-reversion they hold the
-    # only copy of somebody's work. Each recorded in C3 §9 in the same change that added it.
-    # 17 since U28 retired `lock/acquire` / `lock/renew` / `lock/release` / `heartbeat` (21 - 4):
-    # nothing called them — the portal's keep-alive loop that was their only caller was itself
-    # deleted back in U13. `lock/force-end` is the one lock op still reachable from the UI.
-    # 18 since plan 002 U9 added `projects/{project_id}/stop-state`: the drain's ask
-    # (`stop-active-build`) now RETURNS IMMEDIATELY and a detached task does the waiting, so the
-    # outcome needs a reader. Holding a request open for the length of a stop was a dependency
-    # nobody could satisfy — the budget had to sit under the request timeout of a gateway owned by
-    # the client's network — and the outcome it was hiding is three states, not a boolean.
-    # 16 since the standalone build stack was deleted (18 - 2), and both routes went for the same
-    # reason the four lock ops went in U28 — no caller left. The bare collection `POST` on
-    # `/v1/build-sessions` was the start route; PR #182 moved the workspace onto the chat turn and
-    # took away its only browser client, so it was removed together with the harness, the
-    # module-level build agent and the run-build dependency it was the sole door into.
-    # `lock/force-end` had had no UI since the block banner's Force-end button was removed, and it
-    # was the last of the lock ops U28 left standing on the strength of that button. The service
-    # method behind it (`SessionManager.force_end`) is untouched and still has its own tests —
-    # only the HTTP door closed.
+    # 16 build-session paths. Beyond the CRUD/turn set, this counts `projects/{project_id}/
+    # client-error` (the app's own in-browser error report), `projects/{project_id}/
+    # compile-state` (the compile signal for a tab with no live turn — the turn stream's
+    # producer stops at the terminal), `projects/{project_id}/workspace-check` (the idle-tab
+    # integrity probe, for the reversion that happens while nobody is sending messages),
+    # `projects/{project_id}/stop-state` (the drain's ask, `stop-active-build`, now returns
+    # immediately while a detached task does the waiting, so the outcome — three states, not
+    # a boolean — needs a reader; holding the request open for the length of a stop was a
+    # dependency nobody could satisfy, since the budget had to sit under the request timeout
+    # of a gateway owned by the client's network), and the two superadmin operator routes for
+    # the parked/promoted trees (`internal/apps/{app_id}/parked` and `.../promote`) — without
+    # a reader those objects would be write-only, and in a false reversion they hold the only
+    # copy of somebody's work.
+    #
+    # It excludes the lock ops (`lock/acquire`/`renew`/`release`/`heartbeat`/`force-end`):
+    # nothing calls them any more. The portal's keep-alive loop, the only caller of the first
+    # four, is gone, and the block banner's Force-end button, the only caller of the fifth, is
+    # gone too — the service method behind it, `SessionManager.force_end`, is untouched and
+    # still has its own tests, only the HTTP door closed. It also excludes the standalone
+    # build stack's bare collection `POST` on `/v1/build-sessions`, the old start route,
+    # removed together with the harness, the module-level build agent, and the run-build
+    # dependency it was the sole door into, once the workspace moved onto the chat turn and
+    # took away its only browser client.
     assert len(build_session_paths) == 16, (
         f"the C3 build-session route surface changed: expected 16 paths, found "
         f"{len(build_session_paths)}. If a route was deliberately added or removed, amend C3 "

@@ -1,30 +1,14 @@
-"""U4 — the native message store's round-trip property and its seams.
+"""The native message store's round-trip property and its seams.
 
-The store's contract: dump → externalize binaries → redact → JSONB → rehydrate → validate →
-repair, and the ONLY differences between what went in and what comes out are redacted values
-and externalized-then-rehydrated binaries. Equality is asserted on CANONICAL DUMPS
-(`ModelMessagesTypeAdapter.dump_python(..., mode="json")`), not dataclass `==`: pydantic-ai
-2.5.0 validates an image `BinaryContent` back as its `BinaryImage` subclass, so dataclass
-equality is class-strict while the wire shape is identical — the dump IS the contract.
+Contract: dump → externalize binaries → redact → JSONB → rehydrate → validate → repair; the
+only differences between what went in and what comes out are redacted values and
+externalized-then-rehydrated binaries. Reasoning blocks are the one redaction exemption.
 
-REASONING BLOCKS ARE THE ONE EXEMPTION to "redact every string in the tree", and they own the
-other seam here too. A thinking part's `content` and `signature` reach the row VERBATIM,
-because the provider verifies the signature against the content when the block is replayed on
-the next turn and the masker is tuned to over-redact; nothing is lost by exempting them,
-because a reasoning block is never projected, never framed and never sent to the browser. At
-the load seam the rule inverts: a thinking part that has lost its signature is DROPPED rather
-than replayed, because the library sends an unsigned block's content back as visible
-assistant text.
-
-Also pinned here, against the installed pydantic-ai (upgrade tripwires):
-  * the CachePoint hazard — an unknown dict inside user content validates SILENTLY as
-    `CachePoint`, which is exactly why the loader's marker swap must be exhaustive;
-  * the Anthropic wire mapping of a marker followed by a user prompt — consecutive user-role
-    messages in order (marker first; the API folds same-role neighbours);
-  * the no-prompt-run gotcha — `agent.run(None, history-ending-in-marker)` adopts the marker
-    as the prompt (so the turn engine must never start a run without a real user prompt);
-  * the `<thinking>`-tag fallback — an unsigned reasoning block maps to a VISIBLE assistant
-    text block, which is the failure the load-seam drop exists to prevent.
+Equality here is asserted on CANONICAL DUMPS (`dump_python(..., mode="json")`), not dataclass
+`==`: pydantic-ai 2.5.0 validates an image `BinaryContent` back as its `BinaryImage` subclass, so
+dataclass equality is class-strict while the wire shape is identical — the dump IS the contract.
+Several pydantic-ai upgrade tripwires (CachePoint, no-prompt-run, the `<thinking>`-tag
+fallback) are pinned below too — see each test's own docstring for why.
 """
 
 from __future__ import annotations
@@ -189,8 +173,7 @@ async def test_dsn_in_tool_return_is_stored_redacted(db_session, thread):
     row = await db_session.get(Message, stored.id)
     assert row is not None
     flat = str(row.payload)
-    # The parsed password never appears ANYWHERE in the row (security.md: whole value AND
-    # password sub-token are both registered redactions).
+    # Both the whole DSN and the bare password are registered redactions (security.md).
     assert password not in flat
     assert password not in str(row.meta)
 
@@ -226,20 +209,15 @@ async def test_dsn_in_tool_args_is_stored_redacted(db_session, thread):
 
 
 def test_a_reasoning_block_reaches_the_row_verbatim_while_the_prose_beside_it_is_redacted():
-    """The masker's ONE exemption, next to the thing that proves it is scoped rather than a hole.
+    """The masker's ONE exemption, next to what proves it is scoped rather than a hole.
 
-    An agent writing code narrates in credential-shaped strings as a matter of course: the
-    environment variable it must not put in the browser bundle, the token assignment it thought
-    better of, the API key it moved to the server. `redact_secrets` matches on SHAPE and is
-    deliberately tuned to over-redact — which costs nothing on a string headed for a screen and
-    costs the whole turn here, because the provider verifies a reasoning block's signature
-    against its content when the block is replayed and one rewritten character fails that check.
-    So the block goes to the row byte-for-byte, while the sentence the agent actually SAID —
-    carrying the very same token — is masked exactly as it always was.
+    An agent narrates credential-shaped strings while it works; `redact_secrets` matches on
+    shape and over-redacts, which fails signature verification if one rewritten character
+    reaches a replayed reasoning block — so this field goes to the row byte-for-byte, while
+    the sentence the agent actually SAID, carrying the same token, is masked as ever.
 
     Mutation check: drop `content` from `_THINKING_VERBATIM`, or the `part_kind` guard that
-    selects it, and the reasoning arrives as the masked string this test compares against.
-    """
+    selects it, and the reasoning arrives as the masked string this test compares against."""
     reasoning = (
         "The template reads BIAL_DATA_BASE_URL at boot. Setting "
         "BIAL_APP_TOKEN=tok_9f2b1c4d7e in the env file would ship it to the browser, so I will "
@@ -292,8 +270,7 @@ async def test_a_provider_redacted_reasoning_block_survives_the_round_trip(db_se
     preceded by the reasoning that led to it; losing the block wedges the turn that follows.
 
     Mutation check: key the load seam's drop on the block's content instead of its signature and
-    this one — empty content, signature intact — is thrown away as if it were broken.
-    """
+    this one — empty content, signature intact — is thrown away as if it were broken."""
     user, conversation = thread
     signature = "ErUBCkYIBBgCIkAxRedactedBlobPayload/9f2b1c4d=="
     history: list[ModelMessage] = [
@@ -344,17 +321,14 @@ async def test_a_provider_redacted_reasoning_block_survives_the_round_trip(db_se
 
 
 async def test_reasoning_with_no_signature_is_dropped_at_the_load_seam(db_session, thread):
-    """Fail closed: a reasoning block that has lost its signature can no longer be replayed AS
-    reasoning, and the library's fallback is not to skip it — it sends the content back as an
-    ordinary assistant TEXT block wrapped in `<thinking>` tags (pinned below). That would turn a
-    block the citizen was never meant to see into part of the model's own visible transcript for
-    the rest of the conversation, silently. Losing the reasoning and keeping the transcript is
-    the strictly better trade, so the load seam drops it.
+    """Fail closed: a reasoning block that has lost its signature can no longer be replayed, and
+    the library's fallback is not to skip it — it sends the content back as an ordinary
+    assistant TEXT block wrapped in `<thinking>` tags (pinned below), silently promoting
+    private reasoning into the visible transcript; losing the reasoning is the better trade.
 
-    Nothing should ever reach this — the persist seam writes what the library serialized and the
-    masker leaves signatures alone — but a row written before that exemption, or a payload edited
-    by hand, is exactly the case it exists for.
-    """
+    Nothing should reach this in practice — the persist seam writes what the library serialized
+    and the masker leaves signatures alone — but a row written before that exemption, or a
+    payload edited by hand, is exactly the case it exists for."""
     user, conversation = thread
     reasoning = "The citizen never sees this. BIAL_APP_TOKEN=tok_9f2b1c4d7e is server-only."
     await append_batch(
@@ -761,7 +735,7 @@ def _assert_anthropic_pairing(messages: list[ModelMessage]) -> None:
 
 
 def test_orphaned_tool_result_is_dropped_on_load():
-    """THE round-3 P0, as a mutation check: a stored `tool_result` whose `tool_use` was never
+    """A mutation check: a stored `tool_result` whose `tool_use` was never
     persisted (the write-cursor overshoot skipped the run's first ModelResponse) 400s every
     subsequent turn, forever — the conversation is bricked. Repair must drop the orphan at
     load. Revert the fourth repair case and this goes red."""
@@ -1211,16 +1185,14 @@ async def test_no_prompt_run_adopts_a_trailing_injected_note_as_the_prompt():
 
 
 async def test_unsigned_reasoning_maps_to_a_visible_assistant_text_block():
-    """WHY the load seam drops an unsigned reasoning block rather than keeping it, pinned against
-    the installed pydantic-ai.
+    """WHY the load seam drops an unsigned reasoning block rather than keeping it, pinned
+    against the installed pydantic-ai.
 
-    A `ThinkingPart` rides the wire as a `thinking` block only while it still carries the
-    signature its provider issued. Without one the mapping takes the other branch and emits the
-    reasoning CONTENT as an ordinary assistant TEXT block wrapped in `<thinking>` tags — private
-    reasoning promoted into the model's own visible transcript, silently and permanently. If an
-    upgrade changes this branch, `_without_broken_reasoning` can be revisited; until then the
-    drop is the only safe reading.
-    """
+    A `ThinkingPart` rides the wire as a `thinking` block only while it carries its provider's
+    signature; without one, the mapping emits the reasoning CONTENT as an ordinary assistant
+    TEXT block wrapped in `<thinking>` tags — private reasoning promoted into the model's own
+    visible transcript, silently and permanently. If an upgrade changes this branch,
+    `_without_broken_reasoning` can be revisited; until then the drop is the only safe reading."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -1248,7 +1220,7 @@ async def test_unsigned_reasoning_maps_to_a_visible_assistant_text_block():
 
 
 def test_dump_strips_run_instructions_from_the_payload():
-    """U9/D4 — pydantic-ai stamps the run's composed instructions onto every ModelRequest
+    """pydantic-ai stamps the run's composed instructions onto every ModelRequest
     it returns; the dump seam normalizes them to None so no persisted row ever fossilizes
     a prompt (history loads from the DB, each run re-injects its own composition)."""
     request = ModelRequest(

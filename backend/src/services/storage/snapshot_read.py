@@ -1,37 +1,27 @@
 """Server-side extraction of an app's SAVED snapshot, on the control plane's own disk.
 
-NOT A CHAT PATH ANY MORE. This was written for Ask/Plan reads (U8 / plan 2026-07-22-002),
-which answered questions about a git checkout of the saved bundle while a build worked in a
-container nobody could see. That arm is gone — `turns/engine._pin_workspace` has ONE arm and
-every turn of both kinds reads the project's LIVE container — so nothing here is on a turn.
-The two live consumers both need the saved tree rather than the working one, which is exactly
-why they still extract:
+WHY THIS EXISTS
+NOT a chat path: every turn reads the project's LIVE container. Two consumers need the saved
+tree instead — `services/classification/service.py` (admin review scans what was submitted)
+and `services/deploy/service.py` (publishing ships the saved commit, never in-flight edits).
 
-* `services/classification/service.py` — the admin review scans what was SAVED and submitted.
-* `services/deploy/service.py` — publishing ships the saved commit, never the in-flight edits.
+The bundle (`build_sessions/snapshot.py`, HEAD-only, at `snapshot_key(app_id)`) extracts into
+a local cache directory keyed by its HEAD SHA via `parse_bundle_head_sha` (the same validated
+parse submit trusts), so a cache entry is immutable by construction — a new build always lands
+in a new directory. Each caller resolves an extraction once and holds the `ExtractedSnapshot`
+for the whole review or deploy, so a concurrent build cannot move the tree underneath it.
 
-The mechanism is unchanged. The bundle (written by `build_sessions/snapshot.py`, HEAD-only,
-stored at `snapshot_key(app_id)`) is extracted into a local cache directory keyed by the
-bundle's HEAD SHA. The SHA comes from `parse_bundle_head_sha` — the same validated header parse
-submit trusts — so a cache entry is immutable by construction: a new build writes a new bundle
-with a new HEAD, which lands in a NEW extraction directory. Each caller resolves an extraction
-once and holds the `ExtractedSnapshot` for the whole review or deploy, so a build completing
-concurrently cannot move the tree underneath it.
+A never-built app returns `NoAppYet` — NORMAL, not an error — mapped onto each consumer's own
+terminal failure code (`FAIL_NO_APP` / `FAIL_NO_SNAPSHOT`). A snapshot that EXISTS but fails
+header validation is the opposite: corrupt platform state, raised loudly as
+`BundleValidationError`, never silent.
 
-"No snapshot" is a NORMAL outcome, not an error: a project whose app has never been built
-returns `NoAppYet`. It no longer becomes a truthful "no app exists yet" answer to a citizen —
-there is no read tool on this path — so each consumer maps it onto its own terminal failure
-code instead (`FAIL_NO_APP` for a review, `FAIL_NO_SNAPSHOT` for a deploy), both of which say
-so plainly. A snapshot that EXISTS but fails header validation is the opposite: corrupt
-platform state, raised loudly as `BundleValidationError` (fail-first), never silently absent.
+Extraction clones with an EMPTY environment allowlist and `--template=` (no hooks, nothing
+inherited from the server process) because the bundle came from a sandbox the citizen's AI
+drove — untrusted input.
 
-Extraction clones from the bundle file with an EMPTY environment allowlist and
-`--template=` (no hook templates, nothing inherited from the server process env — the
-bundle came from a sandbox the citizen's AI drove, so treat it as untrusted input).
-
-Eviction is a DELIBERATE stub (`sweep_extractions`): the plan defers TTL-vs-LRU tuning
-until extraction cost is measured. Nothing schedules it yet; single replica, local disk,
-bounded by build frequency.
+Eviction is a DELIBERATE stub (`sweep_extractions`): TTL-vs-LRU tuning waits on measured cost.
+Nothing schedules it yet; single replica, local disk, bounded by build frequency.
 """
 
 from __future__ import annotations
@@ -153,7 +143,7 @@ async def extract_snapshot(
                 # `core.symlinks=false` for the checkout so a symlink committed into the tree
                 # materializes as an INERT regular file (its target path as text), never a real
                 # filesystem link a later read command (cat/grep/find/sed) could follow out of the
-                # jail. Without this, exec-style reads escape the extraction dir (P0 jail break).
+                # jail. Without this, exec-style reads escape the extraction dir.
                 "-c",
                 "core.symlinks=false",
                 "clone",

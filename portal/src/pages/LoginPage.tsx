@@ -5,7 +5,7 @@ import BIALLogo from '../components/BIALLogo'
 import { consumeSignoutReason, SIGNOUT_REASONS, LOGIN_URL, bootstrapSession } from '../utils/auth'
 
 // The shape Navbar's handleLogout hands `navigate('/login', { state })` on a failed
-// sign-out (U15) — the ONLY way for a warning owned by a page that is about to unmount
+// sign-out — the ONLY way for a warning owned by a page that is about to unmount
 // to reach the screen the user actually lands on. `useLocation().state` is typed `any`
 // by react-router, so it is narrowed here rather than trusted.
 interface SignoutWarningState {
@@ -23,7 +23,7 @@ function isSignoutWarningState(value: unknown): value is SignoutWarningState {
 // The app's authenticated landing route — the primary RequireAuth-wrapped page in
 // App.tsx (`/` and any unknown path both redirect to `/login`; `/dashboard` is the
 // first real signed-in screen). A signed-in visitor is forwarded here.
-// §7 retired the welcome page; `/dashboard` still resolves but only to redirect here. Landing
+// The welcome page was retired; `/dashboard` still resolves but only to redirect here. Landing
 // on it made every sign-in pay a redirect for a page that no longer exists.
 const HOME_ROUTE = '/projects'
 
@@ -97,7 +97,7 @@ export default function LoginPage() {
       )
       return
     }
-    // A failed sign-out's warning (U15 — see Navbar's handleLogout) arrives as router
+    // A failed sign-out's warning (see Navbar's handleLogout) arrives as router
     // state on THIS navigation, not as a recorded reason to look up — it never touches
     // localStorage, so it takes priority over `consumeSignoutReason()` below rather than
     // racing it.

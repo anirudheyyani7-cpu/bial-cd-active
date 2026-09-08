@@ -1,15 +1,14 @@
-"""`reconcile_orphaned_storage` — the operator-invoked reconciling sweep (U10, R11/R12/R13).
+"""`reconcile_orphaned_storage` — the operator-invoked reconciling sweep.
 
 The crux is the 24h grace and its POLARITY: the ONLY route to "eligible" runs through the grace
 check, so a within-grace or unknown-age blob is never deleted even with no owning row (the
 recorded lifecycle-triad bug was a liveness check that short-circuited to eligible with ZERO
-grace). `submissions/` and `apps/` are report-only until D7; `att/` and `snapshots/` delete the
-ownerless-and-past-grace keys. Owned-set for `att/` is built from the persisted `storage_key`
-column (never a PK-derived key) and includes each deck's `{key}.pdf` sibling.
+grace). `submissions/` and `apps/` are report-only pending a data-retention decision; `att/` and
+`snapshots/` delete the ownerless-and-past-grace keys. Owned-set for `att/` comes from the
+persisted `storage_key` column (never a PK-derived key), including each deck's `{key}.pdf`.
 
-These are SERVICE-level tests (fixed injected `now`). The owned-attachment / derived-key /
-deck-sibling pins that must run through the REAL upload path live in
-`tests/api/v1/admin/test_storage_reconcile.py`.
+SERVICE-level tests (fixed injected `now`) — the owned-attachment / derived-key / deck-sibling
+pins that run through the REAL upload path live in `tests/api/v1/admin/test_storage_reconcile.py`.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ def _put(store: FakeStorage, key: str, *, mtime: datetime.datetime | None = None
 
 
 def test_grace_constant_is_the_err_long_24h() -> None:
-    # D6/KD-7: 24h, a large multiple of the longest realistic submit transaction.
+    # 24h, a large multiple of the longest realistic submit transaction.
     assert RECONCILE_GRACE == datetime.timedelta(hours=24)
 
 
@@ -51,7 +50,7 @@ def test_grace_constant_is_the_err_long_24h() -> None:
 
 
 async def test_within_grace_unowned_never_deleted(db_session) -> None:
-    # AE4 second half + the polarity pin: a FRESH blob with NO owning row survives, because the
+    # The polarity pin: a FRESH blob with NO owning row survives, because the
     # only route to "eligible" runs through the grace check — no short-circuit gives it zero grace.
     store = FakeStorage()
     user = await UserFactory.create(db_session)
@@ -136,7 +135,7 @@ async def test_snapshots_owned_within_eligible_split(db_session) -> None:
 
 async def test_submissions_reported_never_deleted(db_session) -> None:
     # An ownerless submission bundle past grace is REPORTED (eligible + ownerless) but survives:
-    # deleting the immutable approval record is the open D7 governance call.
+    # deleting the immutable approval record is the open governance call.
     store = FakeStorage()
     user = await UserFactory.create(db_session)
     owned_app = await AppRegistryFactory.create(db_session, user_id=user.id)

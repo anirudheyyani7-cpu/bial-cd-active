@@ -48,7 +48,6 @@ vi.mock('../../utils/turnStreamApi', async (orig) => ({
 
 import ConversationSurface from '../../components/chat/ConversationSurface'
 import { ApiError } from '../../utils/apiError'
-import { MAX_PDF_ATTACHMENTS_PER_MESSAGE, TOO_MANY_DOCUMENTS_MESSAGE } from '../../utils/attachmentInput'
 import {
   FakeEventSource, makeClient, primeClient, primeTurn, statusResp, turnStreaming, planReply,
   waitForGateOpen, scriptBuildTurn, BUILD_TURN_ID, T_PREVIEW, T_BUILD_END,
@@ -908,66 +907,11 @@ describe('a refused send leaves the citizen holding their message', () => {
  * answer different questions (per message vs cumulative) and a test that accepted either would go
  * green on the wrong one.
  */
-describe('★ the per-message DOCUMENT cap is enforced where the turn starts', () => {
-  const pdf = (name) => new File(['%PDF-1.7 ' + 'x'.repeat(64)], name, { type: 'application/pdf' })
-  const png = (name) => new File(['x'.repeat(100)], name, { type: 'image/png' })
-
-  /** ONE gesture carrying several files — a multi-select in the picker, or a handful dragged in
-   *  together. Every `add` starts in the same tick, which is the shape the adapter's cap has to
-   *  survive and the one a citizen actually performs. */
-  const dropAll = (...files) =>
-    fireEvent.drop(screen.getByTestId('composer-dropzone'), { dataTransfer: { types: ['Files'], files } })
-
-  /** Wait until the composer is really holding all of them — the base64 read resolves on a TASK,
-   *  so a send fired before the chips exist would carry an empty attachment list and prove
-   *  nothing about a cap. */
-  const stagedAll = (...names) =>
-    waitFor(() => names.forEach((n) => expect(screen.getByText(n)).toBeTruthy()))
-
-  const openChat = async () => {
-    h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
-    renderAt('build-X', deps().deps)
-    await waitForGateOpen()
-  }
-
-  it('refuses a THIRD document in its own words, and starts no turn', async () => {
-    await openChat()
-    dropAll(pdf('lease.pdf'), pdf('annexe.pdf'), pdf('schedule.pdf'))
-    await stagedAll('lease.pdf', 'annexe.pdf', 'schedule.pdf')
-
-    type('summarise these three')
-    fireEvent.keyDown(composer(), { key: 'Enter' })
-
-    // THE EXACT SENTENCE, not a regex that would also match the token gate's advice.
-    expect(await screen.findByText(TOO_MANY_DOCUMENTS_MESSAGE)).toBeTruthy()
-    // NO TURN. The whole point of moving the refusal into the composer is that the server never
-    // has to bounce it — a call here means the message went anyway.
-    expect(h.startTurn).not.toHaveBeenCalled()
-    // NOT THE ADVICE THAT DOES NOT WORK. A new chat refuses the identical message.
-    expect(screen.queryByText(/start a new chat/i)).toBeNull()
-    // NOT THE CONVERSATION CAP EITHER — the other cap, answering the other question.
-    expect(screen.queryByText(/reached its limit of/i)).toBeNull()
-    // A REFUSED SEND LEAVES THE CITIZEN HOLDING THEIR MESSAGE: the text and all three chips stay.
-    expect(composer().value).toBe('summarise these three')
-    expect(screen.getAllByLabelText(/^Remove /)).toHaveLength(3)
-  })
-
-  it('LIVENESS — two documents alongside images go through', async () => {
-    // The cap is `MAX_PDF_ATTACHMENTS_PER_MESSAGE` DOCUMENTS, not a total attachment count, so
-    // images ride along freely. Without this the scenario above would stay green if the composer
-    // simply stopped sending anything with a file on it.
-    expect(MAX_PDF_ATTACHMENTS_PER_MESSAGE).toBe(2)
-    await openChat()
-    dropAll(pdf('lease.pdf'), pdf('annexe.pdf'), png('floorplan.png'))
-    await stagedAll('lease.pdf', 'annexe.pdf', 'floorplan.png')
-
-    type('summarise these two and the plan')
-    fireEvent.keyDown(composer(), { key: 'Enter' })
-
-    await waitFor(() => expect(h.startTurn).toHaveBeenCalledTimes(1))
-    expect(screen.queryByText(TOO_MANY_DOCUMENTS_MESSAGE)).toBeNull()
-  })
-})
+// THE PER-MESSAGE DOCUMENT CAP IS GONE (#214 R7c), and its tests with it. It was two, and it
+// shipped as the stopgap that stopped a 61-page PDF blowing the context budget. The 30-page
+// cap and the flat charge sized to it are the real protections and both stay; the count was
+// the belt beside those braces. One rule governs a message now - five files, any mix - so a
+// citizen never has to know which of their files the platform considers expensive.
 
 describe('an upload the server refuses says WHY, not "try again"', () => {
   /* TWO EMITTERS, ONE BANNER, AND THE ONE THAT KNEW NOTHING WENT LAST.

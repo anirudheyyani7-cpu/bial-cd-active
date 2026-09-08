@@ -491,19 +491,26 @@ describe('★ the attachment pipeline stays ours', () => {
     expect(onUrgent.mock.calls.at(-1)?.[0]).toMatch(/at most 5 files/i)
   })
 
-  it('★ holds the 512 KB text budget inside one gesture too — the other cap the same gap opened', async () => {
-    // Inline text rides in every turn of the conversation, so the budget is cumulative. Three
-    // 250 KB spreadsheets dropped together are 750 KB; two fit and the third is refused, and
-    // saying so is the difference between a bounded prompt and a silently doubled one.
+  it('a large spreadsheet is no longer refused by a text budget that no longer exists', async () => {
+    // ★ THE BUDGET WENT WITH ITS LANE (#214). Inline text rode in EVERY turn of the
+    // conversation, so it carried a cumulative 512 KB ceiling: three 250 KB spreadsheets were
+    // 750 KB, two fit and the third was refused.
+    //
+    // A spreadsheet is an uploaded file now. It never enters the prompt, so there is nothing
+    // for a text budget to bound - it is governed by the 4 MB per-file cap and the
+    // per-conversation limits the server enforces. All three land.
+    //
+    // The SHAPE this used to protect - a cap holding inside one gesture, where files fan out
+    // with Promise.all and each validates before any finishes - is still covered, by the
+    // eight-files-in-one-gesture test above. It is the budget that is gone, not the guard.
     const onUrgent = vi.fn()
     draw({ onUrgent })
     const sheet = (name: string) => new File([new Uint8Array(250 * 1024)], name, { type: 'text/csv' })
 
     dropAll(sheet('jan.csv'), sheet('feb.csv'), sheet('mar.csv'))
 
-    await waitFor(() => expect(chips().length + onUrgent.mock.calls.length).toBe(3))
-    expect(chips()).toHaveLength(2)
-    expect(onUrgent.mock.calls.at(-1)?.[0]).toMatch(/512 KB total limit/i)
+    await waitFor(() => expect(chips()).toHaveLength(3))
+    expect(onUrgent).not.toHaveBeenCalled()
   })
 
   it('★ holds the cap across two gestures a MICROTASK apart, not only inside one', async () => {

@@ -27,14 +27,29 @@ export const ALLOWED_MEDIA_TYPES = [
 // Text media types are special-cased everywhere binary attachments are: inlined
 // as text blocks (sticky across turns), sized by bytes in the context estimate,
 // and previewed as a labelled icon (no thumbnail).
-// STILL INLINED, DELIBERATELY, AND ONLY UNTIL THE SERVER HALF SHIPS (#214, ordering hazard 9).
-// The inline lane is going: every attachment becomes an uploaded file with a stored identity,
-// which is what lets a chip be rebuilt on reload for every format by one fix. But the order
-// matters and only one direction is safe. A server that admits CSV uploads while this browser
-// still inlines them is harmless — the upload path simply goes unused. The reverse, a browser
-// that uploads CSVs against a server that still refuses `text/*`, breaks every CSV attach.
-// `text/plain` is dropped from the set with its removal from the allowlist above.
-export const TEXT_MEDIA_TYPES = new Set(['text/csv'])
+// THE INLINE LANE IS GONE (#214). A CSV used to be read in the browser and pushed into the
+// prompt as a fenced text block; every attachment is now an uploaded file with a stored
+// identity. That is what lets a chip be rebuilt on reload for EVERY format by one fix — the
+// inline lane could never have produced an identity to rebuild from.
+//
+// The set stays, empty, rather than being deleted with its last member: three call sites branch
+// on it, and emptying it turns all three onto the uploaded path at once instead of one at a time
+// leaving a half-migrated composer. The server half shipped first (ordering hazard 9), so this
+// direction is the safe one — a browser that uploads CSVs against a server that still refused
+// them would break every CSV attach.
+export const TEXT_MEDIA_TYPES = new Set<string>([])
+
+// WHAT CAN BE SHOWN AS TEXT, which is a different question from how it travels (#214).
+// `TEXT_MEDIA_TYPES` above answered "is this inlined into the prompt rather than uploaded", and
+// emptying it is correct — nothing is inlined now. But `AttachmentPreview` was reading it to
+// decide something else entirely: whether pressing a chip can render the file in place. A CSV is
+// still perfectly readable in a browser, and losing that preview would be a real regression
+// smuggled in by a transport change.
+//
+// Office formats are absent on purpose: a spreadsheet, document or deck cannot be rendered in a
+// browser without a converter this platform does not host, so their chips return the file
+// instead (R23b).
+export const TEXT_PREVIEW_MEDIA_TYPES = new Set(['text/csv', 'text/tab-separated-values'])
 // Extension tokens let the OS picker show .csv/.txt even when the OS reports an
 // inconsistent or empty MIME (see resolveMediaType).
 // Extension tokens let the OS picker show these even when it reports an inconsistent or empty

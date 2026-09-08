@@ -13,9 +13,12 @@
  * TanStack table with no sorting state renders whatever order its array arrived in — which is
  * the server's only until somebody clicks a header and clicks it back.
  *
- * WHAT THIS PANEL DOES NOT DO: decide. `Review` calls a seam (`onReview`) and nothing else; the
- * dialog behind it, and the two writes behind that, are the next unit's. Until it lands the
- * control is inert by design rather than by omission.
+ * WHERE THE DECISION LIVES. `Review` opens `ConnectorReviewDialog` and this panel owns three
+ * things around it: which row is open, the reload after a write, and the toast. The dialog owns
+ * the two API calls and the difference between a refusal worth retrying and a row that is
+ * already gone — it hands back one sentence through `onSettled`, and BOTH outcomes land here the
+ * same way, because a decision that landed and a row another administrator decided first leave
+ * this queue equally stale.
  *
  * R18: no connector is named anywhere in this file. The pills are built from the connectors the
  * API actually reported, and every label on screen is `connectorDisplayName` off the wire.
@@ -32,6 +35,7 @@ import type { SortingState } from '@tanstack/react-table'
 import { AlertCircle, Loader2, RefreshCw, Search } from 'lucide-react'
 import { listConnectorRequests } from '../../utils/adminConnectorApi'
 import type { ConnectorRequestRow } from '../../utils/adminConnectorApi'
+import ConnectorReviewDialog from './ConnectorReviewDialog'
 import { getStoredUser } from '../../utils/auth'
 import {
   connectorRequestGlobalFilter,
@@ -173,16 +177,15 @@ function QueueTable({ kind, rows, globalFilter, onReview, currentUserId }: Queue
 
 export interface IntegrationsPanelProps {
   /**
-   * THE DECISION SEAM, left open the way `IntegrationsDialog` left `openProjects` for its
-   * drill-down: the queue knows it has a control to offer and nothing about what happens next.
+   * The console's toast channel, as every other writing panel takes it.
    *
-   * The next unit mounts the decide dialog on this callback — approve with no remark, decline
-   * with a required one — and reloads the queue after a write. It is OPTIONAL because that
-   * dialog does not exist yet: without a handler `Review` is present, focusable and inert, which
-   * is the honest state of a half-built feature rather than a control quietly removed from the
-   * board.
+   * IT ARRIVED WITH THE FIRST WRITE, WHICH IS THE POINT. This panel shipped without one while it
+   * only read; a prop wired to nothing is a promise a file cannot keep. Now there are two
+   * writes, and two of the outcomes an administrator most needs to hear about — another
+   * administrator decided first, the citizen withdrew — CLOSE the dialog rather than rendering
+   * inside it, so without this channel they would vanish silently into a reloaded queue.
    */
-  onReview?: (request: ConnectorRequestRow) => void
+  onToast: (message: string, severity?: 'ok' | 'problem') => void
 }
 
 /**
@@ -215,13 +218,7 @@ function mergeConnectors(
   return [...byKey.values()].sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 
-/**
- * NO `onToast` PROP YET, and its absence is deliberate. Every other admin panel takes the
- * console's toast channel because every other one WRITES; this one only reads, so a prop wired to
- * nothing would be a promise the file cannot keep. The decision unit adds it with its first
- * write, in the same commit as the caller that needs it.
- */
-export default function IntegrationsPanel({ onReview }: IntegrationsPanelProps) {
+export default function IntegrationsPanel({ onToast }: IntegrationsPanelProps) {
   const [waitingRows, setWaitingRows] = useState<ConnectorRequestRow[]>([])
   const [decidedRows, setDecidedRows] = useState<ConnectorRequestRow[]>([])
   const [connectors, setConnectors] = useState<ConnectorOption[]>([])
@@ -232,6 +229,13 @@ export default function IntegrationsPanel({ onReview }: IntegrationsPanelProps) 
   /** …and what has settled, which is what the server is asked for. */
   const [appliedQuery, setAppliedQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
+  /**
+   * The row `Review` is open on, or `null`. THE WHOLE ROW rather than its id: the dialog renders
+   * the person, their words and the connector's consent copy off it, and holding an id would
+   * mean looking the row back up on every render of a dialog whose subject cannot change while
+   * it is open.
+   */
+  const [review, setReview] = useState<ConnectorRequestRow | null>(null)
   /** False until a load has actually landed, so a re-filter never blanks the screen back to a spinner. */
   const [ready, setReady] = useState(false)
   // Staleness guard for overlapping loads — a pill press mid-debounce is two loads in flight,
@@ -281,14 +285,26 @@ export default function IntegrationsPanel({ onReview }: IntegrationsPanelProps) 
 
   /**
    * The `Review` seam. Defined here rather than on the column factory because this panel is what
-   * owns the queue's data and will own the dialog's reload; the rows only know they have a
-   * control to offer.
+   * owns the queue's data and the dialog's reload; the rows only know they have a control to
+   * offer. `useCallback` because it is a dependency of the column factory's `useMemo` — an
+   * unstable identity would rebuild every column on every render and drop the sort state.
    */
-  const openReview = useCallback(
-    (request: ConnectorRequestRow): void => {
-      onReview?.(request)
+  const openReview = useCallback((request: ConnectorRequestRow): void => {
+    setReview(request)
+  }, [])
+
+  /**
+   * A decision landed, or the row was gone before it could. Both close the dialog, reload both
+   * tables and say so — the queue is equally stale either way, and leaving the decided row in
+   * `WAITING ON YOU` is how one administrator decides a request twice.
+   */
+  const settleReview = useCallback(
+    (message: string, severity: 'ok' | 'problem'): void => {
+      setReview(null)
+      onToast(message, severity)
+      void load()
     },
-    [onReview],
+    [onToast, load],
   )
 
   // The same predicate the tables filter with, so the sentence above a table and the rows under
@@ -450,6 +466,17 @@ export default function IntegrationsPanel({ onReview }: IntegrationsPanelProps) 
         ones they have not made yet. Withdrawing it stops their chats and their published apps at
         the same moment. Every decision is written to the audit log with your name.
       </p>
+
+      {/* CONDITIONALLY MOUNTED, as every dialog in this portal is — `dialog.tsx`'s focus
+          backstop is written for exactly this shape, and a permanently-mounted dialog holding a
+          stale row would be one render away from deciding somebody else's request. */}
+      {review !== null && (
+        <ConnectorReviewDialog
+          request={review}
+          onClose={() => setReview(null)}
+          onSettled={settleReview}
+        />
+      )}
     </>
   )
 }

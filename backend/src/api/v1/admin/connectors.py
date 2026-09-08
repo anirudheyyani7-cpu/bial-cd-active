@@ -59,6 +59,7 @@ from src.api.v1.admin.schemas import (
     ConnectorRequestRow,
     ConnectorWaitingCountResponse,
 )
+from src.api.v1.connectors.schemas import ConsentLine
 from src.api.v1.pagination import SearchQuery, clean_search
 from src.core.connectors import CONNECTORS
 from src.core.errors import AppApiError
@@ -141,6 +142,33 @@ def _connector_name(connector_key: str) -> str:
     return connector.display_name if connector is not None else connector_key
 
 
+def _consent_lines(connector_key: str) -> list[ConsentLine]:
+    """`WHAT APPROVING GIVES THEM`, as wire objects, in registry order.
+
+    A COPY OF THE ORDER AND NOTHING ELSE — the citizen router's `_consent_lines` beside its own
+    panel, with the OTHER tuple. No filtering, no joining, no re-voicing: these are R1-binding
+    consent sentences pinned byte-exact in `tests/db/test_connector_models.py`, and the dialog
+    that renders them is a renderer.
+
+    THE APPROVER'S SET, NEVER THE REQUESTER'S. They are third person and only this one names the
+    day cap; handing the citizen's second-person tuple to an administrator would ship copy about
+    what "you build" to somebody who is not building anything. (Quoting either set here would put
+    one connector's name in this module and break R18's grep — the sentences live on the entry.)
+
+    AN EMPTY LIST FOR A KEY THE REGISTRY NO LONGER OFFERS, and — unlike `_connector_name` above
+    — the browser treats that as a contract break rather than degrading. The two differ because
+    the values differ in kind: a lowercase key where a display name should be is legible, while
+    a consent box with a heading and no consent under it asks somebody to approve a data grant
+    without saying what it grants. The portal's strict parse throws and the queue shows its
+    error-and-retry state, which is the honest one."""
+    connector = CONNECTORS.get(connector_key)
+    if connector is None:
+        return []
+    return [
+        ConsentLine(lead=line.lead, body=line.body) for line in connector.consent_lines_approver
+    ]
+
+
 # One listing row as the join hands it over: the request, then its ASKER's two name columns.
 _QueueRow = Row[tuple[ConnectorAccessRequest, str | None, str]]
 
@@ -219,6 +247,7 @@ def _row(
         email=email,
         connector_key=request.connector_key,
         connector_display_name=_connector_name(request.connector_key),
+        consent_lines_approver=_consent_lines(request.connector_key),
         requester_remarks=request.requester_remarks,
         asked_at=request.created_at,
         status=request.status,

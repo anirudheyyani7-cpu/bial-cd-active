@@ -1,6 +1,6 @@
 """`GET /v1/admin/connector-requests` and `.../counts` — the administrator's two tables.
 
-SIX CLAIMS THIS FILE EXISTS FOR:
+SEVEN CLAIMS THIS FILE EXISTS FOR:
 
 1. **The two tables are two orders, and both are named rather than incidental.** `waiting` is
    oldest-first (the review-queue order the app registry already uses, so the person who has
@@ -19,6 +19,10 @@ SIX CLAIMS THIS FILE EXISTS FOR:
    silently; a queue that reads as empty because a filter was dropped is the worst outcome here.
 6. **An empty queue is a 200 and a zero, not a 404.** "Nothing is waiting" and "we did not ask"
    must not render as the same pixel.
+7. **The decide dialog's consent copy rides the row.** The administrator's third-person
+   `WHAT APPROVING GIVES THEM` lines are registry facts on the wire, not sentences a component
+   reconstructs — R18's claim is that a second connector costs a registry entry and nothing
+   else, and the citizen's half of this wire has already been repaired once for exactly that.
 
 The ledger seeds come from the citizen suite's conftest ON PURPOSE: both surfaces read one table,
 and a second `seed_request` here would be a second place the row shape is written down.
@@ -44,6 +48,7 @@ from tests.api.v1.connectors.conftest import (
     KEY,
     REMARKS,
     auth_headers,
+    seed_decision,
     seed_request,
 )
 from tests.factories import ProjectFactory, UserFactory
@@ -149,6 +154,42 @@ async def test_the_waiting_table_is_oldest_first_and_carries_the_whole_row(
     # `null`, not `0`: "we did not count" and "none" are different answers, and only one of them
     # belongs on a row nobody has approved.
     assert first["usingItIn"] is None
+
+
+async def test_every_row_carries_the_approver_consent_lines_as_objects(client, db_session) -> None:
+    """★ THE DECIDE DIALOG'S COPY RIDES THE ROW (R18). `AdminReview`'s `WHAT APPROVING GIVES THEM`
+    panel is three consent sentences about ONE connector, and a component that spelled them would
+    make "add a second connector" a component change — the exact defect `1935588e` came back to
+    repair on the citizen's side of this wire.
+
+    THREE THINGS ARE ASSERTED, AND EACH HAS ITS OWN MUTANT:
+    the lines are the registry's APPROVER tuple (hand over the requester's and the third-person
+    panel ships second-person copy, and the thirty-day promise disappears); they cross as
+    `{lead, body}` objects rather than pre-joined sentences (join them and the browser has to
+    guess the bold split at the first full stop, which the first line's lowercase body breaks);
+    and they are on a DECIDED row too, not narrowed to `waiting` (narrow them and the field is
+    state-conditional copy, which is what `ConnectorEntry`'s docblock argues against).
+    """
+    admin = await _admin(db_session)
+    citizen = await _citizen(db_session)
+    await seed_request(db_session, citizen.id, ConnectorRequestStatus.PENDING)
+    other = await UserFactory.create(db_session, email="decided@rvaiglobal.com")
+    await seed_decision(db_session, other.id, ConnectorRequestStatus.APPROVED, admin)
+
+    expected = [
+        {"lead": line.lead, "body": line.body} for line in _CONNECTOR.consent_lines_approver
+    ]
+    # Guard the guard: an empty registry tuple would make every assertion below vacuously true.
+    assert len(expected) == 3
+
+    waiting_row = (await _waiting(client, admin))[0]
+    assert waiting_row["consentLinesApprover"] == expected
+    # THE APPROVER'S SET, NOT THE CITIZEN'S. The two tuples are different sentences in different
+    # voices; only this one names the day cap, and only the citizen's says "you".
+    assert waiting_row["consentLinesApprover"] != [
+        {"lead": line.lead, "body": line.body} for line in _CONNECTOR.consent_lines_requester
+    ]
+    assert (await _decided(client, admin))[0]["consentLinesApprover"] == expected
 
 
 async def test_rows_written_in_one_transaction_still_order_by_their_id(client, db_session) -> None:

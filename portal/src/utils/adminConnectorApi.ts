@@ -24,6 +24,7 @@
 import { ApiError, isRecord, optionalString, readApiError } from './apiError'
 import { authFetch } from './api'
 import type { AuthFetchDeps } from './api'
+import type { ConsentLine } from './connectorApi'
 
 /**
  * Which table a listing asks for. `state` IS REQUIRED ON THE WIRE and there is no honest
@@ -67,6 +68,16 @@ export interface ConnectorRequestRow {
   /** The stored key. Stable, lowercase, never rendered — `connectorDisplayName` is. */
   connectorKey: string
   connectorDisplayName: string
+  /**
+   * `WHAT APPROVING GIVES THEM` — the registry's THIRD-PERSON consent set, which is a different
+   * tuple from the citizen's `consentLinesRequester` and not derivable from it.
+   *
+   * IT RIDES THE ROW BECAUSE THE DECIDE DIALOG IS HANDED A ROW AND NOTHING ELSE. A component
+   * that spelled these three sentences would make "add a second connector" a component change,
+   * which is the claim R18 makes and the exact defect the citizen's half of this wire has
+   * already been repaired for once.
+   */
+  consentLinesApprover: readonly ConsentLine[]
   /** The citizen's own words, in full. Rendered untruncated, as plain text, never markdown. */
   requesterRemarks: string
   askedAt: string
@@ -129,6 +140,31 @@ function optionalCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null
 }
 
+/**
+ * `WHAT APPROVING GIVES THEM`, or a throw — the same strict reader the citizen module applies to
+ * its own consent list, and strict for the same reason.
+ *
+ * AN EMPTY ARRAY IS A BREAK TOO, and this is the one field where degrading gracefully would be
+ * worse than failing. `connectorDisplayName` falls back to the stored key on the server for a
+ * connector the registry no longer offers, because a lowercase key on screen is still legible;
+ * a consent box with a heading and no consent under it asks an administrator to hand somebody
+ * access to BIAL data without saying what the access is. Dropping a malformed LINE would be
+ * worse still — two of three promises on screen with nothing admitting the third went missing.
+ * Both land in the queue's error-and-retry state, which is honest.
+ */
+function readConsentLines(value: unknown): readonly ConsentLine[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ApiError('The server sent a request we could not read (consentLinesApprover).', 500)
+  }
+  return value.map((line: unknown) => {
+    const row = isRecord(line) ? line : {}
+    return {
+      lead: readString(row.lead, 'consentLinesApprover.lead'),
+      body: readString(row.body, 'consentLinesApprover.body'),
+    }
+  })
+}
+
 function toRow(value: unknown): ConnectorRequestRow {
   const row = isRecord(value) ? value : {}
   return {
@@ -138,6 +174,7 @@ function toRow(value: unknown): ConnectorRequestRow {
     email: readString(row.email, 'email'),
     connectorKey: readString(row.connectorKey, 'connectorKey'),
     connectorDisplayName: readString(row.connectorDisplayName, 'connectorDisplayName'),
+    consentLinesApprover: readConsentLines(row.consentLinesApprover),
     requesterRemarks: readString(row.requesterRemarks, 'requesterRemarks'),
     askedAt: readString(row.askedAt, 'askedAt'),
     status: readStatus(row.status),
@@ -197,4 +234,66 @@ export async function fetchWaitingConnectorCount(deps: AuthFetchDeps = {}): Prom
     throw new ApiError('The server sent a waiting count we could not read.', 500)
   }
   return Math.max(0, Math.trunc(doc.waiting))
+}
+
+// --- the two decisions ----------------------------------------------------------
+//
+// BOTH ARE `POST`s BEHIND `RequireCsrf`, and `authFetch` puts the double-submit header on every
+// mutating call, so neither function does anything about it. Both answer with the row's new
+// state and NEITHER RETURN IT: the queue's answer to "what is on screen now" is a reload of both
+// tables, not a body patched into one row, and a parsed shape with no reader would be a contract
+// this module claims to hold and nothing checks. The refusals are what callers act on.
+
+/**
+ * Give this person access to the connector they asked for.
+ *
+ * NO BODY AT ALL, and that is the `AdminReview` board's largest departure rather than an
+ * omission (R10). The board draws a permanent `REQUIRED` remark over both outcomes; an approval
+ * stores nothing, because an approval remark would be readable nowhere — the audit row carries
+ * ids, the citizen is never shown one, and the decided table has no remarks column. Sending an
+ * empty `{}` here would be a body the route does not declare and a reader would have to work out
+ * was ignored.
+ *
+ * Refused with `409 already_decided` when another administrator answered first — its
+ * `error.detail` carries `{status, decidedByName, decidedAt}`, because the server formats no
+ * human-readable date and the console that renders this already formats every date on the screen
+ * behind it. `409 request_cancelled` means the citizen withdrew between the render and the click,
+ * and carries no `detail` at all: there is nothing measured to hand over.
+ */
+export async function approveConnectorRequest(
+  requestId: string,
+  deps: AuthFetchDeps = {},
+): Promise<void> {
+  const res = await authFetch(
+    `/api/admin/connector-requests/${encodeURIComponent(requestId)}/approve`,
+    { method: 'POST' },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to approve the request')
+}
+
+/**
+ * Refuse this person's request, in words they will read.
+ *
+ * `remarks` is required — 5 to 50 words by the shared rule in `utils/words.ts`, which is the
+ * rule the server counts with — and reaches the citizen VERBATIM on their own Integrations row.
+ * A form that let a short one through would meet a `422` whose `detail[]` says the same thing
+ * the counter was already showing, which is why the dialog enforces the floor before this is
+ * called rather than after. The two 409s are the approve route's.
+ */
+export async function declineConnectorRequest(
+  requestId: string,
+  remarks: string,
+  deps: AuthFetchDeps = {},
+): Promise<void> {
+  const res = await authFetch(
+    `/api/admin/connector-requests/${encodeURIComponent(requestId)}/decline`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remarks }),
+    },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to decline the request')
 }

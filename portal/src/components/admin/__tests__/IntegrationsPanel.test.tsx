@@ -26,12 +26,19 @@ import { MemoryRouter } from 'react-router-dom'
 const h = vi.hoisted(() => ({
   listConnectorRequests: vi.fn(),
   fetchWaitingConnectorCount: vi.fn(),
+  approveConnectorRequest: vi.fn(),
+  declineConnectorRequest: vi.fn(),
   getStoredUser: vi.fn(),
 }))
 
 vi.mock('../../../utils/adminConnectorApi', () => ({
   listConnectorRequests: h.listConnectorRequests,
   fetchWaitingConnectorCount: h.fetchWaitingConnectorCount,
+  // The decide dialog this panel now mounts reaches for both. Named here so a stray call from a
+  // test in this file is a mock assertion rather than vitest's "no export is defined" throw —
+  // the decision's own behaviour is covered in `ConnectorReviewDialog.test.tsx`.
+  approveConnectorRequest: h.approveConnectorRequest,
+  declineConnectorRequest: h.declineConnectorRequest,
 }))
 vi.mock('../../../utils/auth', () => ({ getStoredUser: h.getStoredUser }))
 
@@ -58,6 +65,17 @@ const PRIYA_REMARK =
   'I build the stand and turnaround boards for ground ops. All of them need on-block and off-block times.'
 
 /**
+ * `WHAT APPROVING GIVES THEM`, as the wire carries it — three `{lead, body}` pairs, never
+ * pre-joined. Invented like the connectors above, and for the same reason: a component that
+ * spelled the real registry's sentences would still pass a test that asserted the real ones.
+ */
+const CONSENT = [
+  { lead: 'Read access to the movements feed.', body: 'and nothing else in this system.' },
+  { lead: 'Every project they own.', body: 'including ones they have not made yet.' },
+  { lead: 'Up to 30 days of history while they build.', body: 'each project picks its own range.' },
+]
+
+/**
  * Midday UTC, deliberately: every timezone this product is read in still calls it the same day,
  * so the DATE half of every assertion below is stable while the clock half stays local.
  */
@@ -69,6 +87,7 @@ const waiting: ConnectorRequestRow[] = [
     email: 'priya.nair@bial.aero',
     connectorKey: 'orbit',
     connectorDisplayName: 'ORBIT',
+    consentLinesApprover: CONSENT,
     requesterRemarks: PRIYA_REMARK,
     askedAt: '2026-09-04T12:00:00.000Z',
     status: 'pending',
@@ -86,6 +105,7 @@ const waiting: ConnectorRequestRow[] = [
     email: 'sam.fernandes.terminal.duty.manager@bial.aero',
     connectorKey: 'orbit',
     connectorDisplayName: 'ORBIT',
+    consentLinesApprover: CONSENT,
     requesterRemarks:
       'The duty manager’s delay board. Without the live schedule it is a spreadsheet somebody retypes each shift.',
     askedAt: '2026-09-03T12:00:00.000Z',
@@ -103,6 +123,7 @@ const waiting: ConnectorRequestRow[] = [
     email: 'divya.shetty@bial.aero',
     connectorKey: 'atlas',
     connectorDisplayName: 'ATLAS',
+    consentLinesApprover: CONSENT,
     requesterRemarks: 'Belt planning — how many arriving flights land on each belt per hour, a day ahead.',
     askedAt: '2026-09-05T12:00:00.000Z',
     status: 'pending',
@@ -122,6 +143,7 @@ const decided: ConnectorRequestRow[] = [
     email: 'meera.rao@bial.aero',
     connectorKey: 'orbit',
     connectorDisplayName: 'ORBIT',
+    consentLinesApprover: CONSENT,
     requesterRemarks: 'Airside safety walk-arounds.',
     askedAt: '2026-08-26T12:00:00.000Z',
     status: 'approved',
@@ -138,6 +160,7 @@ const decided: ConnectorRequestRow[] = [
     email: 'anant.gupta@bial.aero',
     connectorKey: 'orbit',
     connectorDisplayName: 'ORBIT',
+    consentLinesApprover: CONSENT,
     requesterRemarks: 'Terminal systems dashboards.',
     askedAt: '2026-09-01T12:00:00.000Z',
     status: 'approved',
@@ -156,6 +179,7 @@ const decided: ConnectorRequestRow[] = [
     email: 'rakesh.iyer@bial.aero',
     connectorKey: 'atlas',
     connectorDisplayName: 'ATLAS',
+    consentLinesApprover: CONSENT,
     requesterRemarks: 'Retail footfall by hour.',
     askedAt: '2026-09-01T12:00:00.000Z',
     status: 'declined',
@@ -190,8 +214,8 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-const openPanel = (props: Partial<{ onReview: (r: ConnectorRequestRow) => void }> = {}) =>
-  render(<IntegrationsPanel {...props} />)
+const onToast = vi.fn()
+const openPanel = () => render(<IntegrationsPanel onToast={onToast} />)
 
 const openConsole = () => render(<AdminPage />, { wrapper: MemoryRouter })
 
@@ -443,16 +467,39 @@ describe('a load that fails', () => {
   })
 })
 
-describe('the Review seam the decision dialog will fill', () => {
-  it('hands the whole row to its callback and does nothing else', async () => {
-    const onReview = vi.fn()
-    openPanel({ onReview })
+describe('the Review control opens the decision dialog', () => {
+  it('opens it on the pressed row, and on no other', async () => {
+    openPanel()
     await screen.findByTestId('queue-table-waiting')
+
+    // Not open until asked: paired with the positive below so a dialog that failed to mount
+    // cannot pass this.
+    expect(screen.queryByTestId('connector-review-dialog')).toBeNull()
 
     fireEvent.click(screen.getByTestId('review-req-priya'))
 
-    expect(onReview).toHaveBeenCalledTimes(1)
-    expect(onReview).toHaveBeenCalledWith(waiting[0])
+    const dialog = within(screen.getByTestId('connector-review-dialog'))
+    expect(dialog.getByText('Give Priya Nair access to ORBIT?')).toBeTruthy()
+    // The row that was pressed, not the first waiting row on screen — the two differ here,
+    // because the default order puts Sam on top.
+    expect(dialog.queryByText(/Sam Fernandes/)).toBeNull()
+    expect(dialog.getByText(new RegExp(PRIYA_REMARK.slice(0, 30)))).toBeTruthy()
+  })
+
+  it('closes on Cancel with nothing decided and no reload', async () => {
+    openPanel()
+    await screen.findByTestId('queue-table-waiting')
+    const loadsBefore = h.listConnectorRequests.mock.calls.length
+
+    fireEvent.click(screen.getByTestId('review-req-priya'))
+    fireEvent.click(screen.getByTestId('review-cancel'))
+
+    await waitFor(() => expect(screen.queryByTestId('connector-review-dialog')).toBeNull())
+    // The queue is still there — the liveness half — and nothing was written or re-read.
+    expect(screen.getByTestId('queue-table-waiting')).toBeTruthy()
+    expect(h.approveConnectorRequest).not.toHaveBeenCalled()
+    expect(h.declineConnectorRequest).not.toHaveBeenCalled()
+    expect(h.listConnectorRequests.mock.calls.length).toBe(loadsBefore)
   })
 })
 

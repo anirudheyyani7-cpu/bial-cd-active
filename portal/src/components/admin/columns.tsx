@@ -322,12 +322,26 @@ function initials(name: string): string {
  * that file is out of this unit's scope, so the four lines are here and the month list — the
  * part that could actually disagree — is not.
  */
-function dayMonthTime(iso: string): string {
+/**
+ * `09:12` — the clock half on its own, local and zero-padded, or `null` for an instant that will
+ * not parse.
+ *
+ * EXPORTED FOR THE ONE SENTENCE THAT SETS IT WITH A WORD RATHER THAN A COMMA: the decide
+ * dialog's `Asked on 4 Sep at 09:12.` A third four-line copy of `padStart` would be the drift
+ * the docblock above is already about, one level down — the column list is not the only thing
+ * two surfaces can disagree on. `dayMonthTime` composes it, so both forms move together.
+ */
+export function clockTime(iso: string): string | null {
   const parsed = new Date(iso)
-  if (Number.isNaN(parsed.getTime())) return iso
+  if (Number.isNaN(parsed.getTime())) return null
   const hh = String(parsed.getHours()).padStart(2, '0')
   const mm = String(parsed.getMinutes()).padStart(2, '0')
-  return `${dayMonth(iso)}, ${hh}:${mm}`
+  return `${hh}:${mm}`
+}
+
+function dayMonthTime(iso: string): string {
+  const clock = clockTime(iso)
+  return clock === null ? iso : `${dayMonth(iso)}, ${clock}`
 }
 
 /** The board's ` · ` separator, with absent parts dropped rather than rendered as a dangling gap. */

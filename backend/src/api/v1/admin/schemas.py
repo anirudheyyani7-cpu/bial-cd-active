@@ -8,6 +8,15 @@ All request/response models for the THREE admin routers (`/admin/apps` governanc
 The third router lives in its own module (`admin/connectors.py`) because `admin/router.py`
 is already ~2,500 lines; its schemas nevertheless stay here, with the other two surfaces'.
 See the section comment above them for why.
+
+THE ONE IMPORT THIS MODULE TAKES FROM ANOTHER v1 SURFACE is `ConsentLine`, off the citizen's
+`api/v1/connectors/schemas.py`. It is not a citizen-specific shape: it is the wire mirror of
+`core.connectors.ConsentLine`, a `lead` and a `body`, and BOTH consent panels — the citizen's
+`WHAT AN APPROVAL GIVES YOU` and the administrator's `WHAT APPROVING GIVES THEM` — cross the
+wire as lists of it. A second, identical Pydantic model here would be two names for one wire
+shape, free to drift the day either side gains a field, which is the exact failure both
+docblocks already exist to prevent. The dependency runs one way and closes no loop: that module
+imports from `db.models`, `schemas` and `services.connectors`, and nothing from `admin`.
 """
 
 from __future__ import annotations
@@ -18,6 +27,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, AnyUrl, Field, UrlConstraints, field_validator
 
+from src.api.v1.connectors.schemas import ConsentLine
 from src.db.models.app_registry import MAX_DEPLOYED_URL, ApprovalRoute, AppStatus
 from src.db.models.connector_access import ConnectorRequestStatus
 from src.db.models.worker_pass import PassOutcome
@@ -765,6 +775,18 @@ class ConnectorRequestRow(CamelModel):
     #: The catalogue's name for it, so the `CONNECTOR` column needs no second lookup and no
     #: component has to know what any connector is called (R18).
     connector_display_name: str
+    #: `AdminReview`'s `WHAT APPROVING GIVES THEM` panel — the registry's THIRD-PERSON consent
+    #: set, which is a different tuple from the citizen's `consentLinesRequester` and not
+    #: derivable from it (`core.connectors` explains why they are two fields).
+    #:
+    #: ON EVERY ROW, INCLUDING THE DECIDED ONES, AND THAT REDUNDANCY IS THE POINT. The decide
+    #: dialog is handed one row and nothing else, so the row is the only object the copy can
+    #: ride; a component that reconstructed these three sentences would make "add a second
+    #: connector" a component change, which is exactly the claim R18 makes and which
+    #: `1935588e` had to come back and repair on the citizen's side. Narrowing it to `waiting`
+    #: rows would save a few hundred bytes and reintroduce the state-conditional copy field
+    #: `ConnectorEntry`'s docblock argues against.
+    consent_lines_approver: list[ConsentLine]
     #: The citizen's own words, in full. The queue renders them untruncated (board) and as plain
     #: text on every surface, never through a markdown component: one user writes this and
     #: another reads it.

@@ -155,7 +155,7 @@ export default function AdminPage() {
 
           <div className="p-4">
             {activeTab === 'apps' && <AppRegistryPanel onToast={showToast} />}
-            {activeTab === 'connectors' && <IntegrationsPanel />}
+            {activeTab === 'connectors' && <IntegrationsPanel onToast={showToast} />}
             {activeTab === 'users' && <UsersLimitsPanel onToast={showToast} />}
             {activeTab === 'globalLimits' && <GlobalLimitsPanel onToast={showToast} />}
             {activeTab === 'feedback' && <FeedbackPanel />}

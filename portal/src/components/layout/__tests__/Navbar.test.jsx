@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   getStoredUser: vi.fn(() => ({ email: 'asha@rvaiglobal.com', display_name: 'Asha' })),
   logout: vi.fn(),
   fetchAppStatusCounts: vi.fn(),
+  listConnectors: vi.fn(),
 }))
 
 vi.mock('../../../utils/usage', () => ({
@@ -32,6 +33,14 @@ vi.mock('../../../utils/auth', () => ({
 }))
 vi.mock('../../../utils/attachmentApi', () => ({ revokeAllAttachmentUrls: vi.fn() }))
 vi.mock('../../../utils/appRegistryApi', () => ({ fetchAppStatusCounts: h.fetchAppStatusCounts }))
+// The Integrations dialog the profile menu opens is REAL here, not stubbed — the point of the
+// suite below is that the menu entry opens the actual dialog on whatever screen the navbar is
+// mounted on. Only its network boundary is mocked.
+vi.mock('../../../utils/connectorApi', () => ({
+  listConnectors: h.listConnectors,
+  requestConnectorAccess: vi.fn(),
+  cancelConnectorRequest: vi.fn(),
+}))
 vi.mock('../../FeedbackModal', () => ({ default: () => null }))
 
 import Navbar from '../Navbar'
@@ -47,6 +56,21 @@ function LocationProbe() {
 const ADMIN = { email: 'admin@bial.com', display_name: 'Priya', isAdmin: true }
 const counts = (pending) => ({ draft: 0, pending, approved: 0, rejected: 0, disabled: 0 })
 
+/** One connector as the wire sends it. Named by the suite, never by the component. */
+const CONNECTOR = {
+  key: 'orbit',
+  displayName: 'ORBIT',
+  subtitle: 'Airport operations',
+  state: 'neverAsked',
+  askedAt: null,
+  approvedAt: null,
+  approvedByName: null,
+  onProjectCount: null,
+  decidedAt: null,
+  decidedByName: null,
+  decisionRemarks: null,
+}
+
 /** The subscriber the Navbar hands `onUsageChanged`, so a test can fire the signal itself. */
 let subscriber = null
 
@@ -57,6 +81,7 @@ beforeEach(() => {
   h.getStoredUser.mockReturnValue({ email: 'asha@rvaiglobal.com', display_name: 'Asha' })
   h.fetchUsageToday.mockResolvedValue({ used: 12_345, limit: 50_000, remaining: 37_655 })
   h.fetchAppStatusCounts.mockResolvedValue(counts(0))
+  h.listConnectors.mockResolvedValue([CONNECTOR])
   h.onUsageChanged.mockImplementation((fn) => {
     subscriber = fn
     return () => {
@@ -404,15 +429,80 @@ describe('the avatar menu opens and closes', () => {
 
   it('moves focus between items with the arrow keys — what the swap is for', async () => {
     // Roving focus is the accessibility the hand-rolled menu had no way to get: opening with
-    // ArrowDown must land focus ON an item, not leave it on the trigger.
+    // ArrowDown must land focus ON an item, not leave it on the trigger — and ArrowDown again
+    // must MOVE it, which is the half a one-item menu could never demonstrate.
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
     const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
 
-    const item = await screen.findByRole('menuitem', { name: /sign out/i })
-    await waitFor(() => expect(document.activeElement).toBe(item))
+    const first = await screen.findByRole('menuitem', { name: /integrations/i })
+    await waitFor(() => expect(document.activeElement).toBe(first))
+
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    const second = screen.getByRole('menuitem', { name: /sign out/i })
+    await waitFor(() => expect(document.activeElement).toBe(second))
+  })
+})
+
+/**
+ * THE ONLY NEW DOOR (R5). Integrations is not a route and not a Settings link: it is an entry in
+ * the profile menu that opens a dialog over whatever screen the citizen is standing on. The
+ * `OpenIt` board's two annotations are requirements, and both are asserted here.
+ */
+describe('the profile menu opens Integrations', () => {
+  const openMenu = () => {
+    const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
+    fireEvent.pointerDown(trigger)
+    return trigger
+  }
+
+  it('puts the entry between the identity header and Sign out, and adds no route and no Settings link', async () => {
+    renderNavbar()
+    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+    openMenu()
+
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual(['Integrations', 'Sign out'])
+
+    // The board's first annotation: no Settings link in the top bar.
+    expect(screen.queryByRole('link', { name: /settings/i })).toBeNull()
+    // Liveness for that absence — the top bar really rendered its own links.
+    expect(screen.getByRole('link', { name: 'Marketplace' })).toBeTruthy()
+  })
+
+  it('opens the dialog over the current screen, with the connector list in it', async () => {
+    renderNavbar()
+    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+    openMenu()
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: /integrations/i }))
+
+    expect(await screen.findByTestId('integrations-dialog')).toBeTruthy()
+    expect(await screen.findByText('ORBIT')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy()
+    // Still the same screen underneath — a dialog, not a navigation. Queried by TEXT, not by
+    // role: a modal Radix dialog puts `aria-hidden` on everything outside itself, so the navbar
+    // is deliberately out of the accessibility tree while this is open. It is still mounted, and
+    // that is the fact this asserts.
+    expect(screen.getByText('BIAL Citizen Developer')).toBeTruthy()
+  })
+
+  it('closes on its own X, and does not ask for the list again until it is reopened', async () => {
+    renderNavbar()
+    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /integrations/i }))
+    await screen.findByTestId('integrations-dialog')
+    expect(h.listConnectors).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    await waitFor(() => expect(screen.queryByTestId('integrations-dialog')).toBeNull())
+    // Liveness: the navbar is still there, so the dialog closed rather than the tree dying.
+    expect(screen.getByRole('link', { name: 'Projects' })).toBeTruthy()
+    expect(h.listConnectors).toHaveBeenCalledTimes(1)
   })
 })
 

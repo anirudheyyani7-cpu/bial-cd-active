@@ -4,7 +4,7 @@ import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // `Info` is NOT left over from the removed settings menu — it is the toast's own icon
 // (see the toast render below). The nine icons that went with the deleted header controls
 // are gone; these four all have live consumers.
-import { ChevronDown, LogOut, Info, MessageSquare } from 'lucide-react'
+import { ChevronDown, LogOut, Info, MessageSquare, Plug } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -20,6 +20,7 @@ import { fetchAppStatusCounts } from '../../utils/appRegistryApi'
 import { projectsListHref, rememberProjectsSearch } from '../../utils/projectsListMemory'
 import WaitingCountBadge from '../admin/WaitingCountBadge'
 import FeedbackModal from '../FeedbackModal'
+import IntegrationsDialog from '../connectors/IntegrationsDialog'
 import BIALLogo from '../BIALLogo'
 
 const NAV_LINKS = [
@@ -58,6 +59,10 @@ export default function Navbar() {
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [usage, setUsage] = useState<UsageToday | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  // THE ONLY NEW DOOR (R5, the `OpenIt` board's own annotation). No Settings link, no route:
+  // Integrations opens from this menu, on every screen, as a dialog over whatever was underneath.
+  // Conditionally mounted like every other dialog in this portal.
+  const [integrationsOpen, setIntegrationsOpen] = useState(false)
   // How many apps are waiting for an administrator. `null` = we have not asked, or
   // the ask failed — never rendered as a number, and never asked for at all unless this
   // user is a superadmin (see the effect below).
@@ -340,10 +345,11 @@ export default function Navbar() {
                 align="end"
                 className="w-52 rounded-xl border-bial-border bg-white p-0 py-2 shadow-xl"
               >
-                {/* No border of its own on the row below: the name/email header already carries
-                    the one divider this menu needs. It sat under "My Profile" until that
-                    placeholder was removed; keeping `border-t` would now render a second
-                    hairline a few pixels below the first. */}
+                {/* ONE HAIRLINE, ON THE HEADER, AND STILL ONLY ONE now that two items sit below
+                    it. The `border-b` here is the menu's whole divider; neither item carries a
+                    `border-t`, which would draw a second rule a few pixels under the first, and
+                    Integrations and Sign out are one group rather than two — the board draws them
+                    with no rule between them. */}
                 <DropdownMenuLabel
                   data-testid="user-menu-identity"
                   className="px-4 py-2.5 border-b border-bial-border font-normal"
@@ -351,9 +357,18 @@ export default function Navbar() {
                   <p className="text-xs font-bold text-tertiary">{displayName}</p>
                   <p className="text-[10px] text-neutral">{secondaryLine}</p>
                 </DropdownMenuLabel>
+                {/* Between the header and Sign out, exactly where `OpenIt` draws it. The `mt-1`
+                    moved here from Sign out with the group's first row. */}
+                <DropdownMenuItem
+                  onSelect={() => setIntegrationsOpen(true)}
+                  className="mt-1 gap-2.5 rounded-none px-4 py-2.5 text-sm text-tertiary hover:bg-surface-muted focus:bg-surface-muted"
+                >
+                  <Plug size={13} />
+                  Integrations
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={signOut}
-                  className="mt-1 gap-2.5 rounded-none px-4 py-2.5 text-sm text-danger hover:bg-red-50 focus:bg-red-50 focus:text-danger"
+                  className="gap-2.5 rounded-none px-4 py-2.5 text-sm text-danger hover:bg-red-50 focus:bg-red-50 focus:text-danger"
                 >
                   <LogOut size={13} />
                   Sign out
@@ -371,6 +386,10 @@ export default function Navbar() {
         onSubmitted={() => { setFeedbackOpen(false); showToast('Thanks — your feedback was sent.') }}
         triggerRef={feedbackBtnRef}
       />
+
+      {/* Integrations — the same dialog `Manage integrations →` in the workspace rail opens
+          (U10), over whatever screen the citizen is standing on. */}
+      {integrationsOpen && <IntegrationsDialog onClose={() => setIntegrationsOpen(false)} />}
 
       {/* Toast */}
       {toastMsg && (

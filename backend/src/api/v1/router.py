@@ -24,6 +24,7 @@ from src.api.v1.attachments.router import router as attachments_router
 from src.api.v1.auth.router import router as auth_router
 from src.api.v1.build_sessions.router import router as build_sessions_router
 from src.api.v1.classification.router import router as classification_router
+from src.api.v1.connectors.router import project_router as project_connectors_router
 from src.api.v1.connectors.router import router as connectors_router
 from src.api.v1.conversations.router import router as conversations_router
 from src.api.v1.conversations.transition import router as transition_router
@@ -64,6 +65,7 @@ v1_router.include_router(turns_router)
 v1_router.include_router(transition_router)
 v1_router.include_router(attachments_router)
 v1_router.include_router(connectors_router)
+v1_router.include_router(project_connectors_router)
 v1_router.include_router(apps_router)
 v1_router.include_router(build_sessions_router)
 v1_router.include_router(admin_router)

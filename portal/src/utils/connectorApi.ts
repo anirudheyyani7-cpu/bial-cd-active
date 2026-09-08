@@ -426,6 +426,40 @@ function toProjectConnector(value: unknown): ProjectConnectorEntry {
 }
 
 /**
+ * Every registry connector as ONE project sees it — the read behind the rail's DATA section.
+ *
+ * THE MIRROR IMAGE OF `listConnectorProjects` BELOW, and the pair is the whole of the feature's
+ * two axes: this one fixes the project and walks the connectors, that one fixes the connector and
+ * walks the projects. Both hand back rows the same `ProjectConnectorRow` renders.
+ *
+ * IT IS RE-READ, NEVER CACHED (origin Q12). Days resolve against today, an administrator's
+ * approval can land between two visits, and this portal has no query cache to invalidate — so
+ * the section fetches on every project navigation and again whenever the Integrations dialog
+ * closes over it. That guaranteed pre-load moment is why the section owns a skeleton.
+ *
+ * STRICT, LIKE THE REST OF THIS MODULE: an unreadable row is a contract break and throws, because
+ * the state is what selects which sentence and which control a row draws, and a dropped row would
+ * silently remove the only data source this project has.
+ */
+export async function listProjectConnectors(
+  projectId: string,
+  deps: AuthFetchDeps = {},
+): Promise<ProjectConnectorEntry[]> {
+  const res = await authFetch(
+    `/api/projects/${encodeURIComponent(projectId)}/connectors`,
+    {},
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to load this project’s data settings')
+  const body: unknown = await res.json()
+  const doc = isRecord(body) ? body : {}
+  if (!Array.isArray(doc.connectors)) {
+    throw new ApiError('The server sent a data list we could not read.', 500)
+  }
+  return doc.connectors.map(toProjectConnector)
+}
+
+/**
  * Every project you own, with this connector's switch and days in each one — newest first.
  *
  * A project you have never switched this connector on in is still here, with `enabled: false`

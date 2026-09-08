@@ -16,7 +16,6 @@ import openpyxl
 import pytest
 from pypdf import PasswordType, PdfReader
 
-from src.services.extract.deck import count_pdf_pages as deck_byte_scan
 from src.services.extract.zip_safety import FileParseError
 from src.services.parse.governor import PARSE_TIMEOUT_S, run_parse
 from src.services.parse.parsers import parse_dispatch
@@ -58,6 +57,29 @@ def _lying_zip(entries: dict[str, bytes], declared_uncompressed: int) -> bytes:
     return raw[: cdh + 24] + struct.pack("<I", declared_uncompressed) + raw[cdh + 28 :]
 
 
+def deck_byte_scan(pdf: bytes) -> int:
+    """The naive `/Type /Page` byte scan, INLINED here (#214, ordering hazard 2).
+
+    It lived in `extract/deck.py`, which this work deletes — and importing it at module level
+    meant deleting that file would break collection of this whole suite, taking the cross-
+    reference-bomb test with it. That test is the one the governor exists for and has nothing to
+    do with decks.
+
+    It is inlined rather than dropped because the COMPARISON is the argument: this is what the
+    platform used to count pages with, and the test below shows it reporting zero for a 31-page
+    document. Delete it and the reason `count_pdf_pages` uses pypdf becomes folklore.
+    """
+    count = 0
+    for needle in (b"/Type /Page", b"/Type/Page"):
+        start = 0
+        while (hit := pdf.find(needle, start)) != -1:
+            after = hit + len(needle)
+            if after >= len(pdf) or pdf[after : after + 1] not in b"sabcdefghijklmnopqrtuvwxyz":
+                count += 1
+            start = after
+    return count
+
+
 # --- dispatch bounds (in-process) ---------------------------------------------
 
 
@@ -72,39 +94,7 @@ def test_retired_and_unknown_kinds_are_415(kind: str) -> None:
     assert exc.value.code == "UNSUPPORTED_TYPE"
 
 
-def test_non_office_bytes_rejected_by_the_structure_gate() -> None:
-    # Under the EOCD minimum, so the zip pre-filter no-ops and the OPC structural gate is
-    # what refuses this. Status and code pin the dispatch's `OfficeExtractError` → clean-400
-    # mapping (without it the governor would report a generic 500); the message pins that the
-    # GATE refused it, not mammoth choking downstream — which is the same 400 and the same
-    # code, so without this line the test passes with the gate deleted.
-    with pytest.raises(FileParseError, match="missing ZIP signature") as exc:
-        parse_dispatch(b"not a zip at all", "extract_word", "x.docx", None)
-    assert exc.value.status == 400
-    assert exc.value.code == "INVALID_OFFICE_FILE"
-
-
-def test_zip_bomb_refused_before_the_extract() -> None:
-    # The entry is the one the excel structural gate looks for, so if the pre-filter were
-    # dropped this file would reach openpyxl and fail as a 400 — never as a 413.
-    bomb = _lying_zip({"xl/workbook.xml": b"<workbook/>"}, 400 * 1024 * 1024)
-    with pytest.raises(FileParseError) as exc:
-        parse_dispatch(bomb, "extract_excel", "x.xlsx", None)
-    assert exc.value.status == 413
-    assert exc.value.code == "FILE_TOO_LARGE"
-
-
 # --- governor (killable subprocess) --------------------------------------------
-
-
-async def test_governor_parses_in_subprocess() -> None:
-    # The live chat path: openpyxl runs in the spawned child and the Markdown payload
-    # crosses the Queue intact.
-    data = _xlsx([["Name"], ["Alice"]])
-    result = await run_parse(data, "extract_excel", "x.xlsx", None)
-    assert result["format"] == "excel"
-    assert "Alice" in result["text"]
-    assert result["truncated"] is False
 
 
 async def test_governor_timeout_is_413() -> None:

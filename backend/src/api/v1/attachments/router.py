@@ -34,17 +34,7 @@ from src.api.v1.conversations._shared import PDF_MEDIA_TYPE
 from src.core.errors import AppApiError
 from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
-from src.db.models.user import User
 from src.schemas import AUTH_401, ErrorEnvelope, OkResponse, error_responses
-from src.services.extract.deck import (
-    DeckConvertError,
-    convert_deck_to_pdf,
-    deck_attachments_enabled,
-)
-from src.services.extract.office import (
-    PPTX_MEDIA_TYPE,
-    office_format_for,
-)
 from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
 from src.services.media.lanes import code_lane_refusal, is_code_lane
 from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
@@ -52,7 +42,6 @@ from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
 from src.services.storage import (
     ObjectStorage,
-    StorageError,
     StorageNotFoundError,
     assert_owned,
     attachment_key,
@@ -195,12 +184,12 @@ def _validate_attachment_bytes(media_type: str, b64: Any) -> str | None:
     """Validate a MODEL-LANE upload (image/PDF) against the allowlist + magic bytes.
 
     THE CODE LANE IS NOT CHECKED HERE, and that is the point rather than a gap. `ALLOWED_MEDIA` is
-    the magic-byte gate, and `bytes_match_declared` is applied on three paths that all end at the
+    the magic-byte gate, and it is applied on both paths that end at the
     model — this route, the store's rehydrator and `build_sessions/attachments.py`. Widening it to
     admit Office would make every one of them answer True for a deck, and a spreadsheet would reach
     the model as raw ZIP bytes on whichever path lost its refusal first. Office, CSV and TSV are
     admitted by `code_lane_refusal` instead, which runs only where an attachment is stored, so the
-    three model-facing consumers keep refusing them without a line changing in any of them.
+    model-facing consumers keep refusing them without a line changing in either of them.
     """
     if not isinstance(b64, str) or not b64:
         return "Invalid attachment: missing bytes."
@@ -414,90 +403,6 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
         raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE)
 
 
-async def _handle_office_upload(
-    db: DbSession,
-    storage: ObjectStorage,
-    user: User,
-    attachment_id: str,
-    media_type: str,
-    name: str,
-    conversation_id: uuid.UUID | None,
-    body: dict[str, Any],
-) -> JSONResponse:
-    """docx/xlsx: extract to Markdown BEFORE storing (a corrupt file is rejected without orphaning
-    an object), then store the original bytes and return the `kind:'office'` part.
-
-    The extraction runs in the shared killable parse governor (`run_parse`) — NOT in-process —
-    so an untrusted docx/xlsx whose compressed bytes pass the 4 MB cap but inflate to gigabytes
-    can never OOM the shared API worker; a contained OOM/timeout maps to 413, a corrupt file
-    to 400."""
-    data = _decode_bounded(body.get("base64"))
-    office_format = office_format_for(media_type)
-    if office_format is None:
-        raise AppApiError(400, f"Unsupported Office type: {media_type}")
-    kind = "extract_word" if office_format == "word" else "extract_excel"
-    try:
-        extracted = await run_parse(data, kind, name, None)
-    except FileParseError as exc:
-        raise AppApiError(exc.status, str(exc), code=exc.code) from exc
-    ref = await _store_attachment_bytes(
-        db, storage, user.id, attachment_id, media_type, name, conversation_id, data
-    )
-    return JSONResponse(
-        status_code=201,
-        content={
-            "attachment": {
-                **ref,
-                "kind": "office",
-                "format": extracted["format"],
-                "text": extracted["text"],
-                "truncated": extracted["truncated"],
-                "truncationNote": extracted["truncationNote"],
-            }
-        },
-    )
-
-
-async def _handle_deck_upload(
-    db: DbSession,
-    storage: ObjectStorage,
-    user: User,
-    attachment_id: str,
-    media_type: str,
-    name: str,
-    conversation_id: uuid.UUID | None,
-    body: dict[str, Any],
-) -> JSONResponse:
-    """pptx: gated on a configured Gotenberg. Convert FIRST (validates structure/zip-bomb/page-cap
-    without storing), then store the original .pptx and the derived PDF. Azure-hosted Foundry has
-    no Files API, so a deck cannot be handed over by reference: the PDF lives in the object store
-    and the chat path rehydrates and inlines it. Deck is off by default (unset GOTENBERG_URL)."""
-    if not deck_attachments_enabled():
-        raise AppApiError(501, "PowerPoint attachments aren't enabled.")
-    data = _decode_bounded(body.get("base64"))
-    try:
-        converted = await convert_deck_to_pdf(data, name=name)
-    except DeckConvertError as exc:
-        raise AppApiError(exc.status, str(exc), code=exc.code) from exc
-    ref = await _store_attachment_bytes(
-        db, storage, user.id, attachment_id, media_type, name, conversation_id, data
-    )
-    pdf_key = f"{ref['key']}.pdf"
-    await storage.put(pdf_key, converted.pdf, content_type="application/pdf")
-    return JSONResponse(
-        status_code=201,
-        content={
-            "attachment": {
-                **ref,
-                "kind": "deck",
-                "pdfFileId": pdf_key,
-                "pageCount": converted.page_count,
-                "truncated": False,
-            }
-        },
-    )
-
-
 @router.post(
     "",
     status_code=201,
@@ -512,7 +417,6 @@ async def _handle_deck_upload(
         # later. It is 415 and not 413 for the reason given there: nothing about the SIZE was
         # wrong. (This route's own contract test asserts a SUBSET, so it did not catch the gap.)
         (415, ErrorEnvelope, "The PDF is password-protected and cannot be read"),
-        (501, ErrorEnvelope, "PowerPoint attachments are not enabled"),
         (429, ErrorEnvelope, "Too many attachment requests"),
         AUTH_401,
     ),
@@ -620,15 +524,6 @@ async def upload_attachment(
     return JSONResponse(status_code=201, content={"attachment": {**ref, "kind": kind}})
 
 
-async def _safe_delete_pdf(storage: ObjectStorage, pdf_key: str) -> None:
-    """Best-effort delete of a deck's derived `{key}.pdf` sibling — a genuine store error is
-    swallowed (never fails the parent delete); a missing object is already idempotent."""
-    try:
-        await storage.delete(pdf_key)
-    except StorageError:
-        pass
-
-
 async def _load_owned(db: DbSession, user_id: uuid.UUID, attachment_id: str) -> Attachment | None:
     result: Attachment | None = await db.scalar(
         sa.select(Attachment).where(
@@ -686,10 +581,9 @@ async def delete_attachment(
     if att is not None:
         assert_owned(att.storage_key, user.id)
         await storage.delete(att.storage_key)  # idempotent on a missing object
-        # A deck attachment also wrote a derived `{key}.pdf` sibling — sweep it best-effort
-        # so it doesn't leak (idempotent on a missing object; never fails the delete).
-        if att.media_type == PPTX_MEDIA_TYPE:
-            await _safe_delete_pdf(storage, att.storage_key + ".pdf")
+        # NO DERIVED SIBLING TO SWEEP ANY MORE (#214). A deck used to be rendered to PDF and the
+        # `{key}.pdf` stored beside the original, so a delete had to remove both or leak one.
+        # Nothing derives anything from an attachment now.
         await db.delete(att)
         await db.commit()
     # Delete is always idempotent and 200, even when the id is unknown (Express behavior).

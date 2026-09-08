@@ -27,7 +27,7 @@ from src.config import settings
 from src.db.models.attachment import Attachment
 from src.services.attachments import reclaim_orphaned_attachments
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.extract.office import EXCEL_MEDIA_TYPE
+from src.services.media.lanes import EXCEL_MEDIA_TYPE
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.pdfs import locked_pdf, pdf_with_pages, restricted_pdf, unreadable_pdf, xref_bomb_pdf
 
@@ -589,7 +589,16 @@ def test_attachments_openapi_documents_codes() -> None:
     # "415" IS THE POINT OF THIS LINE. The subset operator makes every code here opt-in, so a
     # status the route raises without declaring passes unnoticed — which is exactly what the
     # locked-PDF 415 did until a review caught it. Anything raised gets named here.
-    assert {"400", "401", "404", "413", "415", "429", "501", "500"} <= upload
+    #
+    # "501" IS GONE (#214). It was the deck converter's "PowerPoint attachments aren't enabled",
+    # and the converter is deleted — a .pptx is stored as itself and read in the sandbox now.
+    #
+    # AND THIS LINE HAD TO CHANGE, which the retirement inventory predicted it would not: it read
+    # the subset operator as making the assertion blind to a NARROWING. It is the opposite way
+    # round — the literal set is on the LEFT, so every code named here must be present, and
+    # dropping 501 from the route turned this red. The blindness is in the other direction, to a
+    # code the route raises without declaring, which is what the comment above is about.
+    assert {"400", "401", "404", "413", "415", "429", "500"} <= upload
     dl = set(paths["/v1/attachments/{attachment_id}"]["get"]["responses"])
     assert {"400", "404", "401", "500"} <= dl
     delete = set(paths["/v1/attachments/{attachment_id}"]["delete"]["responses"])

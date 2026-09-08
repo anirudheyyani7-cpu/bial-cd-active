@@ -18,7 +18,6 @@ from src.services.attachments import (
     NEVER_SENT_RECLAIM_WINDOW,
     reclaim_orphaned_attachments,
 )
-from src.services.extract.office import PPTX_MEDIA_TYPE
 from tests.factories import ConversationFactory, MessageFactory, UserFactory
 from tests.fakes import FakeStorage
 
@@ -37,9 +36,8 @@ async def _add_attachment(
     size: int = 10,
     media_type: str = "image/png",
     conversation_id: uuid.UUID | None = None,
-    with_pdf_sibling: bool = False,
 ) -> str:
-    """Persist an attachment row AND its stored blob(s); return the storage key."""
+    """Persist an attachment row AND its stored blob; return the storage key."""
     key = f"att/{user_id}/{attachment_id}"
     db.add(
         Attachment(
@@ -55,8 +53,6 @@ async def _add_attachment(
     )
     await db.flush()
     storage.objects[key] = b"x" * size
-    if with_pdf_sibling:
-        storage.objects[key + ".pdf"] = b"pdf"
     return key
 
 
@@ -186,27 +182,11 @@ async def test_reclaim_reduces_sum_size(db_session) -> None:
     assert int(after or 0) == 0
 
 
-async def test_deck_orphan_sweeps_both_keys(db_session) -> None:
-    # A deck upload owns `{storage_key}` AND `{storage_key}.pdf`; reclamation must sweep both,
-    # or it deletes the row and leaks the rendered PDF forever.
-    storage = FakeStorage()
-    user = await UserFactory.create(db_session)
-    key = await _add_attachment(
-        db_session,
-        storage,
-        user_id=user.id,
-        attachment_id="att_deck",
-        created_at=_OLD,
-        media_type=PPTX_MEDIA_TYPE,
-        with_pdf_sibling=True,
-    )
-    assert key in storage.objects and key + ".pdf" in storage.objects
-
-    result = await reclaim_orphaned_attachments(db_session, storage, user_id=user.id, now=_NOW)
-    assert result.reclaimed == 1
-    assert result.swept_keys == 2
-    assert key not in storage.objects
-    assert key + ".pdf" not in storage.objects
+# THE DECK-SIBLING SWEEP IS GONE (#214). A .pptx upload used to own `{storage_key}` AND a
+# derived `{storage_key}.pdf` from the converter, so reclamation had to remove both or leak the
+# rendered PDF forever. Nothing derives anything from an attachment now - a deck is stored as
+# itself and read in the sandbox - so `_blob_keys_for` returns one key per row and there is no
+# second key to sweep.
 
 
 async def test_cross_user_isolation(db_session) -> None:

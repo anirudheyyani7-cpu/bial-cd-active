@@ -23,8 +23,6 @@ from src.config import settings
 from src.db.models.attachment import Attachment
 from src.db.models.audit import AuditLog
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.extract.deck import DeckResult
-from src.services.extract.office import PPTX_MEDIA_TYPE
 from src.services.storage import StorageError, attachment_key, snapshot_key, submission_key
 from tests.factories import AppRegistryFactory, UserFactory
 from tests.fakes import FakeStorage
@@ -147,42 +145,11 @@ async def test_many_owned_attachments_yield_zero_eligible(client, app, db_sessio
     assert body["attachments"]["deleted"] == 0
 
 
-async def test_deck_sibling_survives_via_pptx_path(client, app, db_session, monkeypatch) -> None:
-    # A deck upload writes BOTH `{storage_key}` and a derived `{storage_key}.pdf` sibling no column
-    # points at. Both must be in the owned-set (via `_blob_keys_for`'s deck branch) or the sweep
-    # permanently deletes the only rendered form the Azure-hosted model can read. Deck is
-    # Gotenberg-gated (off by default), so the sidecar is mocked to still exercise the REAL upload
-    # path that produces the two objects.
-    import src.api.v1.attachments.router as att_router
-
-    async def _fake_convert(data, *, name):
-        return DeckResult(pdf=b"%PDF-1.4 rendered deck", page_count=1)
-
-    monkeypatch.setattr(att_router, "deck_attachments_enabled", lambda: True)
-    monkeypatch.setattr(att_router, "convert_deck_to_pdf", _fake_convert)
-
-    store = _wire_shared_storage(app)
-    citizen, user = await _citizen(db_session)
-    admin = await _admin(db_session)
-
-    resp = await client.post(
-        "/v1/attachments",
-        headers=citizen,
-        json={"attachmentId": "att_deck", "mediaType": PPTX_MEDIA_TYPE, "base64": _b64(b"pptx")},
-    )
-    assert resp.status_code == 201
-    att = await _row(db_session, user.id, "att_deck")
-    pdf_key = att.storage_key + ".pdf"
-    assert att.storage_key in store.objects and pdf_key in store.objects
-    store.mtimes[att.storage_key] = _past_grace()
-    store.mtimes[pdf_key] = _past_grace()
-
-    assert (await client.post(_RECONCILE, headers=admin)).status_code == 200
-    assert att.storage_key in store.objects
-    # The .pdf sibling SPECIFICALLY is still there and readable.
-    assert pdf_key in store.objects
-    assert await store.get(pdf_key) == b"%PDF-1.4 rendered deck"
-
+# THE DECK-SIBLING TEST IS GONE (#214). A .pptx was rendered to PDF by a converter and the
+# derived `{key}.pdf` stored beside the original, so a sweep had to know not to reclaim it as
+# an orphan. Nothing derives anything from an attachment now - a deck is stored as itself and
+# read in the sandbox - so there is no sibling to survive, and `_blob_keys_for` returns one key
+# per row again.
 
 # --- never-sent-upload reclaim folded into the sweep ---------------------------
 

@@ -16,29 +16,7 @@ from __future__ import annotations
 import io
 from typing import Any, Final
 
-from src.services.extract.office import (
-    EXCEL_MEDIA_TYPE,
-    WORD_MEDIA_TYPE,
-    OfficeExtractError,
-    extract_office,
-)
-from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
-
-
-def _extract_office_payload(buffer: bytes, media_type: str, filename: str) -> dict[str, Any]:
-    """Chat office-extract → Markdown (the `ExtractResult` shape as a JSON-safe dict).
-    Runs INSIDE the governor child so an inflate bomb is bounded by the child's rlimit."""
-    try:
-        result = extract_office(buffer, media_type, name=filename)
-    except OfficeExtractError as exc:
-        raise FileParseError(str(exc), status=400, code="INVALID_OFFICE_FILE") from exc
-    return {
-        "format": result.format,
-        "text": result.text,
-        "truncated": result.truncated,
-        "truncationNote": result.truncation_note,
-    }
-
+from src.services.extract.zip_safety import FileParseError
 
 PDF_UNREADABLE_CODE: Final = "INVALID_PDF"
 """What a PDF that will not parse is reported as. A 400, not the governor's generic 500
@@ -135,12 +113,20 @@ def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
 def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -> dict[str, Any]:
     """Run the bounds then the extract for `kind`. Called INSIDE the killable governor child.
 
-    The `extract_*` and `count_pdf_pages` kinds are the whole live surface — the chat
-    office→Markdown path and the PDF upload page cap — sharing this governor so neither an
-    untrusted docx/xlsx inflate nor a hostile PDF can OOM or stall the shared API worker. The
-    `__test_*` kinds are test-only governor seams; the live callers pass a kind derived from
-    the upload's own media type, so they can pass neither those nor an unknown one. `sheet` is
-    accepted for the governor's uniform call shape and is unused by every live kind."""
+    ONE LIVE KIND REMAINS: `count_pdf_pages`, the upload page cap. The `extract_word` and
+    `extract_excel` arms went with the server-side office→Markdown path (#214) — a docx or xlsx is
+    stored as itself now and read by a script in the citizen's own sandbox, so nothing extracts
+    one here.
+
+    THE GOVERNOR STAYS, AND IS NOT WEAKER FOR IT. Its own docstring at the upload route explains
+    why the page count must never run on the event loop: a cross-reference stream declaring
+    millions of entries costs eight kilobytes and tens of seconds. That threat is entirely
+    independent of Office, and it is the reason the killable, memory-capped subprocess is still
+    the right shape for the one caller left.
+
+    The `__test_*` kinds are test-only governor seams — and now the only remaining coverage of its
+    timeout and hard-kill mapping, since those used to ride the office kinds. `sheet` is accepted
+    for the governor's uniform call shape and is unused by the surviving kind."""
     if kind == "__test_sleep":  # governor timeout seam
         import time
 
@@ -154,17 +140,11 @@ def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -
         _ = bytearray(4 * 1024 * 1024 * 1024)
         return {}
 
-    if kind == "extract_word":  # chat docx → Markdown, zip-bomb-bounded in the governor
-        assert_zip_not_bomb(buffer)
-        return _extract_office_payload(buffer, WORD_MEDIA_TYPE, filename)
-    if kind == "extract_excel":  # chat xlsx → Markdown, zip-bomb-bounded in the governor
-        assert_zip_not_bomb(buffer)
-        return _extract_office_payload(buffer, EXCEL_MEDIA_TYPE, filename)
     if kind == "count_pdf_pages":  # PDF upload page cap, time- and memory-bounded in the governor
         return _count_pdf_pages_payload(buffer)
 
     raise FileParseError(
-        "Supported: Word (.docx), Excel (.xlsx) and PDF.",
+        "Supported: PDF.",
         status=415,
         code="UNSUPPORTED_TYPE",
     )

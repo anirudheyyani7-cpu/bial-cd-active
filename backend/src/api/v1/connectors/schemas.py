@@ -210,6 +210,11 @@ class ProjectConnectorEntry(CamelModel):
     #: The stored `connector_key`. Stable, lowercase, and never rendered — the display name is.
     key: str
     display_name: str
+    #: What this connector's data is CALLED, lowercase, for the rail's two state sentences:
+    #: `Reading N days of {dataNoun}` and `Switch it on when a chat needs {dataNoun}`. It rides
+    #: the wire for the same reason `askSubtitle` does — the sentence is the board's, the noun
+    #: inside it is the connector's, and a second connector must not cost a component edit (R18).
+    data_noun: str
     state: ConnectorPersonState
     #: `pending` only: when this person asked. The rail's state-d sentence names the date.
     asked_at: datetime | None = None

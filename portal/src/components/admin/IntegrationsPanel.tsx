@@ -34,6 +34,7 @@ import {
 import type { SortingState } from '@tanstack/react-table'
 import { AlertCircle, Loader2, RefreshCw, Search } from 'lucide-react'
 import { listConnectorRequests } from '../../utils/adminConnectorApi'
+import { notifyConnectorsChanged } from '../../utils/connectorApi'
 import type { ConnectorRequestRow } from '../../utils/adminConnectorApi'
 import ConnectorReviewDialog from './ConnectorReviewDialog'
 import { getStoredUser } from '../../utils/auth'
@@ -303,6 +304,12 @@ export default function IntegrationsPanel({ onToast }: IntegrationsPanelProps) {
       setReview(null)
       onToast(message, severity)
       void load()
+      // THE TAB BADGE IS NOT OURS TO SET, BUT THE FACT IT COUNTS IS OURS TO ANNOUNCE. The waiting
+      // count is fetched once by `AdminPage` when the console mounts, so without this an
+      // administrator who decides three requests keeps reading `Integrations 3` beside two tables
+      // that now show none waiting — the badge contradicting the queue directly under it. Same
+      // signal the citizen dialog fires; `AdminPage` re-counts on it.
+      notifyConnectorsChanged()
     },
     [onToast, load],
   )

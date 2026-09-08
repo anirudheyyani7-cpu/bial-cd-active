@@ -96,9 +96,9 @@ function viewOf(entry: ProjectConnectorEntry): RowView {
 function stateLine(entry: ProjectConnectorEntry, view: RowView): { text: string; tone: string } {
   switch (view.kind) {
     case 'on':
-      return { text: `Reading ${view.days} days of flight data`, tone: 'text-neutral' }
+      return { text: `Reading ${view.days} days of ${entry.dataNoun}`, tone: 'text-neutral' }
     case 'off':
-      return { text: 'Switch it on when a chat needs flight data', tone: 'text-neutral' }
+      return { text: `Switch it on when a chat needs ${entry.dataNoun}`, tone: 'text-neutral' }
     case 'noAccess':
       // THE CONNECTOR IS NAMED FROM THE WIRE. The board writes the name into this sentence; a
       // literal here would be the one place in the feature that has to change for a second

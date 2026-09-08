@@ -106,6 +106,7 @@ function projectRow(projectId: string): ProjectConnectorEntry {
   return {
     key: 'orbit',
     displayName: 'ORBIT',
+    dataNoun: 'flight data',
     state: server.approved ? 'approved' : 'neverAsked',
     askedAt: null,
     enabled,

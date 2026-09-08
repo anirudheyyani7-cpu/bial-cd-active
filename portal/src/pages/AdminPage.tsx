@@ -8,6 +8,7 @@ import AppRegistryPanel from '../components/admin/AppRegistryPanel'
 import IntegrationsPanel from '../components/admin/IntegrationsPanel'
 import WaitingCountBadge from '../components/admin/WaitingCountBadge'
 import { fetchWaitingConnectorCount } from '../utils/adminConnectorApi'
+import { onConnectorsChanged } from '../utils/connectorApi'
 import { Info, Lock, AlertCircle } from 'lucide-react'
 import { getStoredUser } from '../utils/auth'
 
@@ -54,6 +55,7 @@ export default function AdminPage() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** People waiting on a connector decision. `null` = not asked yet, or the ask failed — never
    *  rendered as a number, because an unknown count must not claim to be zero. */
+  const [connectorCountSeq, setConnectorCountSeq] = useState(0)
   const [connectorWaiting, setConnectorWaiting] = useState<number | null>(null)
 
   /**
@@ -82,7 +84,15 @@ export default function AdminPage() {
     return () => {
       live = false
     }
-  }, [user?.isAdmin])
+  }, [user?.isAdmin, connectorCountSeq])
+
+  /**
+   * RE-COUNT WHEN A DECISION LANDS. The effect above runs once per console mount, so an
+   * administrator who approved three requests kept reading `Integrations 3` beside two tables
+   * showing none waiting — the badge contradicting the queue directly beneath it. The panel
+   * announces each decision; bumping this seq re-runs the count.
+   */
+  useEffect(() => onConnectorsChanged(() => setConnectorCountSeq((n) => n + 1)), [])
 
   // Replaces the whole { text, severity } pair in one `setState`, never the two halves
   // separately — the fix for two messages landing in quick succession: there is no tick

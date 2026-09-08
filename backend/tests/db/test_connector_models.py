@@ -579,6 +579,7 @@ def test_a_connector_carries_exactly_these_fields() -> None:
         "display_name",
         "subtitle",
         "ask_subtitle",
+        "data_noun",
         "max_window_days",
         "consent_lines_requester",
         "consent_lines_approver",

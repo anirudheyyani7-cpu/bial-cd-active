@@ -95,6 +95,7 @@ function settled(enabled: boolean, window: ConnectorWindow | null): ProjectConne
   return {
     key: 'orbit',
     displayName: 'ORBIT',
+    dataNoun: 'flight data',
     state: 'approved',
     askedAt: null,
     enabled,

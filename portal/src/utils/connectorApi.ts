@@ -363,6 +363,12 @@ export type WindowChoice =
 export interface ProjectConnectorEntry {
   key: string
   displayName: string
+  /**
+   * What this connector's data is called, lowercase, for the rail's two state sentences. It
+   * comes off the wire rather than living in the component for the same reason the ask panel's
+   * copy does: a second connector must cost a registry entry and nothing else (R18).
+   */
+  dataNoun: string
   state: ConnectorState
   /** `pending` only: when this person asked. */
   askedAt: string | null
@@ -453,6 +459,7 @@ function toProjectConnector(value: unknown): ProjectConnectorEntry {
   return {
     key: readString(row.key, 'key'),
     displayName: readString(row.displayName, 'displayName'),
+    dataNoun: readString(row.dataNoun, 'dataNoun'),
     state: readState(row.state),
     askedAt: optionalString(row.askedAt),
     enabled: readBoolean(row.enabled, 'enabled'),

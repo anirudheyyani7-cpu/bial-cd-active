@@ -106,6 +106,12 @@ class Connector:
     display_name: str
     subtitle: str
     ask_subtitle: str
+    # WHAT THIS CONNECTOR'S DATA IS CALLED, in the rail's two state sentences: `Reading N days of
+    # {data_noun}` and `Switch it on when a chat needs {data_noun}`. It lives here for the same
+    # reason `ask_subtitle` does — the sentences are the board's, but the noun inside them is this
+    # connector's, and a second connector must not cost a component edit (R18). Lowercase, because
+    # it always appears mid-sentence.
+    data_noun: str
     max_window_days: int
     consent_lines_requester: tuple[ConsentLine, ...]
     consent_lines_approver: tuple[ConsentLine, ...]
@@ -164,6 +170,7 @@ CONNECTORS: Final[Mapping[str, Connector]] = MappingProxyType(
         "dice": Connector(
             display_name="DICE",
             subtitle="Airport operations",
+            data_noun="flight data",
             ask_subtitle=(
                 "DICE is BIAL’s airport operations data. An administrator decides who may "
                 "read it — you are asking once, for yourself."

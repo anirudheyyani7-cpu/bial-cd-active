@@ -60,6 +60,7 @@ const lastSeven: ConnectorWindow = {
 const on: ProjectConnectorEntry = {
   key: 'orbit',
   displayName: 'ORBIT',
+  dataNoun: 'flight data',
   state: 'approved',
   askedAt: null,
   enabled: true,
@@ -345,6 +346,16 @@ describe('the read, before it lands and when it fails', () => {
 
     expect(await screen.findByTestId('data-section-list')).toBeTruthy()
     expect(screen.queryByTestId('data-section-error')).toBeNull()
+  })
+
+  it('names the connector’s own data, so a second connector costs a registry entry and no edit here', () => {
+    // THE R18 MUTANT. `Reading N days of flight data` is the board's sentence, but "flight data"
+    // is the connector's own noun, not the platform's — it rides the wire beside `displayName` for the same
+    // reason the ask panel's copy does. Hard-code it back and this goes red.
+    h.listProjectConnectors.mockResolvedValue([{ ...on, displayName: 'ORBIT', dataNoun: 'stand allocations' }])
+    render(<DataSection projectId="p1" label={<h2>DATA</h2>} onOpenIntegrations={openIntegrations} />)
+
+    return screen.findByText('Reading 30 days of stand allocations')
   })
 
   it('re-reads when any connector write is announced, which is how BOTH dialog doors are felt', async () => {

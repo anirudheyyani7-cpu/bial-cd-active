@@ -443,6 +443,7 @@ def _project_entry(
     return ProjectConnectorEntry(
         key=connector_key,
         display_name=connector.display_name,
+        data_noun=connector.data_noun,
         state=access.state,
         asked_at=None if asked is None else asked.created_at,
         enabled=stored is not None and stored.enabled,

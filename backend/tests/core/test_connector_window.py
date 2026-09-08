@@ -296,6 +296,7 @@ def test_the_cap_is_read_off_the_registry_entry_it_is_handed() -> None:
         display_name="A SHORTER-LIVED SYSTEM",
         subtitle="keeps one week",
         ask_subtitle="A SHORTER-LIVED SYSTEM keeps one week of history.",
+        data_noun="test data",
         max_window_days=7,
         consent_lines_requester=(),
         consent_lines_approver=(),

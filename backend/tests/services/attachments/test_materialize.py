@@ -344,7 +344,9 @@ def test_the_note_lists_every_file_the_conversation_holds() -> None:
     files = (
         _file(attachment_id="att_1", name="a.csv", file_name="a.csv", media_type=CSV_MEDIA_TYPE),
         _file(
-            attachment_id="att_2", name="b.docx", file_name="b.docx",
+            attachment_id="att_2",
+            name="b.docx",
+            file_name="b.docx",
             media_type=WORD_MEDIA_TYPE,
         ),
     )
@@ -393,12 +395,22 @@ async def test_the_query_takes_the_code_lane_and_leaves_the_model_lane(db_sessio
     project = await ProjectFactory.create(db_session, user.id)
     conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     await _stored(
-        db_session, storage, user_id=user.id, attachment_id="a", media_type=EXCEL_MEDIA_TYPE,
-        name="book.xlsx", conversation_id=conv.id,
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="a",
+        media_type=EXCEL_MEDIA_TYPE,
+        name="book.xlsx",
+        conversation_id=conv.id,
     )
     await _stored(
-        db_session, storage, user_id=user.id, attachment_id="b", media_type="image/png",
-        name="shot.png", conversation_id=conv.id,
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="b",
+        media_type="image/png",
+        name="shot.png",
+        conversation_id=conv.id,
     )
 
     found = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
@@ -419,8 +431,13 @@ async def test_a_row_with_no_conversation_link_is_still_found_by_its_id(db_sessi
     project = await ProjectFactory.create(db_session, user.id)
     conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     await _stored(
-        db_session, storage, user_id=user.id, attachment_id="loose", media_type=CSV_MEDIA_TYPE,
-        name="rows.csv", conversation_id=None,
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="loose",
+        media_type=CSV_MEDIA_TYPE,
+        name="rows.csv",
+        conversation_id=None,
     )
 
     found = await code_lane_attachments(
@@ -440,8 +457,13 @@ async def test_another_owners_file_is_not_reachable_by_naming_its_id(db_session)
     project = await ProjectFactory.create(db_session, mine.id)
     conv = await ConversationFactory.create(db_session, mine.id, project_id=project.id)
     await _stored(
-        db_session, storage, user_id=theirs.id, attachment_id="secret",
-        media_type=EXCEL_MEDIA_TYPE, name="payroll.xlsx", conversation_id=None,
+        db_session,
+        storage,
+        user_id=theirs.id,
+        attachment_id="secret",
+        media_type=EXCEL_MEDIA_TYPE,
+        name="payroll.xlsx",
+        conversation_id=None,
     )
 
     found = await code_lane_attachments(
@@ -460,8 +482,13 @@ async def test_the_delivery_round_trips_a_stored_file_into_the_container(db_sess
     project = await ProjectFactory.create(db_session, user.id)
     conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     await _stored(
-        db_session, storage, user_id=user.id, attachment_id="a", media_type=EXCEL_MEDIA_TYPE,
-        name="Gate roster.xlsx", conversation_id=conv.id,
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="a",
+        media_type=EXCEL_MEDIA_TYPE,
+        name="Gate roster.xlsx",
+        conversation_id=conv.id,
     )
 
     files = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)

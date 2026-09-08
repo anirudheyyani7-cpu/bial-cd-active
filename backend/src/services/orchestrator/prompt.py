@@ -1,78 +1,33 @@
-"""The build-agent system prompt + the repair-prompt template (KD-4 / KD-9 / KD-10 / C6 / R18).
+"""The repair-prompt template (KD-4 / KD-9 / KD-10 / C6 / R18).
 
-`BUILD_SYSTEM_PROMPT` describes the open-sandbox reality the model works in (the vibe-coding
-pivot): a real shell (`run_command` + on-demand `npm install`), a fully editable workspace (config
-and `package.json` included, only `.git/` and escapes denied), the always-running dev server it
-must NOT restart, the injected app ENV it writes its own data/storage code against, the
-real-data-only rule (R4 — no seeded dummy records; empty/loading/error states instead), the tool
-surface, and a slim golden-template manifest of editable starting points (KD-10 — instead of a
-computed repo map). `build_repair_prompt` frames a redacted `BuildError` as the NEXT run's user
-prompt — the concrete channel by which a harness-observed error re-enters the model's context
-(KD-1 / KD-5).
+`build_repair_prompt` frames a redacted `BuildError` as the NEXT run's user prompt — the concrete
+channel by which an observed error re-enters the model's context (KD-1 / KD-5). Its consumer is the
+live turn engine's self-heal loop (`turns/engine.py`).
+
+`BUILD_SYSTEM_PROMPT` USED TO LIVE HERE and is deleted with the standalone build harness that was
+its only consumer (`orchestrator/agent.py`'s `build_agent`). Nothing is lost from the model's
+context: the prompt was assembled from EXACTLY the `core/prompt_blocks.py` pieces that
+`mode_prompts._WRITE_SEGMENT` + `_base()` compose for a Build chat turn, which is the surviving —
+and, since PR #182, the only — Write prompt. The open-sandbox reality it described (a real shell,
+a fully editable workspace, the always-running dev server, the injected app ENV, the real-data-only
+rule R4, the tool surface, the golden-template manifest) is all still stated, from the same single
+sources, by `compose_kind_prompt(ChatKind.BUILD, ...)`. The guards that pinned this copy moved to
+that prompt with it.
 
 The unconditional AFTER A WRITE rule (U11 — the user must see their own mutation without a manual
 reload) is UNENFORCEABLE at generation time. The shipped static detector
 `flag_liveness_overpromise` (`src/services/build_sessions/liveness.py`) is claim-gated: its
 `_CLAIM_RE` only fires on a `.tsx`/`.jsx` file that advertises live/shared/real-time copy, so an
 app that makes no such claim and wires no refetch violates this rule silently — nothing lands in
-the log. Measuring the
-rendered-page property "the user saw their own write" needs a JS-executing probe the frozen C2
-`SandboxClient` surface cannot run. That gap is ACCEPTED here, not closed (deferred to issue #49);
-relaxing `_CLAIM_RE` for the after-write case is a cheap follow-up, explicitly out of scope for
-this unit.
-
-Kept as a module constant (like `describe.py:_DESCRIBE_SYSTEM`) so the prompt evolves in code
-review, never at config or runtime.
+the log. Measuring the rendered-page property "the user saw their own write" needs a JS-executing
+probe the frozen C2 `SandboxClient` surface cannot run. That gap is ACCEPTED here, not closed
+(deferred to issue #49); relaxing `_CLAIM_RE` for the after-write case is a cheap follow-up,
+explicitly out of scope for this unit.
 """
 
 from __future__ import annotations
 
 from src.api.v1.build_sessions.schemas import BuildError
-from src.core.prompt_blocks import (
-    BUILD_WORKING_RULES_HEAD as BUILD_WORKING_RULES_HEAD,
-)
-from src.core.prompt_blocks import (
-    BUILD_WORKING_RULES_TAIL as BUILD_WORKING_RULES_TAIL,
-)
-from src.core.prompt_blocks import (
-    DATA_INTEGRITY_RULES as DATA_INTEGRITY_RULES,
-)
-from src.core.prompt_blocks import (
-    NARRATION_VOICE as NARRATION_VOICE,
-)
-from src.core.prompt_blocks import (
-    WRITE_IDENTITY as WRITE_IDENTITY,
-)
-
-BUILD_SYSTEM_PROMPT = f"""\
-{WRITE_IDENTITY}
-
-{BUILD_WORKING_RULES_HEAD}
-
-{DATA_INTEGRITY_RULES}
-
-{NARRATION_VOICE}
-
-{BUILD_WORKING_RULES_TAIL}"""
-"""The standalone build prompt, assembled from EXACTLY the pieces `_WRITE_SEGMENT` uses (KTD-5a).
-It is the live `@build_agent.instructions` return value, not dead legacy text; the identity
-paragraph that used to be typed out here is imported, so the two cannot drift while both exist.
-
-IT NAMES `NARRATION_VOICE` ITSELF, and that line is load-bearing (U5/R79). The audience contract
-is shared by both chat kinds now, so it moved into `mode_prompts._base()` — which THIS prompt
-cannot call, because `_base(context, kind)` needs a `PromptContext` the standalone harness has no
-source for. Lifting the block out of `BUILD_WORKING_RULES_TAIL` without this line would have
-deleted the audience contract from a live prompt and reinstated the 2026-08-18 defect that
-produced it.
-
-IT ALSO OVER-STATES ITS OWN TOOL SURFACE, and that is known rather than accidental. `TAIL` carries
-`WRITE_TOOL_SURFACE`, a snapshot of what the CHAT Build arm registers (twelve tools), while
-`build_agent` is constructed with `sandbox_toolset` alone (eight). So this prompt names
-`list_files`, `search_files`, `tell_the_user` and `propose_first_slice` to an agent that cannot
-call any of them. See `prompt_blocks.WRITE_TOOL_SURFACE`'s docstring for why it is recorded rather
-than fixed, and `test_prompt.py`'s
-`test_the_harness_arm_is_told_about_four_tools_it_does_not_register` for the guard that goes red
-when it is."""
 
 
 def build_repair_prompt(error: BuildError) -> str:

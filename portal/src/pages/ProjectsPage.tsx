@@ -391,19 +391,31 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const handleDelete = async (project: Project, remark: string): Promise<void> => {
     setDeletingIds((ids) => new Set(ids).add(project.id))
-    setItems((rows) => rows.filter((p) => p.id !== project.id))
+    // THE ROW LEAVES WHEN THE CASCADE SAYS IT LEFT, never before (U23/AE1a). It used to be
+    // filtered out of `items` here, one line above the request — so a citizen watched their
+    // project vanish while the server was still dropping its database, and if the drop failed
+    // the row reappeared under them. That is a completed delete the platform had not
+    // performed, which is the one thing this dialog's sentence must not do.
+    //
+    // Nothing replaces it, because nothing has to: the refetch below removes the row on every
+    // outcome that actually removed it, and the citizen's signal during the wait is the
+    // dialog, which stays open and busy for exactly as long as the request runs. The backend
+    // force-drops a database, sweeps blobs and tears down a container before it answers, so
+    // that wait is real and worth showing honestly.
     try {
       await deleteProject(project.id, remark)
-      setReloadNonce((n) => n + 1) // totals and the counts strip both move
+      setReloadNonce((n) => n + 1) // the row goes here, with the totals and the counts strip
     } catch (caught) {
-      // 404 = already gone (another tab). That IS the desired end state, so no toast — but
-      // the row still left the list, so `total` and the counts strip have to move with it.
-      // Returning early here left "Showing 1–7 of 8" on screen.
+      // 404 = already gone (another tab). That IS the desired end state, so no toast — and
+      // the refetch is what takes the row, `total` and the counts strip with it. Returning
+      // early here left "Showing 1–7 of 8" on screen.
       if (caught instanceof ApiError && caught.status === 404) {
         setReloadNonce((n) => n + 1)
         return
       }
-      setReloadNonce((n) => n + 1) // put the row back
+      // The row never left, so this is not "put it back" — it is the totals and the counts
+      // strip catching up with whatever the failed attempt did or did not change.
+      setReloadNonce((n) => n + 1)
       setToast(caught instanceof Error ? caught.message : 'Could not delete the project.')
     } finally {
       setDeletingIds((ids) => {
@@ -421,11 +433,12 @@ export default function ProjectsPage(): React.JSX.Element {
       // 404, or a real failure — which is why this sits in `finally` rather than in only
       // one branch.
       setDeleting(null)
-      // FOCUS EXPLICITLY, rather than let Radix try. The row (and its Delete button, the
-      // trigger Radix captured at open time) left the DOM the moment the optimistic removal
-      // ran, above — long before this `finally` runs — so `onCloseAutoFocus`'s default
-      // restore would find a detached node and silently do nothing (round-4 finding 2). The
-      // heading is the nearest stable, always-mounted landmark.
+      // FOCUS EXPLICITLY, rather than let Radix try, and it still has to be explicit now that
+      // the row survives until the refetch. The Delete button Radix captured is about to be
+      // unmounted by that refetch — a beat AFTER the dialog closes — so a restore onto it
+      // would put the keyboard on a control that is removed a moment later, which lands right
+      // back on the body. The heading is the nearest stable, always-mounted landmark, and it
+      // is unaffected when the row goes.
       headingRef.current?.focus()
     }
   }
@@ -443,19 +456,18 @@ export default function ProjectsPage(): React.JSX.Element {
   // page's reads because a citizen is in one situation — waiting for their projects.
   const waiting = loading || showSkeleton || countsPending
   const showFirstPageError = error !== null && isEmpty
-  // `deleting` covers the round trip: the optimistic removal can empty `items` while the
-  // request is still in flight, and "Nothing here yet" is a claim about the ACCOUNT, not
-  // about this page. Deleting your last row on page 2 must not tell you that you have no
-  // projects for the length of a database drop.
+  // `deleting` covers the round trip. It was written for the optimistic removal — which U23
+  // deleted, because a row that leaves before the cascade returns is a completed delete the
+  // platform has not performed — and it is kept because the window it guards did not go with
+  // it: between the request settling and the refetch landing, `items` can still be a stale
+  // answer, and "Nothing here yet" is a claim about the ACCOUNT, not about this page.
   //
   // `total === 0` CLOSES THE WINDOW `deleteInFlight` DOES NOT (round-4 finding 13). When the
   // delete settles, `setReloadNonce` and the `finally`'s `deletingIds` clear land in ONE
-  // commit — and the refetch that `reloadNonce` triggers is an EFFECT, which runs after
-  // that commit paints. So there is a real rendered frame where `items` is empty (optimistic
-  // removal), `deletingIds` is empty (just cleared), and `loading` is still false (the
-  // refetch has not started): every guard above passes and an account with 40 projects is
-  // told it has none. `total` is the server's own last answer, untouched by the local
-  // filtering, so it still reads 40 in exactly that frame and discriminates the case.
+  // commit — and the refetch that `reloadNonce` triggers is an EFFECT, which runs after that
+  // commit paints. `total` is the server's own last answer, so it still reads 40 in exactly
+  // that frame and discriminates the case. Belt and braces on a screen that answers a
+  // question about somebody's whole account.
   const showFirstRun =
     settled &&
     !loading &&
@@ -542,7 +554,24 @@ export default function ProjectsPage(): React.JSX.Element {
           ) : null}
         </div>
 
-        {/* Three numbers. Nothing else — no charts (§1). */}
+        {/* Three numbers. Nothing else — no charts (§1).
+
+            AND THEY ANNOUNCE, because they CHANGE without saying so (R44b/AE9b). A citizen who
+            deletes a project, or publishes one, watches "In production" go from 3 to 4 with no
+            sound at all — the numbers are the page's only report of what just happened to the
+            estate. The region is `polite`, never `alert`: nothing here is a failure, and an
+            assertive channel would interrupt whatever the person was reading to say "4".
+
+            MOUNTED UNCONDITIONALLY, WRAPPING BOTH ARMS. A region inserted together with its text
+            is missed entirely by several reader-and-browser combinations — the rule the wait
+            region above already states and the reason it lives in the header. The counts have two
+            arms (the cold-failure card and the tiles) and both swap in and out, so the region has
+            to sit OUTSIDE the ternary or it is a region that arrives with its own content.
+
+            IT WRAPS THE VISIBLE NUMBERS rather than adding an `sr-only` copy — two elements
+            carrying one sentence is that sentence read twice (`Announcer.tsx` records that as
+            having broken three tests). */}
+        <div role="status" aria-live="polite" data-testid="projects-counts">
         {countsFailedCold ? (
           <div className="flex items-center justify-between gap-3 bg-white border border-danger/30 rounded-2xl px-5 py-4 mt-5 mb-6">
             <p className="text-xs text-danger">Couldn’t load your counts.</p>
@@ -575,6 +604,7 @@ export default function ProjectsPage(): React.JSX.Element {
           ))}
         </div>
         )}
+        </div>
 
         {/* ONE controls row: search, density (grid only), view, New project (§3). The
             New project button lives HERE and nowhere else — it used to sit in the page
@@ -766,7 +796,26 @@ export default function ProjectsPage(): React.JSX.Element {
             )}
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-4 text-xs text-neutral">
-              <span className="tabular-nums">
+              {/* THE CAPTION ANNOUNCES (R44b/AE9b). Searching, turning a page or changing the
+                  page size leaves the rows below silently different and this line the only thing
+                  that says how many there now are; a reader was told nothing at all.
+
+                  IT IS THE VISIBLE SENTENCE ITSELF, not an `sr-only` twin, and that is the
+                  trade this makes deliberately. The wait region above states the rule this
+                  breaks: a region mounted together with its own text is missed by several
+                  reader-and-browser combinations, and this one lives inside the `showRows`
+                  fence. The alternative was a second element carrying the same sentence — which
+                  is that sentence read twice, the failure `Announcer.tsx` records as having
+                  broken three tests, and which the caption cannot escape by being hoisted
+                  because "Rows per page" would come with it onto an empty list.
+
+                  So the case this does NOT announce is the FIRST appearance of rows: an empty
+                  list becoming a full one. That transition is covered — `projects-wait` speaks
+                  for the load, and the no-matches and empty states below are the page's answer
+                  in between. Every subsequent change — every page turn, every search that still
+                  matches, every page-size change — lands in a region that is already mounted,
+                  which is the case a citizen actually repeats. */}
+              <span className="tabular-nums" role="status" aria-live="polite" data-testid="projects-range">
                 Showing {firstOnPage}–{lastOnPage} of {total}
               </span>
 

@@ -47,8 +47,9 @@ async def test_suspended_at_set_and_clear_roundtrip(db_session) -> None:
 
 def test_chain_ends_at_a_single_linear_head() -> None:
     # The migration chain stays ONE linear head (no divergent branch). The head moved past
-    # 0034_project_description_fts to 0035_chat_kind (the two three-valued enums collapsing
-    # into one two-valued `chat_kind`, on both tables). 0034 had already been re-parented
+    # 0037_deleted_project_description to 0038_app_previous_status (the app row remembers what
+    # it was before the kill switch, so a re-enable puts it back rather than inventing an
+    # approval). 0034 had already been re-parented
     # TWICE by this assertion: authored as an 0029 off 0028_deployment_unpublished_at, moved
     # to 0033 off 0032_rejection_standing on one rebase, and to 0034 off 0033_harness_counters
     # on the next — each time because main took the ordinal first. Which is exactly the silent
@@ -66,4 +67,4 @@ def test_chain_ends_at_a_single_linear_head() -> None:
     # `down_revision` really is the head you expected to build on.
     config = Config(str(_BACKEND_ROOT / "alembic.ini"))
     heads = ScriptDirectory.from_config(config).get_heads()
-    assert heads == ["0036_deleted_projects"]
+    assert heads == ["0038_app_previous_status"]

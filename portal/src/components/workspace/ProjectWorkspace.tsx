@@ -43,7 +43,7 @@
  * and `observe.ts`'s per-project guard makes a repeated call a safe no-op, so the risk is not
  * defeating that guard but BYPASSING it with a second mechanism it does not cover.
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import WorkspaceRail from './WorkspaceRail'
 import ProjectRenameDialog from '../projects/ProjectRenameDialog'
 import { useWorkspaceState } from './useWorkspaceState'
@@ -61,8 +61,9 @@ import {
 import type { ReclaimRequest } from './workspaceChannel'
 import { announceDeploymentChanged } from '../../hooks/usePublishState'
 import { resolvePreviewAddress } from '../../utils/previewAddress'
-import { handOverWorkspace, saveProject } from '../../utils/buildSessionApi'
+import { fetchCompileState, handOverWorkspace, saveProject } from '../../utils/buildSessionApi'
 import type { HandoverStep, ReclaimBlocked } from '../../utils/buildSessionApi'
+import type { CompileState } from '../../utils/compileState'
 import type { Project } from '../../utils/projectApi'
 
 export interface ProjectWorkspaceProps {
@@ -109,13 +110,84 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     sessionStatus: null,
     sessionId: null,
     projectPreviewUrl: workspace.preview?.state === 'alive' ? workspace.preview.previewUrl : null,
+    // …AND IT IS ALSO THIS SCREEN'S WHOLE ANSWER ON LIVENESS. A non-null value here is the read
+    // saying `alive`, which is what the resolver builds `serving` from — so the pardon that used to
+    // be asserted as `completedLive: true` on the pane view below is now READ rather than claimed,
+    // and this screen no longer states anything about a build it never ran (`#199`).
     // The project predicate is trivially true here: these signals came from a read keyed on the
     // project this surface is showing. It is passed rather than assumed because the resolver's own
     // note says an arm must carry its predicate INTO the module — a gate that depends on where it
     // was declared is one reorder away from silently opening.
     sessionBelongsToOpenProject: true,
+    // NO SESSION ON THIS SURFACE AT ALL, so there is no session end to have been a success.
+    sessionEndedCompleted: false,
     transcriptHasBuildOutcome: false,
   })
+
+  /**
+   * ═══ DID THE NEWEST BUILD COMPILE? — asked of the server, gated on liveness (U4, R20/R21a) ═══
+   *
+   * THE MECHANISM IS NOT BUILT HERE; IT IS WIRED HERE. The route, the four-valued type whose
+   * `unknown` means "hold the cover, never read as clean", the client and `LivePreview`'s
+   * hold-the-cover effect all ship already, and the conversation surface has been calling them for
+   * some time. The project screen was the one call site that did not: it passed `compileState: null`
+   * under a comment reasoning that this screen must not cause a container call.
+   *
+   * THAT REASONING WAS NARROWER THAN IT READ. What R3 forbids is a screen that STARTS a stopped
+   * container to answer a question nobody asked — and the route already refuses to attach when
+   * nothing is live, short-circuiting before the expensive part. So the ban is honoured by gating
+   * the read on the same liveness the save read is gated on: no dark pane pays for this.
+   *
+   * WHAT IT COSTS WHEN IT DOES RUN: one `/dev/compile` read of an in-memory value inside a
+   * container that is already up. It never touches the dev server.
+   *
+   * ═══ THE ONE RULE THIS MUST NOT DEFEAT ═══
+   *
+   * `fetchCompileState` answers `unknown` for everything unanswerable — a refusal, an unreadable
+   * body, a thrown request, a container image older than the signal — and never throws. `unknown`
+   * and `null` both HOLD whatever cover is showing and assert nothing in either direction. The
+   * failure mode to avoid is not building something too weak; it is translating an unreadable
+   * answer into `clean` on the way through, which would uncover the frame over the very error
+   * screen the cover exists to hide. So the verdict is stored EXACTLY as it arrives.
+   *
+   * AND IT IS NOT WIRED TO A DISPLAY BOOLEAN. `revealed` and `covered` inside the pane are
+   * deliberately permissive and diverge from what is actually rendered around workspace loss; a
+   * verdict read off one of those would be a measurement taken from a display signal, which is how
+   * a dead preview once got recorded as a fast successful view.
+   */
+  const alive = workspace.preview?.state === 'alive'
+  const framedUrl = address.url
+  const [compileState, setCompileState] = useState<CompileState | null>(null)
+  useEffect(() => {
+    // NOT ALIVE, NOTHING ASKED, AND NOTHING CLAIMED. `null` is "nothing has been reported", which
+    // is the pre-signal state and behaves exactly as this screen did before this read existed —
+    // deliberately NOT `'clean'`, and deliberately not a stale verdict about a container that has
+    // since gone.
+    if (!alive || !framedUrl) {
+      setCompileState(null)
+      return
+    }
+    // ONE READ PER LIVE WORKSPACE, not a timer. No turn runs on this screen, so nothing here can
+    // change what the app compiles to; a poll would spend a container call per tick to hear the
+    // same answer. A start that brings a new app up changes `framedUrl`, which is what re-asks.
+    let live = true
+    fetchCompileState(project.id)
+      // IN FRONT OF THE HANDLER, not after it. Behind it, the same `.catch` that covers the
+      // (impossible) fetch rejection would also swallow anything the state update threw —
+      // a real error in this component silently becoming nothing. Here it covers exactly the
+      // promise it is about, and `unknown` is the right substitute: it is what the client
+      // itself answers for anything unreadable, and it HOLDS whatever cover is showing.
+      .catch(() => 'unknown' as const)
+      .then((verdict) => {
+        // The answer describes the workspace this effect was armed for. A late reply after a
+        // teardown, a project switch or a restart would otherwise land on a different app.
+        if (live) setCompileState(verdict)
+      })
+
+    return () => {
+      live = false
+    }
+  }, [project.id, alive, framedUrl])
 
   const onReclaimRefusal = useCallback((blocked: ReclaimBlocked, retry: () => Promise<void>) => {
     // FIRST REFUSAL WINS. The dialog must not change under the person reading it: they read one
@@ -178,24 +250,38 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const paneView = useMemo(
     () => ({
       // NO TURN RUNS ON THIS SURFACE. Every one of these describes a build in flight, and there is
-      // none: this screen starts no turn and owns no session. `completedLive` is the one to look
-      // at twice — it is the "this container is alive under an idle lease" pardon that lets a frame
-      // outrank a terminal status, and an app reached from the project screen is exactly that.
+      // none: this screen starts no turn and owns no session.
+      //
+      // `completedLive: true` USED TO SIT HERE, AND IT WAS THE `#199` DEFECT (U3). It was the pardon
+      // that let a frame outrank a terminal status — which an app reached from the project screen
+      // genuinely is — but the same flag also drew "Build complete — your app is live below", so a
+      // screen where a build can never run stated a build outcome on every cold load and after
+      // every restore. It could not simply be flipped to `false` either: that would have overridden
+      // the value the pane host held across the chat→project hop and collapsed the iframe right
+      // after a successful build.
+      //
+      // BOTH PROBLEMS ARE GONE RATHER THAN TRADED. The claim went with the chip (U7a), and liveness
+      // went onto the address (U2), where this surface feeds it from the preview-state read instead
+      // of asserting it. Nothing is lost on the framing side: `previewAddress.ts` already resolves
+      // this screen's status to `ready`, which is not terminal, so there is nothing for a pardon to
+      // outrank here in the first place.
       iterating: false,
       reconnecting: false,
-      restoredFromFailedBuild: false,
-      completedLive: true,
       turnRunning: false,
       hasSavedBuild: workspace.preview?.restorable ?? project.hasRelaunchableSnapshot,
       previewState: workspace.preview?.state ?? null,
       occupyingProjectName: workspace.preview?.occupyingProjectName ?? null,
-      // App-scoped facts this surface does not read. The compile state's producer is a turn and
-      // `checkWorkspace` costs a container exec; neither is a question the project screen asks
-      // (R3 — the screen must not cause a container call).
-      compileState: null,
+      // THE SERVER'S VERDICT ON THE NEWEST BUILD, read above and passed through UNTRANSLATED.
+      // `null` and `unknown` both mean "nothing is claimed" and hold whatever cover is showing;
+      // only an affirmative `clean` uncovers, and only `failed` names the failure. See the read.
+      compileState,
+      // `checkWorkspace` STAYS UNASKED, and the distinction from the line above is the cost. The
+      // compile route short-circuits before any attach when nothing is live; the workspace check is
+      // a container exec that can raise an operational alarm, and it is gated on a STANDING
+      // COMPLETION CLAIM — which this screen, having stopped making one, no longer has.
       workspaceLost: false,
     }),
-    [workspace.preview, project.hasRelaunchableSnapshot],
+    [workspace.preview, project.hasRelaunchableSnapshot, compileState],
   )
 
   useWorkspaceProject(project.id)

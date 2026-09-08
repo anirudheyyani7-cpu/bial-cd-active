@@ -33,7 +33,7 @@ import asyncio
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -42,7 +42,7 @@ from typing import Any, Final, Literal
 import structlog
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai._agent_graph import AgentNode
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -178,6 +178,8 @@ from src.services.sandbox import SandboxClient, SandboxError
 from src.services.sandbox.base import CompileState
 from src.services.turns.copy import (
     CANNOT_TELL_WHAT_REMAINS_TEXT,
+    CHAT_TOO_LONG_CODE,
+    CHAT_TOO_LONG_TEXT,
     COULD_NOT_CHECK_TEXT,
     COULD_NOT_CONFIRM_TEXT,
     DID_NOT_COME_TOGETHER_TEXT,
@@ -225,6 +227,57 @@ _TURN_FAILED_MESSAGE = "The assistant hit a problem and this turn was stopped."
 _PERSIST_FAILED_MESSAGE = (
     "The reply could not be saved, so this turn was stopped. Try sending the message again."
 )
+
+# R9b — HOW THE PROVIDER SAYS "THAT PROMPT DID NOT FIT", and why anything reads it at all.
+#
+# `usage/context_window.enforce_context_limit` refuses an over-full conversation at the route,
+# before a word is persisted. It reads the token count the provider reported for the LAST turn
+# it served, because nobody can count the message about to be sent without asking the provider —
+# so a chat admitted just under the ceiling, sent with a large attachment, overflows the served
+# window AFTER the check has passed. That is the one case no pre-flight can pre-empt, and it is
+# the only reason this match exists. It is error handling, not a second estimate: it needs no
+# number, and it must never grow one.
+#
+# MEASURED THROUGH THIS EXACT STACK, NOT ASSUMED (2026-09-07, deployment `claude-opus-4-7` on
+# `bial-genai-vibecoding2`). An over-window send through pydantic-ai's `AnthropicModel` over
+# `AsyncAnthropicFoundry` raises `ModelHTTPError` — never the SDK's own `BadRequestError`, which
+# pydantic-ai wraps and re-raises — carrying `status_code == 400` and a parsed body of
+# `{'type': 'error', 'error': {'type': 'invalid_request_error', 'message':
+# 'prompt is too long: 1963668 tokens > 1000000 maximum'}, 'request_id': ...}`. The probe that
+# took that reading is beside the others in `.vulcan/token-usage-probe/`.
+#
+# THE STATUS IS NOT THE MATCH, AND THAT IS THE WHOLE CARE HERE. Every malformed request Foundry
+# refuses is a 400 — an unsupported media type, a bad tool schema, a password-protected PDF —
+# and answering any of them with "this chat is full, start a new chat" sends the citizen to a
+# new chat that fails identically, which is exactly the loop `MAX_PDF_BLOCKS` exists to avoid.
+# So the provider's own sentence decides and the status only narrows it. The second marker is
+# the provider's other phrasing for the same fact: the prompt fits, the prompt plus the reply it
+# is allowed to write does not.
+_CONTEXT_OVERFLOW_MARKERS: Final = ("prompt is too long", "exceed context limit")
+
+
+def _is_context_overflow(exc: ModelHTTPError) -> bool:
+    """Whether this provider refusal means the prompt did not fit, rather than any other 400.
+
+    Defensive on the body's SHAPE while staying narrow on its CONTENT: the documented shape is
+    a parsed `{"error": {"message": ...}}`, and a body that is a bare string (a gateway that
+    answered with something other than the provider's JSON) is read as the message itself.
+    Anything else yields no message and therefore no match — an unreadable body is not evidence
+    that a chat is full."""
+    if exc.status_code != 400:
+        return False
+    body: object = exc.body
+    message = ""
+    if isinstance(body, Mapping):
+        error: object = body.get("error")
+        if isinstance(error, Mapping):
+            candidate: object = error.get("message")
+            message = candidate if isinstance(candidate, str) else ""
+    elif isinstance(body, str):
+        message = body
+    lowered = message.lower()
+    return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)
+
 
 # =====================================================================================
 # U17/R24 — THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING
@@ -1040,6 +1093,30 @@ class TurnEngine:
                     turn_id=str(state.turn_id),
                 )
 
+        async def _fail_generically() -> None:
+            """How a turn ends when it broke for a reason the citizen cannot act on.
+
+            A CLOSURE BECAUSE THE SPECIFIC ARM HAS TO BE ABLE TO HAND AN ERROR BACK. R9b's
+            match sits ahead of the broad handler and catches a whole exception CLASS, most of
+            which is not its business — and it cannot simply `raise` the rest onward, because a
+            sibling `except` never catches what another one raises. Re-raising would carry an
+            unrelated provider error clean out of this method, past the billing and past the
+            terminal frame, leaving the turn "running" for every subscriber until their stall
+            timeout. So the two arms share one ending rather than one of them having none."""
+            _log.exception(
+                "turn_run_failed",
+                conversation_id=str(state.conversation_id),
+                turn_id=str(state.turn_id),
+            )
+            # Partial spend before the failure still counts: bill what actually ran.
+            await _bill_once()
+            state.error_message = _TURN_FAILED_MESSAGE
+            self._emit(
+                state,
+                lambda seq: TurnErrorFrame(seq=seq, message=_TURN_FAILED_MESSAGE),
+            )
+            self._finish(state, "failed")
+
         try:
             workspace = await self._pin_workspace(
                 state,
@@ -1311,20 +1388,41 @@ class TurnEngine:
                 lambda seq: TurnErrorFrame(seq=seq, message=_PERSIST_FAILED_MESSAGE),
             )
             self._finish(state, "failed")
+        except ModelHTTPError as exc:
+            # R9b — THE ONE OVERFLOW NO PRE-FLIGHT CAN CATCH, answered in the platform's words.
+            #
+            # AHEAD OF THE BROAD ARM, AND NARROW INSIDE IT. Only a refusal that says the prompt
+            # did not fit is translated; every other provider error — a 429, a 500, a 400 about
+            # a media type — takes the same generic ending it took before this arm existed, and
+            # takes it HERE rather than by being re-raised, because a sibling `except` would not
+            # catch it. See `_fail_generically` for what re-raising would cost.
+            if _is_context_overflow(exc):
+                _log.info(
+                    "turn_context_overflow",
+                    conversation_id=str(state.conversation_id),
+                    turn_id=str(state.turn_id),
+                    status_code=exc.status_code,
+                )
+                # The spend that got this far still counts, exactly as it does on every other
+                # ending: the refused request is free, the turns before it were not.
+                await _bill_once()
+                # THE SAME SENTENCE AND THE SAME CODE THE ADMISSION CHECK REFUSES WITH — the
+                # 413 `turns.start_turn` raises when the conversation is already past the
+                # ceiling. One condition, one remedy, one wording: a second sentence for "this
+                # chat is full" is a second thing to keep true, and the citizen cannot tell the
+                # two situations apart anyway. The code rides out on the terminal frame as the
+                # machine-readable half, which is how the browser offers the same way forward.
+                state.end_reason = CHAT_TOO_LONG_CODE
+                state.error_message = CHAT_TOO_LONG_TEXT
+                self._emit(
+                    state,
+                    lambda seq: TurnErrorFrame(seq=seq, message=CHAT_TOO_LONG_TEXT),
+                )
+                self._finish(state, "failed")
+            else:
+                await _fail_generically()
         except Exception:
-            _log.exception(
-                "turn_run_failed",
-                conversation_id=str(state.conversation_id),
-                turn_id=str(state.turn_id),
-            )
-            # Partial spend before the failure still counts: bill what actually ran.
-            await _bill_once()
-            state.error_message = _TURN_FAILED_MESSAGE
-            self._emit(
-                state,
-                lambda seq: TurnErrorFrame(seq=seq, message=_TURN_FAILED_MESSAGE),
-            )
-            self._finish(state, "failed")
+            await _fail_generically()
         finally:
             # THE DURABLE TERMINAL, FIRST IN THE FINALLY. `_finish` emits the live
             # `TurnEndedFrame` and cannot write it — it is synchronous by design, so that a
@@ -2020,8 +2118,8 @@ class TurnEngine:
         ) as run:
             # ANNOTATED, AND WALKED WITH `isinstance` RATHER THAN `Agent.is_end_node` — the
             # classmethod's `TypeIs` binds its type-var to `Unknown` on the bare class, so the
-            # NEGATIVE branch this loop needs does not narrow. `orchestrator/harness.py` writes
-            # the reasoning out in full at the one other place the graph is walked this way.
+            # NEGATIVE branch this loop needs does not narrow. This is the only place the
+            # graph is walked this way now; the deleted harness was the other one.
             node: AgentNode[ChatDeps, str] | End[FinalResult[str]] = run.next_node
             cut_short = False
             pending_answers: ModelRequest | None = None
@@ -2566,10 +2664,11 @@ class TurnEngine:
         ask, and only the server holds the supervisor token. Every failure is swallowed — a
         watcher that raised would take the build down with it over a polling blip.
 
-        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` — see that constant, and
-        keep `orchestrator/harness.py::_watch_preview` in step with it: the two emit the same
-        signal to the same pane, so a debounce on one of them only would make the crash edge
-        depend on which code path built the app."""
+        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` — see that constant. This
+        is the only watcher left (the harness had a second one), and any future second watcher
+        must read that same constant: two watchers emit the same signal to the same pane, so a
+        debounce on one of them only would make the crash edge depend on which code path built
+        the app."""
         sandbox = state.sandbox
         if sandbox is None:
             return

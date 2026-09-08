@@ -58,7 +58,7 @@ from src.api.v1.conversations.schemas import (
 )
 from src.api.v1.live_build import ReclaimBlockedEnvelope, reclaim_blocked_response
 from src.core.errors import AppApiError
-from src.db.models.app_registry import AppRegistry
+from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.conversation import ChatKind, Conversation
 from src.db.models.message import MessageEntryKind, MessageVisibility
 from src.db.models.project import Project
@@ -66,6 +66,7 @@ from src.db.models.user import User
 from src.schemas import AUTH_401, CamelModel, DailyTokenLimitBody, ErrorEnvelope, error_responses
 from src.services.agent.mode_prompts import PromptContext
 from src.services.build_sessions import SandboxReclaimBlockedError
+from src.services.build_sessions.appdata import APP_SWITCHED_OFF, APP_SWITCHED_OFF_CODE
 from src.services.build_sessions.manager import SessionManager
 from src.services.messages.projection import DisplayItem, project_rows
 from src.services.messages.store import (
@@ -190,6 +191,25 @@ async def _app_id_for_project(
         )
     )
     return app_id
+
+
+async def _app_is_switched_off(
+    db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
+) -> bool:
+    """Has an administrator switched this project's app off?
+
+    A READ, and one that mints nothing — the same discipline as `_app_id_for_project` above
+    and for the same reason. A project with no app row yet answers False: there is nothing to
+    have been switched off, and the first turn is allowed to mint one."""
+    switched_off: bool = (
+        await db.scalar(
+            sa.select(AppRegistry.status == AppStatus.DISABLED).where(
+                AppRegistry.project_id == project_id, AppRegistry.user_id == user_id
+            )
+        )
+        or False
+    )
+    return switched_off
 
 
 async def start_conversation_turn(
@@ -368,6 +388,17 @@ async def start_turn(
     if sandbox is None:
         raise AppApiError(503, WORKSPACE_UNAVAILABLE_TEXT, code=WORKSPACE_UNAVAILABLE_CODE)
 
+    # A MESSAGE, NOT A GATE (R41a, #163). The refusal itself lives in one place —
+    # `resolve_app_for_project`, which every door into a container comes through — and it
+    # holds whether or not this line exists. What this buys is WORDS: that refusal is raised
+    # inside the detached turn, where the engine's attach arm catches it as an unexpected
+    # failure and says "the workspace service is not available", which is both wrong and
+    # retryable-sounding for an app an administrator deliberately switched off. Said here,
+    # at the moment of sending and above the first write, the citizen gets the true sentence
+    # and no turn is spent. Same string, same code, one source (`appdata`).
+    if await _app_is_switched_off(db, user.id, project_id):
+        raise AppApiError(409, APP_SWITCHED_OFF, code=APP_SWITCHED_OFF_CODE)
+
     # Every side-effect-free rejection lands BEFORE `resolve_pending_as_refine`, which is a
     # WRITE: a refused start must never burn the user's pending plan-options card. Both
     # checks are re-made downstream (the engine owns the real, race-free claim) — these are
@@ -383,7 +414,7 @@ async def start_turn(
     if conversation_is_mid_reply(conversation_id):
         raise AppApiError(409, "A turn is already running for this conversation.")
     # UNCONDITIONAL, and BELOW the mid-reply guard on purpose: a send during a streaming
-    # reply must still 409 as a busy conversation, or it races `transcript_head_seq`. This
+    # reply must still 409 as a busy conversation, not as a taken workspace. This
     # one asks a different question — is this user's single workspace already committed to a
     # DIFFERENT conversation of their own? Cheap and synchronous; the expensive provision
     # happens inside the detached turn, because blocking the POST on 30-60s recreates the dead
@@ -471,10 +502,18 @@ async def start_turn(
     # powerless to take it back: their message refused AND their offer silently consumed.
     #
     # It is a REFUSAL, not a run bound. The three ceilings inside the engine stop a run already
-    # under way; this one declines to start a turn whose prompt would not fit — which is why it
-    # copies the daily cap's pre-start gate rather than the mid-run terminal.
+    # under way; this one declines to start a turn on a conversation the provider has already
+    # reported as past its owner's ceiling — which is why it copies the daily cap's pre-start
+    # gate rather than the mid-run terminal. It reads a measurement rather than sizing `prompt`:
+    # the message about to be sent has no count until the turn that carries it completes.
+    #
+    # AND WHAT IT MEASURED RIDES BACK OUT ON THE 202 (`contextTokens`). The browser's meter and
+    # this wall are then the same number taken by the same expression on the same request —
+    # never two readings of one scale, which is what the deleted estimator was. It costs no
+    # extra round trip and, crucially, nothing is sized BEFORE a send: the figure is the one
+    # this admission just computed from turns the provider has already served.
     try:
-        await enforce_context_limit(db, user.id, history=history, prompt=prompt)
+        occupied = await enforce_context_limit(db, user.id, history=history)
     except ContextWindowExceededError as exc:
         # The PROSE says neither number on purpose — a citizen does not think in tokens. The
         # `detail` does, because a non-browser caller has no other way to learn how far over it
@@ -596,7 +635,11 @@ async def start_turn(
         manager=manager,
         sandbox=sandbox,
     )
-    return TurnStartResponse(turn_id=str(turn_id))
+    # `None` rather than `0` for a conversation nobody has measured — see the field's own note.
+    # A brand-new chat is UNMEASURED, not empty, and the meter stays silent on the difference.
+    return TurnStartResponse(
+        turn_id=str(turn_id), context_tokens=occupied if occupied > 0 else None
+    )
 
 
 @router.post(

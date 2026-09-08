@@ -11,11 +11,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, AnyUrl, Field, UrlConstraints
+from pydantic import AfterValidator, AnyUrl, Field, UrlConstraints, field_validator
 
 from src.db.models.app_registry import MAX_DEPLOYED_URL, ApprovalRoute, AppStatus
 from src.db.models.worker_pass import PassOutcome
-from src.schemas import CamelModel
+from src.schemas import CamelModel, clean_deletion_reason
 
 
 def _fits_the_column(url: AnyUrl) -> AnyUrl:
@@ -267,11 +267,40 @@ RejectionNote = Annotated[
 ]
 
 
+def _clean_app_delete_reason(value: str) -> str:
+    """The admin app-delete's binding of the shared 5-50 word deletion rule (U23)."""
+    return clean_deletion_reason(value, subject="app")
+
+
 class RejectRequest(CamelModel):
     # REQUIRED since U13 (P3): "a rejection carries a note back" is the requirement, and an
     # optional field made that a suggestion. Omitting it is a 422 on the missing field, and
     # a too-short or whitespace-only one is a 422 on its content.
     note: RejectionNote
+
+
+class AppDeleteRequest(CamelModel):
+    """The body `DELETE /v1/admin/apps/{app_id}` requires (U23, R5).
+
+    AN ADMINISTRATOR DESTROYING SOMEBODY ELSE'S APP MUST SAY WHY. The citizen deleting their
+    own project already has to (#158 §13.2); the harsher act — an administrator destroying work
+    that is not theirs, with no undo and no export — asked for nothing at all, and the browser
+    `window.confirm` it went through could not have collected it.
+
+    The reason rides the `app:delete` audit row this path already writes BEFORE destruction,
+    which has no foreign key to the app and so outlives it. Same 5-50 word bounds and the same
+    validator as the project delete, so the two dialogs cannot disagree about what a word is.
+
+    IT TAKES A BODY ON A DELETE, like `DELETE /v1/projects/{id}` and for the same reason: a
+    50-word reason does not belong in a query string. RFC 9110 leaves content on a DELETE
+    undefined and httpx declines to offer `json=` on `.delete()` for that reason — tests use
+    `.request("DELETE", ...)` — but nginx and the container ingress both forward it and the
+    admin SPA is the only client.
+    """
+
+    reason: str
+
+    _v_reason = field_validator("reason")(_clean_app_delete_reason)
 
 
 class PatchAppRequest(CamelModel):

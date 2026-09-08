@@ -30,7 +30,21 @@ def building(
     `SessionManager.live_session_for_conversation` rather than a stub of it.
 
     Hand-built rather than started for real: what these tests exercise is the ROUTE's refusal,
-    and a real start would drag in Redis, a sandbox, and a brain to prove a lookup."""
+    and a real start would drag in Redis, a sandbox, and a brain to prove a lookup.
+
+    ★ EVERY TEST THAT USES THIS FIXTURE IS FALSE-GREEN, AND KNOWINGLY SO. It passes a
+    `conversation_id` into `BuildSession`, and PRODUCTION CAN NO LONGER MAKE A SESSION OF THAT
+    SHAPE AT ALL: the one construction site that ever set the field was `_start_locked`, which is
+    deleted, and `ensure_sandbox` — now the only allocator — has never set it. So the field is
+    always `None` on a real session, `SessionManager.live_session_for_conversation` can never
+    match, and the gate in `api/v1/conversations/turns.py` that calls it is structurally inert.
+    These tests go on passing against a shape only this fixture can build; their green says the
+    LOOKUP is wired correctly, and says nothing whatever about the gate firing in production.
+    The gate is kept as a redesign seam (thread `conversation_id` through `ensure_sandbox` and it
+    becomes live for the first time) — see `live_session_for_conversation`'s own docstring in
+    `services/build_sessions/manager.py`, which carries the matching warning. Nothing is
+    unguarded meanwhile: `turns.py` also asks `conversation_is_mid_reply` and
+    `active_session_for`."""
     manager = SessionManager()
     app.dependency_overrides[session_manager_dependency] = lambda: manager
 

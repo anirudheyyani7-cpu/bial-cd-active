@@ -170,14 +170,17 @@ def _live_catalog(search: str | None) -> tuple[sa.Select[Any], type[Deployment]]
         publish unattended." That round trip ends with `status` back at DRAFT, which the
         first predicate would list.
 
-    WHAT THIS DOES NOT GIVE YOU: `disable` and `reject` are NOT available for the ordinary
-    member of this catalog. `STATUS_TRANSITIONS[DISABLED] == {APPROVED}`, so
-    `admin/router.py` answers 409 "Only an approved app can be disabled" for anything else
-    — and a one-click deploy never writes `status` at all (`deployment.py`: "there is no
-    admin approval on this path... a self-deployed app is still `draft`"). A DRAFT app
-    cannot be rejected either (`STATUS_TRANSITIONS[DRAFT] == {PENDING}`).
+    `disable` IS NOW AVAILABLE for the ordinary member of this catalog, and this paragraph
+    used to say the opposite. `STATUS_TRANSITIONS[DISABLED] == {APPROVED, DRAFT, REJECTED}`
+    since #163, so `admin/router.py` switches off a self-published DRAFT — which is what the
+    ordinary entry here is, because a one-click deploy never writes `status` at all
+    (`deployment.py`: "there is no admin approval on this path... a self-deployed app is
+    still `draft`") — and the catalog drops it through the `notin_((DISABLED, REJECTED))`
+    predicate below, with no change to this query. `reject` still is not: a DRAFT app cannot
+    be rejected (`STATUS_TRANSITIONS[DRAFT] == {PENDING}`), and PENDING is deliberately not
+    a `disable` source either — an app in the review queue is rejected, not switched off.
 
-    WHAT AN ADMIN CAN DO TODAY, stated precisely because this is the paragraph someone reads
+    WHAT ELSE AN ADMIN CAN DO, stated precisely because this is the paragraph someone reads
     during an incident: `unpublish` + `deactivate` IS a working, durable takedown.
     `POST /v1/admin/apps/{id}/unpublish` carries no `AppStatus` guard at all, so it returns
     200 on a self-published DRAFT app, deletes the container, and drops it from browse and
@@ -188,14 +191,14 @@ def _live_catalog(search: str | None) -> tuple[sa.Select[Any], type[Deployment]]
     auth dependency. (An earlier draft of this docstring said `unpublish` was the only lever
     and undersold it; that was wrong, and it is corrected here rather than left to mislead.)
 
-    Widening `STATUS_TRANSITIONS[DISABLED]` to accept DRAFT/PENDING/REJECTED would give an
-    admin the ADVERTISING switch directly instead of via the takedown pair. Filed as #163,
-    and NOT a one-liner: `enable` returns DISABLED -> APPROVED guarded on
-    `approved_submission_id IS NOT NULL`, which a self-published app never has, so widening
-    `disable` alone strands the app in DISABLED for good. Un-sticking that needs DISABLED in
-    `STATUS_TRANSITIONS[DRAFT]` — which `withdraw` also reads, and `withdraw` is
-    citizen-facing, so it would let an app's OWNER undo an admin kill switch. The fix is a
-    lifecycle decision, not a predicate change, which is why it is not in a catalog PR.
+    GETTING AN APP BACK OUT OF DISABLED IS NOW DONE, and this paragraph used to say it was not.
+    `enable` no longer resolves to the literal APPROVED — which on a never-approved app invented
+    an approval nobody gave, and stranded a switched-off DRAFT permanently. It restores the
+    status the app HELD, from `app_registry.previous_status`, through its own guarded UPDATE.
+    What that deliberately is NOT is DISABLED in `STATUS_TRANSITIONS[DRAFT]`:
+    `apps/router.py::withdraw` reads that same row and is citizen-facing, so widening it would
+    let an app's OWNER undo an admin kill switch. That row is untouched. Still a lifecycle
+    decision rather than a predicate change — which is why none of it is in this query.
 
     SUSPENDED OWNERS are a decision, not an accident of the `User` join: an already-published
     app does not stop being useful to someone else merely because its builder's account is

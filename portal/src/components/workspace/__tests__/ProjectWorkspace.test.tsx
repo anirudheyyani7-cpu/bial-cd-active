@@ -41,6 +41,11 @@ import { formatStamp } from '../../../utils/publishPresentation'
 const api = vi.hoisted(() => ({
   fetchPreviewState: vi.fn(),
   fetchSaveState: vi.fn(),
+  // THE COMPILE READ IS MOCKED AT THE WIRE, not at a hook, and the mock is the REQUEST LOG this
+  // suite asserts on. "The screen must not cause a container call" is a claim about what was
+  // ASKED — a scenario that only inspected rendered text would pass just as happily against a
+  // screen that made the call and ignored the answer.
+  fetchCompileState: vi.fn(),
   relaunchPreview: vi.fn(),
   saveProject: vi.fn(),
   listProjectConversations: vi.fn(),
@@ -51,6 +56,7 @@ vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../utils/buildSessionApi')>()),
   fetchPreviewState: api.fetchPreviewState,
   fetchSaveState: api.fetchSaveState,
+  fetchCompileState: api.fetchCompileState,
   relaunchPreview: api.relaunchPreview,
   saveProject: api.saveProject,
 }))
@@ -108,12 +114,15 @@ const deployment = (publishState: PublishState = 'draft', over: Partial<Deployme
   publishState,
   savedHead: null,
   savedAt: null,
+  // `null` is "the server did not say", which keeps the saved row — the neutral default
+  // for suites that are not about U16's never-saved omission.
+  savedState: null,
   ...over,
 })
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -126,7 +135,7 @@ const EMPTY_PANE: PaneView = {
  */
 function ChatSurface({ projectId = 'pA', pane = true }: { projectId?: string; pane?: boolean }) {
   useWorkspaceProject(projectId)
-  usePublishAddress({ url: APP_URL, status: 'ready' }, projectId)
+  usePublishAddress({ url: APP_URL, status: 'ready', serving: true }, projectId)
   usePublishPaneView(EMPTY_PANE)
   useAppPaneVisible(pane)
   return <div data-testid="chat-surface" />
@@ -185,6 +194,17 @@ function Workspace({ entry = '/projects/pA', project = PROJECT }: { entry?: stri
 }
 
 const frame = () => document.querySelector('iframe')
+/** The pane's opaque full-bleed cover, found by what makes it one rather than by a test id — so a
+ *  refactor that stops covering fails here. Matched on either idle sentence, because WHICH one it
+ *  is telling is a separate question from WHETHER the frame is covered. */
+const cover = () =>
+  [...document.querySelectorAll('div')].find(
+    (el) =>
+      el.className.includes('absolute inset-0') &&
+      /Getting your app ready|isn’t running right now|Putting the latest change together/i.test(
+        el.textContent ?? '',
+      ),
+  )
 // TWO DIFFERENT ELEMENTS, and the distinction is load-bearing. `app-pane-region` is `AppPane`'s
 // own named region — always rendered, whether or not there is anything to frame, and where the
 // skip control and the rail's collapse toggle live. `app-pane` is `AppPaneHost`'s frame wrapper,
@@ -199,6 +219,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   api.fetchPreviewState.mockResolvedValue(preview())
   api.fetchSaveState.mockResolvedValue({ appId: 'app-1', dirty: false, containerHead: null, savedHead: null })
+  // The honest default for a signal nothing has reported: `unknown` holds whatever is showing and
+  // asserts nothing. Never `'clean'` — an absent answer read as good news is the one behaviour the
+  // whole four-valued type exists to forbid.
+  api.fetchCompileState.mockResolvedValue('unknown')
   api.saveProject.mockResolvedValue({ appId: 'app-1', headSha: 'ccc' })
   api.getDeployment.mockResolvedValue(deployment())
 })
@@ -271,6 +295,204 @@ describe('R3 — loading a project address frames the running app, with no chat 
 
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
     expect(frame()).toBeNull()
+  })
+})
+
+describe('★ AE4 — the project screen states no build outcome (#199)', () => {
+  it('★ frames a running app and claims NOTHING about a build, on screen or in the region', async () => {
+    // ★ THE DEFECT: this screen published `completedLive: true` unconditionally, and that flag drew
+    // "Build complete — your app is live below". A route where a build can NEVER run therefore
+    // stated a build outcome — on every cold load, and after every restore, where no build had
+    // happened at all. Measured at t=691ms on ~20 loads with zero build-initiating requests.
+    //
+    // AND IT COULD NOT SIMPLY BE FLIPPED. Publishing `false` would have overridden the value the
+    // pane host held across the chat→project hop and collapsed the iframe right after a successful
+    // build — the regression `AppPaneHost`'s own docblock is written against. The flag is gone in
+    // both directions instead: the claim left with the chip, and liveness moved onto the address,
+    // where this screen READS it from the preview-state answer rather than asserting it.
+    //
+    // ASSERT-ABSENCE, PAIRED WITH LIVENESS: the app has to be framed in the same breath, or a
+    // screen that rendered nothing would satisfy every absence below.
+    api.fetchPreviewState.mockResolvedValue(
+      preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
+    )
+    render(<Workspace />)
+
+    await waitFor(() => expect(frame()).toBeTruthy())
+    // THE FRAME'S OWN `load`, FIRED DELIBERATELY. Without it the pane never REVEALS in jsdom, and
+    // the announcement arm this scenario is about is unreachable — so every assertion below would
+    // pass against a screen that still made the claim. The absence has to be measured in the state
+    // where the claim would be made.
+    fireEvent.load(frame() as HTMLIFrameElement)
+
+    // LIVENESS: the app is on screen, revealed, at the address the read named.
+    expect(frame()?.getAttribute('src')).toBe(APP_URL)
+    expect(document.querySelector('[data-testid="device-card"]')?.className).toMatch(/opacity-100/)
+    // ABSENCE: no completion claim anywhere, and none announced either. The pane's live region is
+    // permanent, so this reads it rather than testing for its existence.
+    expect(screen.queryByText(/build complete/i)).toBeNull()
+    expect(screen.queryByText(/your app is live below/i)).toBeNull()
+    for (const region of screen.getAllByRole('status')) {
+      expect(region.textContent).not.toMatch(/preview is live/i)
+      expect(region.textContent).not.toMatch(/build complete/i)
+    }
+  })
+
+  it('the claim is absent whether or not an app is serving', async () => {
+    // The other half, and the reason the scenario above is not just "the chip moved". A project
+    // with nothing serving never had a chip to lose, so a fix that only silenced the framed case
+    // would pass there and leave the claim reachable the moment an app came up.
+    api.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
+    render(<Workspace />)
+
+    await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
+    // LIVENESS: the screen is up and saying something about the workspace…
+    expect(await screen.findByRole('button', { name: /launch application/i })).toBeTruthy()
+    // …and none of what it says is a build outcome.
+    expect(screen.queryByText(/build complete/i)).toBeNull()
+  })
+})
+
+describe('★ AE4 — the compile verdict, gated on liveness (#199)', () => {
+  const alive = () =>
+    api.fetchPreviewState.mockResolvedValue(
+      preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
+    )
+  /** The pane's permanent live region, which is what the pane ANNOUNCES through. */
+  const spoken = () => screen.getAllByRole('status').map((r) => r.textContent ?? '').join(' | ')
+
+  it('★ a build that failed to compile is NAMED, in the pane and in the live region (U5)', async () => {
+    // WHAT THIS ADDS, AND WHAT IT DOES NOT. The sentence already existed — one plain sentence with
+    // one route back into the chat, already selected when the verdict is `failed`. There is no
+    // second sentence, on purpose: two ways of saying the same thing is how a product ends up
+    // arguing with itself. What was missing is that the verdict could never REACH that state on
+    // this screen, because the screen passed `compileState: null` and asked nothing.
+    //
+    // ANNOUNCED, not merely rendered. The citizen who most needs to be told their app is not
+    // running is the one who cannot see the cover.
+    alive()
+    api.fetchCompileState.mockResolvedValue('failed')
+    render(<Workspace />)
+
+    await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalledWith('pA'))
+    // The sentence, and the one route back into the chat that comes with it.
+    await waitFor(() => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0))
+    expect(spoken()).toMatch(/isn’t running right now/i)
+    expect(spoken()).toMatch(/send a message describing what you’d like/i)
+  })
+
+  it('★ an UNREADABLE verdict asserts nothing in either direction — "not failure" is never success', async () => {
+    // R21a's rule, INHERITED rather than rebuilt: `unknown` is what the client answers for a
+    // refusal, an unreadable body, a thrown request or a container image older than the signal, and
+    // it must read as "no idea" — never as `clean`. The failure mode this rejects is the natural
+    // implementation: treat anything that is not `failed` as fine, and republish the very claim
+    // `#199` is about on exactly the reload where nothing had been verified.
+    //
+    // Mutation check: map the client's answer through `verdict === 'failed' ? 'failed' : 'clean'`
+    // and this goes red — a mutant that reads plausible and is the whole point of the third value.
+    alive()
+    api.fetchCompileState.mockResolvedValue('unknown')
+    render(<Workspace />)
+
+    await waitFor(() => expect(frame()).toBeTruthy())
+    await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalled())
+    // The reveal has to actually happen, or the "no success claim" half below is unreachable and
+    // would pass against a pane that made one.
+    fireEvent.load(frame() as HTMLIFrameElement)
+    // NOTHING IS CLAIMED, in either direction: no failure sentence, and no success claim either.
+    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(spoken()).not.toMatch(/preview is live/i)
+    expect(screen.queryByText(/build complete/i)).toBeNull()
+    // LIVENESS, PAIRED: the pane really did render its app, so the absences above are a refusal to
+    // claim rather than a component that failed to draw.
+    expect(frame()?.getAttribute('src')).toBe(APP_URL)
+  })
+
+  it('★ an unreadable answer HOLDS a cover that is already up — it is never translated to clean', async () => {
+    // ★ THE ONLY PLACE `unknown` AND `clean` DIVERGE, and therefore the only scenario that can
+    // catch the natural mistake: mapping the client's answer through
+    // `verdict === 'failed' ? 'failed' : 'clean'` on the way through. That reads plausible, keeps
+    // every other assertion in this block green, and uncovers the frame over the exact error screen
+    // the cover exists to hide.
+    //
+    // THE SEQUENCE IS THE REAL ONE. Read one says the build failed, so the cover goes up and names
+    // it. The citizen steps into a chat and comes back — this surface remounts and reads again —
+    // and this time the platform cannot tell (the HMR socket is down, or the container predates the
+    // signal). Nothing has been learned, so nothing may change: the cover stays, because the app
+    // behind it is still broken.
+    //
+    // Mutation receipt: apply that ternary and this is the ONLY scenario in the file that goes red.
+    // GENEROUS TIMEOUTS THROUGHOUT, because this scenario is two mounts and two round trips deep and
+    // the default one second is a measurement of the machine rather than of the behaviour.
+    const patient = { timeout: 5000 }
+    alive()
+    api.fetchCompileState.mockResolvedValue('failed')
+    render(<Workspace />)
+    await waitFor(
+      () => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0),
+      patient,
+    )
+
+    // The second read cannot tell. The pane keeps the SAME app framed throughout, which is what
+    // makes "hold" meaningful — a new app would legitimately reset the cover.
+    api.fetchCompileState.mockResolvedValue('unknown')
+    fireEvent.click(screen.getByText('to chat'))
+    fireEvent.click(screen.getByText('to project'))
+    await waitFor(() => expect(api.fetchCompileState.mock.calls.length).toBeGreaterThan(1), patient)
+
+    // HELD: the frame is still COVERED. Asserted on the cover element rather than on its sentence,
+    // because the wording legitimately follows the current verdict — `unknown` is not `failed`, so
+    // the cover reverts to its neutral idle line. What must not change is that it is still there:
+    // an unreadable answer taught the platform nothing, so it may not uncover an app it has been
+    // told is broken. Under the mutant the cover is GONE and the framework's error screen is
+    // showing through.
+    await waitFor(() => expect(cover()).toBeTruthy(), patient)
+    // LIVENESS: over a frame that is still mounted, at the same address — so this is a held cover
+    // rather than a pane that lost its app.
+    expect(frame()?.getAttribute('src')).toBe(APP_URL)
+  })
+
+  it('a call that FAILS answers unreadable, and still nothing is claimed', async () => {
+    // The client never throws — it swallows and answers `unknown` — and this pins that the screen
+    // does not undo that by translating a failure into good news on the way through.
+    alive()
+    api.fetchCompileState.mockRejectedValue(new Error('network is down'))
+    render(<Workspace />)
+
+    await waitFor(() => expect(frame()).toBeTruthy())
+    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(screen.queryByText(/build complete/i)).toBeNull()
+  })
+
+  it('★ the read is NOT ISSUED when the workspace is not alive — asserted on the request log', async () => {
+    // R3's actual constraint, which is narrower than the comment this replaced made it sound: the
+    // screen must not START a stopped container. The route already short-circuits before any
+    // attach when nothing is live, and the read is gated on the same liveness the save read is —
+    // so a dark pane costs nothing.
+    //
+    // ON THE REQUEST LOG, NOT ON RENDERED TEXT. A screen that made the call and ignored the answer
+    // renders identically to one that never asked, so only the log can tell them apart.
+    api.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
+    render(<Workspace />)
+
+    // LIVENESS: wait until the screen has genuinely settled on its answer, so "no call" is not just
+    // "nothing has happened yet".
+    expect(await screen.findByRole('button', { name: /launch application/i })).toBeTruthy()
+    await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
+    expect(api.fetchCompileState).not.toHaveBeenCalled()
+  })
+
+  it('a compiled build says nothing, and reveals the app', async () => {
+    // The success arm, stated for what it is: an affirmative `clean` is the only value that
+    // uncovers, and uncovering is the whole of what it earns. It buys no sentence.
+    alive()
+    api.fetchCompileState.mockResolvedValue('clean')
+    render(<Workspace />)
+
+    await waitFor(() => expect(frame()).toBeTruthy())
+    await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalled())
+    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(screen.queryByText(/build complete/i)).toBeNull()
   })
 })
 

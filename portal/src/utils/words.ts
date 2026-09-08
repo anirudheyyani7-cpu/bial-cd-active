@@ -63,3 +63,9 @@ export const MAX_PROJECT_NAME_WORDS = 8
 /** The delete-reason bounds (#158 §13.2). */
 export const MIN_DELETE_REASON_WORDS = 5
 export const MAX_DELETE_REASON_WORDS = 50
+
+/** THE COLUMN'S PASTE BACKSTOP, not the rule anybody is told about — that is the word count.
+ *  Mirrors the server's own `clean_deletion_reason` cap, and lives here because BOTH deletes
+ *  now need it: the citizen's project delete and the administrator's app delete. It was a
+ *  private constant in `ProjectDeleteDialog` while only one of them existed. */
+export const MAX_DELETE_REASON_CHARS = 2000

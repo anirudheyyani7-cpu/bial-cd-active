@@ -139,7 +139,10 @@ def test_start_response_requires_its_fields() -> None:
 # U28 retired `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` along with the
 # `acquire` / `renew` / `release` / `heartbeat` routes they served — nothing called them (the
 # portal's keep-alive loop that was their only caller was itself deleted back in U13).
-# `ForceEndResponse` is the one lock-op model still live.
+# `ForceEndResponse` outlived them and has now outlived its own route too: U33 deleted
+# `POST /{session_id}/lock/force-end`, so NO ROUTE SERVES THIS MODEL. It is kept because
+# `tests/test_import_graph.py` freezes the C3 schema surface at this location, and the shape is
+# still what `SessionManager.force_end` — which keeps its service tests — would answer with.
 
 
 def test_force_end_response_validates() -> None:
@@ -426,6 +429,11 @@ def test_app_boots_with_build_sessions_router_mounted() -> None:
     schema = app.openapi()
     assert schema["openapi"].startswith("3.")
     paths = schema.get("paths", {})
-    assert "/v1/build-sessions" in paths  # start
-    assert "/v1/build-sessions/{session_id}" in paths  # status
+    # INVERTED, deliberately. This used to assert the bare collection path was PRESENT (`start`);
+    # `POST /v1/build-sessions` is deleted, so its absence is now the fact worth pinning — a
+    # route re-added here would be a route with no client and no `SessionManager.start` behind
+    # it. `lock/force-end` is gone the same way and is asserted absent beside it.
+    assert "/v1/build-sessions" not in paths  # start — DELETED, must not come back
+    assert "/v1/build-sessions/{session_id}/lock/force-end" not in paths  # also deleted
+    assert "/v1/build-sessions/{session_id}" in paths  # status — the reader that survives
     assert "/v1/build-sessions/{session_id}/events" in paths  # SSE feed

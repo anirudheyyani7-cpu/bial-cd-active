@@ -11,7 +11,7 @@
  * count fetch open and observe the loading-vs-resolved copy.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({ listProjectConversations: vi.fn(), getStoredUser: vi.fn() }))
 vi.mock('../../../utils/auth', () => ({ getStoredUser: h.getStoredUser }))
@@ -249,5 +249,35 @@ describe('ProjectDeleteDialog — the irreversible warning', () => {
     render(<ProjectDeleteDialog project={project} onClose={vi.fn()} onConfirm={vi.fn()} />)
     expect(await screen.findByText(/all 200 or more of its chats/i)).toBeTruthy()
     expect(screen.getByText(WARNING)).toBeTruthy()
+  })
+})
+
+describe('★ the reason field says what it wants, and how close you are (R44b/AE9b)', () => {
+  it('describes the textarea with the rule AND the running count', async () => {
+    // The field carried only `aria-label`, so a reader heard the question and neither of the
+    // two facts printed directly under the box: the 5-50 word bound, and how many words they
+    // have. `DialogContent`'s own `aria-describedby` stays on the cascade sentence — that is
+    // what a reader should hear after the title — so this is a second association on a second
+    // element, not a move.
+    render(<ProjectDeleteDialog project={project} onClose={() => {}} onConfirm={vi.fn()} />)
+
+    const field = await screen.findByLabelText(/why are you deleting/i)
+    const described = (field.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+    expect(described.length).toBe(2)
+
+    const text = described.map((id) => document.getElementById(id)?.textContent || '').join(' ')
+    expect(text).toMatch(/between 5 and 50 words/i)
+    expect(text).toMatch(/0\/50 words/)
+  })
+
+  it('the described count is the live one, not a static copy', async () => {
+    // LIVENESS: without this the association could point at a fossil and still pass.
+    render(<ProjectDeleteDialog project={project} onClose={() => {}} onConfirm={vi.fn()} />)
+    const field = await screen.findByLabelText(/why are you deleting/i)
+    const countId = (field.getAttribute('aria-describedby') || '').split(/\s+/)[1]
+
+    fireEvent.change(field, { target: { value: 'one two three four five six' } })
+
+    await waitFor(() => expect(document.getElementById(countId!)?.textContent).toMatch(/6\/50 words/))
   })
 })

@@ -38,6 +38,7 @@ import structlog
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
+from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.db.models.project_database import ProjectDatabase
 from src.services.appdb.engine import get_maintenance_engine
 from src.services.appdb.names import quote_identifier
@@ -135,41 +136,67 @@ async def restore_login(*, db_name: str, role_name: str) -> bool:
     return True
 
 
-async def salt_the_earth(*, db_name: str, role_name: str) -> None:
+async def salt_the_earth(*, db_name: str, role_name: str) -> bool:
     """Irreversibly destroy a project's database and its role. Never raises.
 
     Post-commit best-effort (the registry row is already gone by the time this runs), so a
-    failure here leaves an orphan for the reconciler to sweep — strictly better than
-    exploding a delete endpoint that has already committed.
-    """
+    failure here leaves the database standing rather than exploding a delete endpoint that has
+    already committed.
+
+    RETURNS WHETHER THE EARTH IS ACTUALLY SALTED (U22). `True` means every step succeeded or
+    found its object already gone; `False` means a copy of the citizen's data is still on the
+    cluster after they asked for it to be destroyed, and the caller records that. This used to
+    say the orphan was left "for the reconciler to sweep" — `appdb/reconcile.py` is
+    operator-invoked and, by its own docstring, REPORT-ONLY: it deletes nothing, ever. Nothing
+    automatic collects this.
+
+    An unconfigured substrate returns `True`: with `APP_DB__*` unset no database was ever
+    provisioned, so there is nothing to have survived (the same reading `sweep_app_containers`
+    gives a `None` store)."""
     engine = get_maintenance_engine()
     if engine is None:
         _log.debug("app_database_drop_skipped_unconfigured", db_name=db_name)
-        return
+        return True
     try:
         async with engine.connect() as conn:
-            async with _best_effort("sever", db_name=db_name):
+            async with _best_effort("sever", db_name=db_name) as sever_step:
                 await _sever_on(conn, db_name=db_name, role_name=role_name)
             # WITH (FORCE) terminates whatever reconnected between the sever and here — the
             # relaunched preview and the deployed container hold no build lock, so the
             # delete-time guard does not cover them and this is the actual guarantee.
-            async with _best_effort("drop_database", db_name=db_name):
+            async with _best_effort("drop_database", db_name=db_name) as drop_step:
                 await _drop_database(conn, db_name=db_name)
             # The role can only be dropped after the database it owns is gone.
-            async with _best_effort("drop_role", db_name=db_name):
+            async with _best_effort("drop_role", db_name=db_name) as role_step:
                 await _drop_role(conn, role_name=role_name)
     except (SQLAlchemyError, OSError) as exc:
         # The per-step guards above cover a statement failing; they do NOT cover the
         # `connect()` ITSELF failing on an unreachable cluster (a bare OSError before the
         # driver wraps it, or a SQLAlchemy connect error). The whole point of the name is
-        # that this never raises — a post-commit delete must not 500 — so swallow it,
-        # leaving an orphan for the reconciler. Error TYPE only: the exception text can
-        # carry the maintenance DSN/password (the discipline `_scrubbed_role_failure` keeps).
+        # that this never raises — a post-commit delete must not 500 — so swallow it. Error
+        # TYPE only: the exception text can carry the maintenance DSN/password (the
+        # discipline `_scrubbed_role_failure` keeps).
         _log.warning(
-            "app_database_salt_connect_failed", db_name=db_name, error_type=type(exc).__name__
+            TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+            artefact="app_database",
+            artefact_id=db_name,
+            reason="the database cluster could not be reached",
+            error_type=type(exc).__name__,
         )
-        return
+        return False
+    # THE ROLE COUNTS AS PART OF THE ARTEFACT. A dropped database whose login role survives is
+    # still a leak — the role is a credential holder, and the next provision derives a fresh
+    # name rather than reusing it, so nothing will ever pick this one up.
+    if not (sever_step.ok and drop_step.ok and role_step.ok):
+        _log.warning(
+            TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+            artefact="app_database",
+            artefact_id=db_name,
+            reason="a teardown step failed (see the app_database_* event beside this one)",
+        )
+        return False
     _log.info("app_database_salted", db_name=db_name, role_name=role_name)
+    return True
 
 
 async def _drop_database(conn: AsyncConnection, *, db_name: str) -> None:
@@ -201,18 +228,32 @@ async def _terminate_backends(conn: AsyncConnection, *, db_name: str) -> int:
     return len(result.fetchall())
 
 
+@dataclass
+class _StepOutcome:
+    """Whether one `_best_effort` step left its object gone. Mutable and yielded BY the
+    context manager, because a caller that swallows an exception has no other way to learn one
+    happened — and `salt_the_earth` owes its own caller a truthful answer about whether the
+    citizen's database is really destroyed."""
+
+    ok: bool = True
+
+
 @asynccontextmanager
-async def _best_effort(label: str, **context: str) -> AsyncIterator[None]:
+async def _best_effort(label: str, **context: str) -> AsyncIterator[_StepOutcome]:
     """Run one teardown step, swallowing nothing silently: an already-gone object is logged
     at debug (that IS the idempotent outcome), anything else at warning with its SQLSTATE
     so an operator can tell a transient lock from a real failure."""
+    outcome = _StepOutcome()
     try:
-        yield
+        yield outcome
     except DBAPIError as exc:
         code = _sqlstate(exc)
         if code in _ALREADY_GONE:
+            # ALREADY GONE IS SUCCESS, not a failure to report: the object the step exists to
+            # remove is not there, which is the state the caller asked for.
             _log.debug(f"app_database_{label}_already_gone", sqlstate=code, **context)
             return
+        outcome.ok = False
         _log.warning(
             f"app_database_{label}_failed",
             sqlstate=code,
@@ -220,6 +261,7 @@ async def _best_effort(label: str, **context: str) -> AsyncIterator[None]:
             **context,
         )
     except Exception:
+        outcome.ok = False
         _log.exception(f"app_database_{label}_failed", **context)
 
 

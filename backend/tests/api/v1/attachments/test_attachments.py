@@ -23,7 +23,7 @@ from src.services.auth.session_jwt import mint_session_jwt
 from src.services.extract.deck import DeckResult
 from src.services.extract.office import EXCEL_MEDIA_TYPE, PPTX_MEDIA_TYPE
 from tests.factories import ConversationFactory, UserFactory
-from tests.pdfs import encrypted_pdf, pdf_with_pages, unreadable_pdf, xref_bomb_pdf
+from tests.pdfs import locked_pdf, pdf_with_pages, restricted_pdf, unreadable_pdf, xref_bomb_pdf
 
 _TTL = settings.auth.access_ttl_seconds
 
@@ -637,9 +637,10 @@ async def test_requires_auth(client) -> None:
 # --- the PDF page cap (U6 / D4) -----------------------------------------------
 #
 # ★ WHAT THIS SECTION IS FOR. A 61-page document measured 153,342 tokens — 77% of the hard
-# context limit — while the guardrail recorded it as 1,600, or 0.8% (#194). Two halves fix it:
-# the window charge next door in `test_context_window.py`, and this one, which stops a document
-# the charge could not honestly cover from being admitted at all.
+# context limit — while the guardrail recorded it as 1,600, or 0.8% (#194). The guardrail no
+# longer guesses at all: it reads what the provider reported for a turn it served
+# (`test_context_window.py`). That leaves THIS cap as the only bound acting before the provider
+# has seen the file, which is why the page count is checked at admission.
 #
 # The cap is a PAGE count, not a byte count, and that is the whole reason a parser is involved:
 # a text PDF runs ~1.3 KB a page and a scanned one ~300 KB, so the same 4 MB is anywhere from
@@ -773,7 +774,7 @@ async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
     property the collapsed sentence exists for."""
     headers, _ = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_locked", encrypted_pdf(pages=3))
+    resp = await _upload_pdf(client, headers, "att_locked", locked_pdf(pages=3))
 
     assert resp.status_code == 415, resp.text
     body = resp.json()["error"]
@@ -788,6 +789,61 @@ async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
     assert not re.search(r"pypdf|decrypt|encrypt|cipher|/Encrypt|parser", body["message"], re.I)
     # Refused before the store, like every other arm.
     assert fake_storage.objects == {}
+
+
+async def test_an_encrypted_pdf_cannot_lie_its_way_past_the_page_cap(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE BYPASS #194 WAS OPENED BY, AT THE ROUTE THAT HAS TO CLOSE IT.
+
+    A permission-restricted PDF — empty user password, so every reader including ours opens it
+    unasked — whose catalog DECLARES one page and whose page tree carries twenty thousand. It
+    costs 120 KB, well inside the 4 MB size cap, and before U28 it was admitted: pypdf returns
+    the declared `/Count` unwalked for any encrypted file, so the count the cap compared against
+    was the uploader's own number.
+
+    Two assertions, and they pull in opposite directions on purpose. It must NOT be refused for
+    encryption — the file is perfectly readable and the 415 would be a lie the citizen cannot
+    act on — and it MUST be refused for length, which is the true fact about it."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(
+        client, headers, "att_encrypted_liar", restricted_pdf(pages=20_000, declares=1)
+    )
+
+    assert resp.status_code == 413, resp.text
+    body = resp.json()["error"]
+    assert body["message"] == "That document is too long to work with. Try one under 30 pages."
+    assert "password" not in body["message"].lower()
+    # Refused before the store, like every other arm: no object, no row to reclaim later.
+    assert fake_storage.objects == {}
+    assert (
+        await db_session.scalar(
+            select(Attachment).where(Attachment.attachment_id == "att_encrypted_liar")
+        )
+    ) is None
+
+
+async def test_a_permission_restricted_pdf_is_uploaded_like_any_other_document(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE POSITIVE CASE FOR THE ENCRYPTED PATH, and the one a careless fix breaks.
+
+    "Refuse encrypted PDFs" closes the bypass above and every other test in this file still
+    passes — while refusing the ordinary encrypted document an office produces, where
+    permissions are set and the user password is left empty. That file opens without a
+    password, so there is nothing the citizen could be told to do about it.
+
+    Three pages, honestly declared, and it is stored: encryption is not the question the cap
+    asks. Only a file an empty password will not open is refused, and that is `locked_pdf`
+    above wearing its own 415."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_restricted", restricted_pdf(pages=3))
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["attachment"]["kind"] == "document"
+    assert len(fake_storage.objects) == 1
 
 
 async def test_a_pptx_is_still_governed_by_the_deck_cap_not_the_new_one(
@@ -914,7 +970,7 @@ async def test_the_unreadable_and_locked_refusals_log_the_cause_that_tells_them_
     with capture_logs() as corrupt_logs:
         corrupt = await _upload_pdf(client, headers, "att_log_corrupt", unreadable_pdf())
     with capture_logs() as locked_logs:
-        locked = await _upload_pdf(client, headers, "att_log_locked", encrypted_pdf(pages=3))
+        locked = await _upload_pdf(client, headers, "att_log_locked", locked_pdf(pages=3))
 
     assert corrupt.status_code == 413, corrupt.text
     assert locked.status_code == 415, locked.text

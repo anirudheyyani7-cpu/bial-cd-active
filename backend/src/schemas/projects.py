@@ -87,8 +87,8 @@ class ProjectPatch(CamelModel):
     _v_description = field_validator("description")(_clean_description)
 
 
-def _clean_delete_remark(value: str) -> str:
-    """Why this project is being deleted — 5 to 50 WORDS (#158 §13.2).
+def clean_deletion_reason(value: str, *, subject: str) -> str:
+    """Why this `subject` is being deleted — 5 to 50 WORDS (#158 §13.2).
 
     The same shared rule as the title cap: `count_words` here,
     `portal/src/utils/words.ts` in the browser, both pinned against the same inputs. The
@@ -96,14 +96,20 @@ def _clean_delete_remark(value: str) -> str:
     which is the shape §13.2 asks for, and the opposite of the rename path it cites as the
     thing not to repeat.
 
-    A lower bound is unusual and deliberate. The remark exists so an administrator reading
+    A lower bound is unusual and deliberate. The reason exists so an administrator reading
     a deletion months later learns something; "no" and "done" satisfy a required field
     without satisfying that, and a field that can be dismissed in one word is a field that
     will be.
+
+    ONE RULE, TWO DELETES. The citizen deleting their own project and the administrator
+    destroying somebody else's app answer the same question under the same bounds, and both
+    dialogs share `words.ts`'s counter — so they share the validator too, with `subject`
+    supplying the only word that differs. A second copy of these four checks is how the two
+    surfaces end up disagreeing about what a word is.
     """
     value = value.strip()
     if not value:
-        raise ValueError("Say why you are deleting this project.")
+        raise ValueError(f"Say why you are deleting this {subject}.")
     # The paste backstop, which a person should never meet.
     if len(value) > MAX_DELETE_REMARK_CHARS:
         # The character cap fires on something a WORD cap cannot express: a 40-word paste of
@@ -120,6 +126,11 @@ def _clean_delete_remark(value: str) -> str:
     if words > MAX_DELETE_REMARK_WORDS:
         raise ValueError("Keep the reason under 50 words.")
     return value
+
+
+def _clean_delete_remark(value: str) -> str:
+    """The project delete's own binding of the shared rule."""
+    return clean_deletion_reason(value, subject="project")
 
 
 class ProjectDeleteRequest(CamelModel):

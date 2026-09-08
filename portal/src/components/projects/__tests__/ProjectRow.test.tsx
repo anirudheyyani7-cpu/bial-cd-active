@@ -6,6 +6,13 @@
  *
  * `scrollWidth`/`clientWidth` are stubbed per-element via `Object.defineProperty`, which is
  * the only way to force the measurement jsdom cannot produce on its own.
+ *
+ * THE DESCRIPTION'S TOOLTIP IS GONE (plan 001, U15, R37) and its tests went with it, in the
+ * same change. What replaced them is the opposite assertion — that the description offers no
+ * hover affordance and no pointer cursor, PAIRED with the row still opening by its name,
+ * because an absence assertion on its own passes just as well on a render that crashed. The
+ * NAME keeps its tooltip (§14): a clipped name has no other route to its full value, whereas
+ * the description now reads two lines of itself and is complete in the DOM either way.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
@@ -33,40 +40,67 @@ function stubClip(clipped: boolean) {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(100)
 }
 
-describe('ProjectRow — the description tooltip', () => {
-  it('opens on a REALLY clipped description, and reads the full text', async () => {
-    // Mutation receipt: delete the Tooltip branch from ClampedDescription and this test is
-    // the one that goes red — nothing else in the suite can see it, since jsdom's own
-    // scrollWidth/clientWidth are both 0 and `clipped` would already read `false`.
+/**
+ * U15 / R37 — the description stops pretending to be clickable, and becomes readable.
+ *
+ * It carried a pointer cursor with no keyboard route and hid most of itself behind a hover
+ * tooltip, which touch and keyboard readers never reach. What ships is the complete text in the
+ * DOM, clipped to two lines by CSS.
+ */
+describe('ProjectRow — the description', () => {
+  const LONG =
+    'A visitor log for the north gate that records arrivals, departures, badge numbers and the ' +
+    'host each visitor came to see, with a weekly export for the security desk.'
+
+  it('★ keeps its WHOLE text in the accessible tree, clipped only visually', () => {
+    // Mutation receipt: replace `line-clamp-2` with a JavaScript `slice(0, 60) + '…'` — the
+    // obvious remedy — and this goes red on the first assertion, because the truncation lands
+    // in the DOM and a screen reader loses exactly what a sighted reader loses.
     stubClip(true)
-    render(
-      <ProjectRow
-        project={project({ description: 'A description long enough that it must clip' })}
-        onOpen={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-    )
+    render(<ProjectRow project={project({ description: LONG })} onOpen={vi.fn()} onDelete={vi.fn()} />)
 
-    const description = screen.getByText('A description long enough that it must clip')
-    fireEvent.focus(description.closest('p') ?? description)
-
-    expect(await screen.findByRole('tooltip')).toBeTruthy()
-    expect(screen.getAllByText('A description long enough that it must clip').length).toBeGreaterThan(0)
+    const description = screen.getByText(LONG)
+    expect(description.textContent).toBe(LONG)
+    expect(description.className).toMatch(/line-clamp-/)
+    expect(description.className).not.toMatch(/(^|\s)truncate(\s|$)/)
   })
 
-  it('renders nothing extra when the description is NOT clipped', async () => {
-    // The companion case: text that already fits must not fire a tooltip on hover — one that
-    // does is noise on text the reader can already read in full.
-    stubClip(false)
-    render(<ProjectRow project={project()} onOpen={vi.fn()} onDelete={vi.fn()} />)
+  it('★ carries no pointer cursor and no tooltip — and the row still opens by its name', () => {
+    // PAIRED DELIBERATELY. `queryByRole('tooltip') === null` passes just as well on a render
+    // that threw, so the absence assertions are worthless without the liveness one beneath
+    // them: the row is alive and the affordance it does have works.
+    stubClip(true)
+    const onOpen = vi.fn()
+    render(<ProjectRow project={project({ description: LONG })} onOpen={onOpen} onDelete={vi.fn()} />)
 
-    const description = screen.getByText('A short description')
+    const description = screen.getByText(LONG)
+    expect(description.className).not.toMatch(/cursor-pointer/)
+    expect(description.getAttribute('title')).toBeNull()
     fireEvent.focus(description)
-
+    fireEvent.mouseOver(description)
     expect(screen.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Visitor Log' }))
+    expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
-  it('opens on a really clipped NAME too', async () => {
+  it('is still part of the row\'s click target', () => {
+    // Round-4 finding 8's invariant, kept: the description sits above the name button's
+    // stretched ::after, so it wires `onOpen` back explicitly rather than relying on an
+    // overlay jsdom cannot see.
+    const onOpen = vi.fn()
+    render(<ProjectRow project={project({ description: LONG })} onOpen={onOpen} onDelete={vi.fn()} />)
+
+    fireEvent.click(screen.getByText(LONG))
+
+    expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ProjectRow — the name keeps its tooltip', () => {
+  it('opens on a really clipped NAME', async () => {
+    // §14, unchanged by U15: a clipped NAME has no other route to its full value, whereas the
+    // description now reads two lines of itself and is complete in the DOM regardless.
     stubClip(true)
     render(
       <ProjectRow
@@ -81,31 +115,35 @@ describe('ProjectRow — the description tooltip', () => {
 
     expect(await screen.findByRole('tooltip')).toBeTruthy()
   })
+
+  it('opens nothing on a name that already fits', () => {
+    stubClip(false)
+    render(<ProjectRow project={project()} onOpen={vi.fn()} onDelete={vi.fn()} />)
+
+    fireEvent.focus(screen.getByRole('button', { name: 'Visitor Log' }))
+
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
 })
 
 describe('ProjectRow — the ref never remounts across a clipped transition', () => {
-  it('keeps the SAME DOM node whether or not the description is clipped', () => {
-    // Round-4 minor: the old branch put the ref'd <p> at a DIFFERENT tree position
-    // depending on `clipped` — bare, versus nested inside TooltipProvider/Tooltip/
-    // TooltipTrigger — which React treats as a remount. The effect's deps ([measure, text])
-    // do not change on that remount, so a real ResizeObserver (inert in this test
-    // environment, which is why this checks node IDENTITY rather than the observer firing)
-    // never rebinds to the new node: false→true worked once, true→false never fired again.
-    //
-    // The fix keeps the wrapper mounted always, so the node must be THE SAME element across
-    // a transition forced here by changing `text` (a real effect dependency) alongside the
-    // clip stub — proof that nothing downstream of this component ever loses its target.
+  it('keeps the SAME DOM node whether or not the NAME is clipped', () => {
+    // Round-4 minor, now carried by the name (the description no longer measures anything).
+    // The old branch put the ref'd element at a DIFFERENT tree position depending on
+    // `clipped` — bare, versus nested inside TooltipProvider/Tooltip/TooltipTrigger — which
+    // React treats as a remount. The effect's deps ([measure, text]) do not change on that
+    // remount, so a real ResizeObserver (inert in this environment, which is why this checks
+    // node IDENTITY rather than the observer firing) never rebinds: false→true worked once,
+    // true→false never fired again.
     stubClip(true)
     const { rerender } = render(
-      <ProjectRow project={project({ description: 'Clipped today' })} onOpen={vi.fn()} onDelete={vi.fn()} />,
+      <ProjectRow project={project({ name: 'Clipped today' })} onOpen={vi.fn()} onDelete={vi.fn()} />,
     )
-    const before = screen.getByText('Clipped today')
+    const before = screen.getByRole('button', { name: 'Clipped today' })
 
     stubClip(false)
-    rerender(
-      <ProjectRow project={project({ description: 'Fits now' })} onOpen={vi.fn()} onDelete={vi.fn()} />,
-    )
-    const after = screen.getByText('Fits now')
+    rerender(<ProjectRow project={project({ name: 'Fits now' })} onOpen={vi.fn()} onDelete={vi.fn()} />)
+    const after = screen.getByRole('button', { name: 'Fits now' })
 
     expect(after).toBe(before) // same DOM node, not a fresh mount
     expect(screen.queryByRole('tooltip')).toBeNull() // and it correctly re-measured as unclipped

@@ -58,7 +58,11 @@ the fix were wrong and are worth correcting rather than deleting: it needs no
 needs no `SandboxDep` — `delete_project` takes `OptionalSandbox`, so a sandbox-off
 deployment still deletes instead of 500ing at dependency-solve time. The reap stays
 best-effort, so a busy start lock, an unconfigured sandbox or a Redis blip still leave the
-container to the scheduled sweep. Pinned by
+container standing — and NOTHING AUTOMATIC COMES FOR IT. This used to say "the scheduled
+sweep", which is true of exactly one environment: `may_destroy_on_this_control_plane` gates
+that sweep's destroy half on `environment == "production"`. Everywhere else the container
+runs on, which is why the delete path alarms and files a `project:teardown-incomplete` audit
+row naming what survived rather than trusting a sweeper that will not run. Pinned by
 `test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
 
@@ -139,15 +143,16 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     mid-thought BEFORE the citizen chooses, and the alternative — teaching the cheap state poll
     to answer it — cannot: that read is contractually forbidden from the container round trip
     the unsaved-work half needs. Every refusal on the send path is side-effect-free before
-    anything is persisted, so asking by sending is legitimate, and all FOUR entry points come
-    through this one function — which is what makes the answer identical on all four rather than
+    anything is persisted, so asking by sending is legitimate, and all THREE entry points come
+    through this one function — which is what makes the answer identical on all three rather than
     correct on the one that was tested. They are: the send (`conversations/turns.py::start_turn`),
-    the plan offer's build action (`conversations/transition.py::build_it`), relaunch and
-    `start_build` (both in `build_sessions/router.py`). `start_build` is the newest and was the
-    counter-example to the sentence above it: it raised uncaught and answered 500 (#183) — a door
-    into the hand-over dialog that crashed instead of asking, while this docstring was claiming
-    every door answered identically. Three was the count when it was three; the number is part of
-    the claim, so it moves when a call site is added."""
+    the plan offer's build action (`conversations/transition.py::build_it`), and relaunch
+    (`build_sessions/router.py::relaunch_preview`). It was FOUR for one day: `start_build` was
+    added as the counter-example to the sentence above it — it raised uncaught and answered 500
+    (#183), a door into the hand-over dialog that crashed instead of asking, while this docstring
+    claimed every door answered identically — and the route has since been deleted along with the
+    rest of the standalone build stack. The number is part of the claim, so it moves when a call
+    site is added OR removed."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:

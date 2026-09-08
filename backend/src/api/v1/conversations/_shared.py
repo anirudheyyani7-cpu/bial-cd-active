@@ -90,19 +90,27 @@ PDF_MEDIA_TYPE = "application/pdf"
 # HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
 # `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
 #
-# It falls out of arithmetic that is already fixed elsewhere (D4). `usage/context_window` charges
-# an admitted PDF `NOMINAL_PDF_TOKENS` (75,000 — what the longest document the upload cap admits
-# actually costs), and `occupied_window` adds the 8,000-token system-prompt reserve before it
-# counts a word. So three documents is 233,000 against a 200,000 ceiling and cannot be sent, even
-# if all three are two-page memos.
+# IT IS NOT DERIVED, AND THE DERIVATION THAT USED TO STAND HERE IS DELETED RATHER THAN
+# RECOMPUTED. This comment used to work the number out from what a page of PDF costs, the
+# upload route's page cap and the per-conversation ceiling. That reasoning was already false
+# when it was written — THE PLATFORM DOES NOT PRICE A DOCUMENT UP FRONT: the window check reads
+# the count the provider returns for a completed turn, and nothing charges an attachment a
+# nominal on its way in, so no such sum was ever what refused a third document. Raising the
+# ceiling only makes the wrongness easier to see. It is not re-derived at the new ceiling
+# because the attachment-format work (#214) removes this limit outright, and sizing it now
+# would churn the sentence a citizen reads twice over.
 #
-# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to the token gate, that message is refused with
-# `CHAT_TOO_LONG_TEXT` — "start a new chat" — which is wrong advice here: the new chat refuses the
-# identical message, and the citizen is sent round a loop with nothing that works. So the count is
-# checked FIRST, and answered with a sentence naming the limit they actually hit.
+# What is true, and load-bearing: this cap is a COUNT and not a token figure precisely because
+# it is the one bound that can be checked before the provider has seen anything.
 #
-# Images are deliberately not counted: eight screenshots is 12,800 tokens and has never been the
-# problem. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it says for them.
+# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to anything else, that message is answered with
+# "this chat has got too long — start a new chat", which is wrong advice here: the new chat
+# refuses the identical message, and the citizen is sent round a loop with nothing that works. So
+# the count is checked FIRST, and answered with a sentence naming the limit they actually hit.
+#
+# Images are deliberately not counted: a screenshot measured 1,700-2,000 tokens, so eight of them
+# have never been near any ceiling. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it
+# says for them.
 MAX_PDF_BLOCKS = 2
 
 TOO_MANY_DOCUMENTS_MSG = (
@@ -276,8 +284,9 @@ def prompt_content(
     message: TurnMessage, binaries: list[BinaryContent]
 ) -> str | list[str | BinaryContent]:
     """The turn's user content: binaries first, fenced attachment text next, the typed prose
-    LAST (Anthropic's files-before-text ordering — the same shape `BuildSpec` pins). A plain
-    text-only message stays a bare string (the historical single-string shape)."""
+    LAST (Anthropic's documented files-before-text vision ordering — the shape the deleted
+    `BuildSpec` also pinned). A plain text-only message stays a bare string (the historical
+    single-string shape)."""
     if not binaries and not message.attachment_texts:
         return message.text
     return [*binaries, *message.attachment_texts, message.text]

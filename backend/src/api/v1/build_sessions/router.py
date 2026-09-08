@@ -1,11 +1,21 @@
 """Build-sessions HTTP router — the C3 control surface (Wave 1).
 
-`start` / `stop` / `status` + `force-end` (the one surviving lock op — U28 retired
-`acquire`/`renew`/`release`/`heartbeat`, which nothing called) + the superadmin
-`internal/reap`, all owner-scoped by `user.id` (ADR-0004): every not-found-or-other-user
-case is a non-leaking 404 EXCEPT the one owner-asserted 403 on `force-end` (C3). The
-mutating POSTs carry the reusable `RequireCsrf` dependency (KTD-4); the `status` GET and
-the GET-SSE progress feed (`sse.py`, `Last-Event-ID`-resumable) are exempt.
+`stop` / `status` + the SSE feed + `relaunch` + the project-scoped save/preview/stop ops + the
+superadmin `internal/reap`, all owner-scoped by `user.id` (ADR-0004): every
+not-found-or-other-user case is a non-leaking 404. The mutating POSTs carry the reusable
+`RequireCsrf` dependency (KTD-4); the `status` GET and the GET-SSE progress feed (`sse.py`,
+`Last-Event-ID`-resumable) are exempt.
+
+THERE IS NO `start` ANY MORE, and the three `{session_id}` routes below serve HISTORICAL sessions
+only. The bare `POST` on this collection — the start route — lost its browser client in PR #182
+and was deleted here with the whole harness behind it; the last lock op, `lock/force-end`, went
+with it (it had had no UI since the block banner's Force-end button was removed, which both
+`buildSessionApi.ts` and `useBuildSession.ts` recorded in their own comments). The only remaining
+producer of a session id the
+portal can reach is a `build_started` transcript row written before that deletion — those rows are
+permanent, so `status`/`stop`/`events` stay as their reader. A build now runs as an ordinary Write
+chat turn (`conversations/turns.py`), which registers its workspace through
+`SessionManager.ensure_sandbox` and never serialises a session id at all.
 
 U13 adds one inbound route that is not a control op at all — `projects/{project_id}/client-error`,
 where the app's own in-browser error reporter's findings arrive by way of the portal. It follows
@@ -28,7 +38,6 @@ from src.api.deps_rbac import CurrentSuperadmin
 from src.api.v1.build_sessions.deps import (
     OptionalSandbox,
     RequireCsrf,
-    RunBuildDep,
     SandboxDep,
     SessionManagerDep,
 )
@@ -38,7 +47,6 @@ from src.api.v1.build_sessions.schemas import (
     ClientErrorReportRequest,
     ClientErrorReportResponse,
     CompileStateResponse,
-    ForceEndResponse,
     ParkedTree,
     ParkedTreesResponse,
     PreviewLifeState,
@@ -46,8 +54,6 @@ from src.api.v1.build_sessions.schemas import (
     PromoteParkedResponse,
     RelaunchPreviewRequest,
     RelaunchPreviewResponse,
-    StartBuildRequest,
-    StartBuildResponse,
     StopBuildRequest,
     StopBuildResponse,
     WorkspaceCheckResponse,
@@ -60,10 +66,8 @@ from src.db.models.app_registry import AppRegistry
 from src.schemas import AUTH_401, CamelModel, ErrorEnvelope, error_responses
 from src.services.audit.log import append_audit
 from src.services.build_sessions import (
-    BuildAttachmentError,
     BuildSession,
     BuildSessionConflictError,
-    ConversationNotFoundError,
     NoLiveSandboxError,
     NoSnapshotToRelaunchError,
     SandboxReclaimBlockedError,
@@ -111,9 +115,14 @@ class ReapResponse(CamelModel):
 
 
 class _ConflictError(CamelModel):
-    """The inner error object of a build-session 409 (`start` or `relaunch` already-active):
-    the plain `{message, code}` envelope PLUS the existing session's id, which
-    `_conflict_response` carries but `ErrorEnvelope` omits."""
+    """The inner error object of a build-session 409 (`relaunch` already-active): the plain
+    `{message, code}` envelope PLUS the existing session's id, which `_conflict_response`
+    carries but `ErrorEnvelope` omits.
+
+    NOTHING READS `sessionId`. It was the start route's contribution to this shape and it
+    survives only because `relaunch_preview` raises the same error; the portal's
+    `existingSessionIdOf` has no consumer and its one catch site branches on the error CODE.
+    Retiring the field is a contract change (C3 §7) and is deliberately left for one."""
 
     message: str
     code: str
@@ -312,112 +321,7 @@ async def internal_reap(
     raise _coordination_is_gone()
 
 
-# --- control ops: start / stop / status --------------------------------------
-
-
-@router.post(
-    "",
-    status_code=status.HTTP_201_CREATED,
-    response_model=StartBuildResponse,
-    dependencies=[RequireCsrf],
-    responses=error_responses(
-        (403, ErrorEnvelope, "CSRF check failed"),
-        AUTH_401,
-        (404, ErrorEnvelope, "Project or conversation not found"),
-        (
-            409,
-            BuildConflictEnvelope,
-            "A build session is already active, or another project holds the workspace "
-            "with unsaved work",
-        ),
-        (422, ErrorEnvelope, "An attached file could not be used in the build"),
-        (
-            503,
-            ErrorEnvelope,
-            "Build engine not configured, or the sandbox or build coordination "
-            "is temporarily unavailable",
-        ),
-    ),
-)
-async def start_build(
-    body: StartBuildRequest,
-    user: CurrentUser,
-    db: DbSession,
-    sandbox: OptionalSandbox,
-    run_build: RunBuildDep,
-    manager: SessionManagerDep,
-) -> StartBuildResponse | JSONResponse:
-    if run_build is None:
-        raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Build engine not configured.")
-    # This route's `responses=` names the sandbox in its 503 ("Build engine not configured, or
-    # the sandbox or build coordination is temporarily unavailable"), so an unconfigured sandbox
-    # owes the caller THAT answer. It arrives as `None` (the None-tolerant `OptionalSandbox`)
-    # rather than raising at dependency-solve time, where no `except` here could have reached it.
-    if sandbox is None:
-        raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
-    # U3 — the whole start is inside the coordination seam, because Redis is touched at three
-    # points the caller cannot tell apart: `reconcile_user` (raw `RedisError`), the lock
-    # acquire (`LockUnavailableError`), and the heartbeat seed. Every one of them now answers
-    # with the same retryable 503 instead of a 500, or a 409 inventing a session that never
-    # existed.
-    with build_coordination_or_503():
-        try:
-            session = await manager.start(
-                db,
-                user,
-                body.project_id,
-                body.prompt,
-                conversation_id=body.conversation_id,
-                run_build=run_build,
-                sandbox_client=sandbox,
-            )
-        except ConversationNotFoundError as exc:
-            # R3 — the referenced thread is not the caller's, or belongs to another project. Both
-            # are the SAME non-leaking 404 as a missing one (ADR-0004): grounding a build in
-            # another project's files must not even be probeable.
-            raise AppApiError(status.HTTP_404_NOT_FOUND, "Conversation not found.") from exc
-        except BuildAttachmentError as exc:
-            # R3 — an attached file could not be materialized (missing bytes, a magic-byte
-            # mismatch, a deck, over the per-file text ceiling). FAIL the start naming the file
-            # rather than building as if the file weren't there — the silent-ignore is the exact
-            # bug R3 deletes. Nothing was allocated (the resolution runs before the lock and the
-            # sandbox), so there is no compensation to run. `str(exc)` is the service's own
-            # user-facing copy, never an internal detail (`.claude/rules/security.md`).
-            raise AppApiError(
-                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc), code="build_attachment_unusable"
-            ) from exc
-        except BuildSessionConflictError as exc:
-            # A REAL conflict only: `acquire_lock` no longer folds a Redis failure into the
-            # same signal, so this 409 always describes a session that genuinely holds the
-            # one-per-user lock.
-            return _conflict_response(exc)
-        except SandboxReclaimBlockedError as exc:
-            # #83 — a DIFFERENT 409 from the one above, and the reason this route now declares
-            # `BuildConflictEnvelope`: not "you already have a build running" but "another
-            # project holds your one workspace and taking it would destroy work". Uncaught, it
-            # was a 500 (#183) — a door into the hand-over dialog that crashed instead of
-            # asking, while `reclaim_blocked_response` was documenting that every door answers
-            # identically. NOT a subclass-ordering hazard with the arm above: both derive from
-            # `Exception` directly and describe unrelated conditions, so neither can shadow the
-            # other. Same helper as relaunch and the turn route, which is what makes the answer
-            # identical rather than merely intended to be.
-            return reclaim_blocked_response(exc)
-        except SnapshotUnavailableError as exc:
-            # R6 — the restore could not be completed and the snapshot is not confirmed absent,
-            # so the manager refused to provision a blank template over the user's work. Their
-            # saved version is intact; a retry (or the admin) is the way forward. 503 = try again.
-            raise AppApiError(
-                status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG
-            ) from exc
-        return StartBuildResponse(
-            session_id=session.session_id,
-            project_id=session.project_id,
-            app_id=session.app_id,
-            status=session.status,
-            preview_url=None,
-            created_at=session.created_at,
-        )
-    raise _coordination_is_gone()
+# --- control ops: relaunch / stop / status ------------------------------------
 
 
 @router.post(
@@ -446,7 +350,7 @@ async def relaunch_preview(
 ) -> RelaunchPreviewResponse | JSONResponse:
     """Restore a torn-down app from its snapshot into a fresh, READY sandbox (#43).
 
-    Not a build (Decision 6): no `RunBuildDep`, and the manager path never occupies the
+    Not a build (Decision 6): it runs no agent at all, and the manager path never occupies the
     one-per-user build slot — it registers a ready handle in Redis, releases the lock, and
     returns the live preview synchronously (`wait_ready` blocks until the dev server is up).
     """
@@ -457,9 +361,9 @@ async def relaunch_preview(
     # answer is actually reachable.
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
-    # U3 — same coordination seam as `start_build`, and relaunch needs it at least as badly:
-    # it takes the same per-user lock through the same `_holding_user_lock`, so before the
-    # split a Redis blip here told the user a build was already running.
+    # U3 — the coordination seam the deleted `start_build` also ran inside, and relaunch needs
+    # it at least as badly: it takes the same per-user lock through the same `_holding_user_lock`,
+    # so before the split a Redis blip here told the user a build was already running.
     with build_coordination_or_503():
         try:
             relaunched = await manager.relaunch_preview(
@@ -583,7 +487,7 @@ async def build_events(
     return build_sse_response(session, _parse_last_event_id(request.headers.get("last-event-id")))
 
 
-# --- lock ops: force-end (the operator/owner kill switch) ---------------------
+# --- THERE ARE NO LOCK OPS LEFT ----------------------------------------------
 #
 # U28 retired `acquire` / `renew` / `release` / `heartbeat`, along with their shared
 # `_renew_and_state` helper: the portal's keep-alive loop that was their only caller was
@@ -591,36 +495,15 @@ async def build_events(
 # not neutral — it reads as a supported way to hold the lock, and the next person needing
 # one would have wired the loop straight back. What holds a turn open now is the R10
 # wall-clock lease the SERVER renews (U12), legible to a sweep in another process, which a
-# browser timer never was. `force-end` is the one lock op still reachable from the UI (fed
-# by relaunch's 409) and it CARRIES NO REQUEST BODY, same as its four retired neighbours —
-# the surviving proof that this section's routes take none.
-
-
-@router.post(
-    "/{session_id}/lock/force-end",
-    dependencies=[RequireCsrf],
-    responses=error_responses(
-        (403, ErrorEnvelope, "CSRF check failed / not the session owner"),
-        AUTH_401,
-        (404, ErrorEnvelope, "Build session not found"),
-    ),
-)
-async def lock_force_end(
-    session_id: uuid.UUID, user: CurrentUser, sandbox: SandboxDep, manager: SessionManagerDep
-) -> ForceEndResponse:
-    # The ONE route with an owner-asserted 403 (C3): a found-but-foreign session is a 403,
-    # not a 404 — force-end is a privileged kill switch, so the caller is told it exists.
-    session = manager.get(session_id)
-    if session is None:
-        raise AppApiError(status.HTTP_404_NOT_FOUND, "Build session not found.")
-    if session.user_id != user.id:
-        raise AppApiError(
-            status.HTTP_403_FORBIDDEN,
-            "You do not own this build session.",
-            code="build_session_forbidden",
-        )
-    ended = await manager.force_end(session, sandbox)
-    return ForceEndResponse(session_id=ended.session_id, status=ended.status)
+# browser timer never was.
+#
+# `force-end` was the last one standing and it has now gone the same way. It was described
+# here as "the one lock op still reachable from the UI (fed by relaunch's 409)"; that stopped
+# being true when the block banner's Force-end button was removed, and `buildSessionApi.ts`
+# and `useBuildSession.ts` both recorded in their own comments that nothing called it. Its
+# client exports went with it in the same change. The kill switch a citizen actually reaches
+# is `projects/{project_id}/stop-active-build` (the take-back dialog), which is project-scoped
+# and needs no session id.
 
 
 # --- the save model (U5b / KTD-5e) ---------------------------------------------------------
@@ -1097,8 +980,9 @@ async def report_client_error(
 
     OWNED-OR-404 on the app, like every other route in this file: a cross-user app id and a
     missing one are the same non-leaking answer (ADR-0004). Not 403 — telling a caller "that app
-    exists but is not yours" is exactly the probe the 404 exists to refuse, and there is no
-    force-end-style owner assertion here to make an exception for.
+    exists but is not yours" is exactly the probe the 404 exists to refuse. Every route in this
+    file now answers that way; the one owner-asserted 403 C3 recorded belonged to `force-end`,
+    which is deleted.
 
     NO SESSION, NO REDIS, NO SANDBOX. Deliberately PROJECT-scoped rather than session-scoped: the
     crash arrives from a framed preview, and a preview outlives its build session by design

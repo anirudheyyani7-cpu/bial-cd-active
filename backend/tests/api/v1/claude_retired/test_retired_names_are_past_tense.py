@@ -55,6 +55,31 @@ RETIRED = (
     "claude/prompts.py",
     "to_model_content",
     "services/agent/content",
+    # The standalone build stack, deleted whole: the harness and the module-level agent it ran,
+    # the deps type and the API dependency that fed them, the locked start body behind the route,
+    # the frozen prompt only that agent applied, the attachment resolver only that route needed,
+    # the transcript row only it wrote, and the one lock op whose button went before it did.
+    # Named here because this deletion is the case in the docstring above — a removal wide
+    # enough that the prose describing it is
+    # spread over modules nobody re-reads, which is where the fifth link came undone last time.
+    # Internals of those modules (`BuildSpec`, `RunContextProvider`, `EMPTY_TRANSCRIPT`, the
+    # trace recorders) are deliberately NOT listed: a sentence naming one of them sits next to a
+    # name that is, and a longer list is a list that gets skimmed.
+    # DELIBERATELY ABSENT for the opposite reason — `preview_framed` and `claim_preview_frame`
+    # were deleted from `orchestrator/deps.py`, but `services/turns/engine.py` has LIVE members
+    # under both names. They fail the "unambiguous identifiers only" rule above, and listing them
+    # would make this guard cry wolf at the live turn engine on every run.
+    "orchestrator/harness.py",
+    "orchestrator/agent.py",
+    "build_agent",
+    "BuildOrchestrator",
+    "BuildDeps",
+    "run_build_dependency",
+    "_start_locked",
+    "BUILD_SYSTEM_PROMPT",
+    "resolve_build_attachments",
+    "write_build_started",
+    "lock/force-end",
 )
 
 # Deliberately generous: a miss is cheaper than a false alarm.

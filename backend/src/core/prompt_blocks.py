@@ -1,10 +1,13 @@
-"""Shared prompt blocks — the single source both prompt systems compose from.
+"""Shared prompt blocks — the single source the prompt system composes from.
 
-A LEAF module (imports nothing from src.services) by design: `orchestrator/prompt.py`
-(BRAIN's build prompt) and `services/agent/mode_prompts.py` (the U9 mode segments) both
-import these, and routing the share through either package's __init__ chain created a
-real import cycle (agent -> mode_prompts -> orchestrator -> ... -> projects -> agent).
-`DATA_INTEGRITY_RULES` is U1's data-safety wording — written once, reused everywhere
+A LEAF module (imports nothing from src.services) by design. It was factored out when there were
+TWO prompt systems — `orchestrator/prompt.py` (BRAIN's standalone build prompt) and
+`services/agent/mode_prompts.py` (the U9 mode segments) — because routing the share through
+either package's `__init__` chain created a real import cycle
+(agent -> mode_prompts -> orchestrator -> ... -> projects -> agent). The standalone build prompt
+was deleted with its harness; `mode_prompts.py` is the one consumer left. Keep this module a leaf
+anyway: the cycle it dodges is still live, and every block here is a wording that must exist
+exactly once. `DATA_INTEGRITY_RULES` is U1's data-safety wording — written once, reused everywhere
 (never copy the text).
 """
 
@@ -215,16 +218,65 @@ there, and each was false in the way a prompt is worst at: confidently, on every
 
 `compose_kind_prompt` chooses; `test_mode_prompts.py` asserts what each kind gets."""
 
+NARRATION_EXAMPLES = """\
+HOW YOUR MESSAGES SOUND — everything you write reaches the person who asked for this app, in the \
+order you write it, and the short lines you write between two pieces of work reach them just as \
+they are. Here is the same moment, written twice.
+
+Starting a piece of work
+  Instead of: "Scaffolding the stops route and wiring a Drizzle schema for it."
+  Write: "I'm building the shuttle stops page now — you'll be able to add a stop and see them \
+all in one list."
+
+Carrying on mid-turn — the quick note to yourself is the one that slips out
+  Instead of: "Layout has Toaster already. The build should be clean."
+  Write: "The stops list is on the page. Next I'll add the form for putting a new stop in."
+
+When something goes wrong
+  Instead of: "tsc failed — pickup time is a text column and the form posts a number."
+  Write: "The pickup times weren't saving in the right format. I've fixed that and I'm carrying \
+on."
+
+Each of them does the same thing: it says what the user can now do, or what just became true \
+for their app, and leaves the machinery out."""
+"""R32 — the audience contract shown rather than stated, and it goes FIRST in every prompt.
+
+WHY EXAMPLES AND WHY HERE. `NARRATION_VOICE` states the contract well and has been ignored twice
+in production, both times mid-turn: 2,397 words of paths and framework nouns on the 2026-08-18
+demo, and one terse aside — "Layout has Toaster already. The build should be clean." — as the
+first thing a citizen read on an ordinary successful build (#185). The second is the shape this
+block is aimed at: not a monologue under stress, but a half-thought between two tool calls, which
+reads as a note to yourself and lands in someone's chat. A rule the model has to apply to its own
+next sentence is harder to follow than a sentence it can pattern-match against, so the three
+contrast pairs cover the three moments it has actually failed at — the opening, the gap between
+two steps, and the recovery from an error.
+
+IT LEADS THE COMPOSED PROMPT ON PURPOSE, and that placement is the unit. `NARRATION_VOICE` is
+some 530 words in on a Plan prompt and 570 on a Build one — behind the portal description and the
+data rules. The site that composes a prompt (`mode_prompts._base`) therefore names THIS block
+before anything else, and the voice block's closing sentence points back at it. Moving it down the
+prompt is the regression to watch for.
+
+NO TEST ASSERTS IT IS PRESENT, deliberately (D13). "The composed prompt contains the examples" is
+the exact assertion that let the August leak ship green through 3,300 tests: it proves the
+instruction was written, which nobody doubted, and says nothing about what the model then wrote.
+`test_voice_channel.py::test_the_word_prompt_appears_in_no_claim_that_the_contract_holds` is the
+guard against that habit coming back. This is verified the way the leak was found — by reading
+real output — and a later prompt edit that undoes it is an accepted, stated risk."""
+
 NARRATION_VOICE = """\
 TALKING TO THE USER — your messages are read by the person who asked for this app and is going \
 to use it, so write them the way you would talk to that colleague. Say it in plain, everyday \
 words, about the app they use. Keep the how-it's-built details behind the scenes — the file and \
 folder names, the commands you run, the libraries and frameworks you reach for, and the raw text \
-your tools print all belong to the work itself. Hold the same register when something goes \
+your tools print all belong to the work itself. That holds for the shortest lines as much as the \
+long ones: there is no note-to-self channel here, so a half-thought you jot between two steps \
+arrives in their chat exactly as you wrote it. Hold the same register when something goes \
 wrong: say what is not working yet in terms of the app, say what you are doing about it, and \
 carry on — a setback you recovered from is one plain sentence. The work itself is recorded step \
 by step as you do it, so the technical account already exists; what you write here is what the \
-user reads."""
+user reads. The examples at the top of this prompt are what all of that sounds like in \
+practice."""
 """R79/R80/R81 — the audience contract. ONE statement of how the agent talks to the user, and
 every chat kind inherits it.
 
@@ -245,32 +297,39 @@ long it may write; it tells it who is reading. Two live incidents came from taki
 a build wrote 2,397 words of file paths and framework concepts to a citizen who had asked for
 an app — so it stays as written.
 
-NAMED BY TWO COMPOSITION SITES, EMITTED ONCE EACH. `mode_prompts._base()` carries it into both
-composed chat prompts; `BUILD_SYSTEM_PROMPT` names it separately because it cannot call `_base`
-(that needs a `PromptContext` the standalone build harness has no source for). It deliberately
-does NOT ride inside `BUILD_WORKING_RULES_TAIL` any more: riding the TAIL is what made it
-Build-only, and lifting it out without naming it at the standalone site would have silently
-deleted the audience contract from a live prompt. A test counts it at exactly one in each — `== 1`
-rather than `<= 1`, because the deletion this guard exists to catch passes a `<=`."""
+THE SHORT-LINES CLAUSE IS #185's, and it is the one sentence this block was missing. Both prior
+readings of "your messages" took it to mean the things the agent addresses to the user — so a
+terse aside between two tool calls ("Layout has Toaster already") did not feel like a message at
+all, and went out unedited as the first thing the citizen read. There is no channel that swallows
+it any more (the `pending_text` drop was removed for throwing away every explanation between the
+receipts along with the jargon), so the prompt has to say that plainly. `NARRATION_EXAMPLES`
+shows the same case; this states it.
+
+NAMED BY ONE COMPOSITION SITE, EMITTED ONCE. `mode_prompts._base()` carries it into both composed
+chat prompts. It deliberately does NOT ride inside `BUILD_WORKING_RULES_TAIL`: riding the TAIL is
+what made it Build-only. (A second site used to name it — the standalone `BUILD_SYSTEM_PROMPT`,
+which could not call `_base` for want of a `PromptContext`; it was deleted with the build harness,
+and the reason that line was load-bearing while it existed is the reason this one is now.) A test
+counts it at exactly one — `== 1` rather than `<= 1`, because the deletion this guard exists to
+catch passes a `<=`."""
 
 WRITE_IDENTITY = """\
 WRITE MODE — you build. You are an expert Next.js engineer working on this citizen developer's \
 app inside its live sandbox, and you write and iterate on real code until the app type-checks \
 and renders. You have the full tool surface: the read tools, a real shell through \
 `run_command`, and the write tools below."""
-"""Write's purpose/identity opener (pattern 3) — the paragraph `BUILD_SYSTEM_PROMPT` used to
-type out standalone, now shared with the Write mode segment (KTD-5a).
-
-It lives in THIS leaf module rather than in `mode_prompts.py` for the reason at the top of the
-file: having `orchestrator/prompt.py` import from `services/agent/` to get it would add exactly
-the cross-package edge this module exists to avoid."""
+"""Write's purpose/identity opener (pattern 3) — the paragraph the standalone `BUILD_SYSTEM_PROMPT`
+used to type out for itself, factored here when the two Write prompts were made to share one
+source (KTD-5a). One prompt is left; the block stays where a leaf module can hold it."""
 
 # The working-rules blocks are factored so the U9 mode prompts (`services/agent/
 # mode_prompts.py`) compose Write mode from the SAME text — single source, no drift.
 # HEAD ends before DATA INTEGRITY (which BASE carries once in mode composition) and TAIL
-# resumes after it; `BUILD_SYSTEM_PROMPT` reassembles all three byte-identically.
-# THE AUDIENCE CONTRACT (`NARRATION_VOICE`) IS NOT HERE — it is kind-blind, and the two sites
-# that name it are `mode_prompts._base()` and `BUILD_SYSTEM_PROMPT`. TAIL used to carry a
+# resumes after it.
+# THE AUDIENCE CONTRACT (`NARRATION_VOICE`) IS NOT HERE — it is kind-blind, and the site
+# that names it is `mode_prompts._base()`. Its examples (`NARRATION_EXAMPLES`) are named at that
+# same site and must LEAD the prompt, which is a
+# second reason neither belongs in a block that lands this far down. TAIL used to carry a
 # per-kind sentence about message LENGTH beside it; that sentence and its planning twin are
 # gone, along with the closing-message vocabulary rule, because a prompt that tells the agent
 # how long it may write and which words it may not use is deciding what a citizen is allowed to
@@ -393,25 +452,18 @@ is enforced by test instead — `test_prompt.py`'s drift check recomputes it and
 difference, including one that is only in the WORDING. Regenerate and re-paste with the one-liner
 in `toolsets.py`'s U20 comment.
 
-★ IT IS ACCURATE FOR THE CHAT ARM AND OVER-PROMISES ON THE HARNESS ARM, and the drift check
-cannot see that, because it compares this snapshot against the REGISTRY rather than against
-either agent. `BUILD_WORKING_RULES_TAIL` carries this block into two prompts:
-
-* `mode_prompts._WRITE_SEGMENT` → `chat_agent.iter(..., toolsets=toolsets_for_kind(BUILD))`,
-  which registers all twelve tools named above. Correct.
-* `orchestrator/prompt.BUILD_SYSTEM_PROMPT` → `build_agent`, which is constructed with
-  `toolsets=[sandbox_toolset(_sandbox_of)]` and NOTHING else (`orchestrator/agent.py`) — eight
-  tools. So a `/v1/build-sessions` run is told on every request that it has `list_files`,
-  `search_files`, `tell_the_user` and `propose_first_slice`, and calling any of them gets the
-  runtime's unknown-tool rejection.
-
-NOT FIXED HERE, ON PURPOSE. Both candidate fixes are behaviour changes to a live agent — render
-the harness its own eight-line surface, or give `build_agent` the four missing toolsets — and the
-harness is already scheduled for deletion with its route
-(`docs/plans/2026-09-01-009-fix-the-stop-a-citizen-can-trust-plan.md`, unit 1), so a fix here
-would be work thrown away or a second live prompt to keep in step. What this comment buys instead
-is a guard that goes red when the situation changes:
-`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
+★ IT IS NOW ACCURATE EVERYWHERE, and it was not before. `BUILD_WORKING_RULES_TAIL` used to carry
+this block into TWO prompts: `mode_prompts._WRITE_SEGMENT`, which registers all twelve tools named
+above, and the standalone `orchestrator/prompt.BUILD_SYSTEM_PROMPT`, whose `build_agent` was
+constructed with `toolsets=[sandbox_toolset(...)]` and nothing else — eight. That arm was told on
+every request that it had `list_files`, `search_files`, `tell_the_user` and `propose_first_slice`,
+and calling any of them got the runtime's unknown-tool rejection. The defect is gone because the
+harness is: the bare `POST` on `/v1/build-sessions` and everything reachable only from it
+were deleted, so
+`_WRITE_SEGMENT` is the ONLY consumer of this block and the twelve names match the twelve
+registrations. The guard that watched the discrepancy
+(`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`) went with
+it, by its own design — its docstring said it would go red the day the harness was deleted.
 
 WHY IT HAD TO STOP BEING PROSE. The hand-written block named six tools while the Write arm handed
 the model eight — `list_files` and `search_files` were absent from the prompt for their whole

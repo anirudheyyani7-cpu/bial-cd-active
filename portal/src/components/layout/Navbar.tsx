@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // `Info` is NOT left over from the removed settings menu — it is the toast's own icon
 // (see the toast render below). The nine icons that went with #157's dead header controls
@@ -11,6 +11,7 @@ import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import type { UsageToday } from '../../utils/usage'
 import { revokeAllAttachmentUrls } from '../../utils/attachmentApi'
 import { fetchAppStatusCounts } from '../../utils/appRegistryApi'
+import { projectsListHref, rememberProjectsSearch } from '../../utils/projectsListMemory'
 import WaitingCountBadge from '../admin/WaitingCountBadge'
 import FeedbackModal from '../FeedbackModal'
 import BIALLogo from '../BIALLogo'
@@ -46,6 +47,15 @@ export default function Navbar() {
   const navigate = useNavigate()
   // The workspace's unsaved-work guard, or a pass-through on every page that has no workspace.
   const exit = useWorkspaceExit()
+
+  // THE HALF OF `#208` THE ADDRESS BAR CANNOT DO BY ITSELF (R45). `ProjectsPage` mounts its own
+  // instance of this same component, so THIS is the one place already positioned to notice every
+  // time the address bar reads `/projects` and remember what it carried. The brand link below
+  // reads it back when leaving from somewhere else, rather than resetting the list to page one.
+  const location = useLocation()
+  useEffect(() => {
+    if (location.pathname === '/projects') rememberProjectsSearch(location.search)
+  }, [location.pathname, location.search])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [usage, setUsage] = useState<UsageToday | null>(null)
@@ -184,12 +194,16 @@ export default function Navbar() {
 
                 THE DESTINATION IS `/projects`, not `/dashboard`: that address is a redirect now
                 (#158 §7), and the most-clicked element in the product should not pay an extra hop
-                through it. The guard is unchanged — only where it lets you go. */}
+                through it. The guard is unchanged — only where it lets you go.
+
+                THE DESTINATION CARRIES THE LIST BACK (R45, `#208`). Read fresh at click time
+                rather than memoised at render, so a search typed a moment ago on `/projects` is
+                what this lands on — not a page-one reset the citizen never asked for. */}
             <NavLink
               to="/projects"
               onClick={(e) => {
                 e.preventDefault()
-                exit(() => navigate('/projects'))
+                exit(() => navigate(projectsListHref()))
               }}
               className="flex items-center whitespace-nowrap"
             >

@@ -50,6 +50,7 @@ import AppPane from './AppPane'
 import RailResizeHandle from './RailResizeHandle'
 import WorkspaceToolbar from './WorkspaceToolbar'
 import { clampRailWidth, openingWidth, readRailWidth, writeRailWidth } from './railWidth'
+import { projectsListHref } from '../../utils/projectsListMemory'
 import type { DeviceName } from './devices'
 import { WORKSPACE_RAIL_ID } from './railId'
 import { HIDDEN_BUT_MOUNTED } from './hiddenSubtree'
@@ -314,7 +315,14 @@ function ShellFrame() {
     // chat open this control used to send a citizen who pressed back out to the projects list —
     // out of the project they were working in — and the row's label said "Back to projects" while
     // it did. The mode is derived from the pathname, so it is right from the first frame.
-    const to = mode === 'conversation' && heading.projectId ? `/projects/${heading.projectId}` : '/projects'
+    //
+    // THE LIST ADDRESS CARRIES ITS OWN STATE BACK (R45, `#208`). Read fresh at press time, not
+    // memoised at render — this control can sit for minutes before it is pressed, and the list's
+    // page, search and page size can all have changed on `/projects` in the meantime.
+    const to =
+      mode === 'conversation' && heading.projectId
+        ? `/projects/${heading.projectId}`
+        : projectsListHref()
     guard(() => navigate(to))
   }, [guard, navigate, mode, heading.projectId])
 

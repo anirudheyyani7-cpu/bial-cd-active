@@ -270,6 +270,21 @@ export interface TakeBack {
   resolve: (save: boolean) => Promise<void>
   /** Close the question. Nothing has been stopped, saved or released. */
   cancel: () => void
+  /**
+   * WHAT A TAKE-BACK THAT WORKED DID — the ending that used to report nothing (R44c, U11).
+   *
+   * D2 gave every FAILING ending a sentence, and gave the succeeding one none: the dialog closed,
+   * the pane framed an app, and the citizen who had just stopped somebody else's work was told
+   * nothing about it. The other four endings still come through `onStartOutcome` and the map's
+   * `note`, and they are deliberately NOT duplicated here — a second producer for a sentence the
+   * board already renders is that sentence read twice, which `AppPane.test.tsx` pins.
+   *
+   * `null` UNTIL ONE SUCCEEDS, cleared at the start of every press so a second sequence never shows
+   * the first one's ending, and cleared with the rest of the sequence when the project changes.
+   * Clearing also matters for the announcement itself: a live region speaks on a CHANGE, so a
+   * second hand-over to the same holder would say nothing at all if the string never went empty.
+   */
+  outcome: string | null
 }
 
 /**
@@ -307,8 +322,15 @@ export interface TakeBack {
  * and its `resolve` awaits `retry()` — `fireRelayTurn(rawText, …)` for a refused send. Routing the
  * take-back through it would mean confirming the hand-over SENDS the message the citizen is holding
  * in the composer as a build instruction, and a refused send already holding the slot would swallow
- * the take-back's refusal outright. The take-back owns its own dialog and its own closure, and the
- * two never meet.
+ * the take-back's refusal outright. The take-back owns its own dialog and its own closure.
+ *
+ * THEY CAN BOTH BE ON SCREEN, and this used to claim "the two never meet". They do: the pane's
+ * take-back dialog and the surface's own reclaim dialog are mounted by different owners
+ * (`AppPane` and `WorkspaceShell`) and neither suppresses the other. Suppressing the pane's was
+ * tried and REVERTED — a citizen who answers the send's identical dialog thereby starts a build,
+ * which is the exact harm the take-back exists to avoid. So what is true is narrower and worth
+ * saying precisely: they never share the reclaim SLOT, so neither can swallow the other's
+ * refusal. Two dialogs is a presentation problem; one swallowed refusal is a lost answer.
  *
  * ═══ WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT ═══
  *
@@ -347,6 +369,9 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
   const [working, setWorking] = useState(false)
   const [asking, setAsking] = useState<ReclaimBlocked | null>(null)
   const [step, setStep] = useState<HandoverStep | null>(null)
+  // THE SUCCESS ENDING'S SENTENCE (R44c). See `TakeBack.outcome` — every other ending travels on
+  // `onStartOutcome` and is said by the map, and only this one had nowhere to be said at all.
+  const [outcome, setOutcome] = useState<string | null>(null)
   // Synchronous, so two presses in one tick collapse to one sequence — state would not have
   // committed between them.
   const inFlight = useRef(false)
@@ -378,6 +403,9 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     if (working) setWorking(false)
     if (asking) setAsking(null)
     if (step) setStep(null)
+    // AND THE ENDING GOES WITH THEM, for the same reason: it names A's holder, and left standing it
+    // would announce over B's pane what happened to a project B has nothing to do with.
+    if (outcome) setOutcome(null)
     // AND THE PRESS GUARD GOES WITH IT, or B's control is dead: A's sequence is still running, so
     // the flag is still raised, and every press on the new project would be swallowed as a double
     // press. Two projects are two sequences; what keeps them from writing over each other is
@@ -408,12 +436,19 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
    * here — `null` on the opening ask, the holder's name once it has been stopped — and it travels
    * into the outcome untouched, because D2's rule is that any ending which stopped the holder says
    * so.
+   *
+   * IT RETURNS WHICH OF THE THREE THINGS HAPPENED, and the reason is R44c. Every ending except one
+   * writes itself into the report on its way past, so the caller never had to ask; the succeeding
+   * one writes only `onStartOutcome(null)`, which is indistinguishable from "no attempt has been
+   * made". `resolve` needs to tell a start that WORKED from a start that was refused again by a new
+   * holder, because only the first has an outcome sentence to say. Reading `askingRef` afterwards
+   * would be guessing from a side effect; this answers directly.
    */
   const askForTheWorkspace = async (
     rep: WorkspaceReport,
     projectId: string,
     stoppedHolder: string | null,
-  ): Promise<void> => {
+  ): Promise<'started' | 'blocked' | 'failed'> => {
     try {
       const res = await relaunchPreview({ projectId })
       // THE URL FIRST, AND BEFORE THE OUTCOME, for the reason the start path records: reporting it
@@ -421,6 +456,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       if (res.previewUrl) rep.onStarted(res.previewUrl)
       rep.onStartOutcome(res.ready ? null : { kind: 'not-painted' })
       ifStillOurs(projectId, () => setAsking(null))
+      return 'started'
     } catch (err) {
       const blocked = asReclaimBlocked(err)
       if (blocked) {
@@ -430,7 +466,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         // error. The caller force-remounts on the holder's id, so the copy and the focus move
         // together.
         ifStillOurs(projectId, () => setAsking(blocked))
-        return
+        return 'blocked'
       }
       rep.onStartOutcome({
         kind: 'take-back-failed',
@@ -438,6 +474,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         stoppedHolder,
       })
       ifStillOurs(projectId, () => setAsking(null))
+      return 'failed'
     }
   }
 
@@ -447,6 +484,10 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     if (!rep || !projectId || inFlight.current) return
     inFlight.current = true
     setWorking(true)
+    // A FRESH SEQUENCE SAYS NOTHING YET. Clearing here is also what lets the SAME sentence be
+    // announced twice: a live region speaks on a change, so re-taking the same holder over a
+    // string that never went empty would be silent.
+    setOutcome(null)
     void (async () => {
       try {
         await askForTheWorkspace(rep, projectId, null)
@@ -471,6 +512,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     if (!rep || !holder || !projectId || inFlight.current) return
     inFlight.current = true
     setWorking(true)
+    setOutcome(null)
     // HOW FAR THE HAND-OVER GOT, and it is the ONLY thing that tells D2's endings apart. The order
     // is `handOverWorkspace`'s and lives there: stop, wait for the stop to genuinely finish, save,
     // release. A rejection while the step is still `stopping` therefore means nothing was stopped
@@ -497,7 +539,30 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         return
       }
       ifStillOurs(projectId, () => setStep('starting'))
-      await askForTheWorkspace(rep, projectId, holder.projectName)
+      const ended = await askForTheWorkspace(rep, projectId, holder.projectName)
+      // ═══ THE ENDING THAT WORKED, SAID OUT LOUD (R44c, U11) ═══
+      //
+      // The other four endings are already sentences on the pane, written by the map from
+      // `onStartOutcome`. This one wrote only `onStartOutcome(null)` and then framed an app, so the
+      // citizen who had just stopped a colleague's work learned nothing about having done it — and
+      // the colleague, who is not here, learns nothing either way.
+      //
+      // TWO FACTS IN ONE SENTENCE, and both are things only this sequence knows: what became of the
+      // holder, including whether its work was saved (the answer the citizen gave the dialog), and
+      // that the workspace is now this project's. Neither is recoverable from the reading that
+      // follows.
+      //
+      // ONLY ON `started`. A refusal from a NEW holder is D2's fifth ending — the question reopens
+      // and nothing has concluded — and a failure already has its own sentence.
+      if (ended === 'started') {
+        ifStillOurs(projectId, () =>
+          setOutcome(
+            save
+              ? `“${holder.projectName}” was saved and stopped. Your app has the workspace now.`
+              : `“${holder.projectName}” was stopped without saving. Your app has the workspace now.`,
+          ),
+        )
+      }
       // THE READING IS STALE WHATEVER JUST HAPPENED. The slot was released, so `slot_taken` is no
       // longer the answer — on the ending where the relaunch failed the pane needs the fresh
       // reading to reach `start-failed` rather than sitting on a hand-over that is over.
@@ -521,7 +586,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     setStep(null)
   }, [])
 
-  return { press, working, asking, step, resolve, cancel }
+  return { press, working, asking, step, resolve, cancel, outcome }
 }
 
 /**

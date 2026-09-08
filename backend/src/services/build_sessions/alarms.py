@@ -14,6 +14,13 @@ tests, which is why the tests assert on these names rather than on string copies
 
 Distinguishing REASONS belong in structured fields, not in the event name, for the same
 reason: one operational question, one event, filterable by field.
+
+THE DELETE PATH'S ALARM IS NOT HERE, and the omission is deliberate. The artefact-survived
+alarm every teardown arm raises spans `api/v1/projects/`, `services/storage/`,
+`services/deploy/` and `services/appdb/`, and `services/storage/` is imported while
+`src.config` is still initialising — so importing anything under THIS package from there is a
+startup circular-import error. It lives in `src/core/alarms.py`, a leaf that imports no `src.*`
+at all; the doctrine above governs it identically.
 """
 
 from typing import Final

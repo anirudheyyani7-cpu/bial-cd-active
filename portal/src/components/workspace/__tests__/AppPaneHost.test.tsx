@@ -59,7 +59,7 @@ const OTHER_APP_URL = 'https://app-b.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: false, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -71,16 +71,19 @@ function ChatSurface({
   visible = true,
   pane,
   status,
+  serving = true,
 }: {
   projectId?: string
   url?: string | null
   visible?: boolean
   pane?: Partial<PaneView>
-  /** Overrides the default live `ready`. The TERMINAL statuses are what `completedLive` guards. */
+  /** Overrides the default live `ready`. The TERMINAL statuses are what `serving` guards. */
   status?: BuildSessionStatus
+  /** Is a container still answering at `url`? Rides on the ADDRESS, which survives an unmount. */
+  serving?: boolean
 }) {
   useWorkspaceProject(projectId)
-  usePublishAddress({ url, status: url ? (status ?? 'ready') : null }, projectId)
+  usePublishAddress({ url, status: url ? (status ?? 'ready') : null, serving: serving && url !== null }, projectId)
   usePublishPaneView({ ...EMPTY_PANE, ...pane })
   useAppPaneVisible(visible)
   return <div data-testid="chat-surface" />
@@ -96,13 +99,22 @@ function ChatSurface({
  * arrives after a hydrate/reattach round trip. So its FIRST commit resolves nothing, and that is the
  * commit that used to retire the held address and tear the frame down on the way back in.
  */
-function ColdChatSurface({ projectId = 'pA', pane }: { projectId?: string; pane?: Partial<PaneView> }) {
+function ColdChatSurface({
+  projectId = 'pA',
+  pane,
+  status = 'ready',
+}: {
+  projectId?: string
+  pane?: Partial<PaneView>
+  /** The status the resolved address settles at. TERMINAL is what liveness has to outrank. */
+  status?: BuildSessionStatus
+}) {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     setUrl(APP_URL)
   }, [])
   useWorkspaceProject(projectId)
-  usePublishAddress({ url, status: url ? 'ready' : null }, projectId)
+  usePublishAddress({ url, status: url ? status : null, serving: url !== null }, projectId)
   usePublishPaneView({ ...EMPTY_PANE, ...pane })
   useAppPaneVisible(true)
   return <div data-testid="chat-surface" />
@@ -248,20 +260,50 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
     expect(frame()?.getAttribute('src')).toBe(APP_URL)
   })
 
-  it('leaves the frame alone when the conversation unmounts right after a build SUCCEEDS', () => {
-    // The sibling of the mid-build scenario, on the more common exit. A finished build's container
-    // is PARDONED — alive under an idle lease — and `completedLive` is the pane field carrying that
-    // claim; it is what lets `keepFramed` outrank the address's terminal `ended` status.
+  it('★ a COLD REMOUNT whose address resolves AFTER mount keeps the frame, terminal status and all', () => {
+    // ★ THE SCENARIO A CONSTANT-INPUT FIXTURE CANNOT WRITE, and the reason `ColdChatSurface` exists:
+    // its URL arrives in an effect, so its FIRST commit resolves nothing — which is what every real
+    // surface does (a session hook starts null, a turn narrative ref starts unset, a transcript
+    // starts empty, and the URL only lands after a reattach round trip).
     //
-    // `completedLive` rode on the pane view, which is CLEARED on unmount, so it fell back to
-    // `LivePreview`'s `false` default over an address whose `ended` status is deliberately KEPT.
-    // `frameContext` collapsed and the iframe was unmounted — leaving a build chat at the moment a
-    // citizen is most likely to leave one destroyed an app the server was still serving.
+    // WHAT THIS ADDS OVER THE COLD SCENARIO ABOVE: a TERMINAL status. With `ready` the frame
+    // survives whatever liveness says, so the cold round trip is asserted without the field being
+    // exercised at all. At `ended`, the frame exists only while something is serving — so this is
+    // the cell where "liveness rides on the address" is actually load-bearing.
+    //
+    // Mutation check: put liveness back on the pane view (which is CLEARED on unmount) and the
+    // return leg goes red — the cold surface's first commit hands the pane a `false` default over
+    // an address whose `ended` status is deliberately KEPT, and the iframe comes down.
+    render(<Workspace chatSurface={<ColdChatSurface status="ended" />} />)
+    const original = frame()
+    expect(original).toBeTruthy()
+
+    fireEvent.click(screen.getByText('to project'))
+    expect(frame()).toBe(original)
+
+    fireEvent.click(screen.getByText('to chat'))
+    expect(frame()).toBe(original)
+    expect(frame()?.getAttribute('src')).toBe(APP_URL)
+    // LIVENESS, PAIRED: the pane is framing rather than showing its terminal card, so the identity
+    // assertions above are about a live pane and not about a render that produced nothing.
+    expect(screen.queryByTestId('preview-ended-card')).toBeNull()
+  })
+
+  it('leaves the frame alone when the conversation unmounts right after a build SUCCEEDS', () => {
+    // The sibling of the mid-build scenario, on the more common exit. A finished turn's container
+    // is PARDONED — alive under an idle lease — and liveness is what lets `keepFramed` outrank the
+    // address's terminal `ended` status.
+    //
+    // IT USED TO RIDE ON THE PANE VIEW, as `completedLive`, and the pane view is CLEARED on unmount
+    // — so it fell back to `LivePreview`'s `false` default over an address whose `ended` status is
+    // deliberately KEPT. `frameContext` collapsed and the iframe was unmounted: leaving a build chat
+    // at the moment a citizen is most likely to leave one destroyed an app the server was still
+    // serving. The host answered that with a held ref; U2 answered it structurally, by moving
+    // liveness onto the address, which survives the unmount for the same reason the URL does.
+    //
     // `ended` is the address status a completed build rests at, and the address KEEPS it. Without
-    // it this scenario would false-green: a non-terminal status frames regardless of `completedLive`.
-    render(
-      <Workspace chatSurface={<ChatSurface status="ended" pane={{ completedLive: true }} />} />,
-    )
+    // it this scenario would false-green: a non-terminal status frames regardless of liveness.
+    render(<Workspace chatSurface={<ChatSurface status="ended" />} />)
     const original = frame()
     expect(original).toBeTruthy()
 
@@ -269,6 +311,21 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
 
     expect(frame()).toBe(original)
     expect(frame()?.getAttribute('src')).toBe(APP_URL)
+  })
+
+  it('★ a terminal address with NOTHING serving still collapses — the hold is not a blanket keep-alive', () => {
+    // THE OTHER HALF OF THE SCENARIO ABOVE, and the reason it is not vacuous. Moving liveness onto
+    // a cell that survives an unmount is only safe if the cell can still say "no": a version that
+    // simply never let go of the frame would pass every continuity assertion in this file and leave
+    // a frame pointing at a container that is gone, with nothing able to detect it — which is the
+    // failure `AppPaneHost`'s own docblock is written against.
+    //
+    // Paired with a liveness assertion, because "no iframe" is also what a crashed render looks
+    // like: the pane's own terminal card has to be on screen saying why.
+    render(<Workspace chatSurface={<ChatSurface status="ended" serving={false} />} />)
+
+    expect(frame()).toBeNull()
+    expect(screen.getByTestId('preview-ended-card').textContent).toMatch(/no longer running/i)
   })
 
   it('but leaving for ANOTHER project\'s screen takes the frame down', () => {

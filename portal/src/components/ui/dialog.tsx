@@ -59,13 +59,56 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
  * Everything else is upstream verbatim, including the whole point of moving onto it:
  * `role="dialog"`, `aria-modal`, a focus trap, Escape-to-close and scroll lock.
  */
+/**
+ * WHERE FOCUS GOES WHEN A DIALOG IS UNMOUNTED RATHER THAN CLOSED.
+ *
+ * Radix restores focus to whatever was focused before the content mounted — but the restore runs
+ * inside `FocusScope`'s own cleanup, and every dialog in this portal is rendered CONDITIONALLY:
+ * `{deleting && <ProjectDeleteDialog …/>}`, `{renaming && <ProjectRenameDialog …/>}`. Pressing
+ * Escape calls `onOpenChange(false)`, the parent sets its state to `null`, and React deletes the
+ * whole subtree — `Dialog`, `FocusScope` and all — in the same commit. There is no closing state
+ * for the restore to run in, so it never runs.
+ *
+ * MEASURED, NOT REASONED. In the portal container, opening the rename dialog and pressing Escape
+ * left `document.activeElement === document.body` while the pencil that opened it was still the
+ * same node, still connected and still focusable. A keyboard is then at the top of the document
+ * with no idea where it came from — which is the exact strand `ProjectsPage`'s delete already
+ * records and fixes by hand, and the reason `aria-disabled` is used everywhere in place of
+ * `disabled` (a disabled control throws focus to the body for the same end result).
+ *
+ * IT IS A BACKSTOP, NOT A POLICY. It only fires when focus ended up NOWHERE — on the body, or
+ * unset — and only on the next frame, so a caller that deliberately moves focus somewhere else
+ * still wins: `ProjectsPage` sends focus to its heading because the row Radix captured is gone by
+ * then, and this must not steal it back to a detached trigger. Fixed here rather than at five call
+ * sites because it is one mechanism, and the sixth dialog would be written without it.
+ */
+function useFocusBackstop() {
+  const openerRef = React.useRef<HTMLElement | null>(null)
+  React.useEffect(() => {
+    // Captured on mount, BEFORE the dialog's own autofocus moves it.
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      const opener = openerRef.current
+      if (!opener) return
+      // Next frame: React has finished detaching the dialog and any deliberate restore has run.
+      requestAnimationFrame(() => {
+        const landed = document.activeElement
+        if (!opener.isConnected) return
+        if (landed === null || landed === document.body) opener.focus()
+      })
+    }
+  }, [])
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
     overlayClassName?: string
     hideClose?: boolean
   }
->(({ className, children, overlayClassName, hideClose, ...props }, ref) => (
+>(({ className, children, overlayClassName, hideClose, ...props }, ref) => {
+  useFocusBackstop()
+  return (
   <DialogPortal>
     <DialogOverlay className={overlayClassName} />
     <DialogPrimitive.Content
@@ -85,7 +128,8 @@ const DialogContent = React.forwardRef<
       )}
     </DialogPrimitive.Content>
   </DialogPortal>
-))
+  )
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({

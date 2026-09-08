@@ -154,8 +154,21 @@ export function turnPhase(
     // while it is still happening. Everything after it belongs to the answer.
     return running && narrative.workspace.state === 'preparing' ? 'provisioning' : null
   }
-  if (terminal === 'failed' || terminal === 'stopped') return 'failed'
-  if (terminal === 'completed') return 'ended'
+  // A TURN THAT FAILED IS THE ONLY ONE THAT FAILED (`#96`). This read
+  // `terminal === 'failed' || terminal === 'stopped'`, and that one line was the whole of the bug:
+  // a citizen who pressed Stop watched their running app collapse to "The preview is no longer
+  // running" over a container the backend had deliberately kept up. The backend does not make this
+  // distinction on the container at all — `finish_turn_sandbox` pardons it with no branch on how
+  // the turn ended ("THE CONTAINER IS ALWAYS PARDONED", `manager.py`) — so a stop and a completion
+  // leave exactly the same thing serving, and only the phase said otherwise.
+  //
+  // STOPPED IS ITS OWN PHASE, and `ended` is what that phase is: the turn is over. `ended` is not a
+  // claim that the build SUCCEEDED — nothing in this vocabulary makes that claim, and the pane no
+  // longer draws a completion chip off it. What the pane may say about a half-written app comes
+  // from the compile state, which reports on what is actually in the container rather than on how
+  // its turn finished. Reading `ended` as "it worked" is the conflation this whole group removes.
+  if (terminal === 'failed') return 'failed'
+  if (terminal === 'completed' || terminal === 'stopped') return 'ended'
   if (!running) return null
   if (narrative.preview.state === 'ready') return 'ready'
   return narrative.workspace.state === 'preparing' ? 'provisioning' : 'building'

@@ -19,8 +19,12 @@ from src.api.deps import storage_dependency, storage_or_none_dependency
 from src.config import settings
 from src.db.models.app_registry import MAX_DEPLOYED_URL, AppRegistry, ApprovalRoute, AppStatus
 from src.db.models.audit import AuditLog
+from src.db.models.deployment import Deployment
+from src.db.models.project import Project
+from src.db.models.project_database import ProjectDatabase
 from src.main import create_app
 from src.services.appserving.governance import nuke_app
+from src.services.auth.csrf import issue_csrf_token
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.storage import AppContainerStore, StorageError, snapshot_key, submission_key
 from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
@@ -151,6 +155,22 @@ async def test_citizen_is_forbidden(client, db_session) -> None:
     assert (
         await client.post(f"/v1/admin/apps/{app.id}/mark-deployed", headers=headers)
     ).status_code == 403
+    # ★ THE THREE DESTRUCTIVE LEVERS, which this list was missing. The delete's body contract
+    # changed on this branch and the kill switch widened to draft and rejected apps, so both are
+    # exactly the moment to pin who may reach them. The delete is sent WITHOUT a reason on
+    # purpose: the gate has to outrank the body, or a citizen learns from a 422 that they were
+    # one valid sentence away from destroying somebody else's work.
+    assert (
+        await client.request("DELETE", f"/v1/admin/apps/{app.id}", headers=headers)
+    ).status_code == 403
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    ).status_code == 403
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    ).status_code == 403
+    # LIVENESS: the app is untouched by all seven refusals.
+    assert await db_session.get(AppRegistry, app.id) is not None
 
 
 async def test_unauthenticated_is_401(client, db_session) -> None:
@@ -371,11 +391,77 @@ async def test_disable_then_enable_preserves_the_pin(client, db_session) -> None
     assert fresh.approved_submission_id == pinned  # the pin survives the round trip
 
 
-async def test_disable_requires_approved(client, db_session) -> None:
+@pytest.mark.parametrize("source", [AppStatus.DRAFT, AppStatus.REJECTED])
+async def test_disable_switches_off_a_draft_or_rejected_app(
+    client, db_session, source: AppStatus
+) -> None:
+    """AE8/#163: the kill switch reaches the two categories most likely to need it.
+
+    DRAFT is the ORDINARY member of the marketplace catalog — one-click deploy never writes
+    a status — and REJECTED apps keep serving whatever they last deployed. Before the
+    `STATUS_TRANSITIONS[DISABLED]` widening, the only lever that touched either was
+    `nuke_app`, which destroys the owner's work; that is the harm this transition removes.
+    """
+    app = await _app(db_session, status=source)
+    headers = await _admin(db_session)
+    resp = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "disabled"
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED
+    # ADR-0005: a gated action that moves the state machine writes its audit row — the
+    # widened source set must not slip a transition past the trail.
+    assert "disable" in await _audited_actions(db_session, app.id)
+
+
+async def test_disable_refuses_a_pending_app_and_names_the_right_lever(client, db_session) -> None:
+    """PENDING is the one status deliberately LEFT OUT of the widening (#163).
+
+    An app sitting in the review queue is REJECTED, not switched off: disabling it would let
+    an administrator dispose of a submission with the ops lever instead of deciding it, and
+    the citizen would never get the rejection note the review flow owes them. The copy names
+    the lever they actually wanted rather than refusing bare.
+    """
     app = await _app(db_session, **_pending())
     headers = await _admin(db_session)
     resp = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
     assert resp.status_code == 409
+    assert "rejected instead" in resp.json()["error"]["message"]
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.PENDING  # still in the queue
+    # A refused transition writes nothing: the early-return 409 leaves the trail (and the
+    # database) exactly as it found them.
+    assert "disable" not in await _audited_actions(db_session, app.id)
+
+
+async def test_an_administrators_kill_switch_survives_the_owners_withdraw(
+    client, db_session
+) -> None:
+    """THE BYPASS `#163` DOCUMENTS, pinned so the obvious repair cannot ship silently.
+
+    `withdraw` is citizen-facing and reads `STATUS_TRANSITIONS[DRAFT]` with nothing but an
+    ownership predicate in front of it. Add DISABLED to that row — the tempting way to
+    un-stick a switched-off draft — and this test goes red: the owner of an app an
+    administrator killed walks it straight back to draft from their own workspace.
+    """
+    owner = await UserFactory.create(db_session, email="owner@rvaiglobal.com")
+    app = await AppRegistryFactory.create(db_session, user_id=owner.id, status=AppStatus.DRAFT)
+    admin_headers = await _admin(db_session)
+    killed = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=admin_headers)
+    assert killed.status_code == 200
+
+    # The owner's own signed double-submit headers — the citizen route's real gate, so the
+    # 409 below is the state machine refusing and not CSRF refusing for it.
+    csrf = issue_csrf_token(owner.id, owner.token_version)
+    session = mint_session_jwt(owner.id, owner.token_version, _TTL)
+    owner_headers = {"Cookie": f"session={session}; csrf={csrf}", "X-CSRF-Token": csrf}
+    resp = await client.post(f"/v1/apps/{app.id}/withdraw", headers=owner_headers)
+    assert resp.status_code == 409
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED  # containment held
 
 
 async def test_enable_guard_rejects_non_disabled(client, db_session) -> None:
@@ -384,6 +470,96 @@ async def test_enable_guard_rejects_non_disabled(client, db_session) -> None:
     headers = await _admin(db_session)
     resp = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
     assert resp.status_code == 409
+
+
+# --- what the app WAS, remembered across the kill switch (U31, R42, #163) ---------------
+
+
+@pytest.mark.parametrize("source", [AppStatus.DRAFT, AppStatus.REJECTED])
+async def test_switching_off_and_back_on_returns_the_app_to_what_it_was(
+    client, db_session, source: AppStatus
+) -> None:
+    """AE8/R42: a rejected app comes back REJECTED and a draft comes back DRAFT.
+
+    Enable used to resolve to the literal APPROVED. On an app that was never approved that
+    invents an approval nobody gave — and once the artifact-pin guard refuses a row with no
+    pin, it instead strands the app in DISABLED with no lever left. `previous_status` is the
+    memory that makes the return trip honest.
+    """
+    app = await _app(db_session, status=source)
+    headers = await _admin(db_session)
+
+    off = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    assert off.json()["status"] == "disabled"
+    killed = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(killed)
+    assert killed.previous_status is source  # written from the row, inside the guarded UPDATE
+
+    on = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert on.status_code == 200
+    assert on.json()["status"] == source.value  # the response says where it actually landed
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is source
+    assert fresh.approved_submission_id is None  # no approval was invented on the way back
+    # The memory describes a switched-off app; a stale one on a live row is a fact waiting
+    # to be misread.
+    assert fresh.previous_status is None
+    # ADR-0005: both gated actions leave their trail.
+    actions = await _audited_actions(db_session, app.id)
+    assert "disable" in actions and "enable" in actions
+
+
+async def test_an_approved_app_still_checks_its_approved_submission_on_the_way_back(
+    client, db_session
+) -> None:
+    """The artifact-pin guard rides on the APPROVED arm only, and it still bites there.
+
+    An approved-status row with no `approved_submission_id` is the approved-with-no-artifact
+    state the schema otherwise prevents (D13). Re-enabling one would resurrect it, so the
+    guard refuses — and because it is scoped to the approved arm, the draft and rejected
+    restores above (which have no pin and are not supposed to) sail past it.
+    """
+    app = await _app(db_session, status=AppStatus.APPROVED, approved_submission_id=None)
+    headers = await _admin(db_session)
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    ).status_code == 200
+
+    resp = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert resp.status_code == 409
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED  # refused, and still contained
+    assert fresh.previous_status is AppStatus.APPROVED  # the memory survives a refused enable
+
+
+async def test_an_app_disabled_before_the_column_existed_re_enables_to_approved(
+    client, db_session
+) -> None:
+    """A NULL `previous_status` is a PRE-COLUMN ROW, not an error.
+
+    Migration 0038 backfilled every already-disabled row to `approved` — the status the code
+    it replaced resolved them to — and `enable` reads a NULL the same way as the backstop, for
+    a row inserted by hand during an incident or one the backfill could not reach. Simulated
+    by nulling the column on a DISABLED row, which is exactly the shape 0038 found.
+    """
+    sid = uuid.uuid4()
+    app = await _app(
+        db_session,
+        status=AppStatus.DISABLED,
+        approved_submission_id=sid,
+        approved_commit_sha=_SHA,
+        previous_status=None,
+    )
+    headers = await _admin(db_session)
+
+    resp = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.APPROVED
 
 
 # --- the queue projection (R15/R16) -----------------------------------------------
@@ -1028,19 +1204,57 @@ async def test_hard_delete_purges_everything(client, db_session, app) -> None:
     await db_session.flush()
     headers = await _admin(db_session)
 
-    resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={
+            "reason": "Duplicate app created in error during onboarding, owner asked for removal"
+        },
+    )
     assert resp.json() == {"ok": True}
     # Registry row gone; the snapshot blob swept.
     assert await db_session.get(AppRegistry, row.id) is None
     assert store.objects == {}
+    # ★ THE ROW, AND WHAT IT SAYS. Asserting only that an `app:delete` row exists left the
+    # `detail=` kwarg deletable with the suite still green — and that kwarg IS R5: the
+    # administrator's justification, on the one row that outlives what it destroyed. Read by
+    # APP ID after the app row is gone, which is the property `audit_logs` is chosen for (no
+    # foreign key, `resource_id` a plain string, `read_audit` does no existence pre-check).
     audited = (
         await db_session.execute(
-            sa.select(AuditLog.action).where(
+            sa.select(AuditLog).where(
                 AuditLog.resource_id == str(row.id), AuditLog.action == "app:delete"
             )
         )
     ).scalar_one()
-    assert audited == "app:delete"
+    assert audited.detail == {
+        "reason": "Duplicate app created in error during onboarding, owner asked for removal",
+        "projectId": str(row.project_id),
+    }
+    # THE PROJECT SURVIVES AN APP HARD-DELETE, by design — which is what makes `projectId` the
+    # only handle left connecting this row to something still readable.
+    assert await db_session.get(Project, row.project_id) is not None
+
+
+async def test_hard_delete_without_a_reason_is_refused(client, db_session, app) -> None:
+    """★ THE SERVER IS WHAT ENFORCES THE RULE. The dialog that collects the reason is a
+    courtesy to the person typing it; a client that forgets the body — which is exactly what
+    every client did until this branch — must not be able to destroy somebody's app anyway."""
+    _wire_storage(app)
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    bodiless = await client.request("DELETE", f"/v1/admin/apps/{row.id}", headers=headers)
+    too_short = await client.request(
+        "DELETE", f"/v1/admin/apps/{row.id}", headers=headers, json={"reason": "because"}
+    )
+
+    assert bodiless.status_code == 422
+    assert too_short.status_code == 422
+    # LIVENESS: nothing was destroyed by either refusal.
+    assert await db_session.get(AppRegistry, row.id) is not None
 
 
 async def test_hard_delete_sweeps_every_retained_submission(client, db_session, app) -> None:
@@ -1059,7 +1273,14 @@ async def test_hard_delete_sweeps_every_retained_submission(client, db_session, 
     await db_session.flush()
     headers = await _admin(db_session)
 
-    resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={
+            "reason": "Duplicate app created in error during onboarding, owner asked for removal"
+        },
+    )
     assert resp.json() == {"ok": True}
     # Snapshot + all three submissions swept; the bystander's submission survives.
     assert set(store.objects) == {bystander_key}
@@ -1081,6 +1302,189 @@ async def test_nuke_app_sweeps_the_per_app_container(db_session) -> None:
     assert containers.deleted == [row.id]  # the per-app container was swept
     assert store.objects == {}  # the snapshot blob was swept
     assert await db_session.get(AppRegistry, row.id) is None  # registry row dropped
+
+
+async def test_nuke_app_sweeps_the_container_registry_repository(db_session, monkeypatch) -> None:
+    """★ THE IMAGE GOES WITH THE APP (U21/U23), and until now nothing said so.
+
+    `sweep_app_repositories` was wired into `nuke_app` and never asserted anywhere: delete the
+    call and every suite stayed green while the admin lever — the one whose dialog says
+    "destroyed permanently" — left the app's compiled tree sitting in the container registry,
+    which is exactly what the citizen's own softer delete removes."""
+    row = await _app(db_session, **_pending())
+    db_session.add(Deployment(app_id=row.id, user_id=row.user_id))
+    await db_session.flush()
+    swept: list[list[uuid.UUID]] = []
+
+    async def _recording(app_ids, *, config, transport=None) -> list[str]:
+        swept.append(list(app_ids))
+        return []
+
+    monkeypatch.setattr("src.services.appserving.governance.sweep_app_repositories", _recording)
+
+    await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    assert swept == [[row.id]]
+    assert await db_session.get(AppRegistry, row.id) is None  # and the row still went
+
+
+async def test_nuke_app_does_not_ask_the_registry_about_an_app_never_built(
+    db_session, monkeypatch
+) -> None:
+    """An image reaches the registry only through a deploy — `names.image_tag` composes the push
+    tag from the DEPLOYMENT id — so an app with no deployment row has no repository to delete.
+
+    Asking anyway is not free: a registry that refuses the delete credential answers 401/403 for
+    whatever it is handed, and every id in the sweep comes back a survivor. That would put a
+    repository that never existed into the teardown record of every delete and send an operator
+    after it, which the sibling sweeps' own docstrings call worse than naming nothing."""
+    row = await _app(db_session, **_pending())  # no Deployment row
+    await db_session.flush()
+    swept: list[list[uuid.UUID]] = []
+
+    async def _recording(app_ids, *, config, transport=None) -> list[str]:
+        swept.append(list(app_ids))
+        return []
+
+    monkeypatch.setattr("src.services.appserving.governance.sweep_app_repositories", _recording)
+
+    await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    # The sweep is still CALLED (one code path, no branch to drift) — with nothing in it.
+    assert swept == [[]]
+    assert await db_session.get(AppRegistry, row.id) is None
+
+
+async def test_nuke_app_names_every_artefact_that_outlived_it(db_session, monkeypatch) -> None:
+    """★ SURVIVORS ARE THE RETURN VALUE (U22), not a log line the caller cannot read.
+
+    All four sweeps already answer with what they could not destroy and `nuke_app` used to
+    throw all four answers away, which made the admin hard-delete the one destructive lever on
+    the platform that kept no record of a leak. Each is driven to its failing answer here so
+    the tagging is proved per artefact rather than in aggregate."""
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+
+    async def _blobs(storage, keys) -> list[str]:
+        return ["snapshots/left-behind"]
+
+    async def _containers(store, app_ids) -> list[uuid.UUID]:
+        return list(app_ids)
+
+    async def _published(app_ids, *, client=None) -> list[uuid.UUID]:
+        return list(app_ids)
+
+    async def _repos(app_ids, *, config, transport=None) -> list[str]:
+        return ["app-still-in-the-registry"]
+
+    for name, double in (
+        ("sweep_blobs", _blobs),
+        ("sweep_app_containers", _containers),
+        ("sweep_published_apps", _published),
+        ("sweep_app_repositories", _repos),
+    ):
+        monkeypatch.setattr(f"src.services.appserving.governance.{name}", double)
+
+    survivors = await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    assert survivors == [
+        ("blob", "snapshots/left-behind"),
+        ("app_container", str(row.id)),
+        ("published_app", str(row.id)),
+        ("registry_repository", "app-still-in-the-registry"),
+    ]
+
+
+async def test_hard_delete_records_a_database_that_outlived_it(
+    client, db_session, app, monkeypatch
+) -> None:
+    """★ A SURVIVING DATABASE IS ON THE RECORD (U22/R7), on the harsher lever too.
+
+    `salt_the_earth` answers whether the earth is actually salted, and this route discarded
+    that answer — so an administrator could destroy somebody else's app, the drop could fail,
+    and a copy of the citizen's data would stay on the cluster with nothing written down.
+    Nothing automatic collects it either: `appdb/reconcile.py` is operator-invoked and, by its
+    own docstring, report-only. The route still answers `{"ok": true}` — the delete DID happen,
+    and the citizen has no notification path to be told otherwise (D18)."""
+    _wire_storage(app)
+    owner = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, owner.id)
+    row = await AppRegistryFactory.create(
+        db_session, user_id=owner.id, project_id=project.id, **_pending()
+    )
+    db_session.add(
+        ProjectDatabase(
+            project_id=project.id,
+            db_name="bialdb_stubborn",
+            role_name="bialrole_stubborn",
+            password_encrypted="not-a-real-token",
+        )
+    )
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    async def _refuses_to_salt(*, db_name: str, role_name: str) -> bool:
+        return False
+
+    monkeypatch.setattr("src.api.v1.admin.router.salt_the_earth", _refuses_to_salt)
+
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={"reason": "Owner left the organisation and asked for the app to be destroyed"},
+    )
+
+    assert resp.json() == {"ok": True}  # the delete happened; the leak is not the citizen's news
+    recorded = (
+        await db_session.execute(
+            sa.select(AuditLog.detail).where(
+                AuditLog.action == "project:teardown-incomplete",
+                AuditLog.resource_id == str(project.id),
+            )
+        )
+    ).scalar_one()
+    assert recorded == {
+        "count": 1,
+        "survived": [{"artefact": "app_database", "id": "bialdb_stubborn"}],
+        # ★ AND IT IS FINDABLE. The row's `resource_id` is the PROJECT, but `read_audit` looks
+        # up by app id — `resource_id == app_id` OR `detail["appId"]` — so without this field
+        # the record would exist and never appear in the drawer an administrator opens right
+        # after the delete, which is the only place they would think to look. Proved through
+        # the ROUTE below, not by re-reading the table.
+        "appId": str(row.id),
+    }
+    events = (await client.get(f"/v1/admin/apps/{row.id}/audit", headers=headers)).json()
+    assert "project:teardown-incomplete" in {event["action"] for event in events["events"]}
+
+
+async def test_hard_delete_writes_no_teardown_row_when_nothing_survived(
+    client, db_session, app
+) -> None:
+    """The row exists to be read, so a clean delete must not file one. Paired with the test
+    above so `toBeNull`-shaped absence is never the only thing asserted: that one proves the
+    row appears, this one proves it is not filed unconditionally."""
+    _wire_storage(app)
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={"reason": "Duplicate app created in error during onboarding, owner asked for it"},
+    )
+
+    assert resp.json() == {"ok": True}
+    filed = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(AuditLog)
+            .where(AuditLog.action == "project:teardown-incomplete")
+        )
+    ).scalar_one()
+    assert filed == 0
 
 
 # --- The storage-off contract (FIX 9) ------------------------------------------

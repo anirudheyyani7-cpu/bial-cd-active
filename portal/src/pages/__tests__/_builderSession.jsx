@@ -63,11 +63,11 @@ export const ENDED_RESP = { sessionId: 's1', status: 'ended' }
 
 /** Assemble a BuildSessionClient from a per-file `h` bag of vi.fn()s.
  *
- *  FOUR MEMBERS NOW. `acquireLock` / `releaseLock` went in U28 with the keep-alive loop that was
- *  their only caller, and `start` has gone the same way: the build lives inside the turn's own
- *  transaction, so nothing provisions a C3 session from the browser. `forceEnd` has no control on
- *  any surface either — the block banner's button went with the banner — but it stays, because it
- *  is the only thing that settles a session stuck mid-`building`.
+ *  THREE MEMBERS NOW. `acquireLock` / `releaseLock` went in U28 with the keep-alive loop that was
+ *  their only caller; `start` went the same way, because the build lives inside the turn's own
+ *  transaction and nothing provisions a C3 session from the browser; and `forceEnd` went in U33
+ *  with the route it spoke to — its one control was the block banner's button, deleted with the
+ *  banner, so no surface had been able to reach the kill switch for two units.
  *
  *  `utils/__tests__/buildSessionApi.test.ts` pins this member set against the real client, so a
  *  bag that drifts out of step with it is caught rather than silently mocking nothing. */
@@ -76,7 +76,6 @@ export function makeClient(h) {
     relaunchPreview: h.relaunchPreview,
     stop: h.stop,
     getStatus: h.getStatus,
-    forceEnd: h.forceEnd,
   }
 }
 
@@ -84,7 +83,6 @@ export function makeClient(h) {
 export function primeClient(h) {
   h.stop.mockResolvedValue(ENDED_RESP)
   h.getStatus.mockResolvedValue(statusResp())
-  h.forceEnd.mockResolvedValue(ENDED_RESP)
 }
 
 // ─── U13: the turn half (streamed plan + the options card) ───────────────────

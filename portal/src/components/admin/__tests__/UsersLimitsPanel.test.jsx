@@ -15,7 +15,11 @@ const h = vi.hoisted(() => ({
 }))
 vi.mock('../../../utils/admin', () => h)
 
-const DEFAULTS = { dailyTokenLimit: 100000, contextSoftLimit: 150000, contextHardLimit: 200000 }
+// The server's own defaults (`services/usage/limits.py`), so the modal is exercised against
+// the numbers an administrator really opens it on. The two per-conversation figures moved
+// with the corrected model window; a mock left at the old pair would have this file passing
+// against a form nobody uses.
+const DEFAULTS = { dailyTokenLimit: 100000, contextSoftLimit: 375000, contextHardLimit: 500000 }
 
 const user = (over = {}) => ({
   userId: over.userId || 'u1',
@@ -312,7 +316,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     // placeholder that ignored `defaultValue` and always rendered `fmt(0)` — a plausible
     // "silently reverted later" mistake this test exists to catch — would pass the assertion
     // above by coincidence but fail this one, which pins the real default actually rendering.
-    expect(screen.getByTestId('limit-soft').placeholder).toBe('150,000 (default)')
+    expect(screen.getByTestId('limit-soft').placeholder).toBe('375,000 (default)')
   })
 })
 
@@ -741,8 +745,8 @@ describe('UsersLimitsPanel — the per-conversation hints describe what actually
   it('the max hint says the server refuses, and its field writes contextHardLimit', async () => {
     h.updateUserLimits.mockResolvedValue({
       userId: 'u1',
-      limits: { dailyTokenLimit: null, contextSoftLimit: null, contextHardLimit: 180000 },
-      effectiveLimits: { ...DEFAULTS, contextHardLimit: 180000 },
+      limits: { dailyTokenLimit: null, contextSoftLimit: null, contextHardLimit: 480000 },
+      effectiveLimits: { ...DEFAULTS, contextHardLimit: 480000 },
     })
     await openEditor()
 
@@ -752,31 +756,32 @@ describe('UsersLimitsPanel — the per-conversation hints describe what actually
     expect(hint.textContent).toMatch(/server refuses/i)
     expect(hint.textContent).toMatch(/start a new chat/i)
     // BOTH ENDS OF THE RANGE. The hint used to name only the ceiling, because only the ceiling
-    // was enforced — a max below the system-prompt reserve was accepted and then refused every
-    // chat that person opened, including a brand-new empty one, with a message telling them to
-    // start a new chat. The floor is now the first thing an administrator reads.
-    expect(hint.textContent).toMatch(/Between 16,000 and 200,000 \(model window\)/)
+    // was enforced — a max below what a single run costs before anyone types was accepted, and
+    // that person then could not get past the first message in any chat, with a message telling
+    // them to start a new chat. The floor is now the first thing an administrator reads.
+    expect(hint.textContent).toMatch(/Between 16,000 and 1,000,000 \(model window\)/)
 
-    // 180,000 rather than something smaller: the modal refuses a max at or below the warn
-    // threshold, and the default warn is 150,000. That refusal is its own existing behaviour;
+    // 480,000 rather than something smaller: the modal refuses a max at or below the warn
+    // threshold, and the default warn is 375,000. That refusal is its own existing behaviour;
     // tripping it here would prove nothing about the wiring this test is for.
     fireEvent.click(screen.getByTestId('usedefault-hard'))
-    fireEvent.change(screen.getByTestId('limit-hard'), { target: { value: '180000' } })
+    fireEvent.change(screen.getByTestId('limit-hard'), { target: { value: '480000' } })
     fireEvent.click(screen.getByTestId('save-limits'))
     await waitFor(() =>
       expect(h.updateUserLimits).toHaveBeenCalledWith('u1', {
         dailyTokenLimit: null,
         contextSoftLimit: null,
-        contextHardLimit: 180000,
+        contextHardLimit: 480000,
       }),
     )
   })
 
   it('a max below the floor is refused before it is submitted, and the floor is named', async () => {
     // THE FORM STOPS IT, and the server stops it too — this is the half that means an
-    // administrator is told BEFORE they save rather than after. Below the floor the context
-    // gate refuses every chat that person opens, because it charges the system-prompt reserve
-    // before it has counted a word, and the sentence they read tells them to start a new chat.
+    // administrator is told BEFORE they save rather than after. Below the floor that person
+    // cannot get past the first message in any chat: a run's own system prompt and tool schemas
+    // already exceed the ceiling, the provider counts them in the first turn it reports, and
+    // the sentence they read tells them to start a new chat.
     //
     // Mutation check: delete the `hardNum < CONTEXT_HARD_FLOOR` arm from `submit` and this goes
     // red on the second assertion — the panel would call the API instead of refusing.
@@ -796,6 +801,40 @@ describe('UsersLimitsPanel — the per-conversation hints describe what actually
     fireEvent.change(screen.getByTestId('limit-hard'), { target: { value: '16000' } })
     fireEvent.click(screen.getByTestId('save-limits'))
     await waitFor(() => expect(h.updateUserLimits).toHaveBeenCalled())
+  })
+
+  it('a max past the model window is refused, and the ceiling the server serves is not', async () => {
+    // THE HAND-KEPT TWIN, PINNED FROM BOTH SIDES. `MODEL_CONTEXT_WINDOW` in this panel is a copy
+    // of the server's, and the form VALIDATES against it — so a copy left behind at the old
+    // 200,000 refuses a per-conversation max the server would happily have stored, and tells an
+    // administrator the model cannot do something it demonstrably does.
+    //
+    // The refusal half alone would pass against a panel stuck at any number at all, which is why
+    // the acceptance half is here: 500,000 is the ceiling the server now defaults to, and the
+    // panel has to be able to reach it.
+    h.updateUserLimits.mockResolvedValue({
+      userId: 'u1',
+      limits: { dailyTokenLimit: null, contextSoftLimit: null, contextHardLimit: 500000 },
+      effectiveLimits: { ...DEFAULTS, contextHardLimit: 500000 },
+    })
+    await openEditor()
+
+    fireEvent.click(screen.getByTestId('usedefault-hard'))
+    fireEvent.change(screen.getByTestId('limit-hard'), { target: { value: '1200000' } })
+    fireEvent.click(screen.getByTestId('save-limits'))
+
+    expect(await screen.findByText(/can't exceed 1,000,000/i)).toBeTruthy()
+    expect(h.updateUserLimits).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByTestId('limit-hard'), { target: { value: '500000' } })
+    fireEvent.click(screen.getByTestId('save-limits'))
+    await waitFor(() =>
+      expect(h.updateUserLimits).toHaveBeenCalledWith('u1', {
+        dailyTokenLimit: null,
+        contextSoftLimit: null,
+        contextHardLimit: 500000,
+      }),
+    )
   })
 
   it('the propagation note no longer lumps the two per-conversation limits together', async () => {

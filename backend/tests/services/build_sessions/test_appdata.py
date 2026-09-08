@@ -11,8 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.core.errors import AppApiError
-from src.db.models.app_registry import AppRegistry
-from src.services.build_sessions.appdata import build_app_env, resolve_app_for_project
+from src.db.models.app_registry import AppRegistry, AppStatus
+from src.services.build_sessions.appdata import (
+    APP_SWITCHED_OFF_CODE,
+    build_app_env,
+    resolve_app_for_project,
+)
 from src.services.sandbox import SandboxNotConfiguredError
 from src.services.sandbox.config import SandboxConfig
 from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
@@ -131,6 +135,83 @@ async def test_unrelated_integrity_error_propagates(
     monkeypatch.setattr(db_session, "execute", boom_other)
     with pytest.raises(IntegrityError):
         await resolve_app_for_project(db_session, user.id, project.id)
+
+
+# --- the switched-off gate (U31, R41a, #163) -------------------------------------------
+#
+# ASSERTED HERE, AT THE SITE THAT DECIDES IT (`.claude/rules/testing.md`). This function is
+# the ONE gate: `relaunch_preview` (the explicit start control) and `ensure_sandbox` — which
+# the turn engine routes EVERY turn kind through — both resolve the project's app through it,
+# so one refusal here closes both doors. `test_manager.py` pins that they really do arrive
+# here; these pin the decision itself.
+
+
+async def test_a_switched_off_app_refuses_to_resolve(db_session: AsyncSession) -> None:
+    user = await UserFactory.create(db_session, email="killed@rvaiglobal.com")
+    project = await ProjectFactory.create(db_session, user.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=project.id, status=AppStatus.DISABLED
+    )
+    with pytest.raises(AppApiError) as exc:
+        await resolve_app_for_project(db_session, user.id, project.id)
+    assert exc.value.status_code == 409
+    # The machine-readable code the browser branches on: this refusal shares a status family
+    # with the workspace CONFLICTS and has a different cause and no remedy to retry.
+    assert exc.value.code == APP_SWITCHED_OFF_CODE
+    # The sentence the citizen reads says what they cannot do, and says it WITHOUT mentioning
+    # publishing — a never-published draft can be switched off too (#163), and its owner
+    # learns nothing from being told that publishing is blocked.
+    assert "cannot make changes" in exc.value.message
+    assert "publish" not in exc.value.message.lower()
+
+
+@pytest.mark.parametrize(
+    "status", [AppStatus.DRAFT, AppStatus.PENDING, AppStatus.APPROVED, AppStatus.REJECTED]
+)
+async def test_every_other_status_still_resolves(
+    db_session: AsyncSession, status: AppStatus
+) -> None:
+    """The gate is narrow on purpose: DISABLED is the only status that stops the workspace.
+
+    A pending app is mid-review and its owner keeps working; a rejected one is being fixed,
+    which is the whole point of a rejection note. Widening this would take the workspace away
+    from the two groups most likely to need it.
+    """
+    user = await UserFactory.create(db_session, email=f"ok-{status.value}@rvaiglobal.com")
+    project = await ProjectFactory.create(db_session, user.id)
+    row = await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=project.id, status=status
+    )
+    assert await resolve_app_for_project(db_session, user.id, project.id) == row.id
+
+
+@pytest.mark.route_rollback
+async def test_the_refused_resolve_leaves_the_row_alone(db_session: AsyncSession) -> None:
+    """A refusal is not a write. The upsert's DO-UPDATE bumps `updated_at` before the status
+    comes back, and the caller owns the commit — every one of them raises straight past it —
+    so nothing the refused request touched may survive. Rolled back here the way `get_db`
+    rolls it back in a request."""
+    user = await UserFactory.create(db_session, email="killed2@rvaiglobal.com")
+    project = await ProjectFactory.create(db_session, user.id)
+    row = await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=project.id, status=AppStatus.DISABLED
+    )
+    await db_session.commit()
+    # Re-read rather than project off the just-inserted object: `updated_at` is a server
+    # default, and a new row has not loaded it yet. The id is held in a plain local because
+    # the rollback below expires every instance attribute.
+    await db_session.refresh(row)
+    app_id, stamped = row.id, row.updated_at
+
+    with pytest.raises(AppApiError):
+        await resolve_app_for_project(db_session, user.id, project.id)
+    await db_session.rollback()
+
+    fresh = await db_session.get(AppRegistry, app_id)
+    assert fresh is not None
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED
+    assert fresh.updated_at == stamped  # the speculative bump never landed
 
 
 def test_build_app_env_normalizes_portal_origin(monkeypatch: pytest.MonkeyPatch) -> None:

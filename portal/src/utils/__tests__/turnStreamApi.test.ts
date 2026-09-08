@@ -360,6 +360,35 @@ describe('startTurn', () => {
     })
   })
 
+  it('★ carries the occupancy the server admitted on, verbatim', async () => {
+    // #194. `contextTokens` is the RAW prompt count the provider reported — cache-inclusive, and
+    // never a cost-weighted spend, which for a 97-99% cached conversation would be a tenth of
+    // it. It arrives on the send the citizen was already making; nothing sizes a message before
+    // it is sent. Passed through untouched, because the moment this client adjusts the number it
+    // is estimating again.
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ turnId: 't9', contextTokens: 412_345 }), { status: 202 })
+    )
+
+    const result = await startTurn('c1', { text: 'hello' }, { fetchImpl: fetchFn })
+
+    expect(result.contextTokens).toBe(412_345)
+  })
+
+  it('reads a missing or null occupancy as unmeasured, never as zero', async () => {
+    // `null` and `0` are different claims: `0` says this chat is empty and would be acted on.
+    // An older server sends neither field, which means the same thing — unknown.
+    const absent = vi.fn(async () => new Response(JSON.stringify({ turnId: 't9' }), { status: 202 }))
+    const explicit = vi.fn(async () =>
+      new Response(JSON.stringify({ turnId: 't9', contextTokens: null }), { status: 202 })
+    )
+
+    expect((await startTurn('c1', { text: 'hi' }, { fetchImpl: absent })).contextTokens).toBeNull()
+    expect(
+      (await startTurn('c1', { text: 'hi' }, { fetchImpl: explicit })).contextTokens
+    ).toBeNull()
+  })
+
   it("binds a new chat's KIND into the create block on a first message", async () => {
     // RELOCATED HERE (plan 001, unit 6) from the retired `createConversation` / `createBuild`
     // wrappers' own tests. Those made a `POST /conversations` round trip of their own and pinned

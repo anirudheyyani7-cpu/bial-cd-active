@@ -11,7 +11,7 @@
  *
  * ═══ WHAT TRAVELS ON IT, AND NOTHING ELSE ═══
  *
- *  1. the resolved preview address and its status      (`utils/previewAddress.ts`)
+ *  1. the resolved preview address, its status and its liveness  (`utils/previewAddress.ts`)
  *  2. the pane's view — visibility and the pane's own pass-through props
  *  3. the reclaim dialog's open state
  *  4. the tri-state save state
@@ -96,7 +96,7 @@ function createCell<T>(initial: T, equals: (a: T, b: T) => boolean = Object.is):
 }
 
 const sameAddress = (a: WorkspaceAddress, b: WorkspaceAddress) =>
-  a.url === b.url && a.status === b.status && a.projectId === b.projectId
+  a.url === b.url && a.status === b.status && a.serving === b.serving && a.projectId === b.projectId
 
 /**
  * VALUE-COMPARED, for the same reason the address is. The rail's flags are rebuilt on every render
@@ -140,9 +140,18 @@ export interface PaneView {
      could never fire and the session state above it could never move: three of the four were
      published as constants on both surfaces already. `lastBuildFailed` had to leave here and there
      in ONE change, which is exactly what `UnacceptedPaneProps` below exists to force. */
+  /* `restoredFromFailedBuild` IS GONE, and so is its renderer (U7a/R24). It fed one chip drawn
+     over the framed app's own navigation, both publishers hardcoded it `false`, and the chip is
+     deleted — so the field described a claim nothing could make to a renderer that no longer
+     exists. `#75` stays open and needs a NEW home for that notice (the toolbar row, or a
+     transcript line); when it gets one, the field comes back beside it rather than here. */
+  /* `completedLive` HAS MOVED ONTO THE ADDRESS, as `serving` (U2, `#96`/`#199`/`#200`). It was the
+     one field on this view that decided whether the frame stayed MOUNTED, which is why the host
+     had to hold its last value across an unmount — a pane field cleared on a leave was tearing
+     down an app the server was still serving. Liveness is a fact about what is framed, so it rides
+     on the address cell, which is KEPT across an unmount by design; the hold, and the hazard it was
+     written against, are both gone with it. Nothing on THIS view can unmount the frame any more. */
   /** Project-scoped: the project's one workspace and its restore path. */
-  restoredFromFailedBuild: boolean
-  completedLive: boolean
   hasSavedBuild: boolean | null
   previewState: PreviewLifeState | null
   occupyingProjectName: string | null
@@ -357,7 +366,7 @@ export interface WorkspaceAddress extends PreviewAddress {
   projectId: string | null
 }
 
-export const NO_ADDRESS: WorkspaceAddress = { url: null, status: null, projectId: null }
+export const NO_ADDRESS: WorkspaceAddress = { url: null, status: null, serving: false, projectId: null }
 
 export const NO_RAIL: RailSlot = { mode: null, stacked: false, collapsed: false }
 
@@ -595,7 +604,10 @@ export function useWorkspaceActions(): () => WorkspaceActions {
 //   address    KEPT     — R8. The router unmounts the conversation on a move to the project
 //                         screen; clearing here would destroy the running app on the one
 //                         transition the requirement most obviously covers. Bounded by the
-//                         project instead (see `useWorkspaceAddress`).
+//                         project instead (see `useWorkspaceAddress`). This is also why LIVENESS
+//                         belongs on this cell rather than on the pane view: a fact that decides
+//                         whether the frame stays mounted has to survive the same leave the URL
+//                         does, or the two disagree on exactly the transition R8 is about.
 //   project    KEPT     — the cell must not go blank between an unmounting surface and the one
 //                         replacing it, because the next publisher's address is judged against
 //                         it. Note what KEPT does NOT buy: after a move to a surface that
@@ -710,7 +722,7 @@ export function usePublishAddress(address: PreviewAddress, projectId: string | n
   if (!saysNothing) hasStanding.current = true
   usePublish(
     channel?.address,
-    { url: address.url, status: address.status, projectId },
+    { url: address.url, status: address.status, serving: address.serving, projectId },
     undefined,
     saysNothing && !hasStanding.current,
   )

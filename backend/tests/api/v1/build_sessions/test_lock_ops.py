@@ -1,11 +1,15 @@
-"""U6 — the surviving lock op (`force-end`) + the superadmin internal/reap (owner-scoping:
-404 everywhere except the one force-end 403).
+"""U6 — the superadmin `internal/reap` sweep: RBAC, idempotence, audit, and its 503s.
 
-U28 retired `acquire` / `renew` / `release` / `heartbeat`, along with the tests that were
-about them specifically (their happy path, the renew-a-lost-lock 409, the acquire-vs-active
-409, and their shared Redis-outage/Redis-unconfigured coverage): nothing called those routes
-— the portal's keep-alive loop that was their only caller was itself deleted back in U13. The
-reap half of this suite is untouched below."""
+THERE ARE NO LOCK OPS LEFT, and this file's name outlived them. U28 retired `acquire` / `renew`
+/ `release` / `heartbeat` along with the tests that were about them specifically (their happy
+path, the renew-a-lost-lock 409, the acquire-vs-active 409, and their shared
+Redis-outage/Redis-unconfigured coverage): nothing called those routes — the portal's keep-alive
+loop that was their only caller was itself deleted back in U13. U33 took the last one standing,
+`POST /{session_id}/lock/force-end`, which had had no caller on any surface since the block
+banner's Force-end button went; its two tests here (the owner/non-owner/unknown matrix and the
+404-before-Redis regression) went with the route, because a deleted route 404s every caller and
+neither test could tell that from the behaviour it was written to pin. The reap half of this
+suite is untouched below."""
 
 from __future__ import annotations
 
@@ -18,7 +22,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps_rbac import superadmin_allowlist
-from src.api.v1.build_sessions.deps import run_build_dependency
 from src.db.models.audit import AuditLog
 from src.services.redis import (
     BUILD_COORDINATION_UNAVAILABLE_MSG,
@@ -33,55 +36,14 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
-from tests.api.v1.build_sessions.conftest import BlockingBrain, auth_headers, drain
-from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, a_sandbox_name
-
-
-async def _live_session(client, db, wire, email):
-    """Start a session kept live by a BlockingBrain; returns (user, session_id, brain)."""
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
-    user = await UserFactory.create(db, email=email)
-    project = await ProjectFactory.create(db, user.id)
-    r = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert r.status_code == 201
-    return user, r.json()["sessionId"], brain
-
-
-async def test_force_end_owner_200_nonowner_403_unknown_404(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
-) -> None:
-    user, sid, brain = await _live_session(client, db_session, wire, "lk4@rvaiglobal.com")
-    intruder = await UserFactory.create(db_session, email="lk4b@rvaiglobal.com")
-
-    # Non-owner on an EXISTING session -> 403 (the one owner-asserted route).
-    forbidden = await client.post(
-        f"/v1/build-sessions/{sid}/lock/force-end", headers=auth_headers(intruder)
-    )
-    assert forbidden.status_code == 403
-    assert forbidden.json()["error"]["code"] == "build_session_forbidden"
-
-    # Unknown session -> 404.
-    unknown = await client.post(
-        f"/v1/build-sessions/{uuid.uuid4()}/lock/force-end", headers=auth_headers(user)
-    )
-    assert unknown.status_code == 404
-
-    # Owner -> 200 ended.
-    ok = await client.post(f"/v1/build-sessions/{sid}/lock/force-end", headers=auth_headers(user))
-    assert ok.status_code == 200 and ok.json()["status"] == "ended"
-    await drain(wire.manager, sid)
+from tests.api.v1.build_sessions.conftest import auth_headers
+from tests.factories import UserFactory
+from tests.fakes import a_sandbox_name
 
 
 async def test_internal_reap_superadmin_only_and_idempotent(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     citizen = await UserFactory.create(db_session, email="lk5-citizen@rvaiglobal.com")
     admin = await UserFactory.create(db_session, email="lk5-admin@rvaiglobal.com")
     wire.app.dependency_overrides[superadmin_allowlist] = lambda: frozenset({admin.email})
@@ -117,7 +79,6 @@ async def test_internal_reap_is_audited(
 ) -> None:
     # Every superadmin-gated action is audited (ADR-0005): a successful reap writes ONE
     # accountability row with the sweep count in `detail`.
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     admin = await UserFactory.create(db_session, email="lk6-admin@rvaiglobal.com")
     wire.app.dependency_overrides[superadmin_allowlist] = lambda: frozenset({admin.email})
 
@@ -151,8 +112,8 @@ async def test_internal_reap_documents_the_503_in_its_openapi_responses(
     client: AsyncClient,
 ) -> None:
     # The lock-op half of this table used to sit here too (acquire/renew/release/heartbeat all
-    # documented the same 503) and is gone with the routes (U28) — `force-end` never touched
-    # Redis synchronously, so it never documented one. `internal/reap` is what remains.
+    # documented the same 503) and is gone with the routes (U28/U33). `internal/reap` is the
+    # only route left in this file, and the only one that ever documented a 503.
     schema = (await client.get("/openapi.json")).json()
     path = "/v1/build-sessions/internal/reap"
     assert "503" in schema["paths"][path]["post"]["responses"], path
@@ -207,28 +168,3 @@ async def test_internal_reap_is_503_not_500_when_redis_is_not_configured(
     assert resp.json()["error"]["message"] == BUILD_COORDINATION_UNAVAILABLE_MSG
     row = await db_session.scalar(select(AuditLog).where(AuditLog.action == "build_session.reap"))
     assert row is None
-
-
-# --- FIX 1 regression, re-anchored onto force-end (U28) -----------------------------------
-#
-# The Redis-unconfigured 503 half of this section (`_inject_owned_session` +
-# `test_lock_op_is_503_not_500_when_redis_is_not_configured`) is gone WITH the four retired
-# routes — `force-end` never touches Redis synchronously (`manager.force_end` swallows its
-# best-effort Redis call, see `manager.py::_end`), so there is no 503-on-Redis-off case left
-# to anchor on it, and inventing one would test a scenario the surviving route cannot reach.
-#
-# The ownership-before-Redis 404 DOES generalize: `lock_force_end` checks `manager.get(...)`
-# and ownership BEFORE calling `manager.force_end` at all, so a bogus/unowned session id is a
-# 404 even with no Redis configured. Deliberately FIXTURE-FREE (no `fake_redis`): with it bound,
-# `RedisNotConfiguredError` is unreachable BY CONSTRUCTION and this branch could never be tested
-# (`.claude/rules/testing.md`).
-
-
-async def test_force_end_404s_a_bogus_session_before_touching_redis(
-    client: AsyncClient, db_session: AsyncSession, wire
-) -> None:
-    user = await UserFactory.create(db_session, email="lk-404-force-end@x.com")
-    resp = await client.post(
-        f"/v1/build-sessions/{uuid.uuid4()}/lock/force-end", headers=auth_headers(user)
-    )
-    assert resp.status_code == 404

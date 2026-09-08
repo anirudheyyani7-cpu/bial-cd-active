@@ -41,6 +41,7 @@ from src.db.models.app_registry import AppRegistry
 from src.db.models.conversation import Conversation
 from src.db.models.project import Project
 from src.services.conversations import gather_and_delete_conversations
+from src.services.deploy.registry_delete import app_ids_that_could_have_an_image
 from src.services.storage import (
     ObjectStorage,
     all_keys_under,
@@ -63,6 +64,12 @@ class ProjectCascadeCleanup:
 
     blob_keys: list[str]
     app_container_ids: list[uuid.UUID]
+    # THE SUBSET THAT COULD HAVE AN IMAGE IN THE CONTAINER REGISTRY — the apps with a deployment
+    # row. Captured here rather than derived by the caller because `deployments` cascades with
+    # the app, so after the commit the answer is empty for everything. See
+    # `deploy/registry_delete.app_ids_that_could_have_an_image` for why the sweep is narrowed
+    # at all when a delete of an absent repository already succeeds.
+    built_app_ids: list[uuid.UUID]
 
 
 async def delete_project_cascade(
@@ -112,6 +119,9 @@ async def delete_project_cascade(
         .scalars()
         .all()
     )
+    # BEFORE the rows go: `deployments` cascades with the app, so this question has to be asked
+    # while there is still something to ask it about.
+    built_app_ids = await app_ids_that_could_have_an_image(db, app_ids)
     for app_id in app_ids:
         # The app's C4 snapshot bundle lives in the platform store — sweep its blob.
         blob_keys.append(snapshot_key(app_id))
@@ -153,7 +163,9 @@ async def delete_project_cascade(
     # They are plain UUID values (a `select(AppRegistry.id)`, not an ORM attribute), so the
     # caller may read them AFTER its commit without tripping `expire_on_commit` lazy I/O
     # (KD-8) — which is exactly what `resweep_submission_prefixes` needs them for.
-    return ProjectCascadeCleanup(blob_keys=blob_keys, app_container_ids=list(app_ids))
+    return ProjectCascadeCleanup(
+        blob_keys=blob_keys, app_container_ids=list(app_ids), built_app_ids=built_app_ids
+    )
 
 
 async def resweep_submission_prefixes(

@@ -170,6 +170,70 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
+// --- what changes without saying so (R44b/AE9b) ----------------------------------
+
+describe('★ the two things on this page that change silently now announce', () => {
+  // The page already had two working regions — the wait sentence and the dead-bookmark notice —
+  // which is why the sweep that filed #187 counting `[aria-live]` elements was literally right
+  // and practically wrong. What it named and what was genuinely uncovered are these two: the
+  // numbers, and the range caption. A citizen who deletes a project watches "In production" go
+  // from 3 to 4 in silence, and a search rewrites the rows underneath with nothing said about
+  // how many there now are.
+
+  it('announces the three numbers, and the region is mounted before they arrive', async () => {
+    let resolve: (c: typeof COUNTS) => void = () => {}
+    h.listProjectCounts.mockReturnValue(new Promise((r) => (resolve = r)))
+
+    renderPage()
+
+    // MOUNTED FIRST. A region inserted together with its text is missed entirely by several
+    // reader-and-browser combinations — the rule the wait region above it already states — so
+    // the region has to exist while the numbers are still skeletons.
+    const region = screen.getByTestId('projects-counts')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    expect(region.getAttribute('role')).toBe('status')
+    expect(region.textContent).not.toContain('7')
+
+    resolve({ inProduction: 7, totalApplications: 9, inPipeline: 2 })
+
+    // …and the numbers land INSIDE it, so the change is what gets read.
+    await waitFor(() => expect(screen.getByTestId('projects-counts').textContent).toContain('7'))
+    expect(screen.getByTestId('projects-counts').textContent).toContain('In production')
+  })
+
+  it('keeps the region when the counts fail cold, rather than swapping it out', async () => {
+    // The counts have two arms and both swap in and out. A region inside the ternary would
+    // arrive with its own content on whichever arm won — which is the same defect as not
+    // having one.
+    h.listProjectCounts.mockRejectedValue(new Error('nope'))
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText(/couldn’t load your counts/i)).toBeTruthy())
+    const region = screen.getByTestId('projects-counts')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    expect(region.textContent).toContain('Couldn’t load your counts')
+  })
+
+  it('announces the range caption, and it really does change', async () => {
+    h.listProjects.mockResolvedValue(
+      page([mkProject('p1', 'One'), mkProject('p2', 'Two')], { total: 14, totalPages: 2, pageSize: 8 }),
+    )
+    renderPage()
+
+    const range = await screen.findByTestId('projects-range')
+    expect(range.getAttribute('aria-live')).toBe('polite')
+    const before = range.textContent
+    expect(before).toContain('of 14')
+
+    // PAIRED WITH A REAL CHANGE, so a static page cannot pass this: the caption has to say
+    // something different after the search, not merely carry the attribute.
+    h.listProjects.mockResolvedValue(page([mkProject('p1', 'One')], { total: 1, totalPages: 1 }))
+    fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'One' } })
+    await waitFor(() => expect(screen.getByTestId('projects-range').textContent).not.toBe(before))
+    expect(screen.getByTestId('projects-range').textContent).toContain('of 1')
+  })
+})
+
 // --- the three numbers ---------------------------------------------------------
 
 describe('the dashboard strip', () => {
@@ -610,10 +674,17 @@ describe('create and delete', () => {
     expect(screen.queryByRole('button', { name: '10' })).toBeNull()
   })
 
-  it('deleting the last row on a page does not flash "Nothing here yet"', async () => {
-    // The optimistic removal empties `items` while the request is in flight, and that
-    // request drops a database. "Nothing here yet" is a claim about the ACCOUNT, so
-    // showing it to someone with 40 projects for the length of a round trip is a lie.
+  it('★ the row leaves when the cascade returns, not when the button is pressed', async () => {
+    // U23/AE1a. The row used to be filtered out of `items` one line ABOVE the request, so a
+    // citizen watched their project vanish while the server was still dropping its database —
+    // and if the drop failed the row came back under them. A completed delete the platform has
+    // not performed is the one thing the sentence they agreed to must not show them.
+    //
+    // The dialog is what says "this is happening": it stays open and busy for the whole round
+    // trip, which is real work — a force-dropped database, a blob sweep, a container teardown.
+    //
+    // And "Nothing here yet" is a claim about the ACCOUNT, so it must not appear at any point
+    // in this sequence for someone holding 40 projects.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 40, totalPages: 5 }))
     let release: () => void = () => {}
     h.deleteProject.mockReturnValue(new Promise<void>((r) => (release = () => r())))
@@ -626,23 +697,28 @@ describe('create and delete', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /delete project/i }))
 
-    await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull()) // optimistic removal
-    expect(screen.queryByTestId('projects-empty')).toBeNull() // ...but not the first-run screen
+    // ★ STILL THERE. The request has not answered, so nothing has been deleted yet, so the
+    // row is exactly where the citizen left it.
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    expect(screen.getByText('Alpha')).toBeTruthy()
+    expect(screen.queryByTestId('projects-empty')).toBeNull() // and not the first-run screen
 
-    // THE DIALOG ITSELF IS STILL OPEN, HERE, WHILE THE ROW IS ALREADY GONE (round-4 finding
-    // 9). It used to close in the same commit as the optimistic removal above — batched
-    // before the request had even been sent — so its own busy state (the spinner, Cancel
-    // disabling) was set and unmounted in one render and could never be observed. The
-    // backend does real work before answering, so this window is not theoretical.
-    expect(screen.getByRole('dialog')).toBeTruthy()
+    // THE DIALOG HOLDS ITS BUSY STATE for the whole round trip (round-4 finding 9). It used to
+    // close in the same commit as the optimistic removal — batched before the request had even
+    // been sent — so the spinner and the disabled Cancel were set and unmounted in one render
+    // and could never be observed.
     expect(screen.getByRole('button', { name: /cancel/i }).hasAttribute('disabled')).toBe(true)
 
+    // The server answers; the refetch is what takes the row.
+    h.listProjects.mockResolvedValue(page([], { total: 39, totalPages: 5 }))
     release()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    // FOCUS LANDS ON THE HEADING, not <body>. The row (and its Delete button, the trigger
-    // Radix would otherwise try to restore focus to) left the DOM well before the dialog
-    // closed, so a detached-node no-op is exactly the failure this proves did not happen
-    // (round-4 finding 2).
+    await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull())
+    expect(screen.queryByTestId('projects-empty')).toBeNull() // 39 projects is not "no projects"
+    // FOCUS LANDS ON THE HEADING, not <body>, and it still has to be sent there explicitly:
+    // the Delete button Radix captured is unmounted by the refetch a beat after the dialog
+    // closes, so restoring onto it would put the keyboard on a control that is removed a
+    // moment later (round-4 finding 2, in its new shape).
     expect(document.activeElement?.textContent).toBe('Your apps')
   })
 

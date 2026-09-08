@@ -115,7 +115,7 @@ class FakeRemover:
 
 class AbsentRemover(FakeRemover):
     """The already-gone container. The real `delete_app` passes `absent_is_none=True`, so a
-    404 from ARM returns None rather than raising — which `sweep_published_apps` counts as
+    404 from ARM returns None rather than raising — which `sweep_published_apps` treats as
     swept. Behaviourally identical to a successful delete here, and that is the point being
     pinned: a non-zero sweep count means "no error", NOT "something was deleted"."""
 
@@ -230,7 +230,7 @@ async def test_happy_path_unpublishes_and_audits(app, client, db_session) -> Non
     assert body["appId"] == str(app_row.id)
     assert body["deploymentId"] == str(deployment.id)
     assert body["unpublishedAt"]
-    # Pins router.py: `swept = await sweep_published_apps([app_id], client=remover)` — revert
+    # Pins router.py: `if await sweep_published_apps([app_id], client=remover):` — revert
     # that call (e.g. skip straight to `store.unpublish`) and this goes to 0.
     assert remover.calls == [app_row.id]
 
@@ -283,7 +283,8 @@ async def test_an_unobserved_teardown_leaves_unpublished_at_unset_and_retry_succ
 ) -> None:
     """A sweep that comes back empty is recorded as UNCONFIRMED, never as failed.
 
-    `sweep_published_apps` collapses every exception into a count, so a zero covers both a
+    `sweep_published_apps` collapses every exception into a survivor entry, so a non-empty
+    list covers both a
     terminal `AcaError` (ARM refused; the container really is still up) and an
     `AcaTransientError` raised by `await_lro` on ceiling expiry — whose docstring says the
     outcome is genuinely unknown because "the operation may still land". The second case is
@@ -664,7 +665,7 @@ async def test_the_attempt_is_audited_before_azure_is_touched(app, client, db_se
 
 async def test_an_already_absent_container_still_settles_the_row(app, client, db_session) -> None:
     """`delete_app` passes `absent_is_none=True`, so ARM's 404 returns None instead of
-    raising and `sweep_published_apps` counts it as swept. This is what makes retry converge
+    raising and `sweep_published_apps` reports no survivor. This is what makes retry converge
     after a partial failure — and it is also why a non-zero count means "no error", not
     "something was deleted". The route treats the two identically on purpose: its job is to
     guarantee absence, not to prove it personally caused it."""

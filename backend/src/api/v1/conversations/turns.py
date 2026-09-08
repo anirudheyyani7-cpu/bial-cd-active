@@ -56,6 +56,10 @@ from src.db.models.project import Project
 from src.db.models.user import User
 from src.schemas import AUTH_401, CamelModel, DailyTokenLimitBody, ErrorEnvelope, error_responses
 from src.services.agent.mode_prompts import PromptContext
+from src.services.attachments.materialize import (
+    AttachmentDelivery,
+    code_lane_attachments,
+)
 from src.services.build_sessions import SandboxReclaimBlockedError
 from src.services.build_sessions.appdata import APP_SWITCHED_OFF, APP_SWITCHED_OFF_CODE
 from src.services.build_sessions.manager import SessionManager
@@ -213,15 +217,20 @@ async def start_conversation_turn(
     visibility: MessageVisibility = MessageVisibility.VISIBLE,
     meta: dict[str, object] | None = None,
     expects_mutation: bool = False,
+    attachments: AttachmentDelivery | None = None,
 ) -> uuid.UUID:
     """Persist the user turn and start the run — ONE expression, two readers.
 
     `POST /turns` and `Build it` differ only in prompt origin, visibility, and whether a file
     change is OWED; the rest (pre-run write, engine claim, conflict mappings) is identical, so
     one copy stops two guards drifting apart. `visibility=HIDDEN` puts Build-it's machine seed
-    in model history without the citizen seeing it (`load_history` ignores it, `project_rows`
+    in model history without the citizen seeing it (`load_history` ignores it, the projection
     skips it). `expects_mutation` travels to the engine: no file change makes a Build-it turn a
-    FAILED build but a Write turn just an answered question — only the caller knows which."""
+    FAILED build but a Write turn just an answered question — only the caller knows which.
+
+    `attachments` is the conversation's code-lane files (#214 R20). Only `POST /turns` passes
+    one; Build-it's `None` is a fact rather than a gap, because that route CREATES the Build
+    chat it starts — there is no conversation yet for a file to have been attached to."""
 
     async def persist_user_turn() -> None:
         await append_batch(
@@ -251,6 +260,7 @@ async def start_conversation_turn(
             manager=manager,
             sandbox_client=sandbox,
             expects_mutation=expects_mutation,
+            attachments=attachments,
         )
     except ConversationBusyError:
         raise AppApiError(409, "A turn is already running for this conversation.") from None
@@ -466,7 +476,37 @@ async def start_turn(
             raise AppApiError(400, str(exc)) from None
 
     history = await _history()
-    binaries = await resolve_binaries(db, storage, user.id, body.message.attachment_ids)
+    # THE TWO LANES SPLIT HERE, AND THIS IS THE ONLY PLACE THAT KNOWS BOTH (#214 R20/R11a).
+    #
+    # One query answers both halves. The files it returns are the ones the platform must write
+    # into the container and name to the agent; their ids are exactly the ids that must NOT reach
+    # `resolve_binaries`, because the rehydrator behind it re-asserts the model allowlist — which
+    # was deliberately not widened — and would refuse a perfectly good spreadsheet as "no longer
+    # matching its declared type". Asking the question twice is how those two answers drift apart.
+    #
+    # SCOPED TO THE CONVERSATION, NOT TO THIS MESSAGE, for a reason that only shows up on the
+    # second turn: `/workspace/attachments` is a sibling of the app tree so that no snapshot or
+    # restore carries it, which means a recycled container comes back without it. The message's
+    # own ids are passed as well, so a row whose conversation link was never stamped is still
+    # found (the column is nullable on purpose).
+    code_lane = await code_lane_attachments(
+        db,
+        user_id=user.id,
+        conversation_id=conversation_id,
+        attachment_ids=body.message.attachment_ids,
+    )
+    delivery = (
+        AttachmentDelivery(files=tuple(code_lane), storage=storage)
+        if code_lane and storage is not None
+        else None
+    )
+    binaries = await resolve_binaries(
+        db,
+        storage,
+        user.id,
+        body.message.attachment_ids,
+        skip={file.attachment_id for file in code_lane},
+    )
     prompt = prompt_content(body.message, binaries)
 
     # The per-conversation guardrail — STILL ABOVE THE FIRST WRITE, which is what the ordering
@@ -611,6 +651,7 @@ async def start_turn(
         factory=factory,
         manager=manager,
         sandbox=sandbox,
+        attachments=delivery,
     )
     # `None` rather than `0` for a conversation nobody has measured — see the field's own note.
     # A brand-new chat is UNMEASURED, not empty, and the meter stays silent on the difference.

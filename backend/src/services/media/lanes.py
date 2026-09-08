@@ -60,6 +60,31 @@ _DELIMITED: Final[dict[str, tuple[str, ...]]] = {
 
 CODE_LANE_MEDIA: Final[frozenset[str]] = frozenset(_OPC_PART) | frozenset(_DELIMITED)
 
+# THE SUFFIX THE READER DISPATCHES ON — not a display detail (#214 R20a).
+#
+# `read_attachment.py` picks its reader from `path.suffix.lower()` and from nothing else, so the
+# name a file is written under inside the container decides whether it can be read at all. Two
+# admitted files would otherwise arrive unreadable: an `.xlsx` whose citizen-supplied name carries
+# no extension (the OPC check reads the BYTES, and never looks at the name), and a `movements.tab`
+# — a name the TSV door deliberately accepts because it is a real TSV convention, and a suffix the
+# reader's table does not carry.
+#
+# So the media type, which was verified at the door, names the file. The citizen's own name is
+# still what they are shown and what the agent is told; this is the on-disk spelling underneath it.
+_SUFFIX_FOR: Final[dict[str, str]] = {
+    WORD_MEDIA_TYPE: ".docx",
+    EXCEL_MEDIA_TYPE: ".xlsx",
+    PPTX_MEDIA_TYPE: ".pptx",
+    CSV_MEDIA_TYPE: ".csv",
+    TSV_MEDIA_TYPE: ".tsv",
+}
+
+
+def canonical_suffix(media_type: str) -> str:
+    """The file extension a code-lane file must be written under, or `""` for anything else."""
+    return _SUFFIX_FOR.get(media_type, "")
+
+
 # An encrypted OOXML file is an OLE2 compound document, not a ZIP: Office wraps the whole encrypted
 # package in one. The signature is fixed and eight bytes long, so a locked file is distinguishable
 # from an ordinary one WITHOUT opening it — which is what makes refusing at the door possible.

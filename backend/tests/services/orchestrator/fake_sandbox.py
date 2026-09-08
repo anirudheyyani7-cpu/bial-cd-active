@@ -69,6 +69,12 @@ workspace was born with."""
 FAKE_SUPERVISOR_TOKEN = "tok_supervisor_SECRET_never_leak_me"  # noqa: S105
 
 
+#: The supervisor's second root, named here rather than imported: `sandbox/supervisor` is a
+#: separate deployable with no shared package. Kept in step with `attachments/materialize`'s
+#: `CONTAINER_ATTACHMENTS_ROOT` and the supervisor's own `ATTACHMENTS`.
+ATTACHMENTS_ROOT = "/workspace/attachments"
+
+
 def _lf(text: str) -> str:
     """LF-normalize like the supervisor does before it touches a file."""
     return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -347,6 +353,15 @@ class FakeSandbox(SandboxClient):
     def _guard_escape(path: str) -> None:
         # The supervisor's 400-on-escape → opaque SandboxError. BRAIN's write guard denies
         # these above the seam, but the fake still models the client-side rejection.
+        #
+        # TWO ROOTS, MIRRORING THE SUPERVISOR'S `_resolve` (#214 R19). A relative path is still
+        # app-relative and is still the only shape any agent tool produces; the attachments root
+        # is reachable ONLY by naming it absolutely, which is the property that keeps an app
+        # containing its own `attachments/` directory resolving where it always did. Without this
+        # arm the fake refuses a write the real supervisor accepts, and the platform's own
+        # attachment placement is untestable against it.
+        if path.startswith(f"{ATTACHMENTS_ROOT}/") and ".." not in path.split("/"):
+            return
         if path.startswith("/") or ".." in path.split("/"):
             raise SandboxError(f"path escapes the workspace: {path}")
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Container, Sequence
 from typing import Annotated
 
 import sqlalchemy as sa
@@ -226,7 +226,12 @@ def history_rehydrator(
 
 
 async def resolve_binaries(
-    db: AsyncSession, storage: ObjectStorage | None, user_id: uuid.UUID, attachment_ids: list[str]
+    db: AsyncSession,
+    storage: ObjectStorage | None,
+    user_id: uuid.UUID,
+    attachment_ids: list[str],
+    *,
+    skip: Container[str] = frozenset(),
 ) -> list[BinaryContent]:
     """Owned attachment refs → base64-backed `BinaryContent` for the model prompt. Rides the
     store's own rehydrator — owner-scoped row, magic re-check, authoritative media type — then
@@ -236,11 +241,26 @@ async def resolve_binaries(
 
     It no longer counts documents. That gate was `MAX_PDF_BLOCKS`, removed by #214 R7c — one
     file count now governs every format, and the room a message needs is checked before it is
-    sent rather than by refusing a second PDF here."""
+    sent rather than by refusing a second PDF here.
+
+    `skip` NAMES THE CODE LANE, AND IT IS APPLIED BEFORE THE REHYDRATOR RATHER THAN AFTER IT
+    (#214 R20). A code-lane file is not refused and not lost — it travels by being written into
+    the workspace, where the shipped reader opens it. But it cannot pass through here on the way:
+    the rehydrator re-asserts `bytes_match_declared`, which answers False for every code-lane type
+    BECAUSE THE MODEL ALLOWLIST WAS DELIBERATELY NOT WIDENED, so a spreadsheet reaching it would
+    come back as "no longer matches its declared type" — a refusal about a file that is completely
+    fine. The caller resolves which ids those are (it has just queried the rows) and names them.
+
+    The route is what knows, rather than this function: the same query answers "which files must
+    be placed in the container" and "which ids must not enter the prompt", and asking twice is how
+    the two answers drift."""
     if not attachment_ids:
         return []
     if storage is None:
         raise AppApiError(503, "File storage is not configured.")
+    attachment_ids = [ref for ref in attachment_ids if ref not in skip]
+    if not attachment_ids:
+        return []
     rehydrate = attachment_rehydrator(db, storage, user_id)
     try:
         resolved = await rehydrate(attachment_ids)
@@ -252,8 +272,7 @@ async def resolve_binaries(
         if not (media_type.startswith(VISION_MEDIA_PREFIX) or media_type == PDF_MEDIA_TYPE):
             raise AppApiError(
                 400,
-                "an attached file of this type cannot be sent to the assistant as a file; "
-                "its extracted text travels with the message instead",
+                "an attached file of this type cannot be sent to the assistant as a file",
             )
         binaries.append(
             BinaryContent(

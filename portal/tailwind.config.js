@@ -147,6 +147,19 @@ export default {
           offeredge: '#CDE9EA',    // …and the box's own border while the offer is live
           offerink: '#0A5C5F',     // the strip's headline — darker than the action teal, on purpose
           offerlock: '#F8FAFC',    // …and the input row's ground while that offer waits to be answered
+          /**
+           * THE AMBER NOTE'S EDGE, from `DateRange` — the hairline round the date popover's
+           * "N days available while you build" strip. Its GROUND is not here: the board sets it
+           * `#FEF3C7`, which this config already owns as `status-amber-bg`, and a second name for
+           * one hex is the drift the `canvas` docblock above exists to prevent.
+           *
+           * THE PLAN ASKED FOR `#FFFBF0` HERE AND THAT IS A MISREADING OF THE BOARD, recorded so
+           * it is not "fixed" back. `#FFFBF0` appears in `DateRange.dc.html` and `OpenIt.dc.html`
+           * twice each and only ever as the ground of a DASHED ANNOTATION CALLOUT — the
+           * designer's margin notes, which are not screens and are not built. `#F0DFC0` appears
+           * exactly once in the whole board set: this border.
+           */
+          noteedge: '#F0DFC0',     // the date popover's amber note border (its ground is status-amber-bg)
         },
         /**
          * The nine status states of `StatusCardStates`, as text / ground / dot triples. Six

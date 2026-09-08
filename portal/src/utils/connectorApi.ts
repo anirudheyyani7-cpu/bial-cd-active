@@ -229,3 +229,258 @@ export async function cancelConnectorRequest(
   if (!res.ok) throw await readApiError(res, 'Failed to cancel your request')
   return toEntry(await res.json())
 }
+
+// --- the project's switch and its days ------------------------------------------
+//
+// A SECOND FAMILY IN THIS MODULE, mirroring `api/v1/connectors/schemas.py`, which splits at the
+// same line and for the same reason. Everything above answers "where does this PERSON stand with
+// this connector"; everything below answers "what does this PROJECT read". `ConnectorStates`
+// draws the two as separate state machines, and that split is why one administrator's answer
+// covers every project somebody owns.
+
+/** How a window is expressed. The wire values of the server's `ConnectorWindowKind` enum. */
+export type ConnectorWindowKind = 'relative' | 'absolute'
+
+/**
+ * What the row actually holds — the pair the citizen picked, BEFORE any clamp.
+ *
+ * Exactly one shape is populated: `days` for a preset, `start` + `end` for a fixed range. It
+ * crosses the wire so `clamped` can be acted on, and it has exactly one reader in this portal:
+ * the popover, which uses it to decide WHICH option is ticked. Nothing renders it as the
+ * project's current window — that is the resolved pair beside it.
+ */
+export interface StoredWindow {
+  days: number | null
+  start: string | null
+  end: string | null
+}
+
+/**
+ * The days one project reads from one connector RIGHT NOW, as `resolve_window` answered.
+ *
+ * EVERY FIELD IS AN ANSWER, NOT AN INPUT (R13). `start`, `end` and `days` are post-clamp, so the
+ * chip and the rail's `Reading N days of flight data` are the same numbers from the same
+ * emitter. Nothing in this portal recomputes any of them, and `ConnectorProjectsPanel.test.tsx`
+ * feeds a resolved window deliberately inconsistent with its stored pair to prove it.
+ *
+ * `earliestDate` AND `latestDate` ARE WHY THE GRID CAN GREY HONESTLY. A browser in Bangalore and
+ * a server in UTC are 5½ hours apart, so a calendar that worked out its own floor would offer a
+ * date the next read refuses. Both ends travel, and both disable dates.
+ *
+ * DATES STAY STRINGS HERE. They are `YYYY-MM-DD` calendar days, not instants, and
+ * `new Date('2026-09-01')` parses as UTC midnight — which is 31 August in every timezone west of
+ * Greenwich. The one place that needs `Date` objects (the month grid) builds them field by field.
+ */
+export interface ConnectorWindow {
+  kind: ConnectorWindowKind
+  start: string
+  end: string
+  /** `(end - start) + 1` AFTER clamping — what the app can actually see. */
+  days: number
+  /** The stored pair aged out of retention or pointed past today, and was moved. */
+  clamped: boolean
+  /** The oldest and newest dates this connector will serve today, inclusive. */
+  earliestDate: string
+  latestDate: string
+  stored: StoredWindow
+}
+
+/** One of the caller's projects, on the drill-down list behind an approved connector row. */
+export interface ConnectorProjectEntry {
+  projectId: string
+  name: string
+  enabled: boolean
+  /** `null` for a project this connector was never switched on in — there is no window to draw. */
+  window: ConnectorWindow | null
+}
+
+/**
+ * Every project the caller owns for one connector, and whether that IS all of them.
+ *
+ * `truncated` is not decoration: nothing bounds a citizen's project count, the server stops at
+ * 200, and a silent prefix would be a list that lies about being the whole list.
+ */
+export interface ConnectorProjectList {
+  projects: ConnectorProjectEntry[]
+  truncated: boolean
+}
+
+/**
+ * What a citizen picks in the popover — the server's discriminated `WindowChoice`.
+ *
+ * Sending one REPLACES the stored window outright; there is no per-field merge. Omitting it from
+ * an update keeps whatever is stored, which is what makes a switch press a one-field call.
+ */
+export type WindowChoice =
+  | { kind: 'relative'; days: number }
+  | { kind: 'absolute'; start: string; end: string }
+
+/**
+ * One registry connector as ONE PROJECT sees it — the rail's DATA row, and the answer every
+ * write returns.
+ *
+ * `enabled` IS THE SWITCH POSITION AND `effectivelyOn` IS WHETHER IT READS. Different facts, both
+ * shipped: the switch renders `enabled`, and anything meaning "this project can see the data"
+ * reads `effectivelyOn`. A client computing `enabled && state === 'approved'` would be a second
+ * home for a conjunction the resolver owns.
+ */
+export interface ProjectConnectorEntry {
+  key: string
+  displayName: string
+  state: ConnectorState
+  /** `pending` only: when this person asked. */
+  askedAt: string | null
+  enabled: boolean
+  effectivelyOn: boolean
+  window: ConnectorWindow | null
+}
+
+/** A required wire boolean. Same strictness as `readString` — a missing one is a contract break. */
+function readBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new ApiError(`The server sent a connector we could not read (${field}).`, 500)
+  }
+  return value
+}
+
+/** A required wire integer. */
+function readNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ApiError(`The server sent a connector we could not read (${field}).`, 500)
+  }
+  return value
+}
+
+/**
+ * A required `YYYY-MM-DD` calendar day.
+ *
+ * THE SHAPE IS CHECKED, NOT JUST THE TYPE, because every consumer of these four fields splits
+ * them on `-` to build a local `Date` without a timezone. A string that is not this shape would
+ * produce an `Invalid Date` three components away from here, where the cause is invisible.
+ */
+function readDate(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new ApiError(`The server sent a connector we could not read (${field}).`, 500)
+  }
+  return value
+}
+
+/** The kind, or a throw — never a fallback, which would render a day count as a date range. */
+function readWindowKind(value: unknown): ConnectorWindowKind {
+  if (value === 'relative' || value === 'absolute') return value
+  throw new ApiError('The server sent a window kind this app does not recognise.', 500)
+}
+
+/** A wire integer that is genuinely nullable (`stored.days` on an absolute row). */
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** A wire date that is genuinely nullable (`stored.start` / `stored.end` on a preset row). */
+function optionalDate(value: unknown): string | null {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null
+}
+
+/** `null` stays `null` — a project with no row has no window, which is not a broken one. */
+function toWindow(value: unknown): ConnectorWindow | null {
+  if (value === null || value === undefined) return null
+  const row = isRecord(value) ? value : {}
+  const stored = isRecord(row.stored) ? row.stored : {}
+  return {
+    kind: readWindowKind(row.kind),
+    start: readDate(row.start, 'window.start'),
+    end: readDate(row.end, 'window.end'),
+    days: readNumber(row.days, 'window.days'),
+    clamped: readBoolean(row.clamped, 'window.clamped'),
+    earliestDate: readDate(row.earliestDate, 'window.earliestDate'),
+    latestDate: readDate(row.latestDate, 'window.latestDate'),
+    stored: {
+      days: optionalNumber(stored.days),
+      start: optionalDate(stored.start),
+      end: optionalDate(stored.end),
+    },
+  }
+}
+
+function toProjectRow(value: unknown): ConnectorProjectEntry {
+  const row = isRecord(value) ? value : {}
+  return {
+    projectId: readString(row.projectId, 'projectId'),
+    name: readString(row.name, 'name'),
+    enabled: readBoolean(row.enabled, 'enabled'),
+    window: toWindow(row.window),
+  }
+}
+
+function toProjectConnector(value: unknown): ProjectConnectorEntry {
+  const row = isRecord(value) ? value : {}
+  return {
+    key: readString(row.key, 'key'),
+    displayName: readString(row.displayName, 'displayName'),
+    state: readState(row.state),
+    askedAt: optionalString(row.askedAt),
+    enabled: readBoolean(row.enabled, 'enabled'),
+    effectivelyOn: readBoolean(row.effectivelyOn, 'effectivelyOn'),
+    window: toWindow(row.window),
+  }
+}
+
+/**
+ * Every project you own, with this connector's switch and days in each one — newest first.
+ *
+ * A project you have never switched this connector on in is still here, with `enabled: false`
+ * and a `null` window: the list is your projects, not your switches, because switching one on is
+ * the whole reason the panel opens. Having no projects at all is an empty list, not a failure —
+ * an administrator can approve somebody before they have made anything.
+ */
+export async function listConnectorProjects(
+  connectorKey: string,
+  deps: AuthFetchDeps = {},
+): Promise<ConnectorProjectList> {
+  const res = await authFetch(
+    `/api/connectors/${encodeURIComponent(connectorKey)}/projects`,
+    {},
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to load your projects')
+  const body: unknown = await res.json()
+  const doc = isRecord(body) ? body : {}
+  if (!Array.isArray(doc.projects)) {
+    throw new ApiError('The server sent a project list we could not read.', 500)
+  }
+  return {
+    projects: doc.projects.map(toProjectRow),
+    // Absent reads as "not truncated": the server defaults it to `false`, and treating a missing
+    // flag as `true` would put a cap notice over a four-project list.
+    truncated: doc.truncated === true,
+  }
+}
+
+/**
+ * Switch a connector on or off for one project, and set the days it reads. One write, both facts.
+ *
+ * `window` omitted KEEPS whatever the project already had — so switching off and back on returns
+ * the range the citizen chose rather than silently re-picking a default. Sending one replaces the
+ * stored window outright.
+ *
+ * Refused with `403 access_not_approved` for anyone an administrator has not approved, `404` for
+ * a project you do not own or a connector that is not in the catalogue, and `422` for a day count
+ * the connector does not offer. The message the server sends is the one to show.
+ *
+ * Returns the project's connector RESOLVED exactly as a read returns it — which is what the chip
+ * re-renders from, never the local pick.
+ */
+export async function setProjectConnector(
+  projectId: string,
+  connectorKey: string,
+  update: { enabled: boolean; window?: WindowChoice },
+  deps: AuthFetchDeps = {},
+): Promise<ProjectConnectorEntry> {
+  const res = await authFetch(
+    `/api/projects/${encodeURIComponent(projectId)}/connectors/${encodeURIComponent(connectorKey)}`,
+    jsonOpts('PUT', update),
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to save this project’s data settings')
+  return toProjectConnector(await res.json())
+}

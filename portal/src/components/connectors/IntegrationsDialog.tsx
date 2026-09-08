@@ -4,7 +4,7 @@
  * navigation: it lands as a dialog over whatever the citizen was doing.
  *
  * ONE `Dialog` ROOT, THREE BODIES. This component owns the single `<Dialog open>` mount and swaps
- * its body between the connector list, the ask panel, and the projects drill-down (U8) — each
+ * its body between the connector list, the ask panel, and the projects drill-down — each
  * behind a back chevron. Building the ask as a second `<Dialog>` would unmount one Radix dialog
  * and mount another on every forward and back click: a double backdrop fade, and `dialog.tsx`'s
  * `useFocusBackstop()` firing twice, on what the boards draw as one continuous panel. The test
@@ -31,12 +31,16 @@ import type { ConnectorEntry } from '../../utils/connectorApi'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 import ConnectorRow from './ConnectorRow'
 import AskAccessPanel from './AskAccessPanel'
+import ConnectorProjectsPanel from './ConnectorProjectsPanel'
 
 /**
- * Which body is showing. The `ask` arm carries its own entry rather than an index into the list,
- * so a reload underneath the panel cannot re-point it at a different connector.
+ * Which body is showing. The `ask` and `projects` arms carry their own entry rather than an index
+ * into the list, so a reload underneath either panel cannot re-point it at a different connector.
  */
-type DialogBody = { view: 'list' } | { view: 'ask'; entry: ConnectorEntry }
+type DialogBody =
+  | { view: 'list' }
+  | { view: 'ask'; entry: ConnectorEntry }
+  | { view: 'projects'; entry: ConnectorEntry }
 
 /** The one id `DialogContent` describes itself with, whichever body is rendering it. */
 const SUBTITLE_ID = 'integrations-dialog-subtitle'
@@ -80,14 +84,25 @@ export default function IntegrationsDialog({
   }, [load])
 
   /**
-   * U8 FILLS THIS IN — it swaps the body to the projects drill-down for `entry`.
+   * Swaps the body to the projects drill-down.
    *
    * The handler lives here rather than on the row because the dialog is what owns its own body;
-   * the row only knows it has a control to offer. Present now so the approved row's
-   * `On in N projects ›` is exactly where the board draws it and U8 is a body, not a re-plumb of
-   * the row's props.
+   * the row only knows it has a control to offer.
    */
-  const openProjects = useCallback((_entry: ConnectorEntry): void => {}, [])
+  const openProjects = useCallback((entry: ConnectorEntry): void => {
+    setBody({ view: 'projects', entry })
+  }, [])
+
+  /**
+   * Coming BACK from the drill-down re-reads the list, and that is not tidiness. The row the
+   * citizen just left says `On in N projects ›`, and N is exactly what the switches behind it
+   * change — returning to a stale count would put the dialog's own two surfaces in disagreement
+   * about a number one of them had just moved.
+   */
+  const backFromProjects = useCallback((): void => {
+    setBody({ view: 'list' })
+    void load()
+  }, [load])
 
   const cancelRequest = useCallback(
     async (entry: ConnectorEntry): Promise<void> => {
@@ -145,7 +160,13 @@ export default function IntegrationsDialog({
         className="font-manrope w-full max-w-[640px] gap-0 rounded-2xl border-0 bg-white p-0 shadow-2xl"
         aria-describedby={SUBTITLE_ID}
       >
-        {body.view === 'ask' ? (
+        {body.view === 'projects' ? (
+          <ConnectorProjectsPanel
+            entry={body.entry}
+            onBack={backFromProjects}
+            onClose={onClose}
+          />
+        ) : body.view === 'ask' ? (
           <AskAccessPanel
             entry={body.entry}
             busy={busyKey === body.entry.key}

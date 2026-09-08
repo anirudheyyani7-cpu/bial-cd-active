@@ -46,11 +46,23 @@ export function ConnectorGlyph({ size = 'row' }: { size?: 'row' | 'title' }): Re
  * specifies is not any runtime's default, and a suite that pinned it would be pinning the machine
  * it ran on. The portal's copy is English throughout; the day and the clock stay LOCAL (the reader
  * is in Bangalore and the server stamps UTC), only the shape is fixed.
+ *
+ * EXPORTED for `WindowChip.tsx`, which sets `1 – 30 Sep` on the date chip. It reuses this LIST
+ * rather than `dayMonth` below, and the difference matters: the functions here take an ISO
+ * INSTANT and read it in local time, while a window's bounds are calendar DAYS (`2026-09-01`) that
+ * `new Date()` would parse as UTC midnight — the day before, anywhere west of Greenwich. The chip
+ * splits its own strings on the hyphen and comes back here only for the month's three letters.
  */
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** `2 Sep` — the board's form for a decision's date, which carries no year and no time. */
-function dayMonth(iso: string): string {
+/**
+ * `2 Sep` — the board's form for a decision's date, which carries no year and no time.
+ *
+ * EXPORTED for `ConnectorProjectsPanel.tsx`, whose header sets the same date in the same shape
+ * (`Approved for you 2 Sep by Rahul Menon.`). One formatter, so the row and the panel behind it
+ * cannot render one approval two ways.
+ */
+export function dayMonth(iso: string): string {
   const parsed = new Date(iso)
   if (Number.isNaN(parsed.getTime())) return iso
   return `${parsed.getDate()} ${MONTHS[parsed.getMonth()]}`

@@ -21,9 +21,10 @@
  *
  * R18: nothing here names a connector. The key is a value, the display name rides the wire.
  */
-import { ApiError, isRecord, optionalString, readApiError } from './apiError'
+import { ApiError, isRecord, optionalCount, optionalString, readApiError, requiredString } from './apiError'
 import { authFetch } from './api'
 import type { AuthFetchDeps } from './api'
+import { readConsentLines } from './connectorApi'
 import type { ConsentLine } from './connectorApi'
 
 /**
@@ -112,12 +113,8 @@ export interface ConnectorRequestPage {
 }
 
 /** A required wire field. Missing means the server broke its own contract, not "absent value". */
-function readString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new ApiError(`The server sent a request we could not read (${field}).`, 500)
-  }
-  return value
-}
+/** This module's binding of the shared required-string reader — the noun is fixed here, once. */
+const readString = (value: unknown, field: string): string => requiredString(value, 'request', field)
 
 /**
  * The status, or a throw. NOT a fallback: a row whose status we guessed would be filed under the
@@ -136,10 +133,6 @@ function readStatus(value: unknown): ConnectorRequestStatus {
  * connector on in any project yet — and folding it to `null` would draw the declined row's em
  * dash over an approval.
  */
-function optionalCount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null
-}
-
 /**
  * `WHAT APPROVING GIVES THEM`, or a throw — the same strict reader the citizen module applies to
  * its own consent list, and strict for the same reason.
@@ -152,18 +145,7 @@ function optionalCount(value: unknown): number | null {
  * worse still — two of three promises on screen with nothing admitting the third went missing.
  * Both land in the queue's error-and-retry state, which is honest.
  */
-function readConsentLines(value: unknown): readonly ConsentLine[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new ApiError('The server sent a request we could not read (consentLinesApprover).', 500)
-  }
-  return value.map((line: unknown) => {
-    const row = isRecord(line) ? line : {}
-    return {
-      lead: readString(row.lead, 'consentLinesApprover.lead'),
-      body: readString(row.body, 'consentLinesApprover.body'),
-    }
-  })
-}
+
 
 function toRow(value: unknown): ConnectorRequestRow {
   const row = isRecord(value) ? value : {}
@@ -174,7 +156,7 @@ function toRow(value: unknown): ConnectorRequestRow {
     email: readString(row.email, 'email'),
     connectorKey: readString(row.connectorKey, 'connectorKey'),
     connectorDisplayName: readString(row.connectorDisplayName, 'connectorDisplayName'),
-    consentLinesApprover: readConsentLines(row.consentLinesApprover),
+    consentLinesApprover: readConsentLines(row.consentLinesApprover, 'request', 'consentLinesApprover'),
     requesterRemarks: readString(row.requesterRemarks, 'requesterRemarks'),
     askedAt: readString(row.askedAt, 'askedAt'),
     status: readStatus(row.status),

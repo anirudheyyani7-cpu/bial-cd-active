@@ -20,7 +20,7 @@
  * row draws. So a row we cannot read is a contract break and throws — the dialog already has an
  * error-and-retry state, and it is the honest one.
  */
-import { ApiError, isRecord, optionalString, readApiError } from './apiError'
+import { ApiError, isRecord, optionalCount, optionalString, readApiError, requiredString } from './apiError'
 import { authFetch } from './api'
 import type { AuthFetchDeps } from './api'
 
@@ -92,12 +92,9 @@ export interface ConnectorEntry {
 }
 
 /** A required wire field. Missing means the server broke its own contract, not "absent value". */
-function readString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new ApiError(`The server sent a connector we could not read (${field}).`, 500)
-  }
-  return value
-}
+/** This module's binding of the shared required-string reader — the noun is fixed here, once. */
+const readString = (value: unknown, field: string): string =>
+  requiredString(value, 'connector', field)
 
 /**
  * The state, or a throw. NOT a fallback to `neverAsked`: that would put a `Request access` button
@@ -119,27 +116,33 @@ function readState(value: unknown): ConnectorState {
  * still — the citizen would read two of three promises with nothing on screen admitting the
  * third went missing. Both cases land in the dialog's error-and-retry state, which is honest.
  */
-function readConsentLines(value: unknown): readonly ConsentLine[] {
+/**
+ * A consent panel off the wire, or a throw. Shared with the admin client, which reads the
+ * APPROVER set off its own queue rows — one parser, because the citizen's panel and the
+ * administrator's are the same shape carrying different promises, and a shape check that can
+ * disagree between the two surfaces is worse than no check at all.
+ *
+ * An empty list is a contract break, not an absent value: a lowercase key standing in for a
+ * display name is legible, a consent box with no consent under it is not.
+ */
+export function readConsentLines(
+  value: unknown,
+  subject: string,
+  field: string,
+): readonly ConsentLine[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new ApiError(
-      'The server sent a connector we could not read (consentLinesRequester).',
-      500,
-    )
+    throw new ApiError(`The server sent a ${subject} we could not read (${field}).`, 500)
   }
   return value.map((line: unknown) => {
     const row = isRecord(line) ? line : {}
     return {
-      lead: readString(row.lead, 'consentLinesRequester.lead'),
-      body: readString(row.body, 'consentLinesRequester.body'),
+      lead: requiredString(row.lead, subject, `${field}.lead`),
+      body: requiredString(row.body, subject, `${field}.body`),
     }
   })
 }
 
 /** A count that is genuinely absent stays absent; anything unreadable is treated the same way. */
-function optionalCount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null
-}
-
 function toEntry(value: unknown): ConnectorEntry {
   const row = isRecord(value) ? value : {}
   return {
@@ -151,7 +154,7 @@ function toEntry(value: unknown): ConnectorEntry {
     // Required, unlike `subtitle` above: a row with no one-line label is a thinner row, but an
     // ask panel with no opening sentence is a panel that will not say what it is asking about.
     askSubtitle: readString(row.askSubtitle, 'askSubtitle'),
-    consentLinesRequester: readConsentLines(row.consentLinesRequester),
+    consentLinesRequester: readConsentLines(row.consentLinesRequester, 'connector', 'consentLinesRequester'),
     state: readState(row.state),
     askedAt: optionalString(row.askedAt),
     approvedAt: optionalString(row.approvedAt),

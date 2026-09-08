@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
 
-WHY A GUARD AND NOT A SENTENCE. Two comments in this codebase used to state this census — one
+A GUARD AND NOT A SENTENCE. Two comments in this codebase used to state this census — one
 on `ChatKind` itself ("exactly two readers"), one in the turn engine ("three ... the closed
 set") — and they were both wrong, they disagreed with each other, and neither could go red. A
 number in a docstring cannot fail. This can.

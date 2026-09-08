@@ -388,8 +388,8 @@ async def test_an_app_role_cannot_reach_the_control_plane_database(
     # automatic: PostgreSQL grants PUBLIC CONNECT on every new database, so an app role could
     # open a session against the control plane and read `pg_catalog` as reconnaissance. The
     # fix is a provisioning-time REVOKE on the control-plane database itself, not something
-    # the per-project sequence can do — hence a runbook step (DEPLOYMENT-FACTS) and this test,
-    # which fails loudly on any cluster where that step was skipped.
+    # the per-project sequence can do — so it is a step the operator runs when standing the
+    # cluster up, and this test fails loudly on any cluster where that step was skipped.
     project_id = await _new_project(db_session)
     salted.append(project_id)
     record = await ensure_project_database(db_session, project_id)

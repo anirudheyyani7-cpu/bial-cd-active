@@ -1,4 +1,6 @@
-"""WHY THIS EXISTS
+"""The `deployments` table.
+
+WHY THIS EXISTS
 
 One append-only row per one-click deploy attempt. A citizen presses Deploy and the app
 goes live with no admin approval, so this is the ONLY durable record of what is running:

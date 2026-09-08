@@ -12,8 +12,10 @@ Five sandbox families share the environment-scoped root `bial:{environment}:sand
     lease:{user_id}      string — liveness lease (epoch seconds, TTL mandatory)
     starting:{user_id}   string — start-in-flight marker (project id, TTL mandatory)
 
-A sixth family, taskiq's queue in `src/broker.py`, has a literal prefix outside `bial:`. There
-is deliberately NO `:channel` family — single-replica means build progress is in-process.
+A sixth family, taskiq's queue in `src/broker.py`, sits under `bial:` but outside `sandbox:` —
+`bial:{env}:taskiq:stream`, where those braces are a literal Redis hash tag, not a placeholder.
+Only the library-derived `autoclaim:<group>:<stream>` lock has a literal prefix outside `bial:`.
+There is deliberately NO `:channel` family — single-replica means build progress is in-process.
 
 WHY THIS EXISTS. Production shares one Redis instance with other BIAL apps, and a scheduled job
 reads this namespace as a spare-list and deletes Azure containers on the strength of it — a

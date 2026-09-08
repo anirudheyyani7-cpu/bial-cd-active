@@ -1,10 +1,12 @@
 /**
+ * Mock-free harness for the BuilderPage build-session suites: exports fixtures and a render
+ * helper only.
+ *
  * WHY THIS EXISTS
  *
- * Mock-free harness for the BuilderPage build-session suites: exports fixtures and a render
- * helper only. Each test file declares its own vi.mock and injects the mock client plus
- * FakeEventSource via the `buildSessionDeps` prop; the real useBuildSession/LivePreview/
- * ActivityFeed/SessionControls hooks run, so tests assert real rendered DOM.
+ * Each test file declares its own vi.mock and injects the mock client plus FakeEventSource via
+ * the `buildSessionDeps` prop; the real useBuildSession/LivePreview/ActivityFeed/SessionControls
+ * hooks run, so tests assert real rendered DOM.
  *
  * A composer send is a TURN (POST /turns + the frame stream); the plan streams as text and
  * `present_plan_options` renders the card; a build starts only through the atomic Build-it

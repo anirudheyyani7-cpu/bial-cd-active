@@ -1034,7 +1034,6 @@ def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
 
     Occupancy is what the guard asks. Mutation check: point `dev_start` back at
     `_dev_port_serving` and the spawn below fires."""
-    # Mutation check: point `dev_start` back at `_dev_port_serving` and the spawn below fires.
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", None)  # no owned child — only the unowned server

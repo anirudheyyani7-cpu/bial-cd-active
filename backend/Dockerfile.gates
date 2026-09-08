@@ -7,7 +7,7 @@
 # its own test suite, and weakening it so it could would be the wrong trade — it would ship a
 # test framework and a type checker into production to satisfy a check.
 #
-# So the criterion splits in two (plan ASM1), and BOTH must pass before the rebase is called done:
+# So the criterion splits in two, and BOTH must pass before the rebase is called done:
 #   (a) `docker build -f Dockerfile .`      — a locked sync with source builds disabled, proving
 #                                             every dependency has a musl wheel.
 #   (b) this file                           — ruff + ty + mypy + pyright + pytest, from the same

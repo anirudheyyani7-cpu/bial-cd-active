@@ -5,7 +5,7 @@ callback, refresh reuse). It carries only NON-SECRET diagnostic context: a
 human-readable `message` for server logs and a short stable `reason` code that is
 safe to surface to the browser (the `/login?authError=<reason>` redirect).
 NEVER put a token, secret, claim value, or credential on an `AuthError` — the
-message and reason may be logged and the reason is reflected to the client
+message and reason may be logged and the reason is reflected to the client.
 Security checks fail CLOSED: raise, never return a sentinel. Every
 class ends in `Error` (N818).
 """

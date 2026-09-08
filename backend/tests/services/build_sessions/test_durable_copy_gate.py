@@ -120,7 +120,8 @@ async def test_a_recovery_copy_behind_head_is_stale_not_destroyable(store: FakeS
 async def test_a_matching_head_over_a_dirty_tree_is_not_destroyable(store: FakeStorage) -> None:
     """★ THE REGRESSION: a HEAD match stopped meaning "preserved" once the agent stopped
     committing as it worked.
-    Mutation check: dropping `container_dirty` there turns this red."""
+    Mutation check: drop `container_dirty` from the head-match arm in `durable_copy.py` and this
+    goes red."""
     await _put_recovery(store, HEAD)
 
     verdict = await confirm_durable_copy(APP, container_head=HEAD, container_dirty=True)

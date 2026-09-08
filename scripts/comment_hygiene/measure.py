@@ -7,8 +7,10 @@ comment leaves its line counted as code. The denominator is every line of every
 tracked source file in the surface, blanks included. Boundaries come from the
 languages' own parsers, never a regex, so a `#` inside a string never counts.
 
-Needs `portal/node_modules` for the TypeScript half. From the repository root:
-`uv run python scripts/comment_hygiene/measure.py [--check]`.
+Needs `portal/node_modules` for the TypeScript half, and an interpreter that can
+parse this repo: there is no root project, so plain `uv run` picks a Python too
+old for PEP 758. From the repository root:
+`./backend/.venv/bin/python scripts/comment_hygiene/measure.py [--check]`.
 """
 
 from __future__ import annotations
@@ -247,6 +249,16 @@ def report(tallies: dict[str, dict[str, int]], check: bool) -> int:
 
 
 def main() -> int:
+    if sys.version_info < (3, 14):
+        # Not a style preference: the tree uses PEP 758 `except A, B:`, which older
+        # parsers reject, and the failure surfaces as a SyntaxError in a scanned file
+        # rather than here -- which reads as a corrupt repo rather than a wrong python.
+        print(
+            f"needs Python 3.14+ to parse this repo; got {sys.version.split()[0]}. "
+            "Try ./backend/.venv/bin/python scripts/comment_hygiene/measure.py",
+            file=sys.stderr,
+        )
+        return 2
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="repository root")
     parser.add_argument("--check", action="store_true", help="exit 1 if a surface is over target")

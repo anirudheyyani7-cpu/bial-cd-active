@@ -7,9 +7,9 @@ as the answer when the model is unavailable, so its precision burden is absolute
 pattern must stay LINEAR — app-controlled text reaches them on the event loop — and a
 synchronous caller caps input length before scanning.
 
-`scrub_untrusted` is strip-escapes, THEN redact, THEN slice — that order IS the security
-property: cutting first fragments a credential so no pattern matches it; stripping after
-closes the text back around a secret already leaked in the clear."""
+`scrub_untrusted` is cap, THEN strip-escapes, THEN redact — the cap runs first because it
+bounds the work an adversarial, app-controlled blob can make a synchronous, event-loop-bound
+scan do; strip and redact then run over an already-bounded string."""
 
 from __future__ import annotations
 

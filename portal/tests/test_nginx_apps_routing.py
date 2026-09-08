@@ -498,8 +498,8 @@ def test_the_access_log_separates_no_such_app_from_a_dead_app(
 ) -> None:
     """The router answers a flat 404 for BOTH an unknown key and a dead app, since naming the
     upstream to a browser would disclose the environment's naming convention. The log is the
-    ONLY place an operator can tell them apart — DEPLOYMENT-FACTS.md sends them here — so it
-    is pinned.
+    ONLY place an operator can tell them apart, and an incident walks someone straight to it,
+    so it is pinned.
 
     The discriminating field is `$upstream_addr`, NOT `$upstream_status`: a refused connect
     reports `upstream_status=502` even though nothing ever answered, so only a resolved

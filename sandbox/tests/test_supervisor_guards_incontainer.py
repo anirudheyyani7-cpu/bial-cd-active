@@ -309,8 +309,8 @@ def test_image_size_is_far_below_the_original_baseline(sandbox_image: str) -> No
     size = int(proc.stdout.strip())
     print(f"\nsandbox image {sandbox_image}: {size / 1_000_000:.1f} MB compressed content")
     assert size < _MAX_IMAGE_BYTES, (
-        f"{size / 1_000_000:.1f} MB — the pre-U7 image was 718.9 MB. A size at or near that means "
-        "the duplicate chown layer or root's npm cache is back in the shipped artifact."
+        f"{size / 1_000_000:.1f} MB — the pre-cleanup image was 718.9 MB. A size at or near that "
+        "means the duplicate chown layer or root's npm cache is back in the shipped artifact."
     )
 
 

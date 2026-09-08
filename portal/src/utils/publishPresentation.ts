@@ -340,11 +340,13 @@ export function versionRowData(
 }
 
 /**
- * THE NINE STATES' COLOURS (`StatusCardStates`) — previously all one grey pill; now an explicit
- * text/ground pair + dot each. Three groups share a look: `approved_*` takes GREEN (platform said
- * yes; the difference is on the button); `live_drift_unknown` stays GREEN like the other live
- * states (the uncertainty is in the label, not an amber that would wrongly say something broke);
- * `taken_offline` shares `switched_off`'s off-grey (only one has a remedy, again on the button).
+ * THE STATE COLOURS (`StatusCardStates`) — previously all one grey pill; now an explicit
+ * text/ground pair + dot each. SIX FAMILIES COVER THIRTEEN STATES: three pairs share a look and
+ * differ only in their words, and four of the portal's states have no board at all. `approved_*`
+ * takes GREEN (platform said yes; the difference is on the button); `live_drift_unknown` stays
+ * GREEN like the other live states (the uncertainty is in the label, not an amber that would
+ * wrongly say something broke); `taken_offline` shares `switched_off`'s off-grey (only one has a
+ * remedy, again on the button).
  */
 export interface StateLook {
   /** Tailwind classes for the pill: its text and its ground. */

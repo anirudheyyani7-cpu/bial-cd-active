@@ -1,10 +1,11 @@
 /**
+ * One vocabulary for what state an app is in.
+ *
  * WHY THIS EXISTS
  *
- * One vocabulary for what state an app is in. The projects list must reuse
- * `PublishStatusChip`'s words rather than invent a second set; this module is the
- * SUBSET a list row can prove without an N-way per-row deployment fetch — same
- * words, fewer of them, never different ones.
+ * The projects list must reuse `PublishStatusChip`'s words rather than invent a
+ * second set; this module is the SUBSET a list row can prove without an N-way
+ * per-row deployment fetch — same words, fewer of them, never different ones.
  *
  * TWO FACTS, NOT ONE. Whether an app is LIVE is a deployment fact ("live = deployed
  * / published, with a url" — confirmed on a call) and is NOT derivable from

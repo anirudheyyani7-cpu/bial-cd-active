@@ -1,11 +1,12 @@
 /**
+ * Guards that the vendored-registry and hand-written CSS residue two earlier sweeps removed
+ * stays removed.
+ *
  * WHY THIS EXISTS
  *
- * Guards that the vendored-registry and hand-written CSS residue two earlier sweeps removed
- * stays removed. Every item here was an export nobody imported, a `cva` key nobody selected, or
- * a raw CSS rule no class name reached — `tsc`/`eslint`/render tests have no opinion on any of
- * it, so a routine `shadcn add` or a careless paste can bring a whole alias set or a dead rule
- * straight back.
+ * Every item here was an export nobody imported, a `cva` key nobody selected, or a raw CSS rule
+ * no class name reached — `tsc`/`eslint`/render tests have no opinion on any of it, so a routine
+ * `shadcn add` or a careless paste can bring a whole alias set or a dead rule straight back.
  *
  * A NAMED LIST, not a reachability walk: `no-orphan-primitives.test.ts` already walks import
  * specifiers but is file-level, so it can't see an unused export inside a file something else

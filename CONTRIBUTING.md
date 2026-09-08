@@ -5,7 +5,7 @@ Three trees, three toolchains:
 | Tree | What it is | Toolchain |
 |---|---|---|
 | `backend/` | FastAPI control plane | Python 3.14, `uv` |
-| `portal/` | React + Vite single-page app | Node 22, `npm` |
+| `portal/` | React + Vite single-page app | Node >=20 (CI runs 20, the image builds on 24), `npm` |
 | `sandbox/` | The build supervisor and the template every generated app starts from | Python 3.14 (via `backend/`), Node 24 in the image |
 
 `README.md` is a stub, so this is the document to read first.
@@ -90,9 +90,10 @@ number, or a document that is not in this repository.** A reader with nothing bu
 checkout has to be able to act on every word. If a citation was carrying the explanation,
 the fix is to write the explanation, not to delete the sentence.
 
-Also: no `NOTE:`/`IMPORTANT:` markers, no banner or divider comments, no calendar dates used
-as history, and no archaeology — which review round changed a thing, or what it used to be
-called, helps nobody reading the code today.
+Also: no `NOTE:`/`IMPORTANT:` markers, no banner comments — the boxed
+`===== SECTION =====` kind — no calendar dates used as history, and no archaeology: which
+review round changed a thing, or what it used to be called, helps nobody reading the code
+today. A plain `# --- helpers ---` divider is structure, not archaeology, and stays.
 
 ### Module docstring — 3 to 8 lines, hard ceiling 12
 
@@ -103,14 +104,20 @@ What this module owns, and the one or two constraints a caller gets wrong unaide
 +"""Mirror the environment-scoped sandbox registry back onto the pre-cutover key shape.
 ```
 
-A module may exceed 12 lines only when it is the single home of a durable fact — an incident
-the code is shaped around, a measurement that justifies a threshold — in which case it says so
-under a `WHY THIS EXISTS` heading and stops at 25. That allowance is module-scope; it never
-applies to a function.
+Lines here means lines that carry text; a blank line between paragraphs is not one, or a
+docstring would be penalised for being readable. A module may exceed 12 lines only when it is
+the single home of a durable fact — an incident the code is shaped around, a measurement that
+justifies a threshold — in which case it says so under a `WHY THIS EXISTS` heading and stops
+at 25. That allowance is module-scope; it never applies to a function.
 
 ### Function and class docstring — hard ceiling 8
 
 State the contract. Do not restate the signature.
+
+Counted the same way, text-carrying lines only. On that basis thirteen function docstrings are
+still over the ceiling, the worst at thirty-one lines. They were read and kept rather than cut
+to reach the number: where a ceiling and a causal fact collide, the fact wins. The ceiling is
+the instrument, not the gate.
 
 ```diff
 -"""The per-project-database half of the orphan sweep (U7, R10). Counts ONLY — never a

@@ -1,4 +1,6 @@
 /**
+ * THE RELAUNCH CHAIN IS INERT — the characterization this unit was allowed to delete against.
+ *
  * WHY THIS EXISTS
  *
  * `RelaunchAffordance` and its four render sites went in, and `LivePreview` was left holding

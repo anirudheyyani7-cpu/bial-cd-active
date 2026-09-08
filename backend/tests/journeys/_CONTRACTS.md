@@ -12,22 +12,21 @@ or, for conversations, the Express `_id`/`{error:{message}}` envelope.
 
 ## Journey 1 — Deploy lifecycle: provision → status(appId) → publish(projectId)
 
-**Updated 2026-07-09 for one app per project (KD-4).** A project holds exactly ONE app (its
+**Updated 2026-07-09 for one app per project.** A project holds exactly ONE app (its
 tool/code). The builder provisions that app — passing `{conversationId, projectId}` — and
 addresses it **flat by the RETURNED appId** (`/v1/apps/{appId}/status`), never by a conversation
 id. The app has its own fresh UUIDv7 PK; the acting builder conversation is recorded as the app's
 head/last-builder pointer (`conversation_id`), and the parent project is resolved via `project_id`
 for the breadcrumb. The mint is idempotent **per project**. The rebuilt frontends address by the
-returned appId (there is no deployed SPA to preserve — the frontends are built after the backend;
-see memory `app-identity-and-flat-url-model`). The citizen-callable `/submit` sibling that used to
-share this flat-appId addressing is **retired** (ASM18/U8, row 1.3) — entering the review queue is
-now addressed by `projectId`, through the publish route.
+returned appId (there is no deployed SPA to preserve — the frontends are built after the backend).
+The citizen-callable `/submit` sibling that used to share this flat-appId addressing is **retired**
+(row 1.3) — entering the review queue is now addressed by `projectId`, through the publish route.
 
 | # | Assertion the test must make | Status | Evidence |
 |---|------------------------------|--------|----------|
-| 1.1 | `resolve_app_for_project(db, userId, P)` (the build session's path — `POST /v1/apps/provision` was removed in U6) returns the app's OWN fresh uuid7 id, distinct from any conversation id. | OK — mints/reuses the project's one app. | back: `backend/src/services/build_sessions/appdata.py` `resolve_app_for_project`; PK: `backend/src/db/models/app_registry.py` (`UUIDv7PrimaryKeyMixin`), `uq_app_registry_project` |
+| 1.1 | `resolve_app_for_project(db, userId, P)` (the build session's path — `POST /v1/apps/provision` was removed) returns the app's OWN fresh uuid7 id, distinct from any conversation id. | OK — mints/reuses the project's one app. | back: `backend/src/services/build_sessions/appdata.py` `resolve_app_for_project`; PK: `backend/src/db/models/app_registry.py` (`UUIDv7PrimaryKeyMixin`), `uq_app_registry_project` |
 | 1.2 | After the mint, `GET /v1/apps/{appId}/status` → **200** with `status == "draft"`, `appId == <returned>`, and an `appKey`. | OK — resolves by the returned PK. | back: `apps/router.py` `read_status`, `_owned_app_or_404` |
-| 1.3 | The citizen HTTP submit route (`POST /v1/apps/{appId}/submit`) is **retired** (ASM18/U8) — the SPA no longer calls it (R15a: exactly one route into the review queue, through the publish request, which attaches both declaration answer sets). It answers **404/405** even for the owner with a valid staged bundle, guarded forever. Entering the queue now runs through `POST /v1/projects/{projectId}/deploy`, addressed by `projectId` not `appId`. | OK — retirement pinned; not a live SPA contract. | back: `apps/router.py` docstring (ASM18); guard: `tests/api/v1/apps/test_submit_retired.py`; replacement: `deploy/router.py` `_route_to_review` → `services/approvals/submit.py` `submit_app_for_review` |
+| 1.3 | The citizen HTTP submit route (`POST /v1/apps/{appId}/submit`) is **retired** — the SPA no longer calls it (there is exactly one route into the review queue, the publish request, which attaches both declaration answer sets). It answers **404/405** even for the owner with a valid staged bundle, guarded forever. Entering the queue now runs through `POST /v1/projects/{projectId}/deploy`, addressed by `projectId` not `appId`. | OK — retirement pinned; not a live SPA contract. | back: `apps/router.py` docstring; guard: `tests/api/v1/apps/test_submit_retired.py`; replacement: `deploy/router.py` `_route_to_review` → `services/approvals/submit.py` `submit_app_for_review` |
 | 1.4 | A repeat resolve in the SAME project returns the **same** app (idempotent per project) — same id, same `appKey`, no second row. | OK — `on_conflict_do_update` on `uq_app_registry_project`. | back: `appdata.py` `resolve_app_for_project` (upsert on `uq_app_registry_project`) |
 | 1.5 | Cross-user: user B `GET /v1/apps/{appId}/status` for user A's app → **404 `{error:{message}}`** (owner-scoped, indistinguishable from a missing app, matching sibling `withdraw`); an unknown appId → **404**; a resolve against another user's `projectId` → **404**. | OK (fail-closed). | back: `apps/router.py` `read_status` → `_owned_app_or_404`; `appdata.py` `owned_project_or_404` (cross-user project → 404) |
 
@@ -83,7 +82,7 @@ so this journey is the **green baseline** that proves the harness drives the rea
 
 ## Journey 5 — Plan → Builder handoff (summarize relay)
 
-**Updated 2026-07-17 for the canonical build thread + interview protocol (003-U1/U4).** The
+**Updated 2026-07-17 for the canonical build thread + interview protocol.** The
 handoff no longer mints a builder chat, and arriving no longer builds anything.
 
 **This journey is RETIRED as described.** It documented the stateless Claude relay
@@ -106,7 +105,7 @@ useful pinned than deleted, because deleting it is how it quietly comes back.
 
 ## Journey 6 — Admin users roster: keyset page
 
-**Updated 2026-07-10 for the keyset roster (KD-1, R8–R9).** `GET /v1/admin/users` no longer returns
+**Updated 2026-07-10 for the keyset roster.** `GET /v1/admin/users` no longer returns
 the full roster in one response: it is a **keyset page** — a `users` array of at most `?limit=` rows
 (default 25, cap 100, newest-first) plus `nextCursor`/`hasMore`. An admin client that expected every
 user in one `users` array must walk `nextCursor` until `hasMore` is false.
@@ -119,6 +118,6 @@ user in one `users` array must walk `nextCursor` until `hasMore` is false.
 ---
 
 ### Summary of BROKEN rows (must be red now, green after fix)
-- **Journey 1** — updated 2026-07-09 to one-app-per-project flat-id addressing (KD-4); all rows now GREEN (the app is addressed by its returned appId, not the conversation id).
+- **Journey 1** — updated 2026-07-09 to one-app-per-project flat-id addressing; all rows now GREEN (the app is addressed by its returned appId, not the conversation id).
 - **2.1** — admin apps list has no owner username/email (`ownerId` uuid only).
 - **3.1, 3.2, 3.3, 3.4** — audit rows miss `_id`, `at`, `username`, and top-level `recordId`/`count`.

@@ -1,10 +1,11 @@
 /**
+ * The sufficiency check for `src/test-setup.ts`.
+ *
  * WHY THIS EXISTS
  *
- * Sufficiency check for `src/test-setup.ts`, deliberately small: asserting "the global the setup
- * file defines is defined" restates the setup file and goes green whether the shim actually
- * works. Real proof lives in the units that cannot run without these shims (activity group,
- * attachment dialog, copy button).
+ * Deliberately small: asserting "the global the setup file defines is defined" restates the
+ * setup file and goes green whether the shim actually works. Real proof lives in the units that
+ * cannot run without these shims (activity group, attachment dialog, copy button).
  *
  * What only this file can pin: that the `setupFiles` key exists in `vitest.config.js` at all —
  * one line with no compiler or linter behind it. Drop it and a consumer three units away fails

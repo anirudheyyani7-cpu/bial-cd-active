@@ -623,8 +623,9 @@ async def test_the_body_refuses_exactly_what_the_renderer_declines_to_draw(
     nothing while the model believes it landed. They used to disagree twice over a count — raw
     vs. de-duplicated pieces, and a hand-kept two-number ceiling — both now gone from both sides.
 
-    Asserted as an EQUIVALENCE — what matters is that the two agree, not what either decides,
-    since each rule has its own test above; see the parametrize rows for what each one covers."""
+    Asserted as an EQUIVALENCE — what matters is that they agree, not what either decides, since
+    each rule has its own test above; the parametrize rows say what each covers. No single mutation
+    turns `empty-found` red: unlike `empty-first`, it pins the two emptiness guards jointly."""
     body_refused: bool
     try:
         await propose_first_slice(_ctx(), found, first, _WHY, _QUESTION)

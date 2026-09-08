@@ -15,8 +15,9 @@ query scopes by `user_id`, not email). Verified against the dev DB:
 
 THE CASCADE TRAP: `OwnedByUserMixin.user_id` is `ON DELETE CASCADE`, so a *missed* owned table is
 not left orphaned — deleting ORPHAN would CASCADE-DELETE its rows. It reassigns all nine owned
-tables to CANONICAL first (merging, never blind-UPDATE, where a UNIQUE constraint exists), then
-proves ORPHAN owns zero rows first, one transaction. Rollback `.mythos/walkthrough-e2e/backups/`.
+tables to CANONICAL (merging, never blind-UPDATE, where a UNIQUE constraint exists), then proves
+ORPHAN owns zero rows, and only then deletes it — one transaction. Rollback
+`.mythos/walkthrough-e2e/backups/`.
 
   DRY RUN (default):  uv run python -m scripts.merge_duplicate_user_rows --confirm-env dev
   EXECUTE:            uv run python -m scripts.merge_duplicate_user_rows --confirm-env dev \

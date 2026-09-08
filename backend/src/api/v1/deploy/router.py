@@ -189,8 +189,8 @@ _TEARDOWN_UNCONFIRMED = "The takedown could not be confirmed. Retrying is safe a
                 503,
                 ErrorEnvelope,
                 "Object storage is unavailable (`storage_unavailable` — and so is "
-                "publishing, ASM21), or deploying is unconfigured — checked only once a "
-                "branch actually needs the pipeline, so routing works without it (ASM10)",
+                "publishing), or deploying is unconfigured — checked only once a "
+                "branch actually needs the pipeline, so routing works without it",
             ),
         ),
     },
@@ -1034,7 +1034,10 @@ async def unpublish(
     IDEMPOTENT: an already-stamped attempt returns 200 and never touches Azure again. AN OPERATOR
     CONVENIENCE, NOT AN ENFORCEMENT LEVER — nothing in `deploy_project` consults `unpublished_at`
     or `AppRegistry.status`, so the owner republishes one click later. Against a compromised or
-    data-leaking app the answer is `disable`, which fails CLOSED by severing the database."""
+    data-leaking app, `disable` fails CLOSED by severing the database — but it only accepts an
+    APPROVED app, and a one-click-deployed app is still DRAFT, so `disable` 409s on it. The
+    working takedown there pairs this lever with `POST /v1/admin/users/{user_id}/deactivate`, which
+    revokes every refresh family so the redeploy dies in the auth dependency."""
     # NOT the citizen-facing case, and no submit-for-review lineage is touched — a separate,
     # admin-only lever, same posture as `admin/router.py`'s `disable`. The convenience/enforcement
     # distinction matters against a hostile app: the right default here is an app misbehaving by

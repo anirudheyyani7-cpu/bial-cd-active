@@ -1,10 +1,11 @@
 /**
+ * A refusal whose message was WRITTEN FOR THE CITIZEN and is therefore safe to show.
+ *
  * WHY THIS EXISTS
  *
- * A refusal whose message was WRITTEN FOR THE CITIZEN and is therefore safe to show — the type
- * IS the permission. Other `onSubmit` rejections (a `TypeError`, an abort the surface already
- * explained in its own banner) must never surface via `err.message`, or developer text — or a
- * second, differently-worded banner — lands in front of someone asking for an app.
+ * THE TYPE IS THE PERMISSION. Other `onSubmit` rejections (a `TypeError`, an abort the surface
+ * already explained in its own banner) must never surface via `err.message`, or developer text —
+ * or a second, differently-worded banner — lands in front of someone asking for an app.
  * `silent` means "reject, but say nothing" for two cases that must still reject so the composer
  * doesn't empty for a press that sent nothing: an in-flight duplicate nobody knowingly made, and
  * a send someone else already answered (`RailComposer`'s guardrail modal and held-workspace

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fail-first guard for REQUIRED deploy inputs (KTD-3). Without these, the nginx envsubst that
+# Fail-first guard for REQUIRED deploy inputs. Without these, the nginx envsubst that
 # runs next (20-envsubst-on-templates.sh) would emit a silently-broken config — and "silently"
 # is the operative word: every failure below leaves `nginx -t` green and the container serving.
 #
@@ -30,7 +30,7 @@
 #     168.63.129.16 on Azure, 127.0.0.11 in local Docker. Missing -> a literal `${DNS_RESOLVER}`
 #     in the config, which nginx rejects with a far less actionable parse error.
 #
-# That is exactly the env-difference-on-the-Windows-build class CLAUDE.local.md warns about, so
+# That is exactly the class of env-difference bug that only shows up on the deployed build, so
 # refuse to start rather than serve a broken config. Runs before 20-envsubst (nginx sorts
 # /docker-entrypoint.d/ lexically) and before nginx starts; a non-zero exit aborts startup.
 #

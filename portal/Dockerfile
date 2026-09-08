@@ -61,12 +61,12 @@ FROM nginx:alpine-slim
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Fail-first guard (KTD-3): APPS_DOMAIN, APPS_HOSTNAME, PORTAL_ORIGIN and DNS_RESOLVER are
+# Fail-first guard: APPS_DOMAIN, APPS_HOSTNAME, PORTAL_ORIGIN and DNS_RESOLVER are
 # REQUIRED deploy inputs with no sensible defaults — this runs at start, before nginx's
 # envsubst, and exits non-zero if any is unset, empty, or SHAPED WRONG (a scheme, a `*.`
 # prefix, a port or a trailing slash all produce a config that loads and misroutes). It is a shell
 # artifact BUILT ON THE WINDOWS VM, so strip any CRLF and make it executable — the exact
-# `#!/bin/sh\r` → "no such file or directory" trap CLAUDE.local.md warns about.
+# `#!/bin/sh\r` → "no such file or directory" trap that has broken this build before.
 COPY docker-entrypoint.d/19-require-apps-domain.sh /docker-entrypoint.d/19-require-apps-domain.sh
 # The template gets the same CR strip. It is DEFENCE IN DEPTH, not a fix for a live defect —
 # stated precisely because the obvious-sounding claim is false and a reviewer will test it: a

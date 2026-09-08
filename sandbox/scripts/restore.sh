@@ -1,11 +1,11 @@
 #!/bin/sh
-# C4 restore mechanics — runs INSIDE a FRESH sandbox via the frozen `/exec` (as appuser).
+# Restore mechanics — runs INSIDE a FRESH sandbox via the frozen `/exec` (as appuser).
 #
 # The reference client base64-ENCODES the raw bundle it fetched from storage and writes it to a
 # text file via `/files create`; this script DECODES it and overlays the snapshot onto the
 # pre-baked (non-empty, NON-repo) workspace: git init → fetch the bundle's refs → checkout -f.
 #
-# Overlay semantics (C4 / U16): `checkout -f` forces the snapshot's tracked files over the baked
+# Overlay semantics: `checkout -f` forces the snapshot's tracked files over the baked
 # tree but does NOT delete untracked files — so the baked node_modules/.next (excluded from the
 # bundle, and REQUIRED for `next dev`) survive. `git clean` is deliberately NOT used: it would nuke
 # that baked node_modules. Snapshot files win; a baked source file the user deleted reappears (an

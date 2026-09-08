@@ -1,9 +1,10 @@
-"""WHY THIS EXISTS
+"""The build session's GET-SSE progress feed — the streaming response its route returns.
 
-The GET-SSE progress feed — byte-framing COPIED from the legacy chat relay (copy into
-your own router, never shared-edit someone else's), adapted for the envelope and
-`Last-Event-ID` resume. The relay has since retired; this copy is why the router did not
-have to change when it went.
+WHY THIS EXISTS
+
+Byte-framing COPIED from the legacy chat relay (copy into your own router, never
+shared-edit someone else's), adapted for the envelope and `Last-Event-ID` resume. The
+relay has since retired; this copy is why the router did not have to change when it went.
 
 Each frame is `id: {seq}\\n` + `data: {compact-envelope-json}\\n\\n`; the terminal `ended`
 envelope is followed by `data: [DONE]\\n\\n`. Unlike that relay, this does NOT await a

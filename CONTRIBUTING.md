@@ -5,7 +5,7 @@ Three trees, three toolchains:
 | Tree | What it is | Toolchain |
 |---|---|---|
 | `backend/` | FastAPI control plane | Python 3.14, `uv` |
-| `portal/` | React + Vite single-page app | Node >=20 (CI runs 20, the image builds on 24), `npm` |
+| `portal/` | React + Vite single-page app | Node >=20 (the image builds on 24), `npm` |
 | `sandbox/` | The build supervisor and the template every generated app starts from | Python 3.14 (via `backend/`), Node 24 in the image |
 
 `README.md` is a stub, so this is the document to read first.
@@ -67,21 +67,6 @@ cd sandbox
 uv run --project ../backend pytest -q
 uv run --project ../backend ruff check .
 ```
-
-### What CI actually runs — read this before trusting a green check
-
-`.github/workflows/ci.yml` has two jobs, and between them they run **the portal suite and
-nothing else**:
-
-- the portal job runs typecheck, lint and tests;
-- the backend job runs the five static gates plus a single-Alembic-head check, and
-  **deliberately does not run `pytest`** — the suite needs that out-of-band database, and a
-  red-by-default job would block every pull request;
-- **there is no sandbox job at all.**
-
-So a green check means the portal tests passed and the backend compiles and typechecks. It
-does not mean the backend suite passed, and it says nothing whatever about `sandbox/`. Run
-those two locally before you land anything that touches them.
 
 ## The comment convention
 
@@ -186,23 +171,3 @@ prose at runtime:
 
 None of this is caught by lint or by the type checkers. **Run the suites before landing a
 comment-only change.**
-
-## Measuring
-
-`scripts/comment_hygiene/measure.py` reports the share of each tree that is prose, against a
-target per surface. Run it from the repository root:
-
-```sh
-./backend/.venv/bin/python scripts/comment_hygiene/measure.py
-```
-
-Density is a smell test, not a scoreboard. A file under its target with a docstring that
-answers nothing has failed; a file over its target because it is the single home of a hard-won
-fact has not. No surface is currently at its target, and that is deliberate: the remaining
-prose was read and judged load-bearing rather than cut to reach a number.
-
-## Branches and commits
-
-Short-lived branches off `main` — `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`.
-Conventional commit subjects. Stage explicit paths rather than everything, and keep one
-logical change per commit.

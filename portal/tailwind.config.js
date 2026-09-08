@@ -160,6 +160,21 @@ export default {
            * exactly once in the whole board set: this border.
            */
           noteedge: '#F0DFC0',     // the date popover's amber note border (its ground is status-amber-bg)
+          /**
+           * THE WAITING QUEUE ROW UNDER THE POINTER, from `AdminQueue`.
+           *
+           * READ THE BOARD, NOT THE PLAN, ON THIS ONE. The plan calls `#F8FCFC` "the waiting
+           * row's ground", which would tint all three of them; the board paints it on the FIRST
+           * waiting row and sets the other two `background:#fff` explicitly, and paints none of
+           * the decided rows at all. One row out of three, on the only table with a control in
+           * it, is a hover drawn onto a screenshot that cannot show one — so it ships as a hover
+           * and not as a ground. (Recorded because the same file already carries one plan
+           * misreading of a board hex, in `noteedge` directly above.)
+           *
+           * NOT A SECOND NAME FOR ONE THE RAMP OWNS: the nearest values in this config are
+           * `savedirty` #F5FCFC and `offer` #F5FBFB, both different hexes on different roles.
+           */
+          queuehover: '#F8FCFC',   // the waiting queue row under the pointer
         },
         /**
          * The nine status states of `StatusCardStates`, as text / ground / dot triples. Six

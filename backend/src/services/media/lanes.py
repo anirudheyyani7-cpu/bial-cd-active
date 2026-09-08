@@ -9,13 +9,15 @@ by a list of extensions:
     reports what it found. The model never receives the bytes.
 
 WHY `ALLOWED_MEDIA` IS NOT WIDENED, which is the opposite of the obvious change. That set is the
-magic-byte gate, and `bytes_match_declared` is applied on THREE paths that all end at the model:
-the upload route, the store's rehydrator, and `build_sessions/attachments.py`. Adding OOXML there
-would make `bytes_match_declared` answer True for a deck at every one of them — and the PowerPoint
-refusal that used to stop a deck reaching a build's `BinaryContent` would then be the only thing in
-the way, on a path where it is easy to delete as obsolete. A spreadsheet would reach the model as
-raw ZIP bytes: expensive, unreadable, and exactly the confident-wrong-answer failure this work
+magic-byte gate, and it is applied on BOTH paths that end at the model: the upload route
+(`ALLOWED_MEDIA.get` + `magic_matches`) and the store's rehydrator (`bytes_match_declared`).
+Adding OOXML there would make both answer True for a deck, and a spreadsheet would reach the model
+as raw ZIP bytes: expensive, unreadable, and exactly the confident-wrong-answer failure this work
 exists to remove.
+
+(There was a third — the build session's own attachment resolver, which refused a deck by name.
+It went with the whole legacy build-sessions attachment surface in #218. The count moves; the
+reasoning does not, which is the point of routing by lane rather than by a list of types.)
 
 So the second lane is its own set, admitted only where an attachment is STORED. The three
 model-facing consumers keep the narrow gate they already had, and they refuse the code lane without

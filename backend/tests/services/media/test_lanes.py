@@ -36,13 +36,18 @@ def test_the_two_lanes_do_not_overlap() -> None:
 def test_the_model_allowlist_was_not_widened() -> None:
     """★ HAZARD 8, ASSERTED RATHER THAN REMEMBERED.
 
-    `ALLOWED_MEDIA` is the magic-byte gate, and `bytes_match_declared` is applied on three paths
-    that all end at the model: the upload route, the store's rehydrator, and the build's
-    attachment resolver. Adding OOXML to it would make all three answer True for a deck, leaving
-    one hand-written refusal as the only thing between a spreadsheet and the model's context.
+    `ALLOWED_MEDIA` is the magic-byte gate, and it is applied on both paths that end at the model:
+    the upload route and the store's rehydrator. Adding OOXML to it would make both answer True
+    for a deck, leaving a hand-written refusal as the only thing between a spreadsheet and the
+    model's context.
 
-    So the code lane is its own set, and the three model-facing consumers keep refusing it with no
-    line changing in any of them. Widen `ALLOWED_MEDIA` and this test says so.
+    IT WAS THREE PATHS WHEN THIS WAS WRITTEN — the build session's own attachment resolver refused
+    a deck by name, and that whole surface was retired in #218. The count moving is the argument
+    rather than a correction to it: a lane is a property of the media type, so a consumer
+    appearing or disappearing changes nothing about what this asserts.
+
+    So the code lane is its own set, and the model-facing consumers keep refusing it with no
+    line changing in either of them. Widen `ALLOWED_MEDIA` and this test says so.
     """
     for media_type in (EXCEL_MEDIA_TYPE, WORD_MEDIA_TYPE, PPTX_MEDIA_TYPE, CSV_MEDIA_TYPE):
         assert media_type not in ALLOWED_MEDIA

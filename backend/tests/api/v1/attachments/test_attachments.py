@@ -1095,35 +1095,12 @@ async def test_a_permission_restricted_pdf_is_uploaded_like_any_other_document(
     assert len(fake_storage.objects) == 1
 
 
-async def test_a_pptx_is_still_governed_by_the_deck_cap_not_the_new_one(
-    client, db_session, monkeypatch
-) -> None:
-    """The deck path keeps its own 100-page limit, and the two caps disagreeing is deliberate.
-
-    A deck is rendered to a PDF by Gotenberg and counted by `extract/deck.py::count_pdf_pages`
-    — a raw-byte scan that is reliable for LibreOffice output and nothing else. The new cap did not
-    reuse it and did not touch it. So a 60-page deck, which is over the new 30-page upload cap
-    and under the deck path's 100, still uploads. Wire the new cap into the pptx branch and
-    this goes red."""
-    import src.api.v1.attachments.router as att_router
-
-    async def _fake_convert(data, *, name):
-        return DeckResult(pdf=b"%PDF-1.4 rendered deck", page_count=60)
-
-    monkeypatch.setattr(att_router, "deck_attachments_enabled", lambda: True)
-    monkeypatch.setattr(att_router, "convert_deck_to_pdf", _fake_convert)
-    headers, _ = await _auth(db_session)
-
-    resp = await client.post(
-        "/v1/attachments",
-        headers=headers,
-        json={"attachmentId": "att_deck60", "mediaType": PPTX_MEDIA_TYPE, "base64": _b64(b"pptx")},
-    )
-
-    assert resp.status_code == 201, resp.text
-    att = resp.json()["attachment"]
-    assert att["kind"] == "deck"
-    assert att["pageCount"] == 60
+# THE DECK-CAP TEST WENT WITH THE DECK PATH (#214 R27). It proved that a 60-page deck cleared
+# the pptx branch's own 100-page limit while the 30-page upload cap applied to PDFs — two caps
+# that disagreed on purpose, because a deck was rendered to PDF by a converter that was never
+# deployed. There is no pptx branch and no converter now: a deck is stored as itself and read in
+# the sandbox, so it is governed by the size cap like every other code-lane file, and there is no
+# second page count for the two to disagree about.
 
 
 async def test_a_pdf_that_hangs_the_parser_is_killed_and_the_worker_keeps_serving(

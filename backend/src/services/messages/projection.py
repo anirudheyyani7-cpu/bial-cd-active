@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.prompt_blocks import APPLY_SCHEMA_CHANGE_TOOL
+from src.core.prompt_blocks import APPLY_SCHEMA_CHANGE_TOOL, ATTACHMENT_READ_TOOL
 from src.db.models.attachment import Attachment
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.schemas import CamelModel
@@ -428,9 +428,32 @@ def _file_step_label(tool_name: str, path: str | None) -> tuple[str, bool]:
     return (f"{verb} {area}", hidden)
 
 
+def _attachment_step_label(file: str | None) -> tuple[str, bool]:
+    """(label, hidden) for a read of an attached file — and here the NAME is the friendly thing.
+
+    ★ THE ONE PLACE THIS MODULE SHOWS A FILE NAME ON PURPOSE (#214 R23). `_friendly_area` exists
+    because a citizen has no idea what `components/GateTable.tsx` is: that is the platform's own
+    machinery, named by the agent. An attachment is the opposite in every respect — the citizen
+    chose the file, named it, and is looking at a chip carrying that name a few inches up the
+    screen. "Looking at part of your app" over their spreadsheet would be LESS informative than
+    the raw name, and it would leave the transcript unable to say which of five attached files an
+    answer came from.
+
+    The name comes from the model's own argument, so it is the on-disk spelling rather than the
+    display name — close enough to recognise, and this module has no database to resolve the
+    other one from.
+    """
+    if not file:
+        return ("Reading the attached file", False)
+    return (f"Reading {file.rsplit('/', 1)[-1]}", False)
+
+
 def _step_label(tool_name: str, args: dict[str, Any]) -> tuple[str, bool]:
     """(label, hidden) for one tool call — the data-driven friendly mapping."""
     path = args.get("path") if isinstance(args.get("path"), str) else None
+    if tool_name == ATTACHMENT_READ_TOOL:
+        file = args.get("file")
+        return _attachment_step_label(file if isinstance(file, str) else None)
     if tool_name in _FILE_MUTATORS:
         return _file_step_label(tool_name, path)
     if tool_name == "read_file":

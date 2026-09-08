@@ -912,12 +912,37 @@ def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_ent
         ("search_files", '{"query": "visitors"}'),
         ("fetch_output_slice", '{"call_id": "c1"}'),
         ("run_command", '{"command": ["grep", "-rn", "visitors", "app/"]}'),
+        ("read_attachment", '{"file": ".attachments/roster.xlsx"}'),
     ):
         label, hidden = classify_tool_call(tool, args)
         assert hidden is False, tool
         assert label.strip(), tool
     assert classify_tool_call("write_file", '{"path": "tsconfig.json"}')[1] is True
     assert classify_tool_call("run_command", '{"command": ["mkdir", "-p", "app/lib"]}')[1] is True
+
+
+def test_reading_an_attachment_names_the_citizens_own_file() -> None:
+    """★ #214 R23, AND THE ONE DELIBERATE EXCEPTION TO `_friendly_area`.
+
+    Every other file label in this module hides the path on purpose: `components/GateTable.tsx`
+    is the platform's own machinery and means nothing to the person reading. An attachment is the
+    opposite — the citizen chose the file, named it, and can see a chip carrying that name. So the
+    transcript says WHICH file was read, which is also the only way a turn that read three of them
+    can be told apart afterwards.
+
+    The raw-name fallback is what makes this a branch rather than a nicety: without it the step
+    renders as "Used read_attachment", which is exactly the machinery leak the friendly mapping
+    exists to prevent.
+
+    Mutation receipt: delete the `ATTACHMENT_READ_TOOL` arm and the first assertion reads
+    "Used read_attachment".
+    """
+    label, hidden = classify_tool_call("read_attachment", '{"file": ".attachments/roster.xlsx"}')
+
+    assert label == "Reading roster.xlsx"
+    assert hidden is False
+    # A call with no argument at all still says something true rather than naming nothing.
+    assert classify_tool_call("read_attachment", "{}")[0] == "Reading the attached file"
 
 
 def test_a_read_binary_asked_to_write_is_never_drawn_as_an_inspection() -> None:

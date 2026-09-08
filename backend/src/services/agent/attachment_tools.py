@@ -32,6 +32,7 @@ from typing import Any
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
+from src.core.prompt_blocks import ATTACHMENT_READ_TOOL
 from src.services.agent.read_tools import ATTACHMENTS_PREFIX, is_an_attachment_path
 from src.services.orchestrator.deps import SandboxSession
 
@@ -80,7 +81,9 @@ def attachment_toolset[DepsT](
     """
     toolset: FunctionToolset[DepsT] = FunctionToolset[DepsT](id="attachments")
 
-    @toolset.tool
+    # THE NAME IS THE CONSTANT, not the spelling of this function, because the transcript's
+    # label mapping matches on it from a module that cannot import this one.
+    @toolset.tool(name=ATTACHMENT_READ_TOOL)
     async def read_attachment(ctx: RunContext[Any], file: str) -> str:
         """Read a file the user attached to this chat and report what is in it.
 

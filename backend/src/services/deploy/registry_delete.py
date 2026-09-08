@@ -19,10 +19,24 @@ Python 3.11, against this backend's 3.14 — a whole unmaintained dependency for
 package is tested against (`httpx.MockTransport`).
 
 THE CREDENTIAL IS THE ONE ALREADY LOADED, and the scope rides the TOKEN REQUEST rather than
-the credential. `acr_username`/`acr_password` are required settings the process already holds
-and already WRITES to the registry with (`local_images.py` does `docker login` and pushes with
-them), so a second, narrower secret would guard nothing that is not already in this process.
-What actually needs guarding is our own bug naming the wrong repository, and that is guarded
+the credential. `acr_username`/`acr_password` are required settings the process already holds,
+so a second, narrower secret would guard nothing that is not already in this process. That the
+account can do more than pull was MEASURED, not assumed (2026-09-08): the two calls below, run
+with a deployment's own `DEPLOY__ACR_*` against a throwaway repository in the real
+`citizen-apps/` namespace, were granted `{"actions": ["delete"]}` and the DELETE answered 202
+with the repository gone from the registry afterwards. Do not read `config.py`'s "pull
+credentials handed to ACA" as a ceiling on the account — that sentence says what ACA is handed
+them FOR, not what they can do, and the registry's admin user has full permissions. It becomes
+a real ceiling the day BIAL swaps in a scope-map token or an `AcrPull` principal, and this call
+is then the first thing to break.
+
+DO NOT RE-DERIVE THE SCOPE FROM `local_images.py`. It does push with these credentials, but
+only under `image_builder=local_docker`, which `settings/api.py` refuses outright in production
+— there ACR Tasks builds under a managed identity and this process never writes to the registry
+at all. "We already push with it" is a development-only argument, and mistaking it for a
+production one is precisely why the scope went unverified long enough to need measuring.
+
+What still needs guarding is our own bug naming the wrong repository, and that is guarded
 directly: the exchange asks for `repository:{repo}:delete` — a token good for exactly one
 repository — and the name is composed by `names.repository_name`, the same function the build
 pushed with. A test asserts the scope on the request, which is a stronger check than a

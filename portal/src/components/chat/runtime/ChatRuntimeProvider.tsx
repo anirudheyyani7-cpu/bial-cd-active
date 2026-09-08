@@ -13,7 +13,12 @@
 import type { ReactNode } from 'react'
 import { AssistantRuntimeProvider, type AppendMessage } from '@assistant-ui/react'
 import { useChatRuntime } from './useChatRuntime'
-import { RefusalSinkProvider, StagedAttachmentsBinding, useBoundAttachmentAdapter } from './stagedAttachments'
+import {
+  PendingReadsProvider,
+  RefusalSinkProvider,
+  StagedAttachmentsBinding,
+  useBoundAttachmentAdapter,
+} from './stagedAttachments'
 import type { ChatMessage } from '../../../utils/messageTypes'
 
 export interface ChatRuntimeProviderProps {
@@ -33,13 +38,17 @@ export default function ChatRuntimeProvider({
   onCancel,
   children,
 }: ChatRuntimeProviderProps) {
-  const { adapter, stagedRef, refusalRef } = useBoundAttachmentAdapter()
+  const { adapter, stagedRef, refusalRef, pendingReads } = useBoundAttachmentAdapter()
   const runtime = useChatRuntime({ messages, isRunning, onNew, onCancel, attachments: adapter })
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <RefusalSinkProvider value={refusalRef}>
-        <StagedAttachmentsBinding target={stagedRef} />
-        {children}
+        {/* #214 R21a — the count of files still being read, so the composer can hold Send until
+            they are all in. It is the only adapter signal the screen has to react to. */}
+        <PendingReadsProvider value={pendingReads}>
+          <StagedAttachmentsBinding target={stagedRef} />
+          {children}
+        </PendingReadsProvider>
       </RefusalSinkProvider>
     </AssistantRuntimeProvider>
   )

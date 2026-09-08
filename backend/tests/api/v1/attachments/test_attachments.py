@@ -8,6 +8,7 @@ import base64
 import datetime
 import io
 import re
+import struct
 import time
 import uuid
 import zipfile
@@ -37,6 +38,17 @@ _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 # count, so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case,
 # tested by name below.
 _PDF = pdf_with_pages(1)
+
+
+def _lying_zip(entries: dict[str, bytes], declared_uncompressed: int) -> bytes:
+    """A real archive whose central directory DECLARES a huge uncompressed size.
+
+    The bomb pre-filter sums the declared sizes and never inflates to check, precisely because
+    they are attacker-controllable - so an overstated size is the threat, not a cheat.
+    """
+    raw = _zip_with(entries)
+    cdh = raw.index(bytes([0x50, 0x4B, 0x01, 0x02]))  # first central-directory header
+    return raw[: cdh + 24] + struct.pack("<I", declared_uncompressed) + raw[cdh + 28 :]
 
 
 def _zip_with(entries: dict[str, bytes]) -> bytes:
@@ -287,6 +299,41 @@ async def test_over_quota_rejected(client, db_session) -> None:
     assert resp.status_code == 413
     body = resp.json()
     assert body["error"]["code"] == "ATTACHMENT_STORE_FULL"
+
+
+async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake_storage) -> None:
+    """★ THE BOUND IS WIRED, NOT MERELY PRESENT (#214 R18b, ordering hazard 3).
+
+    `assert_zip_not_bomb` had three callers, all server-side extraction arms this work deletes,
+    and its own suite calls the function DIRECTLY — so that suite proves the algorithm and would
+    have stayed green through the guard going completely unwired. The two tests that did prove
+    wiring rode the very office kinds being removed.
+
+    This is its replacement on the lane that now carries archives. A 4 MB `.xlsx` can declare 300
+    MB uncompressed, and the new path is strictly more exposed than the old one: the office lane
+    extracted inside a killable, memory-capped subprocess and never stored a file it could not
+    read, while this one stores the archive and hands it to a reader in the citizen's own sandbox,
+    where neither that ceiling nor that deadline reaches.
+
+    Mutation receipt: remove the `assert_zip_not_bomb` call from the upload lane and this is the
+    only test that goes red.
+    """
+    headers, _ = await _auth(db_session)
+    bomb = _lying_zip({"xl/workbook.xml": b"<workbook/>"}, 400 * 1024 * 1024)
+
+    resp = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_bomb",
+            "name": "book.xlsx",
+            "mediaType": EXCEL_MEDIA_TYPE,
+            "base64": _b64(bomb),
+        },
+    )
+
+    assert resp.status_code == 413, resp.text
+    assert fake_storage.objects == {}  # refused BEFORE the store
 
 
 # --- the conversation-scoped budgets (#214 R7a/R7b) ---------------------------

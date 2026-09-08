@@ -36,7 +36,7 @@ const h = vi.hoisted(() => ({
   // it shadowed was deleted. It is handed to the injected client below and armed with the 409 that
   // used to raise the block banner; the assertion is that nothing on this surface reaches it —
   // which was true while the hook still consumed a `start`, and is true structurally now.
-  start: vi.fn(), stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(), relaunchPreview: vi.fn(),
+  start: vi.fn(), stop: vi.fn(), getStatus: vi.fn(), relaunchPreview: vi.fn(),
   fetchSaveState: vi.fn(), fetchPreviewState: vi.fn(),
 }))
 
@@ -83,16 +83,23 @@ const CHAT_ID = 'build-X'
  * calls what it names.
  */
 const client = () => ({
-  start: h.start, relaunchPreview: h.relaunchPreview, stop: h.stop, getStatus: h.getStatus, forceEnd: h.forceEnd,
+  start: h.start, relaunchPreview: h.relaunchPreview, stop: h.stop, getStatus: h.getStatus,
 })
 const deps = () => ({ client: client(), eventSourceFactory: () => new FakeEventSource('x') })
 
 /** The device card that carries the reveal's opacity — the handle every frame assertion uses. */
 const card = (container) => container.querySelector('[data-testid="device-card"]')
 
-/** The banner and the control this unit deletes, found by their rendered copy, not by a testid. */
+/** The banner this unit deletes, found by its rendered copy, not by a testid.
+ *
+ *  ITS FORCE-END BUTTON USED TO BE ASSERTED HERE TOO, and that assertion went with force-end
+ *  itself rather than outliving its subject: the button was the banner's, so "no banner" already
+ *  covers it here, and what a citizen can still see is pinned directly — and exhaustively over
+ *  every prop the component accepts — by the RETIREMENT GUARD in
+ *  `components/chat/__tests__/SessionBanners.test`.
+ *  There is no force-end left to render from any state: the client, the hook wrapper and the
+ *  backend route all went in one change. */
 const blockBanner = () => screen.queryByText(/you already have a build running/i)
-const forceEndControl = () => screen.queryByRole('button', { name: /force-end/i })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -100,7 +107,6 @@ beforeEach(() => {
   primeTurn(h)
   h.stop.mockResolvedValue(ENDED_RESP)
   h.getStatus.mockResolvedValue(statusResp())
-  h.forceEnd.mockResolvedValue(ENDED_RESP)
   h.getBuild.mockResolvedValue({ id: CHAT_ID, kind: 'build', messages: [] })
   h.loadBuilds.mockResolvedValue([])
   h.listProjectConversations.mockResolvedValue([])
@@ -131,7 +137,6 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
     expect(screen.getByTestId('composer-input')).toBeTruthy()
     expect(h.start).not.toHaveBeenCalled()
     expect(blockBanner()).toBeNull()
-    expect(forceEndControl()).toBeNull()
   })
 
   it('arm 2, relaunch’s 409: the LIVE relaunch path answers in the pane, never in the banner', async () => {
@@ -152,20 +157,21 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
     // without which "no banner" would also be true of a surface that had thrown.
     expect(await findStartAppControl()).toBeTruthy()
     expect(screen.getByTestId('composer-input')).toBeTruthy()
-    // …never the banner, and never its kill switch.
+    // …never the banner.
     expect(blockBanner()).toBeNull()
-    expect(forceEndControl()).toBeNull()
 
     standby.settle()
   })
 })
 
 describe('frame survival — the case where an unmount kills a live container', () => {
-  // A framed, pardoned preview: `status: 'ended'` + `completedLive` is the state in which
-  // the server is STILL SERVING the container under an idle lease. `showTerminal` must stay false,
+  // A framed, pardoned preview: `status: 'ended'` + `serving` is the state in which the
+  // server is STILL SERVING the container under an idle lease. `showTerminal` must stay false,
   // `frameContext` true and `framePending` true, or the iframe comes down over a live app.
+  // (`serving` is what `completedLive` was renamed to when liveness moved onto the address — same
+  // state, a name that no longer also claims a build succeeded.)
   const framedAndPardoned = (props = {}) =>
-    render(<LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive {...props} />)
+    render(<LivePreview previewUrl={SANDBOX_URL} status="ended" serving {...props} />)
 
   it('an ended-but-live preview keeps its frame mounted, shows no terminal card, and keeps the labelled wait', () => {
     const { container } = framedAndPardoned()

@@ -10,6 +10,81 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
+## [1.7.0-beta.10] - 2026-09-08
+
+The rest of the end-to-end campaign: what the platform says while it waits, what it remembers
+after it destroys something, and what it costs you to be told.
+
+### Added
+
+- **A published app offers its link.** Sharing one meant reading a URL off the screen and typing it
+  somewhere else; there is now a control that copies it, and it says plainly when there is nothing
+  to copy yet.
+- **A rejected submission shows the reviewer's reason where the decision is.** It was already on
+  the wire and shown nowhere, so a citizen learned only that the answer was no.
+- **The wait while your app starts says what it is doing, and how long it has been doing it.** The
+  card was a still, silent thing for up to two minutes. It now names the step and counts the wait —
+  measured against the clock, so leaving the tab and coming back tells the truth rather than
+  reporting the seconds the browser felt like giving it.
+- **Switching an app off remembers what it was.** Turning an app back on used to make it approved,
+  whatever it had been — an approval nobody gave. It now goes back exactly where it came from.
+
+### Fixed
+
+- **The kill switch reaches the apps that most need it.** It only ever worked on approved apps,
+  and most of the catalog is a draft, so the only lever left for an app that had to stop was the
+  one that destroys the owner's work. Draft and rejected apps can now be switched off — and
+  switching one off actually stops the work in flight rather than only changing a label.
+- **An administrator's delete asks why, and works at all.** The delete required a written reason
+  and the screen behind it could not collect one, so every attempt was refused. It now asks, in the
+  same words the citizen's own delete asks for, and keeps what you typed if the answer is no.
+- **Deleting something records what could not be destroyed.** Every clean-up step after a delete is
+  best-effort by design — the rows are already gone, so a failure must not undo a delete that
+  worked. What was missing is the other half: an administrator's delete kept no record at all of a
+  database, a file or an image left behind, and nothing automatic collects those. It now names them
+  on the record. The record also stopped inventing them: deleting a project while starting a
+  workspace in another one used to file a permanent note about a container that was never running.
+- **A deleted project keeps its description** on the record that outlives it, read before the
+  delete rather than after.
+- **An encrypted PDF is counted honestly.** A 120 KB file could declare one page, carry twenty
+  thousand, and walk straight past the page limit — adding an encryption dictionary switched the
+  count from the document to whatever the file claimed.
+- **Generating a description is bounded by generations, not by presses.** Pressing it on a project
+  with nothing built yet is refused and costs nothing, and those refusals no longer count against
+  the handful of generations a quarter of an hour allows.
+- **You are no longer billed for the platform's own reasoning**, and the counter and the guardrail
+  now read the same measured number instead of two different estimates. The per-chat ceiling is
+  raised to what the model actually accepts, the estimator that guessed at it is gone, and when a
+  chat really is full it is said in our words rather than the provider's.
+- **A closed dialog gives the keyboard back.** Closing any dialog left focus at the top of the
+  document, so a keyboard user was returned to nowhere with no idea where they had come from. The
+  administrator's delete dialog also gains the trap and the Escape key the rest of them already
+  had — it was the one dialog behind the most destructive control on that screen.
+- **A project row leaves the list when the delete has actually happened**, not the moment the
+  button is pressed. It used to disappear while the server was still dropping the database, and
+  reappear if that failed.
+- **The wait while your app publishes says so.** "Save and publish" went on reading "Save and
+  publish" while it was already working, and the only thing announced was the result.
+- **The projects screen stops changing in silence.** The three numbers and the "showing 1–8 of 14"
+  line both change under you — after a delete, after a search — and neither was announced. The
+  delete dialog's reason box now also carries the rule it is judged against.
+- **The workspace toolbar is reachable and pressable on a phone.** 360px is now a declared width:
+  every control there presents a finger-sized target, and a row too wide to fit scrolls rather than
+  hiding what is past the edge.
+- **The project screen stops claiming a build outcome it did not check**, and asks the app itself
+  whether it compiled — only when it is actually running. A never-saved project stops reporting
+  that the platform lost track of it.
+- **A hand-over asks one question at a time**, and Cancel during a save that is already away no
+  longer tells you it was cancelled when it was not.
+- **The workspace narration stops leaking developer vocabulary** into what a citizen reads.
+
+### Changed
+
+- **Deleting an app deletes the image it was built from.** The citizen's own delete already removed
+  it; the administrator's harsher one left it in the registry.
+- **The orphaned legacy build stack is gone** — around 7,100 lines with no caller left, removed with
+  its tests and the contracts that described it.
+
 ## [1.7.0-beta.9] - 2026-09-06
 
 Eighteen findings from the end-to-end campaign, and the waits finally say what they are doing.

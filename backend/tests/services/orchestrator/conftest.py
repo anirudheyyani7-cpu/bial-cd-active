@@ -4,32 +4,23 @@ The autouse `_no_live_model` guard forbids any live model request for the whole 
 (mirrors `tests/services/agent/conftest.py`): the `FunctionModel` never hits the network, but an
 accidental real call fails loudly instead of billing Foundry.
 
-`billing_factory` binds BRAIN's per-model-step session to the rolled-back test
-session — the substitution the retired `claude/router.py` used to make via
-`dependency_overrides`, adapted for a construction-time dependency (the live equivalent is
-`conversations/_shared.py`). The run-context-provider fixture lives with the harness that
-consumes it.
+`CollectingSink` is the in-process `on_progress` double (every emitted envelope lands in
+`.events`); `tests/services/agent/test_toolsets.py` takes it from here too.
+
+`build_tool_agent` is the LOCAL driver for the sandbox toolset — see its docstring for why the
+driver is local now. The harness fixtures that used to live here (`make_orchestrator`,
+`make_provider`, `billing_factory`) went with `services/orchestrator/harness.py`.
 """
 
 from __future__ import annotations
 
-import contextlib
-import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
-
 import pytest
-from pydantic_ai import BinaryContent, models
-from pydantic_ai.models import Model
-from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic_ai import Agent, RunContext, models
 
 from src.api.v1.build_sessions.schemas import ProgressEnvelope
-from src.services.orchestrator.harness import (
-    BuildOrchestrator,
-    BuildSpec,
-    RunContextProvider,
-    SessionFactory,
-)
+from src.services.orchestrator.deps import SandboxSession
+from src.services.orchestrator.tools import sandbox_toolset
+from tests.fakes import ToolDeps
 
 
 @pytest.fixture(autouse=True)
@@ -55,51 +46,33 @@ def sink() -> CollectingSink:
     return CollectingSink()
 
 
-@pytest.fixture
-def billing_factory(
-    db_session: AsyncSession,
-) -> Callable[[], AbstractAsyncContextManager[AsyncSession]]:
-    """A per-model-step session factory bound to the rolled-back test session, so metering writes
-    are observable and rolled back. Each `factory()` yields the SAME test session (in production a
-    fresh `async_sessionmaker` session per step); the harness owns the commit."""
-
-    @contextlib.asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        yield db_session
-
-    return _session
+def _sandbox_of(ctx: RunContext[ToolDeps]) -> SandboxSession:
+    """The accessor the sandbox toolset resolves its session through."""
+    return ctx.deps.sandbox
 
 
-def make_provider(
-    prompt: str | Sequence[str | BinaryContent], app_id: uuid.UUID
-) -> RunContextProvider:
-    """A run-context provider double: `session_id -> BuildSpec{prompt, app_id}`. The prompt
-    may be a bare string or the multimodal sequence SESSION-API resolves for a turn carrying
-    attachments."""
+def build_tool_agent() -> Agent[ToolDeps, str]:
+    """A LOCAL agent over the sandbox toolset — the driver `tools.py`'s tests run through.
 
-    async def _provider(session_id: uuid.UUID) -> BuildSpec:
-        return BuildSpec(prompt=prompt, app_id=app_id)
+    LOCAL BECAUSE THE MODULE-LEVEL ONE IS GONE, NOT BECAUSE THIS IS A SHORTCUT.
+    `orchestrator/agent.py`'s `build_agent` existed only for the standalone build harness, and
+    it was deleted with it. The toolset it was built over did not go anywhere: `sandbox_toolset`
+    is the SAME factory a live Write chat turn composes its surface from
+    (`services/agent/toolsets.py` → `toolsets_for_kind(ChatKind.BUILD, …)`), resolved through
+    the same `SandboxSession` accessor shape. So an `Agent` constructed here over that factory
+    drives the real tool bodies through the real reflection path — which is what these tests
+    were ever asserting about.
 
-    return _provider
+    Deliberately NO system prompt: `build_agent` carried `BUILD_SYSTEM_PROMPT` as `instructions`,
+    and that prompt is now `mode_prompts.compose_kind_prompt(ChatKind.BUILD, …)`, tested in
+    `test_prompt.py`. Nothing in this file's tests reads the instructions, and binding a prompt
+    here would invite an assertion about a string this driver, not production, chose.
 
+    `retries=2` is what the deleted `build_agent` was constructed with, and it is load-bearing: a
+    `ModelRetry` raised by a tool (an enriched `edit_file` failure, a blocked SQL command) has to
+    be reflected back to the model IN-RUN, which is exactly what several of these tests assert
+    on. Carried over rather than re-chosen.
 
-def make_orchestrator(
-    model: Model,
-    session_factory: SessionFactory,
-    *,
-    prompt: str | Sequence[str | BinaryContent] = "build a records app",
-    app_id: uuid.UUID | None = None,
-) -> tuple[BuildOrchestrator, uuid.UUID]:
-    """Construct a BuildOrchestrator wired to test doubles. `readiness_poll_s=0` so the readiness
-    poll never sleeps in the suite; a small poll budget keeps a stuck-dev test bounded.
-    `preview_watch_poll_s=0` so the early readiness watcher spins without sleeping."""
-    resolved_app_id = app_id if app_id is not None else uuid.uuid4()
-    orchestrator = BuildOrchestrator(
-        model=model,
-        session_factory=session_factory,
-        run_context_provider=make_provider(prompt, resolved_app_id),
-        readiness_max_polls=5,
-        readiness_poll_s=0.0,
-        preview_watch_poll_s=0.0,
-    )
-    return orchestrator, resolved_app_id
+    The pattern is `tests/services/agent/test_toolsets.py`'s — a per-test `Agent` over the
+    factory under test."""
+    return Agent(deps_type=ToolDeps, retries=2, toolsets=[sandbox_toolset(_sandbox_of)])

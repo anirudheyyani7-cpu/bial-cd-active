@@ -266,6 +266,30 @@ describe('getDeployment parses the one publish state, and refuses to guess it', 
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).message).toMatch(/publish state we could not read/i)
   })
+
+  /**
+   * U16 / R37a — WHY the saved pair is absent, which the pair itself cannot say. Only
+   * `never_saved` removes the rail's row, so it is the one value an unrecognised string must
+   * never be read as.
+   */
+  it('★ parses each reason the saved pair can be absent', async () => {
+    for (const state of ['saved', 'never_saved', 'store_unconfigured', 'storage_error'] as const) {
+      const view = await parse({ savedState: state })
+      expect(view.savedState, state).toBe(state)
+    }
+  })
+
+  it('★ reads an unrecognised or missing reason as NO CLAIM, never as "never saved"', async () => {
+    // The conservative reading `toApprovalRoute` already documents, and the direction matters:
+    // the one value that DELETES a row must never be reachable by accident, so a server that
+    // grows a fifth member fails towards saying too little.
+    for (const wire of [{ savedState: 'never_saved_probably' }, { savedState: null }, {}]) {
+      const view = await parse(wire)
+      expect(view.savedState, JSON.stringify(wire)).toBeNull()
+      // Liveness: an unreadable supplementary field must not blank the response it rode on.
+      expect(view.publishState, JSON.stringify(wire)).toBe('live_current')
+    }
+  })
 })
 
 describe('startDeploy has two success shapes, discriminated by outcome', () => {

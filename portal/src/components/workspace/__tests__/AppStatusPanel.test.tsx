@@ -54,6 +54,9 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   publishState,
   savedHead: null,
   savedAt: null,
+  // `null` is "the server did not say", which keeps the saved row — the neutral default
+  // for suites that are not about U16's never-saved omission.
+  savedState: null,
   ...over,
 })
 
@@ -197,6 +200,226 @@ describe('the provenance rows', () => {
       expect(saved.querySelector('.text-status-amber-fg') !== null, state).toBe(amber)
       cleanup()
     }
+  })
+})
+
+/**
+ * U14 / R34 / AE9 — sharing a published app without leaving the product.
+ *
+ * The panel already linked the address; copying it meant opening the tab and taking it out of
+ * the browser's own address bar. What is asserted here is the VALUE copied, not the presence of
+ * a control — a copy button wired to the wrong string passes every presence assertion.
+ */
+describe('the copy control on a published app', () => {
+  const LIVE = 'https://visitor-log.apps.example/'
+
+  const published = (over: Partial<DeploymentView> = {}) =>
+    view('live_current', {
+      finishedAt: '2026-08-20T09:14:00Z',
+      headSha: SHA,
+      url: LIVE,
+      savedAt: '2026-08-20T09:14:00Z',
+      savedHead: SHA,
+      savedState: 'saved',
+      ...over,
+    })
+
+  /** jsdom ships no `navigator.clipboard` at all, so every case here is a definition. */
+  const stubClipboard = (writeText: (text: string) => Promise<void>) => {
+    const spy = vi.fn(writeText)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: spy }, configurable: true })
+    return spy
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'clipboard')
+  })
+
+  it('★ copies the LIVE APP\'S OWN ADDRESS, not merely something', async () => {
+    const writeText = stubClipboard(async () => {})
+    wire({ deployment: published() })
+    mount()
+
+    fireEvent.click(screen.getByTestId('status-copy-link'))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    expect(writeText).toHaveBeenCalledWith(LIVE)
+    // …and it says so, because a copy control that gives no answer is indistinguishable from
+    // one that failed.
+    await waitFor(() =>
+      expect(screen.getByTestId('status-copy-link').getAttribute('aria-label')).toMatch(/copied/i),
+    )
+  })
+
+  it('★ is absent on an app that is not published', () => {
+    // Gated on the same `url` the row carries, so the two states below cover both reasons a
+    // panel has no address to offer: never published, and published then taken down (whose
+    // address would 404 — `provenanceRows` nulls it deliberately).
+    for (const state of ['draft', 'in_review', 'nothing_built'] as const) {
+      wire({ deployment: view(state, { savedState: 'saved', savedAt: '2026-08-20T09:14:00Z' }) })
+      mount()
+      expect(screen.queryByTestId('status-copy-link'), state).toBeNull()
+      // Liveness: the panel rendered its state — an absence assertion on a crashed render
+      // would pass on its own.
+      expect(screen.getByTestId('status-pill'), state).toBeTruthy()
+      cleanup()
+    }
+
+    wire({
+      deployment: view('taken_offline', {
+        url: LIVE,
+        finishedAt: '2026-08-20T09:14:00Z',
+        savedState: 'saved',
+      }),
+    })
+    mount()
+    expect(screen.queryByTestId('status-copy-link')).toBeNull()
+    expect(screen.getByTestId('status-row-published').textContent).toMatch(/LAST PUBLISHED/)
+  })
+
+  it('★ says so when the clipboard refuses, and hands over the address to copy by hand', async () => {
+    // The defect this forbids is SILENCE. `navigator.clipboard` rejects on a denied permission
+    // and on an unfocused document, and the press otherwise does nothing at all — the citizen
+    // pastes whatever was on their clipboard before and the platform never said a word.
+    const writeText = stubClipboard(async () => {
+      throw new Error('NotAllowedError')
+    })
+    wire({ deployment: published() })
+    mount()
+
+    fireEvent.click(screen.getByTestId('status-copy-link'))
+
+    const alert = await screen.findByTestId('status-copy-refused')
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(alert.getAttribute('role')).toBe('alert')
+    // Actionable, not merely apologetic: the address itself is in the message.
+    expect(alert.textContent).toContain(LIVE)
+    // Liveness: the panel is intact and the control is still there to try again.
+    expect(screen.getByTestId('status-copy-link')).toBeTruthy()
+  })
+
+  it('★ says the same thing when the browser has no clipboard at all', async () => {
+    // The OTHER refusal shape, and the one a `.catch()` alone would miss: on an insecure
+    // origin `navigator.clipboard` is UNDEFINED, so an inline `await
+    // navigator.clipboard.writeText(…)` throws rather than rejecting.
+    Reflect.deleteProperty(navigator, 'clipboard')
+    wire({ deployment: published() })
+    mount()
+
+    fireEvent.click(screen.getByTestId('status-copy-link'))
+
+    expect((await screen.findByTestId('status-copy-refused')).textContent).toContain(LIVE)
+  })
+})
+
+/**
+ * U15 / R35 / AE9 — the reviewer's reason, on the rail, without opening anything.
+ *
+ * WHAT IS NOT HERE, DELIBERATELY: the geometric half of AE9 — that a 1,000-character note
+ * leaves "Send for review" in view. jsdom has no layout engine, so a test here could only
+ * assert that both elements EXIST, which is exactly the false pass this campaign has already
+ * produced once. It lives in the browser suite; what this file pins is source order, which is
+ * the mechanism the geometry depends on.
+ */
+describe('the reviewer\'s reason on the rail', () => {
+  const NOTE = 'Move the hardcoded database URL and API key out of lib/db.ts, then send it again.'
+  const rejected = (note: string | null) =>
+    ({
+      deployment: view('changes_requested', { savedState: 'saved', savedAt: '2026-08-20T09:14:00Z' }),
+      approval: approval({ status: 'rejected', rejectionNote: note }),
+    }) as const
+
+  it('★ is on the panel with nothing opened, and in full', () => {
+    wire(rejected(NOTE))
+    mount()
+
+    const note = screen.getByTestId('status-row-rejection-note')
+    expect(note.textContent).toBe(NOTE)
+    // The whole point of "without opening anything": no dialog, no popover, no press.
+    expect(screen.queryByTestId('data-classification-modal')).toBeNull()
+    // And it is not the dialog rendered early — the panel's own row carries it.
+    expect(screen.getByTestId('status-row-rejection').textContent).toMatch(/WHY/)
+  })
+
+  it('★ sits ABOVE the state\'s action in source order', () => {
+    // The mechanism behind the geometric requirement: a note that renders after the button
+    // pushes it down the rail as it grows. Asserted on document position, which is the part
+    // of that claim jsdom can actually see.
+    wire(rejected(NOTE))
+    mount()
+
+    const note = screen.getByTestId('status-row-rejection')
+    const action = screen.getByTestId('status-action')
+    expect(note.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(action.textContent).toBe('Send for review')
+  })
+
+  it('★ bounds the BOX rather than the text', () => {
+    // A 1,000-character cap in a 360px rail. The remedy that reproduces the defect is cutting
+    // the string; the remedy is a bounded, scrollable box around all of it.
+    const long = 'x'.repeat(1000)
+    wire(rejected(long))
+    mount()
+
+    const note = screen.getByTestId('status-row-rejection-note')
+    expect(note.textContent?.length).toBe(1000)
+    expect(note.className).toMatch(/overflow-y-auto/)
+    expect(note.className).toMatch(/max-h-/)
+    // Reachable by keyboard, not by mouse wheel alone.
+    expect(note.getAttribute('tabindex')).toBe('0')
+  })
+
+  it('★ shows no note row where an administrator wrote none', () => {
+    wire(rejected(null))
+    mount()
+
+    expect(screen.queryByTestId('status-row-rejection')).toBeNull()
+    // Liveness: the state itself still rendered, note or no note.
+    expect(screen.getByTestId('status-pill').textContent).toBeTruthy()
+    expect(screen.getByTestId('status-action').textContent).toBe('Send for review')
+  })
+})
+
+/**
+ * U16 / R37a / AE9a — a project that has never been saved stops claiming the platform lost it.
+ */
+describe('the LAST SAVED row on a project with no save', () => {
+  it('★ is not rendered at all, rather than rendered as "we could not tell"', () => {
+    wire({ deployment: view('draft', { savedState: 'never_saved' }) })
+    mount()
+
+    expect(screen.queryByTestId('status-row-saved')).toBeNull()
+    expect(screen.queryByTestId('status-row-saved-unknown')).toBeNull()
+    // Liveness, twice over: the panel drew its state and its action, so the absence above is
+    // an omitted row rather than a panel that failed to render.
+    expect(screen.getByTestId('status-pill').textContent).toBeTruthy()
+    expect(screen.getByTestId('status-action').textContent).toBe('Send for review')
+  })
+
+  it('★ still says "we could not tell" for a save the platform could not READ', () => {
+    for (const state of ['storage_error', 'store_unconfigured'] as const) {
+      wire({ deployment: view('draft', { savedState: state }) })
+      mount()
+      expect(screen.getByTestId('status-row-saved-unknown').textContent, state).toMatch(
+        /could not tell/i,
+      )
+      cleanup()
+    }
+  })
+
+  it('renders the real timestamp for a project that HAS saved', () => {
+    wire({
+      deployment: view('draft', {
+        savedState: 'saved',
+        savedAt: '2026-08-25T14:20:00Z',
+        savedHead: SAVED_SHA,
+      }),
+    })
+    mount()
+
+    const saved = screen.getByTestId('status-row-saved')
+    expect(saved.textContent).toMatch(/2026/)
+    expect(saved.textContent).toContain('f9e8d7c')
   })
 })
 

@@ -252,8 +252,28 @@ export async function enableApp(appId: string, deps: AuthFetchDeps = {}): Promis
 }
 
 /** Hard-delete an app (audited; blobs swept, registry row and app database removed). */
-export async function deleteApp(appId: string, deps: AuthFetchDeps = {}): Promise<unknown> {
-  return readBody(await authFetch(`/api/admin/apps/${encodeURIComponent(appId)}`, { method: 'DELETE' }, deps), 'Failed to delete app')
+/**
+ * Hard-delete an app, with the administrator's justification.
+ *
+ * THE REASON IS REQUIRED BY THE ROUTE (U23, R5) — 5-50 words, validated server-side — because
+ * an administrator destroying somebody else's work with no undo and no export should have to
+ * say why, and the `window.confirm` this used to go through could not collect it. It rides the
+ * `app:delete` audit row, which is written before destruction and has no foreign key to the
+ * app, so it outlives what it describes.
+ *
+ * A BODY ON A DELETE, mirroring `deleteProject`. RFC 9110 leaves content on DELETE undefined,
+ * but nginx and the container ingress both forward it and the admin SPA is the only client.
+ * Sending none is a 422, which is what this function did before the body existed.
+ */
+export async function deleteApp(appId: string, reason: string, deps: AuthFetchDeps = {}): Promise<unknown> {
+  return readBody(
+    await authFetch(
+      `/api/admin/apps/${encodeURIComponent(appId)}`,
+      { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) },
+      deps,
+    ),
+    'Failed to delete app',
+  )
 }
 
 /** Mirrors the backend's `AuditEventOut` (`backend/src/api/v1/admin/schemas.py`,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
@@ -22,13 +23,17 @@ import pytest
 import redis.asyncio as aioredis
 import sqlalchemy as sa
 from pydantic import SecretStr
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.schemas import BuildSessionStatus
 from src.config import settings
 from src.db.models.app_registry import AppRegistry
+from src.db.models.conversation import ChatKind
 from src.db.models.user import User
+from src.services.agent.mode_prompts import PromptContext
 from src.services.build_sessions import manager as manager_module
 from src.services.build_sessions.alarms import RECOVERY_WRITE_DID_NOT_LAND_EVENT
 from src.services.build_sessions.locks import (
@@ -54,8 +59,10 @@ from src.services.sandbox import (
 )
 from src.services.sandbox.config import SandboxConfig
 from src.services.storage import StorageError, recovery_key, snapshot_key
-from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, FakeSandboxClient, FakeStorage, a_git_bundle
+from src.services.turns.engine import TurnEngine, set_turn_engine_for_tests
+from src.services.turns.guard import _mid_reply
+from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.fakes import FakeSandboxClient, FakeStorage, a_git_bundle
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +89,33 @@ async def _mk(db: AsyncSession, email: str) -> tuple[User, uuid.UUID]:
     return user, project.id
 
 
+_CTX = PromptContext(user_name="Ada", project_name="Visitors", project_description=None)
+
+
+@pytest.fixture
+def _fresh_engine():
+    """THE ENGINE `stop_active_work` ACTUALLY REACHES. `_stop_the_held_session` asks
+    `get_turn_engine()` to settle the user's turn, so a test holding a real turn open has to
+    register the engine that turn is running in — otherwise the stop talks to a global engine
+    with nothing in it and reads a verdict off a session nobody stopped. Not autouse: only the
+    handful of tests that hold a turn open need it."""
+    _mid_reply.clear()
+    engine = TurnEngine()
+    set_turn_engine_for_tests(engine)
+    yield engine
+    set_turn_engine_for_tests(None)
+    _mid_reply.clear()
+
+
+@pytest.fixture
+def session_factory(db_session):
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield db_session
+
+    return lambda: _session()
+
+
 # --- attach ------------------------------------------------------------------
 
 
@@ -103,10 +137,11 @@ async def test_ensure_sandbox_allocates_a_build_worth_of_state_without_the_build
     assert await heartbeat_is_alive(fake_redis, user.id) is True
     assert await read_registry(fake_redis, user.id) is not None
 
-    # And nothing a build would run.
+    # And nothing a build would run. `attachments` used to be the fourth of these; the field
+    # itself is gone from `BuildSession` now that nothing can populate it, so its absence is
+    # structural rather than something a test has to keep watching.
     assert session.task is None
     assert session.prompt == ""
-    assert session.attachments == []
     assert session.started_seq is None
     assert session.conversation_id is None
 
@@ -135,8 +170,13 @@ async def test_ensure_sandbox_mints_the_app_row_a_fresh_project_lacks(
 async def test_a_second_write_attach_while_one_is_live_is_a_conflict(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # One sandbox per user, whoever is asking. A Write turn and a build compete for the same
-    # slot because they consume the same container budget and the same Redis lock.
+    # One sandbox per user, whoever is asking. Every turn — Ask, Plan or Write — competes for
+    # the same slot, because they consume the same container budget and the same Redis lock.
+    #
+    # THIS USED TO HAVE A TWIN asserting the OTHER direction, a build refused over a live Write
+    # sandbox. There is no other direction any more: `_claim_the_one_build_slot` had exactly two
+    # callers and `_start_locked` is deleted, so `ensure_sandbox` is now both sides of the race
+    # and this test IS the pair. The claim it shared is unchanged and still asserted here.
     user, project_id = await _mk(db_session, "w3@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -149,25 +189,6 @@ async def test_a_second_write_attach_while_one_is_live_is_a_conflict(
             db_session, user, project_id, sandbox_client=client, may_write=True
         )
     assert caught.value.session_id == first.session_id
-
-
-async def test_a_build_cannot_start_over_a_live_write_sandbox(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    # The other direction of the same slot. Without the shared claim, a build would provision
-    # a second container for a user who already has one and orphan whichever lost the race.
-    user, project_id = await _mk(db_session, "w4@rvaiglobal.com")
-    manager = SessionManager()
-    client = FakeSandboxClient()
-    live = await manager.ensure_sandbox(
-        db_session, user, project_id, sandbox_client=client, may_write=True
-    )
-
-    with pytest.raises(BuildSessionConflictError) as caught:
-        await manager.start(
-            db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
-        )
-    assert caught.value.session_id == live.session_id
 
 
 def _with_head(client: FakeSandboxClient, sha: str) -> FakeSandboxClient:
@@ -784,22 +805,68 @@ async def test_a_confirmed_gone_container_still_reclaims_silently(
 # offered the user Save and Switch, and the server declined both. Observed live.
 
 
-class _Blocking(FakeBrain):
-    """Holds a build session open so the switch lands mid-write.
+class _Blocking:
+    """Holds a live WRITE TURN open so the switch lands mid-write.
 
-    Subclasses `FakeBrain` for its `RunBuild` signature; the body never reaches a return
-    because the point is to still be running when the test acts on it. A stop cancels the
-    `gate.wait()`, which is the shape a real agent mid-write takes."""
+    THE ONLY KIND OF WORK LEFT TO CATCH MID-FLIGHT. This used to hold a build session open by
+    parking a `FakeBrain` the manager had spawned and could cancel itself; that whole path went
+    with `SessionManager.start`. A turn on the real `TurnEngine` is what holds the workspace
+    now, so the hold lives where production's does — inside the streaming model. `stepped` says
+    the turn is genuinely under way, `gate` is the test's hand on the tap, and a stop cancels
+    the `gate.wait()`, which is the shape a real agent mid-write takes."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.gate = asyncio.Event()
         self.stepped = asyncio.Event()
 
-    async def __call__(self, session_id, user_id, sandbox_client, on_progress):
-        self.stepped.set()
-        await self.gate.wait()
-        raise RuntimeError("halted by the test")
+    def model(self) -> FunctionModel:
+        async def _stall(_messages: list[ModelMessage], _info: AgentInfo):
+            yield "working on it"
+            self.stepped.set()
+            await self.gate.wait()
+            raise RuntimeError("halted by the test")
+
+        return FunctionModel(stream_function=_stall)
+
+
+async def _a_turn_holding_the_workspace(
+    db: AsyncSession,
+    engine: TurnEngine,
+    session_factory,
+    manager: SessionManager,
+    client: FakeSandboxClient,
+    user: User,
+    project_id: uuid.UUID,
+    turn: _Blocking,
+) -> None:
+    """Start a real Write turn on `project_id` and return once it is genuinely streaming.
+
+    The turn pins the project's container through `manager.ensure_sandbox`, so the manager's
+    one-per-user slot is held by work `stop_active_work` can actually reach — which is what
+    makes its `STOPPED` a statement about anything."""
+    conversation = await ConversationFactory.create(
+        db, user.id, project_id=project_id, kind=ChatKind.BUILD
+    )
+    await engine.start_turn(
+        conversation=conversation,
+        user_id=user.id,
+        prompt="build it",
+        history=[],
+        prompt_context=_CTX,
+        app_id=None,
+        project_id=project_id,
+        model=turn.model(),
+        session_factory=session_factory,
+        persist_user_turn=_nothing_to_persist,
+        manager=manager,
+        sandbox_client=client,
+    )
+    await asyncio.wait_for(turn.stepped.wait(), timeout=10)
+
+
+async def _nothing_to_persist() -> None:
+    """The user's row is the route's job, not the engine's — and no test here reads it."""
+    return None
 
 
 async def test_a_project_being_built_refuses_with_building_not_unsaved_changes(
@@ -816,22 +883,21 @@ async def test_a_project_being_built_refuses_with_building_not_unsaved_changes(
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "f" * 40)
-    brain = _Blocking()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    # A WRITING session, held and not finished — which is the whole of what the guard reads
+    # (`_writing_session_holds`). No turn engine is needed for this one: `reclaim_preflight`
+    # asks the manager's own session map and never touches the work behind it.
+    await manager.ensure_sandbox(
+        db_session, user, project_a, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()
-    try:
-        with pytest.raises(SandboxReclaimBlockedError) as caught:
-            await manager.reclaim_preflight(db_session, user, project_b, sandbox_client=client)
 
-        assert caught.value.building is True
-        assert caught.value.dirty is None  # deliberately not asked
-        assert caught.value.project_id == project_a
-        assert client.torn_down == []  # the agent keeps working
-    finally:
-        brain.gate.set()
+    with pytest.raises(SandboxReclaimBlockedError) as caught:
+        await manager.reclaim_preflight(db_session, user, project_b, sandbox_client=client)
+
+    assert caught.value.building is True
+    assert caught.value.dirty is None  # deliberately not asked
+    assert caught.value.project_id == project_a
+    assert client.torn_down == []  # the agent keeps working
 
 
 async def test_saving_a_project_mid_build_is_refused(
@@ -848,23 +914,23 @@ async def test_saving_a_project_mid_build_is_refused(
     user, project_a = await _mk(db_session, "w22@rvaiglobal.com")
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "0" * 40)
-    brain = _Blocking()
 
-    session = await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_a, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()
-    try:
-        with pytest.raises(BuildSessionConflictError):
-            await manager.save_project_snapshot(db_session, user, project_a, sandbox_client=client)
-        # Nothing was written — the saved bundle is not a photograph of a workshop mid-swing.
-        assert snapshot_key(session.app_id) not in fake_storage.objects
-    finally:
-        brain.gate.set()
+
+    with pytest.raises(BuildSessionConflictError):
+        await manager.save_project_snapshot(db_session, user, project_a, sandbox_client=client)
+    # Nothing was written — the saved bundle is not a photograph of a workshop mid-swing.
+    assert snapshot_key(session.app_id) not in fake_storage.objects
 
 
 async def test_stop_active_work_settles_the_build_so_the_switch_can_proceed(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """The first of three steps: while the build runs, save and release both refuse, and after
     `stop_active_work` returns the slot must be free — `_active_by_user` empty ON RETURN is the
@@ -875,18 +941,17 @@ async def test_stop_active_work_settles_the_build_so_the_switch_can_proceed(
     user, project_a = await _mk(db_session, "w23@rvaiglobal.com")
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "1" * 40)
-    brain = _Blocking()
+    turn = _Blocking()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
     assert manager.active_session_for(user.id) is not None
 
-    # The gate stays SHUT: the stop must be what ends this, not the brain finishing on its own.
-    # Opening it first would let the build settle by itself and the assertions below would pass
-    # without `stop_active_work` having done anything — the turn cancels inside `gate.wait()`,
-    # the shape a real agent mid-write takes.
+    # The gate stays SHUT: the stop has to be what ends this, not the model finishing on its
+    # own. Opening it first would let the turn settle by itself and the assertions below
+    # would pass without `stop_active_work` having done anything — the turn cancels inside
+    # `gate.wait()`, which is the shape a real agent mid-write takes.
     stopped = await manager.stop_active_work(db_session, user, project_a, sandbox_client=client)
 
     assert stopped is StopOutcome.STOPPED
@@ -929,20 +994,18 @@ async def test_stop_active_work_will_not_stop_a_different_project(
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
     client = _with_head(FakeSandboxClient(), "2" * 40)
-    brain = _Blocking()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await manager.ensure_sandbox(
+        db_session, user, project_a, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()
-    try:
-        stopped = await manager.stop_active_work(
-            db_session, user, project_b, sandbox_client=client
-        )
-        assert stopped is StopOutcome.NOTHING_WAS_RUNNING
-        assert manager.active_session_for(user.id) is not None  # A is still building
-    finally:
-        brain.gate.set()
+
+    # Asking B to stop must not stop A's agent. NOT VACUOUS WITHOUT A RUNNING TURN: an
+    # unscoped `stop_active_work` would find A's session through the per-user slot and answer
+    # `STILL_RUNNING`, which is the state this assertion refuses — only a read scoped to the
+    # project the caller named reaches `NOTHING_WAS_RUNNING` here.
+    stopped = await manager.stop_active_work(db_session, user, project_b, sandbox_client=client)
+    assert stopped is StopOutcome.NOTHING_WAS_RUNNING
+    assert manager.active_session_for(user.id) is not None  # A still holds the workspace
 
 
 # --- a QUESTION is not a build ---------------------------------------------------

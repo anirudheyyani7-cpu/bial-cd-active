@@ -5,10 +5,12 @@ LF-normalizes writes, enforces the `str_replace` exactly-once rule (0 or N>1 →
 non-zero command `exit` as a NORMAL `ExecResult` (never an exception), keeps `dev_start`
 idempotent, and tails `dev_logs` from a cursor.
 
-Programmable hooks drive the self-heal loop under test (`queue_commands`, `become_ready_after`,
-`push_dev_logs`, `attach_error`, ...); call counters (`command_calls`, `dev_start_calls`,
-`teardown_calls`) let a test assert BRAIN never ran `git`, restarted the dev server, or tore
-down. Mirrors `tests/fakes.py:FakeStorage`.
+Programmable hooks drive the self-heal loop under test: `queue_commands` scripts the FIFO
+results of the between-turn `tsc` (`selfheal.verify`'s, fail then pass), `become_ready_after`
+delays dev readiness, `push_dev_logs` injects a crash into the tail, and `attach_error` makes
+`attach_existing` raise. Call counters (`command_calls`, `dev_start_calls`, `teardown_calls`)
+let a test assert BRAIN never ran `git`, restarted the dev server, or tore down. Mirrors
+`tests/fakes.py:FakeStorage`.
 """
 
 from __future__ import annotations
@@ -119,7 +121,7 @@ class FakeSandbox(SandboxClient):
         # before this check existed don't silently start paying for a re-check pass.
         self.changed_since_watermark = False
         self.watermark_stamps = 0
-        # A container that cannot answer the harness's own `sh -c` probes at all (no `find`, no
+        # A container that cannot answer `selfheal`'s own `sh -c` probes at all (no `find`, no
         # shell) — every probe reads a non-zero exit as "could not find out," never as a fact.
         self.probes_fail = False
         # The marker file is missing (a failed stamp, or a fresh `/tmp`). Models the real script's
@@ -139,7 +141,7 @@ class FakeSandbox(SandboxClient):
     # --- programmable hooks --------------------------------------------------
 
     def queue_commands(self, *results: ExecResult) -> None:
-        """Script the FIFO results the harness-driven `tsc` reads (fail then pass)."""
+        """Script the FIFO results the between-turn `tsc` reads (fail then pass)."""
         self._command_queue.extend(results)
 
     def become_ready_after(self, polls: int) -> None:
@@ -165,8 +167,8 @@ class FakeSandbox(SandboxClient):
         self.warm_status = 500
 
     def push_dev_logs(self, *lines: str) -> None:
-        """Append lines to the dev-server tail (a crash line is just stderr text the harness
-        recognizes)."""
+        """Append lines to the dev-server tail (a crash line is just stderr text
+        `selfheal.detect_server_crash` recognizes)."""
         self._dev_log_lines.extend(lines)
 
     def kill_dev(self, *, exit_code: int = 1) -> None:
@@ -239,9 +241,11 @@ class FakeSandbox(SandboxClient):
         # A non-zero exit is a NORMAL return, never an exception.
         self.command_calls.append(list(cmd))
         self.command_timeouts.append(timeout_s)
-        # The harness's own `sh -c` probes answer from their own fields, ahead of both queues:
-        # `queue_commands`/`queue_exec_errors` are FIFO for the harness-driven `tsc` run, and a
-        # probe consuming a queued entry would hand the type-check the wrong answer silently.
+        # `selfheal`'s own `sh -c` probes answer from their own fields, ahead of both queues.
+        # `queue_commands` and `queue_exec_errors` script the between-turn `tsc` run — that is
+        # what every caller means by them — and they are FIFO, so a probe consuming a queued entry
+        # would hand the type-check the wrong answer while looking like it did nothing. A test that
+        # wants a probe to fail sets `probe_error`, which still sees every probe.
         scripted = self._answer_a_probe(cmd)
         if scripted is not None:
             return scripted
@@ -252,7 +256,7 @@ class FakeSandbox(SandboxClient):
         return self.default_result
 
     def _answer_a_probe(self, cmd: list[str]) -> ExecResult | None:
-        """One of the harness's own container probes, or `None` for an ordinary command."""
+        """One of `selfheal`'s own container probes, or `None` for an ordinary command."""
         if len(cmd) != 3 or cmd[0] != "sh":
             return None
         script = cmd[2]
@@ -345,7 +349,7 @@ class FakeSandbox(SandboxClient):
             raise self.dev_start_error
         if self.dev_exit_code is not None:
             # A restart after a death mirrors the supervisor: `/dev/start` resets the log
-            # ring, so old cursors point past it (the harness re-reads from 0).
+            # ring, so old cursors point past it (`selfheal.verify` re-reads from 0).
             self._dev_log_lines = []
             self.dev_exit_code = None
         self.dev_running = True

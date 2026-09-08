@@ -12,16 +12,32 @@
  *
  * `fetchPreviewState` is CHEAP BY CONTRACT: one cache read, at most two rows, at most two object-store
  * HEADs, no container call — safe on a timer. `fetchSaveState` is not — two `git` execs in the container —
- * called only when `alive` (a stopped project's unsaved work would otherwise attach to a dead workspace,
- * forbidden), and a stopped project shows no save state or commit. Neither `fetchCompileState` nor
- * `checkWorkspace` is called from here: both belong to a live-turn surface, both costing a container exec.
+ * so it is called only when the read says `alive`: asking a stopped project whether it has unsaved work is
+ * an attach against a dead workspace, which is a start this screen caused, and a screen read must never
+ * start a container. The consequence is stated rather than hidden: at rest, a stopped project shows no
+ * save state and no commit. `checkWorkspace` stays out of here for its own reasons — it costs a container
+ * exec, it can raise an operational alarm, and it is gated on a standing completion claim the project
+ * screen does not make. `fetchCompileState` IS asked from this surface: its route short-circuits before
+ * any attach when nothing is live, so it cannot start a stopped container. `ProjectWorkspace` asks it
+ * beside this read rather than from inside it, because it is gated on THIS hook's `alive` answer and on
+ * the resolved address, neither of which this hook holds.
  *
  * `starting`'s successor arrives with no user gesture, so it's polled faster — at
  * {@link STARTING_PROBE_MS} not {@link PREVIEW_PROBE_MS} — the window `nextProbeCadence` owns and bounds.
- * A throwing read spends from it too (`spendProbeCadence`); an accelerated tick skips `fetchSaveState`
- * even on `alive` since a seconds-old container is still booting. A thirty-minute stay can lapse unnoticed
- * too: `RELAUNCH_PREVIEW_STAY_SECONDS` renews only via a turn's deadline writers, so the next read returns
- * `asleep` — one press recovers it, nothing lost.
+ * The reschedule happens INSIDE the read, keyed off `[projectId, epoch]` so a start outcome can't re-arm
+ * the poll and a transition can't trigger an extra request — unlike the chat surface's equivalent effect,
+ * which blanks its reading on every re-run and can flicker "we could not check" or unframe a running app.
+ *
+ * A throwing read spends from the window too (`spendProbeCadence`): the bound ceilings elapsed
+ * fast-polling rather than tallying answers returned, so an endpoint erroring mid-start still buys an
+ * unbounded 3-second poll for the tab's life. An accelerated tick asks the preview state only —
+ * `fetchSaveState` still waits for `alive`, since a seconds-old container is still booting — so the save
+ * state lands within one accelerated interval of when it would have arrived unaccelerated.
+ *
+ * A thirty-minute stay can lapse unnoticed too: `RELAUNCH_PREVIEW_STAY_SECONDS` renews only via a turn's
+ * own deadline writers, so the start-then-read shape (no turn) can let it lapse under someone still
+ * reading. The next read then returns `asleep`, offering the start again with nothing lost — renewing the
+ * stay on a plain read would be a new way to hold a container claimed, which nobody has built.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPreviewState, fetchSaveState, samePreviewState, sameSaveState } from '../../utils/buildSessionApi'

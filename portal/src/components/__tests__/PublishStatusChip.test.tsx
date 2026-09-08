@@ -80,6 +80,9 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   publishState,
   savedHead: null,
   savedAt: null,
+  // `null` is "the server did not say", which keeps the saved row — the neutral default
+  // for suites that are not about U16's never-saved omission.
+  savedState: null,
   ...over,
 })
 
@@ -973,5 +976,88 @@ describe('guarantees carried over from the controls this chip replaces', () => {
     const pop = await openChip()
 
     expect(pop.innerHTML).not.toContain('review-status')
+  })
+
+  /**
+   * THE CHIP IS A PRESS, SO IT CARRIES THE TOOLBAR'S TOUCH FLOOR (plan 001, U17 — R38a, `#201`).
+   *
+   * It is the third of the workspace row's nine occupants and the only one that lives in another
+   * file, which is exactly how a sweep over `WorkspaceToolbar.tsx` would have left ~26px of pill
+   * as the one target below the floor.
+   *
+   * STRUCTURAL, LIKE EVERY OTHER SIZE ASSERTION IN THIS FILE: jsdom computes no Tailwind, so what
+   * is checked is which class each state resolves to. The rectangle belongs to the browser suite.
+   */
+  it('★ every state\'s chip declares the 44px touch floor below the stacking threshold', () => {
+    for (const [state] of LABELS) {
+      wire(view(state, { status: 'running' }))
+      mount()
+      const chip = screen.getByTestId('publish-chip')
+      // A HEIGHT ONLY: every one of the thirteen words is already wider than 44px inside the
+      // pill's padding, and `min-h` leaves the 999px radius, the dot and the chevron exactly as
+      // the board draws them at every width above the threshold.
+      expect(chip.className).toContain('narrow:min-h-[44px]')
+      expect(chip.className).not.toContain('narrow:min-w-')
+      // Above the threshold nothing changed: strip the variant and the pill's own geometry is
+      // untouched, so the desktop chip is the one that shipped.
+      const desktop = chip.className.split(/\s+/).filter((token) => !token.startsWith('narrow:'))
+      expect(desktop.join(' ')).not.toMatch(/min-[hw]-/)
+      expect(desktop.join(' ')).toContain('py-[5px]')
+      cleanup()
+    }
+  })
+
+  it('★ …and so does the chip the read-failure branch draws, which is the only way to retry', () => {
+    // The branch a walk over the thirteen states cannot reach: `loadError` replaces the pill
+    // entirely, and the button it replaces it with is the only route to "Check again".
+    wire(null, { loadError: 'The publish status could not be read.' })
+    mount()
+
+    const chip = screen.getByTestId('publish-chip')
+    expect(chip.textContent).toContain('Status unavailable')
+    expect(chip.className).toContain('narrow:min-h-[44px]')
+  })
+})
+
+describe('★ the publish wait says what it is doing (R31)', () => {
+  // `busyReason` existed and was rendered ONLY as a `title` attribute — neither visible text
+  // nor an exposed busy state, and unreachable to a keyboard or a touch screen. So the one
+  // thing this component announced was the publish OUTCOME: press Save and publish, and hear
+  // nothing at all until it is over, on an operation that uploads a bundle, claims a
+  // deployment row and starts a container.
+
+  it('names the wait in the button, in the region, and as a busy state', async () => {
+    wire(view('draft'), { saving: true })
+    mount()
+    await openChip()
+
+    const action = screen.getByTestId('publish-action')
+    // VISIBLE TEXT, not a tooltip. Under the defect the label still read "Save and publish"
+    // while it was already saving — a control that looks pressable and is doing the thing.
+    expect(action.textContent).toContain('Saving and publishing')
+    expect(action.getAttribute('aria-busy')).toBe('true')
+    // ANNOUNCED, through the region that previously only ever spoke the outcome.
+    expect(screen.getByTestId('publish-announce').textContent).toContain('Saving and publishing')
+  })
+
+  it('names a take-back the same way, and gives the label back when the wait ends', async () => {
+    // PAIRED WITH THE LEAVING, because an announcement on entering a wait and silence on
+    // leaving it is a screen that never says the thing finished.
+    wire(view('draft'), { withdrawing: true })
+    mount()
+    await openChip()
+    expect(screen.getByTestId('publish-action').textContent).toContain('Taking it back')
+    expect(screen.getByTestId('publish-announce').textContent).toContain('Taking it back')
+
+    cleanup()
+    wire(view('draft'))
+    mount()
+    await openChip()
+
+    const settled = screen.getByTestId('publish-action')
+    expect(settled.textContent).not.toContain('Taking it back')
+    expect(settled.getAttribute('aria-busy')).toBe('false')
+    // LIVENESS: the control really is the same one, back to offering its action.
+    expect(settled.textContent?.trim().length).toBeGreaterThan(0)
   })
 })

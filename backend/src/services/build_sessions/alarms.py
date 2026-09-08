@@ -8,6 +8,13 @@ THE ONE RULE: each name appears exactly ONCE in the codebase. An alert cannot be
 a string that exists in two spellings, and the second spelling is invisible until the day it is
 the only one firing. Import the constant, never retype the literal — tests included. Reasons that
 distinguish one firing from another belong in structured fields, not in the event name.
+
+THE DELETE PATH'S ALARM IS NOT HERE, and the omission is deliberate. The artefact-survived alarm
+every teardown arm raises spans `api/v1/projects/`, `services/storage/`, `services/deploy/` and
+`services/appdb/`, and `services/storage/` is imported while `src.config` is still initialising —
+so importing anything under this package from there is a startup circular-import error. It lives
+in `src/core/alarms.py`, a leaf that imports no `src.*` at all; the doctrine above governs it
+identically.
 """
 
 from typing import Final

@@ -20,14 +20,20 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from src.services.orchestrator.agent import build_agent
-from src.services.orchestrator.deps import BuildDeps, SandboxSession
+from src.services.orchestrator.deps import SandboxSession
 from src.services.orchestrator.progress import ProgressEmitter
 from src.services.orchestrator.sql_guard import GUARD_INPUT_MAX_CHARS, you_shall_not_pass
 from src.services.sandbox import ExecResult
-from tests.services.orchestrator.conftest import CollectingSink
+from tests.fakes import ToolDeps
+from tests.services.orchestrator.conftest import CollectingSink, build_tool_agent
 from tests.services.orchestrator.fake_sandbox import FakeSandbox
 from tests.services.orchestrator.model_harness import text_turn, tool_turn
+
+_tool_agent = build_tool_agent()
+"""The in-run wiring test at the foot of this file needs a real agent over the real
+`sandbox_toolset`, because the guard is consulted from inside `run_command`'s body and its
+refusal has to come back as a `ModelRetry` the runtime reflects. The module-level agent that used
+to serve was deleted with the build harness; this is the same toolset, driven locally."""
 
 _FAKE_DSN = "postgresql://app:app@db.local/appdb"
 
@@ -35,7 +41,8 @@ _FAKE_DSN = "postgresql://app:app@db.local/appdb"
 
 
 def test_the_walkthrough_delete_from_visitors_is_blocked() -> None:
-    # The exact 2026-07-22 production incident (see module docstring).
+    # The exact improvisation that destroyed real data: a psql one-liner clearing a table
+    # "to clean up" during a change build.
     refusal = you_shall_not_pass(["psql", _FAKE_DSN, "-c", "DELETE FROM visitors"])
     assert refusal is not None
     # The message is corrective, not a dead-end: it names WHY and the sanctioned channel.
@@ -205,9 +212,9 @@ def _capturing_model(turns: list[ModelResponse], captured: dict[str, Any]) -> Fu
     return FunctionModel(respond)
 
 
-def _deps(fake: FakeSandbox, sink: CollectingSink) -> BuildDeps:
+def _deps(fake: FakeSandbox, sink: CollectingSink) -> ToolDeps:
     emitter = ProgressEmitter(sink)
-    return BuildDeps(
+    return ToolDeps(
         sandbox=SandboxSession(
             sandbox_client=fake,
             handle=fake.handle(),
@@ -238,8 +245,10 @@ async def test_destructive_sql_is_blocked_in_run_and_the_build_self_heals(
         ],
         captured,
     )
-    result = await build_agent.run("tweak the app", deps=_deps(fake, sink), model=model)
+    result = await _tool_agent.run("tweak the app", deps=_deps(fake, sink), model=model)
+    # Only the benign verification ever executed.
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
+    # The corrective refusal was fed back to the model in-run.
     all_incoming = "\n".join(captured.get("incoming", []))
     assert "blocked" in all_incoming.lower()
     assert result.output == "verified without touching data"

@@ -725,11 +725,21 @@ async def test_delete_fails_and_keeps_the_project_when_the_pre_commit_gather_rai
     assert await db_session.scalar(select(Project).where(Project.id == project.id)) is not None
 
 
-async def test_delete_returns_200_and_logs_when_the_post_commit_sweep_fails(
+async def test_delete_returns_200_and_records_what_survived_when_the_sweep_fails(
     app, client, db_session
 ) -> None:
+    # The POST-commit sweep is best-effort in the opposite direction: the rows are already
+    # committed-deleted, so a failing `delete` must never 500 a delete that succeeded.
+    #
+    # WHAT HAPPENS TO THE KEY INSTEAD. It used to be logged "so a future reconcile has a
+    # trail" — there is no reconcile that will collect it: the storage reconciler is
+    # operator-invoked, and nothing on this path runs on a timer outside production. So the arm
+    # raises the pinned survival alarm AND the delete files one audit row naming the key, which
+    # is the artefact an operator can act on.
     from structlog.testing import capture_logs
 
+    from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
+    from src.db.models.audit import AuditLog
     from src.services.storage import submission_key
 
     class _ExplodingDeleteStorage(FakeStorage):
@@ -738,7 +748,8 @@ async def test_delete_returns_200_and_logs_when_the_post_commit_sweep_fails(
 
     headers, _user, project, app_row = await _project_with_app(db_session)
     store = _ExplodingDeleteStorage()
-    store.objects[submission_key(app_row.id, uuid.uuid4())] = b"# v2 git bundle"
+    doomed = submission_key(app_row.id, uuid.uuid4())
+    store.objects[doomed] = b"# v2 git bundle"
     _override_storage(app, store)
 
     with capture_logs() as logs:
@@ -751,7 +762,20 @@ async def test_delete_returns_200_and_logs_when_the_post_commit_sweep_fails(
 
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
-    assert any(entry["event"] == "post_delete_blob_sweep_failed" for entry in logs)
+    survived = [
+        entry["artefact_id"]
+        for entry in logs
+        if entry["event"] == TEARDOWN_ARTEFACT_SURVIVED_EVENT and entry["artefact"] == "blob"
+    ]
+    assert doomed in survived
+    record = await db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "project:teardown-incomplete",
+            AuditLog.resource_id == str(project.id),
+        )
+    )
+    assert record is not None
+    assert {"artefact": "blob", "id": doomed} in record.detail["survived"]
 
 
 async def test_resweep_continues_past_an_app_whose_re_walk_raises(db_session) -> None:
@@ -1110,6 +1134,11 @@ async def test_delete_proceeds_when_redis_is_not_configured(app, client, db_sess
 async def test_delete_fails_closed_when_the_lock_names_no_app(
     app, client, db_session, fake_redis
 ) -> None:
+    # FAIL CLOSED on ambiguity. A held lock with no resolvable registry is a REAL state, not a
+    # hypothetical: `ensure_sandbox` takes the lock BEFORE provisioning the container that
+    # writes the registry hash, so every turn that allocates a workspace passes through this
+    # window (as did the deleted `_start_locked` before it). Proceeding here would land the
+    # delete mid-provision — a silent race — so it refuses instead.
     headers, user, project, app_row = await _project_with_app(db_session)
     _override_storage(app, FakeStorage())
     await fake_redis.set(_lock(user.id), "holder-token")  # lock held, NO registry hash

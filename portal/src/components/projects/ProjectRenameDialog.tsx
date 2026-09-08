@@ -10,14 +10,18 @@
  * Built on the vendored Radix `Dialog`, like the delete and create dialogs, replacing a
  * hand-rolled `fixed inset-0` that had no real focus trap at all — Escape was wired only to the
  * `<input>`'s own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing. Radix
- * gives the trap, Escape from anywhere inside, `role="dialog"`, and focus restored to the pencil
- * that opened it — which survives a rename, so this dialog needs no `onCloseAutoFocus` override
- * the way the delete dialog does.
+ * gives the trap, Escape from anywhere inside, `role="dialog"`, and focus back on the pencil that
+ * opened it, which survives a rename. That last one was not free: Radix's restore runs in
+ * `FocusScope`'s cleanup, and this dialog is rendered conditionally, so `onClose()` deletes the
+ * whole subtree in the same commit and the restore never runs. Measured in a browser, Escape left
+ * `document.activeElement` on the body with the pencil still connected. The backstop that fixes it
+ * lives in the vendored `dialog.tsx`, once, for all five dialogs — see `useFocusBackstop` there.
  *
  * Carries the same 8-word cap the server enforces on PATCH as well as POST, because the rule is
  * "both entry points, or neither" — a rename without the client-side guard is a round trip whose
- * only purpose is to be refused, and the cap has already been dropped once during a prior
- * relocation of this control, which is the argument for keeping it beside the input.
+ * only purpose is to be refused. The cap has now missed this control twice by relocation — out of
+ * `ProjectPage` into the rail, and out of the rail into this dialog — which is the argument for
+ * keeping it beside the input rather than anywhere upstream of it.
  */
 import { useEffect, useRef, useState } from 'react'
 import { patchProject } from '../../utils/projectApi'
@@ -52,7 +56,7 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
   const words = countWords(draft)
   const tooManyWords = words > MAX_PROJECT_NAME_WORDS
   const trimmed = draft.trim()
-  // A LEGACY NAME OVER THE CAP MUST NOT OPEN ALREADY REFUSING (round-4 review). The 8-word
+  // A LEGACY NAME OVER THE CAP MUST NOT OPEN ALREADY REFUSING. The 8-word
   // rule is not retroactive — names saved before it keep working — but the word gate used
   // to fire on the UNTOUCHED draft, so opening this dialog on a stored 9-word name showed
   // Save disabled and, if pressed, an error about text the person had not typed. Nothing
@@ -154,10 +158,28 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
         )}
 
         <div className="mt-5 flex justify-end gap-2">
+          {/* CANCEL HAS TO REFUSE WHILE A SAVE IS IN FLIGHT. It called `onClose`
+              unconditionally, so a citizen who pressed Save, changed their mind and pressed Cancel
+              got the dialog closed AND the project renamed — the request was already away, and
+              closing the dialog does nothing to it. That is data integrity, not polish: the
+              citizen was told the rename was cancelled and it was not.
+
+              The same rule already rides `onOpenChange` above, which is why Escape and the overlay
+              click were safe and only the explicit button was not. This is the gap, not a new rule.
+
+              `aria-disabled`, never `disabled`, for the reason the Save button states one line
+              down: a disabled control throws focus to the body, which is the defect the focus work
+              on the neighbouring dialogs exists to prevent. */}
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg"
+            onClick={() => {
+              if (busy) return
+              onClose()
+            }}
+            aria-disabled={busy}
+            className={`rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg ${
+              busy ? 'cursor-not-allowed opacity-50' : ''
+            }`}
           >
             Cancel
           </button>

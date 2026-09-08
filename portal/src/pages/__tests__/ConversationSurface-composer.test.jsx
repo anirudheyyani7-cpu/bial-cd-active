@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
   listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(),
   resolvePlanOptions: vi.fn(),
-  stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(), relaunchPreview: vi.fn(),
+  stop: vi.fn(), getStatus: vi.fn(), relaunchPreview: vi.fn(),
   notifyUsageChanged: vi.fn(),
 }))
 
@@ -849,7 +849,10 @@ describe('a refused send leaves the citizen holding their message', () => {
     expect(composer().value).toBe('do not lose this')
     expect(screen.queryByText(/did not send/i)).toBeNull()
 
-    releaseStart()
+    // Resolved with the real 202 SHAPE, not with nothing: a 202 body now carries the chat's
+    // occupancy beside the turn id (#194), and a mock that resolves `undefined` stands in for
+    // a contract this endpoint no longer has.
+    releaseStart({ turnId: 't1', contextTokens: null })
     await waitFor(() => expect(composer().value).toBe(''))
   })
 
@@ -878,7 +881,7 @@ describe('a refused send leaves the citizen holding their message', () => {
     )
     await waitForGateOpen()
 
-    h.startTurn.mockResolvedValue(undefined)
+    h.startTurn.mockResolvedValue({ turnId: 't1', contextTokens: null }) // the real 202 shape
     type('second attempt')
     fireEvent.keyDown(composer(), { key: 'Enter' })
 
@@ -899,8 +902,9 @@ describe('a refused send leaves the citizen holding their message', () => {
  * AND IT ASSERTS WHICH REFUSAL, WHICH IS THE HALF THAT MOTIVATED THE FIX
  *
  * Without this check the citizen still gets stopped — one step later, by the token gate, which
- * says "start a new chat". That advice does not work: the new chat refuses the identical message,
- * because a PDF is charged a flat 75,000 tokens wherever it is sent. So "was a refusal shown" is
+ * says "start a new chat". That advice does not work: the cap counts documents PER MESSAGE, so the
+ * new chat refuses the identical message. (It used to say the reason was a flat 75,000-token charge
+ * per PDF; nothing prices a document up front any more, on either side.) So "was a refusal shown" is
  * not enough of a claim. The refusal has to be THIS one, and it must not be the conversation cap's
  * sentence — the two caps answer different questions (per message vs cumulative) and a test that
  * accepted either would go green on the wrong one.

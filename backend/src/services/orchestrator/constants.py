@@ -125,9 +125,10 @@ one."""
 
 CRASH_EDGE_CONSECUTIVE_POLLS = 3
 """How many CONSECUTIVE `(ready=False, running=False)` polls a preview watcher needs before it
-calls a dev-process crash. BOTH `_watch_preview` implementations (`orchestrator/harness.py` and
-`turns/engine.py`) must read this — they emit the same signal to the same pane, and a debounce
-applied to one of them only means the crash edge depends on which code path built the app.
+calls a dev-process crash. `turns/engine.py::_watch_preview` reads it. There were TWO watchers
+until the harness was deleted, and the rule this constant encodes came from that: a debounce
+applied to one of them only would have made the crash edge depend on which code path built the
+app. Any second watcher must read this rather than pick its own number.
 
 A SINGLE negative is not evidence. `/dev/status` answers from a bounded wait on an in-flight
 probe (`_STATUS_PROBE_WAIT`, 2s) while a real cold root render against a per-project Postgres can

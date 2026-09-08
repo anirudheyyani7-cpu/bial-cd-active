@@ -1,7 +1,10 @@
-"""`FunctionModel` scripting helpers — drive the build agent with a deterministic sequence
-of model turns, each carrying its own `RequestUsage` so per-model-step metering is assertable.
-A run ends when the model returns a text turn (no tool call); a multi-run build is one
-flat list of turns, the runs delimited by those text turns.
+"""`FunctionModel` scripting helpers — drive an agent with a deterministic sequence of model
+turns, each carrying its own `RequestUsage` so per-model-step metering is assertable. A run
+ends when the model returns a text turn (no tool call).
+
+Written for the standalone build harness, which drove several runs off one flat list of turns
+delimited by those text turns; that harness was deleted and the helpers outlived it, because a
+scripted `FunctionModel` is what every agent-level test in this tree needs.
 """
 
 from __future__ import annotations
@@ -33,8 +36,8 @@ def text_turn(content: str = "Done.", *, usage: RequestUsage = DEFAULT_USAGE) ->
 
 def scripted_model(turns: Sequence[ModelResponse]) -> FunctionModel:
     """A `FunctionModel` that replays `turns` in order (one per model request), across as many
-    `agent.iter` runs as the harness starts. Over-driving past the script yields a benign text
-    turn so a run always terminates."""
+    `agent.iter` runs as the caller starts. Over-driving past the script yields a benign text turn
+    so a run always terminates."""
     remaining = list(turns)
     cursor = {"i": 0}
 

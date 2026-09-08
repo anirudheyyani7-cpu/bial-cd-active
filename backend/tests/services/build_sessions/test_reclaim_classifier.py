@@ -220,9 +220,10 @@ def test_a_lock_without_a_live_heartbeat_does_not_spare() -> None:
 
 
 def test_a_container_mid_provision_is_not_a_candidate() -> None:
-    """`_start_locked` takes the lock BEFORE it provisions the container that writes the registry
+    """`ensure_sandbox` takes the lock BEFORE it provisions the container that writes the registry
     hash, so a four-second-old container legitimately looks exactly like an orphan. That window is
-    the reason this whole module is report-only for a release."""
+    the reason this whole module is report-only for a release. (The deleted `_start_locked` had the
+    same window; the allocator changed, the hazard did not.)"""
     live, claims = _healthy_padding()
     newborn = a_fleet_member("sbx-newborn", tags=_tags(age=dt.timedelta(seconds=4)))
 

@@ -6,9 +6,11 @@
  * Wire format is camelCase; bodies are untrusted `unknown`, narrowed with `toX()` guards — never
  * cast, never `any`. Every non-2xx becomes an `ApiError`, so callers branch on `.status`/`.code`.
  *
- * CSRF: `relaunchPreview`/`stop`/`forceEnd` are mutating POSTs and carry the signed double-submit
- * token (`X-CSRF-Token`, via `auth.js` `getCsrfToken()`); `getStatus` and the SSE GET carry none —
- * safe methods. Net-new: no prior portal route enforced CSRF.
+ * CSRF: `relaunchPreview` / `stop` (and the project-scoped save / release / stop-active
+ * calls below) are mutating POSTs and carry the signed double-submit token (`X-CSRF-Token`,
+ * reusing `auth.js` `getCsrfToken()`); `getStatus` GET and the SSE GET (a separate transport,
+ * `buildSessionEvents.ts`) are safe methods and carry NO token. This is net-new: no prior
+ * business route in the portal enforces CSRF (`api.js` names itself "the seam to add it to").
  */
 import { ApiError, extractApiCode, extractApiMessage, isRecord, readApiError } from './apiError'
 import { authFetch } from './api'
@@ -18,7 +20,6 @@ import { getCsrfToken } from './auth'
 import type {
   BuildSessionStatus,
   BuildSessionStatusResponse,
-  ForceEndResponse,
   RelaunchPreviewRequest,
   RelaunchPreviewResponse,
   StopBuildRequest,
@@ -139,11 +140,6 @@ function toStopBuildResponse(value: unknown): StopBuildResponse {
   return { sessionId: requireSessionId(value), status: toBuildSessionStatus(value.status) }
 }
 
-function toForceEndResponse(value: unknown): ForceEndResponse {
-  if (!isRecord(value)) throw new ApiError('The server returned a build session we could not read.', 500)
-  return { sessionId: requireSessionId(value), status: toBuildSessionStatus(value.status) }
-}
-
 // ─── request plumbing ────────────────────────────────────────────────────────
 
 /** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.js`). */
@@ -181,8 +177,9 @@ async function getJson(
 }
 
 /**
- * A mutating POST with CSRF. `body === undefined` sends no JSON body (`forceEnd` — the one
- * surviving lock op — takes none). A non-2xx becomes an `ApiError`, EXCEPT a
+ * A mutating POST with CSRF. `body === undefined` sends no JSON body — the project-scoped
+ * commands (`saveProject` / `releaseProject` / `stopActiveBuild`) name the target in the path
+ * and carry nothing else. A non-2xx becomes an `ApiError`, EXCEPT a
  * `409 build_session_already_active` which becomes the richer
  * `BuildSessionAlreadyActiveError` carrying the existing session id.
  */
@@ -247,17 +244,18 @@ export async function getStatus(sessionId: string, deps: AuthFetchDeps = {}): Pr
   return toBuildSessionStatusResponse(await res.json())
 }
 
-// ─── lock operations ─────────────────────────────────────────────────────────
+// ─── lock operations — THERE ARE NONE LEFT ─────────────────────────────────
 //
-// `forceEnd` HAS NO CALLER IN THE UI and is kept anyway: it is the owner-only kill switch for the
-// case the whole lock op exists for — a session stuck mid-`building` that never emits a terminal
-// `ended`. Delete it as dead code and that session has no way out.
-
-/** `force-end` — the owner-only kill switch (`kill_switch()`), regardless of in-flight state. A non-owner → `403 build_session_forbidden`. */
-export async function forceEnd(sessionId: string, deps: AuthFetchDeps = {}): Promise<ForceEndResponse> {
-  const body = await postJson(`${BASE}/${encodeURIComponent(sessionId)}/lock/force-end`, undefined, 'Failed to force-end the build session', deps)
-  return toForceEndResponse(body)
-}
+// `acquireLock` and `releaseLock` are gone: nothing called them — the portal's blind
+// keep-alive loop that was their only caller was itself deleted, same as `renewLock` and
+// `heartbeat` before them (see the note above).
+//
+// `forceEnd` is gone too, and so is the ROUTE it spoke to. It was the owner-only kill switch
+// for a session stuck mid-`building` that never emits a terminal `ended`, but its one control
+// was the block banner's Force-end button, deleted with the banner — so no surface could reach
+// it any more, and keeping a client for it only advertised a way to end a build that a citizen
+// could not actually take. What a live build offers now is `stop` (graceful, the whole
+// interrupt vocabulary of a turn) and, project-scoped, `stopActiveBuild`.
 
 /**
  * The dependency bag the client + event feed accept, so a hook and a page
@@ -269,7 +267,6 @@ export interface BuildSessionClient {
   relaunchPreview: typeof relaunchPreview
   stop: typeof stop
   getStatus: typeof getStatus
-  forceEnd: typeof forceEnd
 }
 
 /** The real, wired-by-default client — already the final implementation, so no later swap between mock and real is needed. */
@@ -277,7 +274,6 @@ export const buildSessionClient: BuildSessionClient = {
   relaunchPreview,
   stop,
   getStatus,
-  forceEnd,
 }
 
 // --- the save model ---------------------------------------------------------

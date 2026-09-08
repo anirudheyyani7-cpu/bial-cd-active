@@ -395,6 +395,15 @@ export interface ActiveTurn {
 export type ConversationWithMessages = ConversationHeader & {
   messages: ChatMessage[]
   activeTurn: ActiveTurn | null
+  /**
+   * HOW FULL THIS CHAT IS — the provider's raw prompt count for the largest turn it has served
+   * here, which is the very number `enforce_context_limit` refuses on. It rides the read a
+   * reopened chat already makes, so the "getting long" line is right from first paint.
+   *
+   * `null` MEANS UNMEASURED, NOT EMPTY. A chat with no served turn has no measurement, and the
+   * meter stays silent rather than assuming either — guessing is what #194 deleted.
+   */
+  contextTokens: number | null
 }
 
 export async function getConversation(id: string, deps: AuthFetchDeps = {}): Promise<ConversationWithMessages | null> {
@@ -402,11 +411,15 @@ export async function getConversation(id: string, deps: AuthFetchDeps = {}): Pro
   if (res.status === 404) return null
   if (!res.ok) throw await readApiError(res, 'Failed to load conversation')
   // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
-  const data = (await res.json()) as { conversation: unknown; projection?: RawProjectionItem[]; activeTurn?: ActiveTurn | null }
+  const data = (await res.json()) as { conversation: unknown; projection?: RawProjectionItem[]; activeTurn?: ActiveTurn | null; contextTokens?: number | null }
   return {
     ...(normalizeHeader(data.conversation) as ConversationHeader),
     messages: messagesFromProjection(data.projection),
     activeTurn: data.activeTurn ?? null,
+    // NARROWED, not coerced: a server that has not learned this field yet, or one answering
+    // `null` for an unmeasured chat, both mean "no measurement" — and neither may be read as
+    // zero, which would be a claim that the chat is empty.
+    contextTokens: typeof data.contextTokens === 'number' ? data.contextTokens : null,
   }
 }
 

@@ -1,7 +1,10 @@
 """The five tools + the fail-closed write guard + 422→ModelRetry enrichment.
 
-Driven through `build_agent` + a capturing `FunctionModel` + `FakeSandbox` — the real reflection
-path, not a hand-called function."""
+Driven through `conftest.build_tool_agent()` + a capturing `FunctionModel` + `FakeSandbox` — the
+real reflection path, not a hand-called function. The agent is LOCAL because the module-level
+`build_agent` was the deleted standalone harness's; `sandbox_toolset` — the thing actually under
+test here — is the same factory a live Write chat turn composes its surface from, so the driver
+still exercises the shipping tool bodies. See `build_tool_agent`'s docstring."""
 
 from __future__ import annotations
 
@@ -26,9 +29,9 @@ from src.core import prompt_blocks
 from src.db.models.conversation import ChatKind
 from src.db.models.harness_counter import HarnessCounter
 from src.services.messages.projection import long_operation_line
-from src.services.orchestrator import build_agent, constants
+from src.services.orchestrator import constants
 from src.services.orchestrator import tools as tools_module
-from src.services.orchestrator.deps import BuildDeps, HeldOutput, SandboxSession
+from src.services.orchestrator.deps import HeldOutput, SandboxSession
 from src.services.orchestrator.progress import ProgressEmitter
 from src.services.orchestrator.tools import (
     OUTPUT_NO_LONGER_HELD,
@@ -47,9 +50,17 @@ from src.services.sandbox import (
 )
 from src.services.turns import engine as engine_module
 from src.services.turns.engine import _TurnState
-from tests.services.orchestrator.conftest import CollectingSink
+from tests.fakes import ToolDeps
+from tests.services.orchestrator.conftest import CollectingSink, build_tool_agent
 from tests.services.orchestrator.fake_sandbox import FAKE_SUPERVISOR_TOKEN, FakeSandbox
 from tests.services.orchestrator.model_harness import text_turn, tool_turn
+
+_tool_agent = build_tool_agent()
+"""One agent for the module, mirroring the singleton these tests used to drive: no bound model
+(each run passes its own `FunctionModel`), so construction never needs a configured Foundry.
+
+Named for what it is rather than for what it replaced — the deleted name is not resurrected as a
+live identifier here."""
 
 # Repo-root/sandbox — the real golden template and supervisor, read by the marker-drift pins
 # below. This file is backend/tests/services/orchestrator/test_tools.py, so parents[4] is the
@@ -102,9 +113,9 @@ def _capturing_model(turns: list[ModelResponse], captured: dict[str, Any]) -> Fu
     return FunctionModel(respond)
 
 
-def _deps(fake: FakeSandbox, sink: CollectingSink) -> BuildDeps:
+def _deps(fake: FakeSandbox, sink: CollectingSink) -> ToolDeps:
     emitter = ProgressEmitter(sink)
-    return BuildDeps(
+    return ToolDeps(
         sandbox=SandboxSession(
             sandbox_client=fake,
             handle=fake.handle(),
@@ -121,7 +132,7 @@ async def _run(
 ) -> dict[str, Any]:
     captured: dict[str, Any] = {}
     model = _capturing_model(turns, captured)
-    result = await build_agent.run("build the app", deps=_deps(fake, sink), model=model)
+    result = await _tool_agent.run("build the app", deps=_deps(fake, sink), model=model)
     captured["output"] = result.output
     captured["all_incoming"] = "\n".join(captured.get("incoming", []))
     return captured
@@ -302,7 +313,7 @@ async def test_declare_done_sets_the_signal_and_emits_a_step(sink: CollectingSin
     model = _capturing_model(
         [tool_turn("declare_done", {"summary": "built it"}), text_turn()], captured
     )
-    await build_agent.run("build", deps=deps, model=model)
+    await _tool_agent.run("build", deps=deps, model=model)
     assert deps.sandbox.done_requested is True
     assert deps.sandbox.done_summary == "built it"
     assert any(getattr(e, "name", None) == "declare_done" for e in sink.events)
@@ -315,7 +326,13 @@ async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
 
     `declare_done` used to promise the opposite of what it now does ("This does NOT end the
     build on its own"), and a model that believes it gets one more turn keeps its closing
-    message out of `summary`, saved for prose the harness has already stopped rendering.
+    message out of `summary`, saved for prose the run has already stopped rendering. That is
+    the exact failure this test exists to prevent, so the description is asserted with the same
+    seriousness as the code.
+
+    Asserted on the description the toolset registers — the text pydantic-ai actually sends —
+    rather than on `__doc__`, because the framework composes one from the other and only one of
+    them reaches the model.
 
     Mutation check: restore either retired sentence and the two absence asserts go red; drop
     the diagnostic clause and the liveness assert does."""
@@ -366,7 +383,7 @@ async def test_declare_done_tells_the_model_its_summary_is_the_last_word(
         [tool_turn("declare_done", {"summary": "You can add visitors and check them in."})],
         captured,
     )
-    await build_agent.run("build", deps=deps, model=model)
+    await _tool_agent.run("build", deps=deps, model=model)
     returned = "\n".join(captured["incoming"]).lower()
 
     assert "this turn ends here" in returned
@@ -818,7 +835,7 @@ async def _run_following(
     fake: FakeSandbox, sink: CollectingSink, command: list[str]
 ) -> dict[str, Any]:
     captured: dict[str, Any] = {}
-    result = await build_agent.run(
+    result = await _tool_agent.run(
         "build the app", deps=_deps(fake, sink), model=_following_model(command, captured)
     )
     captured["output"] = result.output
@@ -942,16 +959,16 @@ async def test_an_unknown_handle_returns_the_plain_instruction_not_an_exception(
 
 
 async def test_a_handle_from_a_previous_run_is_no_longer_held(sink: CollectingSink) -> None:
-    """★ THE STATED LIFETIME, exercised rather than asserted about. The harness builds a fresh
-    `SandboxSession` per run (`harness.py`), so the buffer dies with the turn — nothing here is
-    persisted to the database or to blob."""
+    """★ THE STATED LIFETIME, exercised rather than asserted about. The turn engine builds a
+    fresh `SandboxSession` per turn (`turns/engine.py:1727`), so the buffer dies with the turn —
+    nothing here is persisted to the database or to blob."""
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout=_long_output(), stderr="", exit=0))
     first = await _run_following(fake, sink, ["npm", "run", "build"])
     handle = _slice_call_in(first["incoming"][1])
     assert handle is not None
 
-    # A SECOND run, with its own session — exactly what the harness does at the start of a build.
+    # A SECOND run, with its own session — exactly what the engine does at the start of a turn.
     second = await _run(
         fake,
         sink,
@@ -989,7 +1006,7 @@ async def test_a_very_large_capture_does_not_retain_unbounded_memory(
     huge = "\n".join(f"line {n} {'y' * 200}" for n in range(5_000))  # ~1MB
     fake.queue_commands(ExecResult(stdout=huge, stderr="", exit=1))
     deps = _deps(fake, sink)
-    await build_agent.run(
+    await _tool_agent.run(
         "build",
         deps=deps,
         model=_capturing_model(

@@ -44,6 +44,7 @@ from src.api.v1.admin.schemas import (
     AdminAppOut,
     AdminAppStatusResponse,
     AppCountsResponse,
+    AppDeleteRequest,
     AppListResponse,
     ApproveRequest,
     AppStatusCounts,
@@ -99,6 +100,7 @@ from src.db.models.app_registry import (
     AppRegistry,
     ApprovalRoute,
     AppStatus,
+    app_status_enum,
 )
 from src.db.models.attachment import Attachment
 from src.db.models.audit import AuditLog
@@ -129,6 +131,7 @@ from src.services.appdb.teardown import (
 from src.services.appserving.governance import nuke_app
 from src.services.attachments import AttachmentReclaimResult, reclaim_orphaned_attachments
 from src.services.audit.log import append_audit
+from src.services.audit.teardown import record_what_survived
 from src.services.auth.refresh import revoke_all_sessions
 from src.services.build_sessions.inventory import (
     FleetLister,
@@ -277,6 +280,20 @@ async def _transition(
     return result.first() is not None
 
 
+# WHERE A RE-ENABLE LANDS — the status `disable` remembered, or APPROVED when
+# there is nothing remembered. Used TWICE inside `enable`'s one UPDATE, as the SET target and
+# inside the guard that decides which arm the artifact-pin check applies to, so it is written
+# once: two copies of this expression that drifted would silently apply the approved arm's
+# guard to a draft, or skip it on an approved app.
+#
+# A NULL IS A PRE-COLUMN ROW, NOT AN ERROR. Migration 0038 backfilled every already-disabled
+# row to `approved` — the status the code before it resolved them to — and this COALESCE is
+# the same answer given a second time, for a row the backfill could not reach.
+_RESTORE_TARGET = sa.func.coalesce(
+    AppRegistry.previous_status, sa.literal(AppStatus.APPROVED, app_status_enum)
+)
+
+
 # The `db:*` levers all act on a PROJECT-scoped resource (the database is keyed by project,
 # not by app), which is why every one of them carries `appId` in its `detail`: `read_audit`
 # finds a row by `resource_id == app_id` OR `detail["appId"]`, so without it the whole
@@ -296,6 +313,16 @@ def _db_detail(app_id: uuid.UUID, handles: TeardownHandles) -> dict[str, Any]:
 # error text crosses the API boundary.
 _SANDBOX_UNAVAILABLE = "The sandbox service is unavailable. Please try again."
 _DB_LEVER_FAILED = "The app's database could not be reached. Please try again."
+
+# `STATUS_TRANSITIONS[DISABLED]` in one sentence, plus the ONE thing an administrator who
+# hits this is most likely to have meant. PENDING is the only status this refusal really
+# fires for in practice — the panel renders the control for the other three — and "reject
+# it instead" is the lever they actually want, so the copy names it rather than leaving a
+# bare refusal.
+_NOT_DISABLABLE = (
+    "Only an approved, draft or rejected app can be disabled — "
+    "an app waiting for review must be rejected instead."
+)
 
 # The reconcile/observe half's copy. Same posture, different subject: the whole CLUSTER, not
 # one app's database — and a sweep must never answer with a partial report dressed as a
@@ -680,7 +707,7 @@ async def patch_app(
     "/{app_id}/disable",
     responses=error_responses(
         (404, ErrorEnvelope, "App not found"),
-        (409, ErrorEnvelope, "Only an approved app can be disabled"),
+        (409, ErrorEnvelope, "Only an approved, draft or rejected app can be disabled"),
         (503, ErrorEnvelope, "The app database could not be severed"),
         *_ADMIN_AUTH,
     ),
@@ -690,6 +717,13 @@ async def disable(
 ) -> AdminAppStatusResponse:
     """THE kill switch. Flipping the status stops the platform serving the app; SEVERING its
     database is what stops the app's own running container reaching data.
+
+    REACHES DRAFT AND REJECTED APPS TOO, not approved ones only. The ordinary member of the
+    marketplace catalog is a DRAFT — one-click deploy never writes a status — so the
+    approved-only version of this lever could not switch off the very apps most likely to
+    need it; the only remaining answer was `nuke_app`, which destroys the owner's work.
+    PENDING stays out: an app waiting for review is REJECTED, not switched off, and the copy
+    below says so rather than leaving the administrator to guess which lever they wanted.
 
     NOT severed here, deliberately and per the runbook: the app's deploy Blob SAS (see
     `mint_deploy_credential`). Revoking that means deleting the container's stored access
@@ -705,16 +739,37 @@ async def disable(
     # (`get_db`), so status and reality never disagree in the dangerous direction: whatever the
     # sever did manage is `NOLOGIN` first, i.e. it fails CLOSED, and the retry is safe because
     # `sever` is idempotent.
+    #
+    # IT REMEMBERS WHAT THE APP WAS, and that is what makes `enable` honest now that this
+    # reaches three statuses instead of one. `previous_status = AppRegistry.status` is a
+    # COLUMN reference, not `app.status` read a moment ago in Python: PostgreSQL evaluates an
+    # UPDATE's SET expressions against the row's pre-update values, so the remembered status is
+    # read from the very row this statement is guarding, inside the same statement. Reading it
+    # off the ORM object would open a window in which the row's status changed between the load
+    # and the update, and the memory would be a lie the return trip could not detect.
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
-    if not await _transition(db, app_id, AppStatus.DISABLED):
-        raise AppApiError(409, "Only an approved app can be disabled.")
-    await append_audit(
-        db, actor_id=admin.id, action="disable", resource_type="app", resource_id=str(app_id)
-    )
+    if not await _transition(db, app_id, AppStatus.DISABLED, previous_status=AppRegistry.status):
+        raise AppApiError(409, _NOT_DISABLABLE)
     # Scalars read pre-commit; an app from the era before per-project databases (or a
     # deployment with no substrate at all) simply has no row — a clean no-op, not an error.
     handles = await teardown_handles(db, project_id)
+    await append_audit(
+        db,
+        actor_id=admin.id,
+        action="disable",
+        resource_type="app",
+        resource_id=str(app_id),
+        # WHETHER THERE WAS A DATA KILL AT ALL, said out loud. `disable` is the only data kill
+        # for a deployed app, and a project with no `project_databases` row skips the sever AND
+        # the `db:revoke` row below — so an operator reading the log afterwards could not tell
+        # "the database was closed" from "there was no database to close" except by the absence
+        # of a second row, which is also what a half-written transaction looks like. Widening
+        # this lever to DRAFT and REJECTED apps brought in the population most likely to have no
+        # database, so the ambiguous case stopped being the rare one. Read BEFORE the audit
+        # append for this reason — the order is the point, not incidental.
+        detail={"databaseSevered": handles is not None},
+    )
     if handles is not None:
         try:
             severed = await sever(db_name=handles.db_name, role_name=handles.role_name)
@@ -760,7 +815,43 @@ async def enable(
     leaving the role `NOLOGIN` would hand back an app that serves pages and cannot read a
     row. The restore sits INSIDE the guarded path for the same reason the sever does: the
     two 409s below are the approve gate, and a refused enable must not re-open a database
-    the kill switch closed."""
+    the kill switch closed.
+
+    IT PUTS THE APP BACK WHERE IT WAS, not where APPROVED would be. `disable`
+    reaches DRAFT and REJECTED apps as well as approved ones, so resolving every re-enable
+    to the literal APPROVED would invent an approval nobody gave — and the artifact-pin
+    guard below would instead have stranded those apps in DISABLED with no way out. The
+    target is read from `previous_status`, the memory `disable` wrote.
+
+    NOT THROUGH `_transition`, and this is the point of the hand-written UPDATE below.
+    That helper derives its source set from the TARGET (`status.in_(STATUS_TRANSITIONS[
+    target])`), so restoring to draft or rejected through it would need DISABLED added to
+    `STATUS_TRANSITIONS[DRAFT]` — and `apps/router.py::withdraw` is CITIZEN-facing and
+    reads that same row with only an ownership predicate, so widening it would let the
+    OWNER of an app an administrator switched off walk it straight back to draft.
+    Containment turned into a bypass. Reaching for `_transition` is the obvious move (both
+    `disable` and `approve` use it), which is exactly why this says so.
+
+    ONE STATEMENT, THREE ARMS, and the guards ride where they belong:
+
+    * SOURCE — `status == DISABLED`, written out rather than borrowed from the transition
+      table. It is the same load-bearing entry guard the early return above states in
+      Python: `→approved` legally accepts PENDING, so without it an enable could promote a
+      pending app past the approve gate that pins the reviewed artifact. Both are kept —
+      the Python one so the ordinary refusal reads cleanly, this one so the refusal is
+      atomic against a concurrent transition.
+    * TARGET — `COALESCE(previous_status, 'approved')`. The NULL is a pre-column row (see
+      migration 0038): APPROVED is what the code this replaces resolved such a row to, so
+      a row that predates the column re-enables exactly as it would have yesterday.
+    * ARTIFACT PIN — `approved_submission_id IS NOT NULL`, ON THE APPROVED ARM ONLY. It
+      exists to stop a re-enable resurrecting an approved-with-no-artifact row (a state
+      the schema otherwise prevents); a draft or rejected app has no pin and is not
+      supposed to, so applying it to every arm would refuse every restore this unit exists
+      to make possible.
+
+    `previous_status` is cleared on the way out: the memory describes a switched-off app,
+    and a stale one on a live row is a fact waiting to be misread.
+    """
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     # Load-bearing guard: →approved also permits `pending`, so without this an enable
@@ -768,13 +859,22 @@ async def enable(
     # artifact). Approve reaches APPROVED only from PENDING; enable only from DISABLED.
     if app.status is not AppStatus.DISABLED:
         raise AppApiError(409, "Only a disabled app can be re-enabled.")
-    # Artifact-pin guard: re-enabling restores APPROVED, so it must never resurrect a
-    # legacy DISABLED row the migration spared with a NULL approved pin (a state
-    # the schema otherwise prevents) — approved-with-no-artifact. A DISABLED row with no
-    # pin updates zero rows → the same 409.
-    if not await _transition(
-        db, app_id, AppStatus.APPROVED, AppRegistry.approved_submission_id.is_not(None)
-    ):
+    restored_status = (
+        await db.execute(
+            sa.update(AppRegistry)
+            .where(
+                AppRegistry.id == app_id,
+                AppRegistry.status == AppStatus.DISABLED,
+                sa.or_(
+                    _RESTORE_TARGET != AppStatus.APPROVED,
+                    AppRegistry.approved_submission_id.is_not(None),
+                ),
+            )
+            .values(status=_RESTORE_TARGET, previous_status=None)
+            .returning(AppRegistry.status)
+        )
+    ).scalar_one_or_none()
+    if restored_status is None:
         raise AppApiError(409, "Only a disabled app can be re-enabled.")
     await append_audit(
         db, actor_id=admin.id, action="enable", resource_type="app", resource_id=str(app_id)
@@ -799,7 +899,11 @@ async def enable(
             detail=_db_detail(app_id, handles),
         )
     await db.commit()
-    return AdminAppStatusResponse(app_id=app_id, status=AppStatus.APPROVED)
+    # The status the UPDATE actually wrote, read back through RETURNING rather than
+    # restated here: the response is the one place an administrator learns WHERE the app
+    # landed, and a switched-off draft that came back as a draft must not be reported as
+    # approved.
+    return AdminAppStatusResponse(app_id=app_id, status=restored_status)
 
 
 # Minutes-scale: long enough for an out-of-band review download, short enough that a leaked
@@ -1096,6 +1200,7 @@ async def mark_deployed(
 )
 async def hard_delete(
     app_id: uuid.UUID,
+    body: AppDeleteRequest,
     admin: CurrentSuperadmin,
     db: DbSession,
     storage: Storage,
@@ -1107,7 +1212,14 @@ async def hard_delete(
     neither documents a 503 nor maps `StorageError`. `nuke_app` requires a real store (its
     submissions ENUMERATION raises rather than strand blobs nobody can find), and it has no
     storage-unavailable copy to answer with. Storage missing here is a deploy bug, and a 500 is
-    the honest answer to one; inventing a 503 would be inventing a contract."""
+    the honest answer to one; inventing a 503 would be inventing a contract.
+
+    IT REQUIRES A REASON, in 5-50 words. Destroying somebody else's work with no undo is the
+    harshest lever on this router and was the only one that asked for nothing — the browser
+    `window.confirm` behind it could not have collected an answer if it wanted to. The reason
+    rides the `app:delete` row below, which is written before destruction and has no foreign key
+    to the app, so it is still readable by app id long after the app is gone (`read_audit` says
+    so outright: no existence pre-check)."""
     # Contrast `approve` / `bundle-url` / `reconcile-storage` above, which all promise a 503 and
     # so must take `OptionalStorage`.
     #
@@ -1121,6 +1233,15 @@ async def hard_delete(
     # explicitly (the project-delete path gets that for free via `ON DELETE CASCADE`). No row =
     # never provisioned, which is precisely what makes the next build re-provision a clean
     # database instead of injecting a DSN to one that is about to stop existing.
+    #
+    # WHAT SURVIVED IS ON THE RECORD, the citizen's own delete's discipline applied to the
+    # harsher lever. Every post-commit arm here is best-effort by construction — the rows are
+    # already gone, so a failed drop must not 500 a delete that succeeded — and this route used
+    # to discard all of those answers, `salt_the_earth`'s included. So the one lever that
+    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy,
+    # and nothing automatic collects any of it (`appdb/reconcile.py` is operator-invoked and
+    # report-only). The response is `{"ok": true}` either way: the delete did happen, and this
+    # platform has no notification path with which to promise the citizen an operator was told.
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     # Plain scalars, read BEFORE the commit that removes the row they come from.
@@ -1132,6 +1253,12 @@ async def hard_delete(
         action="app:delete",
         resource_type="app",
         resource_id=str(app_id),
+        # THE ADMINISTRATOR'S JUSTIFICATION, on the one row that outlives what it destroyed.
+        # `projectId` rides along because the project SURVIVES an app delete, so it
+        # is the only handle left connecting this row to something still readable. `audit.py`'s
+        # "no user data beyond ids" rule is amended in the same commit rather than stretched
+        # quietly: this is metadata about the ACT, not content of the deleted app.
+        detail={"reason": body.reason, "projectId": str(project_id)},
     )
     if handles is not None:
         await append_audit(
@@ -1145,12 +1272,23 @@ async def hard_delete(
         await db.execute(
             sa.delete(ProjectDatabase).where(ProjectDatabase.project_id == project_id)
         )
-    await nuke_app(db, storage, app_id, container_store)
+    survivors = await nuke_app(db, storage, app_id, container_store)
     await db.commit()
     if handles is not None:
-        # Post-commit, never-raising, and its first step IS the sever. A failed drop leaves
-        # a logged orphan for the reconciler; it must never un-delete a committed registry.
-        await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name)
+        # Post-commit, never-raising, and its first step IS the sever. A failed drop leaves a
+        # logged orphan NOTHING automatic collects — `appdb/reconcile.py` is operator-invoked
+        # and report-only — so it must never un-delete a committed registry, and its answer
+        # must never be thrown away either. `False` here means a copy of the citizen's data is
+        # still on the cluster after an administrator destroyed their app.
+        if not await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name):
+            survivors.append(("app_database", handles.db_name))
+    # WHAT SURVIVED IS ON THE RECORD, the citizen's own delete's discipline applied to
+    # the harsher lever. This path used to discard every sweep's answer, so the one delete that
+    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy.
+    # The project survives an app hard-delete, so its id is the handle the row hangs off.
+    await record_what_survived(
+        db, actor_id=admin.id, project_id=project_id, survivors=survivors, app_id=app_id
+    )
     return OkResponse(ok=True)
 
 
@@ -1876,16 +2014,19 @@ async def set_user_limits(
             raise AppApiError(400, "contextHardLimit cannot exceed the model context window.")
         # THE FLOOR, AND THE ADMINISTRATOR IS TOLD THE NUMBER. Below it the context gate
         # refuses every conversation that person opens — including a brand-new empty one,
-        # because the gate charges the system-prompt reserve before it counts a word — and the
-        # refusal they read tells them to start a new chat, which also fails. A form that
-        # accepted the number and silently locked someone out is the defect; naming the lowest
-        # usable value is the whole fix at this end. The read-time clamp in `effective_context`
-        # is the other end, for the people a value stored before this validator already reached.
+        # because every run spends `SYSTEM_PROMPT_RESERVE` on its system prompt and tool schemas
+        # before the citizen has typed a word, and the provider counts that in the very first
+        # turn it reports — so their SECOND message is refused in every chat they own, whatever
+        # they wrote in the first, and the refusal they read tells them to start a new chat,
+        # which also fails. A form that accepted the number and silently locked someone out is
+        # the defect; naming the lowest usable value is the whole fix at this end. The read-time
+        # clamp in `effective_context` is the other end, for the people a value stored before
+        # this validator already reached.
         if hard < CONTEXT_HARD_FLOOR:
             raise AppApiError(
                 400,
-                f"contextHardLimit cannot be below {CONTEXT_HARD_FLOOR}. Under that, every "
-                "chat this person opens is refused before they have typed anything.",
+                f"contextHardLimit cannot be below {CONTEXT_HARD_FLOOR}. Under that, this "
+                "person cannot get past the first message in any chat they open.",
             )
     soft, hard = changes.get("context_soft_limit"), changes.get("context_hard_limit")
     if soft is not None and hard is not None and soft >= hard:
@@ -2104,7 +2245,7 @@ async def _get_user_or_404(db: DbSession, user_id: uuid.UUID) -> User:
         # The RBAC gate's own 403 is the DetailBody shape; this route's 403 (below)
         # is the envelope. OpenAPI allows one schema per status — the envelope is
         # documented since it is this route's own raise.
-        (403, ErrorEnvelope, "Target is a super-admin and can never be suspended"),
+        (403, ErrorEnvelope, "Target is a super-admin (never suspendable, AE6)"),
         (404, ErrorEnvelope, "No such user"),
         (409, ErrorEnvelope, "User is already suspended"),
     ),

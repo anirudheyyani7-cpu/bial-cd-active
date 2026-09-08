@@ -627,29 +627,39 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   const streamAbortRef = useRef<AbortController | null>(null) // aborts the SUBSCRIPTION only — the turn runs on server-side
   const loadedBuildRef = useRef<string | null>(null)
 
-  // The per-conversation guardrail's SOFT half. The transcript lives here, so the estimate does
-  // too — the composer is handed a finished sentence rather than a second opinion about how long
-  // the conversation is. The HARD half is the server's and arrives as an ordinary `turnError`.
+  // The per-conversation guardrail's SOFT half. The composer is handed a finished sentence
+  // rather than a second opinion about how long the conversation is. The HARD half is the
+  // server's and arrives as an ordinary `turnError`.
+  //
+  // THE NUMBER IT READS IS THE SERVER'S OWN, NOT A SECOND OPINION. A per-attachment,
+  // four-characters-to-the-token estimate is deleted on both sides: it read a 61-page document
+  // as 1,600 tokens when it really cost 153,342, so the meter a citizen watched and the wall the
+  // server enforces were describing different conversations. What replaces it is the token count
+  // the PROVIDER reported for a turn it served — raw `input_tokens`, cache-inclusive, never a
+  // cost-weighted spend — measured by the same expression that refuses the turn.
+  //
+  // IT ARRIVES ON TWO REPLIES THE BROWSER ALREADY WAITED FOR, and no request is made to size
+  // anything before a send. The cold read (`getBuild`) carries `contextTokens` for the chat as
+  // stored, so the line is right from first paint; every `startTurn` 202 carries what the
+  // admission just measured, so it tracks the conversation as it grows. Both come from the one
+  // rule, so they cannot disagree with each other or with the wall.
+  //
+  // NOTHING HERE GUARDS ANYTHING. This half only ever warned — the boundary is the server's
+  // refusal, which is live and measured whatever the browser believes.
   //
   // IT LIVES BELOW `loadedBuildRef` BECAUSE IT READS IT, and a `useMemo` body runs during the
   // render that declares it — putting this up with the other derived state threw a TDZ error on
   // first paint that neither `tsc` nor eslint saw, because the reference is inside a closure.
   //
   // GUARDED TO THIS CHAT, the way the narrative values below are. The surface does NOT remount
-  // on a chat switch and `messages` is cleared in an effect, so there is a render where
-  // `buildId` already names the incoming chat while `messages` still holds the outgoing one —
-  // long enough to flash the previous conversation's warning onto the new composer.
-  //
-  // THE DEP IS `messages`, NOT `messages.length`, AND NARROWING IT WOULD BREAK THE FEATURE.
-  // `text_delta` repaints through `.map`, so the array grows a new reference on every frame
-  // while its LENGTH holds still for the whole reply. Keying on length would therefore skip
-  // exactly the case this warning exists for: a single enormous answer that pushes the chat
-  // over on its own. The citizen would see nothing, send once more, and meet the server's 413
-  // instead of the sentence that was supposed to reach them first. The walk is bounded by part
-  // count (JS `.length` is O(1)), and `transcript` already re-walks the same array every frame.
+  // on a chat switch, so there is a render where `buildId` already names the incoming chat while
+  // the outgoing chat's values are still in hand — long enough to flash the previous
+  // conversation's warning onto the new composer.
+  const [measuredContextTokens, setMeasuredContextTokens] = useState<number | null>(null)
   const contextWarning = useMemo(
-    () => (loadedBuildRef.current === buildId ? contextState(messages).message : null),
-    [messages, buildId],
+    () =>
+      loadedBuildRef.current === buildId ? contextState(measuredContextTokens).message : null,
+    [measuredContextTokens, buildId],
   )
   // Merged step runs, held by identity for `mergeStepRun` far below — declared here because
   // the per-chat effect clears it alongside these.
@@ -879,6 +889,10 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     setTurnError(null)
     setWorkspaceSays(null)
     setWorkspaceLost(false)
+    // The outgoing chat's occupancy is not this one's. Cleared to "unmeasured" rather than to
+    // zero: zero is a claim (this chat is empty) and null is the absence of one, and the arriving
+    // chat's real figure lands a moment later with its transcript.
+    setMeasuredContextTokens(null)
 
     getBuild(buildId)
       .then((saved) => {
@@ -895,6 +909,10 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
           return
         }
         loadedBuildRef.current = buildId
+        // HOW FULL THIS CHAT ALREADY IS, from the same read that rebuilt the transcript — so a
+        // reopened chat that is already past the warn threshold says so on first paint rather
+        // than staying silent until the citizen has sent one more message into it.
+        setMeasuredContextTokens(saved?.contextTokens ?? null)
         const restored = saved?.messages ?? []
         if (restored.length > 0) {
           // Seed the next seq from the highest PERSISTED seq, not the array length: a transcript
@@ -1446,7 +1464,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // is read below — after the guard that decides whether anything may be painted at all.
     let outcome: StreamOutcome
     try {
-      await startTurn(
+      const started = await startTurn(
         activeId,
         {
           text: wire.text ?? '',
@@ -1459,6 +1477,13 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         parentage,
       )
       posted = true
+      // THE METER, FROM THE ADMISSION THAT JUST PASSED. This is the number the server measured
+      // to decide whether to accept this very turn — one token higher and the call above would
+      // have thrown the 413 instead. So the line under the composer and the wall behind it are
+      // the same number, not two readings of one scale. Guarded to the chat it came from: the
+      // surface does not remount on a switch, and a late 202 must not paint the outgoing
+      // conversation's occupancy onto the incoming one's composer.
+      if (buildIdRef.current === activeId) setMeasuredContextTokens(started.contextTokens ?? null)
       // THE ONE PLACE THE COMPOSER MAY EMPTY, and it is here because this is the first instant the
       // server is holding the message. A 202 means it is persisted and the reply runs detached, so
       // the citizen's text has somewhere to live other than the box they typed it in.
@@ -2110,10 +2135,19 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // framed URL — which stopped being true when the poll was widened to ask with no frame at all,
     // and left the headline and the pane disagreeing on every reload of a chat whose app is up.
     projectPreviewUrl: previewState?.state === 'alive' ? previewState.previewUrl : null,
+    // …AND IT ANSWERS THE LIVENESS QUESTION TOO, with no second input. A non-null value here IS
+    // the read saying `alive`, which is what the resolver's `serving` is built from: whether a
+    // terminal status is allowed to unframe a container that is demonstrably up. That widening
+    // is needed because the backend pardons a container whether the turn completed, stopped or
+    // failed, so what is serving is the only honest source.
     sessionUrl: session.previewUrl,
     sessionStatus: session.status,
     sessionId: session.sessionId,
     sessionBelongsToOpenProject: sessionProjectMatches,
+    // The legacy session's own pardon, kept because the poll above has not always answered yet.
+    // `ended` alone is not enough — a session torn down by a stop or a failure is `ended` too — so
+    // the end REASON travels in rather than being inferred from the status.
+    sessionEndedCompleted: session.status === 'ended' && session.endReason === 'completed',
     transcriptHasBuildOutcome: newestOutcome !== null,
   })
   const framedPreviewUrl = address.url
@@ -2147,22 +2181,20 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // said something about the app yet", which for the stop control meant a build was unstoppable
   // between the press of Send and its first step frame. `isRunning` is the honest predicate and
   // is what the control reads now.
-  // "done, preview live": this LIVE session completed, so the server pardoned its
-  // container (idle lease) and the framed URL still serves. Gated on `showSession`
-  // deliberately: a reloaded page (no live session, `framedStatus` synthesized from the
-  // transcript's newest outcome) keeps the terminal placeholder + Relaunch — never coerce
-  // "no live status" into a prior build's live-preview claim (the framedStatus lesson).
-  // TWO HALVES OF ONE DECISION, and they must read the same source. `framedStatus` now comes
-  // from the turn, so leaving this on the session meant a completed Write build showed
-  // "The preview is no longer running" + Relaunch over an app the server had just PARDONED and
-  // that was still serving — the framedStatus lesson, reintroduced from the other side.
-  //
-  // Keyed on `turnTerminal` (this tab watched the turn complete) rather than on `framedStatus`:
-  // a reloaded page has no live turn and must keep the terminal placeholder, which is exactly
-  // what the comment above defends.
-  const completedLive =
-    (turnNarrativeIsThisChat && turnTerminal === 'completed' && turnPreview.url != null) ||
-    (showSession && session.status === 'ended' && session.endReason === 'completed')
+  /* `completedLive` IS GONE FROM THIS SURFACE. It answered two questions with one boolean —
+     "the container is up" and "a build finished successfully" — so the pane could not keep an
+     app framed without also claiming a build had succeeded, which is how the project screen
+     came to state a build outcome on a route where no build runs.
+
+     IT ALSO RODE ON THE CONVERSATION. The pane view is cleared when this surface unmounts, so
+     the pane host had to HOLD the last value across a leave or the frame collapsed on the way
+     to the project screen. Liveness is a fact about the framed address, so it lives on the
+     address now, where survival across a leave is the cell's own rule rather than a ref
+     somebody maintains.
+
+     Both of its terms survive as resolver inputs, beside the preview-state read that outranks
+     them: see `projectPreviewUrl` (which IS the preview-state read's `alive`) and
+     `sessionEndedCompleted` in the address block above. */
   // IS THE PREVIEW STILL REAL?
   //
   // A reclaimed preview is visually identical to a working app: the last render stays painted,
@@ -2678,15 +2710,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
        shell's own toolbar row beside the chat title, from the same computed state, so there is one
        mount for both screens rather than two that happen never to be live at once. */
     iterating: showSession && session.iterating,
-    /* NO PRODUCER ON THIS SURFACE ANY MORE, and that is a gap rather than residue. The server does
-       still answer `restoredFromFailedBuild` on every relaunch (`RelaunchPreviewResponse`, parsed
-       and tested in `buildSessionApi`) — it is the two live callers, `StartAppControl` and
-       `RailComposer`, that read `previewUrl` and `ready` off that response and drop this third
-       field. The value used to arrive through the session hook's own `relaunch()`, which went with
-       the rest of the chain. Re-wiring it is a behaviour change and belongs to whoever owns that
-       label, not to a deletion sweep. */
-    restoredFromFailedBuild: false,
-    completedLive,
+    /* `restoredFromFailedBuild` IS NOT PUBLISHED ANY MORE, because there is nothing left to render
+       it — the chip it fed, which sat on the framed app's own navigation, is deleted. The
+       server still ANSWERS it on every relaunch — `RelaunchPreviewResponse`, parsed and tested in
+       `buildSessionApi` — so that fact is not lost at the wire; what it lacks is a home on screen.
+       Whoever gives it one (the toolbar row, or a transcript line) re-publishes it there.
+
+       AND `completedLive` LEFT WITH IT, onto the address as `serving` — see the block above the
+       address resolution. Nothing on this view can unmount the frame any more. */
     hasSavedBuild,
     previewState: previewState?.state ?? null,
     occupyingProjectName: previewState?.occupyingProjectName ?? null,

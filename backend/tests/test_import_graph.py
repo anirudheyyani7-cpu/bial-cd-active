@@ -179,12 +179,31 @@ def test_the_app_still_builds_with_its_full_route_surface() -> None:
     paths = list(app.openapi().get("paths", {}))
     build_session_paths = [p for p in paths if "build-session" in p]
 
-    # 18 is easy to undercount: it includes the two superadmin park/promote reader routes (a
-    # false reversion would otherwise leave someone's work with no way to read it back), and
-    # the `lock/*` set — only `lock/force-end` is reachable from the UI, the rest are retired,
-    # not dead code to prune.
-    assert len(build_session_paths) == 18, (
-        f"the C3 build-session route surface changed: expected 18 paths, found "
+    # 16 build-session paths. Beyond the CRUD/turn set, this counts `projects/{project_id}/
+    # client-error` (the app's own in-browser error report), `projects/{project_id}/
+    # compile-state` (the compile signal for a tab with no live turn — the turn stream's
+    # producer stops at the terminal), `projects/{project_id}/workspace-check` (the idle-tab
+    # integrity probe, for the reversion that happens while nobody is sending messages),
+    # `projects/{project_id}/stop-state` (the drain's ask, `stop-active-build`, now returns
+    # immediately while a detached task does the waiting, so the outcome — three states, not
+    # a boolean — needs a reader; holding the request open for the length of a stop was a
+    # dependency nobody could satisfy, since the budget had to sit under the request timeout
+    # of a gateway owned by the client's network), and the two superadmin operator routes for
+    # the parked/promoted trees (`internal/apps/{app_id}/parked` and `.../promote`) — without
+    # a reader those objects would be write-only, and in a false reversion they hold the only
+    # copy of somebody's work.
+    #
+    # It excludes the lock ops (`lock/acquire`/`renew`/`release`/`heartbeat`/`force-end`):
+    # nothing calls them any more. The portal's keep-alive loop, the only caller of the first
+    # four, is gone, and the block banner's Force-end button, the only caller of the fifth, is
+    # gone too — the service method behind it, `SessionManager.force_end`, is untouched and
+    # still has its own tests, only the HTTP door closed. It also excludes the standalone
+    # build stack's bare collection `POST` on `/v1/build-sessions`, the old start route,
+    # removed together with the harness, the module-level build agent, and the run-build
+    # dependency it was the sole door into, once the workspace moved onto the chat turn and
+    # took away its only browser client.
+    assert len(build_session_paths) == 16, (
+        f"the C3 build-session route surface changed: expected 16 paths, found "
         f"{len(build_session_paths)}. If a route was deliberately added or removed, amend C3 "
         f"and update this number in the same change.\n{sorted(build_session_paths)}"
     )

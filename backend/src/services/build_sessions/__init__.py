@@ -3,9 +3,14 @@
 The one-per-user Redis lock + heartbeat + registry-state helpers (`locks`), the reaper
 ordering + reconciliation sweep (`reaper`), the app-data credential mint + injection
 (`appdata`) and the per-project database half of that env (`appdb_env`), the snapshot
-write (`snapshot`), the conversation-attachment materialization (`attachments`), and the
-in-process session lifecycle + progress channel + BRAIN launch (`manager`). Public surface
-via explicit `from .x import Y as Y` re-exports — never `__all__`.
+write (`snapshot`), and the in-process session lifecycle + progress channel (`manager`).
+
+`attachments` is GONE. It materialized a conversation's file parts into the standalone build
+agent's prompt, and its one caller was `SessionManager.start` — deleted with the start route. A
+Write chat turn grounds itself on attachments the ordinary way (the parts are already in the
+turn's own history) and never made this trip.
+
+Public surface via explicit `from .x import Y as Y` re-exports — never `__all__`.
 """
 
 from src.services.build_sessions.appdata import build_app_env as build_app_env
@@ -14,13 +19,6 @@ from src.services.build_sessions.appdb_env import (
     provision_app_database as provision_app_database,
 )
 from src.services.build_sessions.appstorage import provision_app_storage as provision_app_storage
-from src.services.build_sessions.attachments import BuildAttachmentError as BuildAttachmentError
-from src.services.build_sessions.attachments import (
-    ConversationNotFoundError as ConversationNotFoundError,
-)
-from src.services.build_sessions.attachments import (
-    resolve_build_attachments as resolve_build_attachments,
-)
 from src.services.build_sessions.locks import LockUnavailableError as LockUnavailableError
 from src.services.build_sessions.locks import acquire_lock as acquire_lock
 from src.services.build_sessions.locks import delete_registry as delete_registry

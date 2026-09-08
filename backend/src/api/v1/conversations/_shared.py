@@ -82,19 +82,23 @@ PDF_MEDIA_TYPE = "application/pdf"
 # HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
 # `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
 #
-# It falls out of arithmetic that is fixed elsewhere: `usage/context_window` charges
-# an admitted PDF `NOMINAL_PDF_TOKENS` (75,000 — what the longest document the upload cap admits
-# actually costs), and `occupied_window` adds the 8,000-token system-prompt reserve before it
-# counts a word. So three documents is 233,000 against a 200,000 ceiling and cannot be sent, even
-# if all three are two-page memos.
+# IT IS NOT DERIVED. THE PLATFORM DOES NOT PRICE A DOCUMENT UP FRONT: the window check reads the
+# count the provider returns for a completed turn, and nothing charges an attachment a nominal
+# cost on its way in, so no arithmetic sum was ever what refused a third document. It is not
+# derived at this ceiling either, because upcoming attachment-format work removes this limit
+# outright, and sizing it now would churn the sentence a citizen reads twice over.
 #
-# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to the token gate, that message is refused with
-# `CHAT_TOO_LONG_TEXT` — "start a new chat" — which is wrong advice here: the new chat refuses the
-# identical message, and the citizen is sent round a loop with nothing that works. So the count is
-# checked FIRST, and answered with a sentence naming the limit they actually hit.
+# What is true, and load-bearing: this cap is a COUNT and not a token figure precisely because
+# it is the one bound that can be checked before the provider has seen anything.
 #
-# Images are deliberately not counted: eight screenshots is 12,800 tokens and has never been the
-# problem. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it says for them.
+# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to anything else, that message is answered with
+# "this chat has got too long — start a new chat", which is wrong advice here: the new chat
+# refuses the identical message, and the citizen is sent round a loop with nothing that works. So
+# the count is checked FIRST, and answered with a sentence naming the limit they actually hit.
+#
+# Images are deliberately not counted: a screenshot measured 1,700-2,000 tokens, so eight of them
+# have never been near any ceiling. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it
+# says for them.
 MAX_PDF_BLOCKS = 2
 
 TOO_MANY_DOCUMENTS_MSG = (
@@ -182,8 +186,8 @@ async def resolve_conversation_or_404(
     db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> Conversation:
     """The turn's owner-scoped conversation row. Conversations are created BEFORE the first turn
-    (`POST /v1/conversations`), so there is no None arm to keep: an unknown or cross-user id is
-    a 404."""
+    (`POST /v1/conversations`), so there is no None arm to keep: an unknown id is a client bug, a
+    cross-user id is indistinguishable from it, and both get the same non-leaking 404."""
     conversation: Conversation | None = await db.scalar(
         sa.select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id
@@ -216,12 +220,11 @@ def history_rehydrator(
 async def resolve_binaries(
     db: AsyncSession, storage: ObjectStorage | None, user_id: uuid.UUID, attachment_ids: list[str]
 ) -> list[BinaryContent]:
-    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt.
-    Rides the store's own rehydrator — owner-scoped row, magic
-    re-check, authoritative media type — then gates on WHAT may enter the prompt: only
-    image/PDF vision content. Office originals and anything else are a 400 (their content
-    travels as `attachmentTexts`), and an unknown/foreign id fails the same typed way the
-    rehydrator words it.
+    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt. Rides the
+    store's own rehydrator — owner-scoped row, magic re-check, authoritative media type — then
+    gates on WHAT may enter the prompt: only image/PDF vision content. Office originals and
+    anything else are a 400 (their content travels as `attachmentTexts`), and an unknown/foreign
+    id fails the same typed way the rehydrator words it.
 
     It also gates on HOW MANY DOCUMENTS: past `MAX_PDF_BLOCKS` the message is refused here
     rather than by the token gate downstream, which would answer the same refusal with advice
@@ -267,8 +270,9 @@ def prompt_content(
     message: TurnMessage, binaries: list[BinaryContent]
 ) -> str | list[str | BinaryContent]:
     """The turn's user content: binaries first, fenced attachment text next, the typed prose
-    LAST (Anthropic's files-before-text ordering — the same shape `BuildSpec` pins). A plain
-    text-only message stays a bare string."""
+    LAST (Anthropic's documented files-before-text vision ordering — the shape the deleted
+    `BuildSpec` also pinned). A plain text-only message stays a bare string (the historical
+    single-string shape)."""
     if not binaries and not message.attachment_texts:
         return message.text
     return [*binaries, *message.attachment_texts, message.text]

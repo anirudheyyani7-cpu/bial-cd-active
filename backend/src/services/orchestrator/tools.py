@@ -10,15 +10,47 @@ failure becomes a self-healing `ModelRetry` — only `SandboxGoneError` escalate
 share one fail-closed write guard (absolute/`..` escape + `.git/` deny). No tool ever renders
 `session.handle`/`handle.token`.
 
-WHY THIS EXISTS: every tool docstring below is PROMPT COPY sent to the model by
-pydantic-ai, and `core/prompt_blocks.WRITE_TOOL_SURFACE` is a generated snapshot of them
-— edit one here and `test_prompt.py`'s drift check goes red until it is regenerated. Two
-sentences are load-bearing beyond their own tool: `run_command`'s don't-restart-the-dev-
-server rule, and `declare_done`'s terminal-on-a-passing-check statement. The two
-consumers also do NOT compose the same surface — Write's chat turn adds four tools the
-legacy harness cannot call, yet `WRITE_TOOL_SURFACE` ships that union in both prompts.
-Recorded, not fixed; guarded by
-`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
+WHY THIS EXISTS: every tool docstring below is PROMPT COPY sent to the model by pydantic-ai
+at registration, and `core/prompt_blocks.WRITE_TOOL_SURFACE` is a generated snapshot of them
+(`agent/toolsets.render_tool_surface` is what generates it) — edit one here and
+`test_prompt.py`'s drift check goes red until it is regenerated. Write the FIRST SENTENCE as
+the line you want in the prompt; the rest is detail the model reads on the tool schema. Two
+sentences are load-bearing beyond their own tool and must survive any trim: `run_command`'s
+don't-start-or-restart-the-dev-server rule (the only thing covering a second `next dev`
+started through `/exec`, which the supervisor's child env cannot tell from the real one), and
+`declare_done`'s terminal-on-a-passing-check statement — a model promised a follow-up
+round-trip withholds its closing message from `summary`, and there is no reply to put it in.
+
+`fetch_output_slice` is the seventh, and it exists because the output cap used to be
+HEAD-ONLY: a truncated failure lost the assertion at the bottom, and recovering the middle cost
+a re-run. Output is now cut to head AND tail under an exit-code-conditional budget, and the
+notice between them names a handle the model reads the elided middle back through. The buffer
+behind that handle holds `scrub_untrusted` output and NOTHING ELSE, lives on `SandboxSession`
+(so the harness's per-run reset is its whole lifetime), never reaches the database or blob, and
+answers an unknown handle with a plain re-run instruction rather than a `ModelRetry` — which
+would spend the round-trip the tool exists to save.
+
+`apply_schema_change` is the eighth, and it is the one tool here that is a SEQUENCE rather
+than an action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used to
+dictate step by step. It exists because both of them can fail while exiting zero, so a model
+reading exit codes believes a schema change happened that did not — it reads what they
+PRINTED, reports a per-step outcome, refuses to call a run successful when any step failed,
+and says which step failed and what state that left the workspace and the database in.
+
+They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — mirroring
+`agent/read_tools.read_only_toolset` — rather than decorators on a module-level agent. That
+shape was chosen when there were TWO consumers, the standalone `/build-sessions` harness and a
+Write chat turn; the harness is deleted and the chat turn is the one left. The factory stays,
+because the accessor closure is still what lets one tool body serve whatever deps type a run
+carries, and the tool tests drive it over their own.
+
+ONE SURFACE NOW, AND THE PROMPT FINALLY MATCHES IT. The harness took THIS toolset and nothing
+else — eight tools — while `WRITE_TOOL_SURFACE` described the Write chat arm's twelve and
+shipped in both prompts, so the harness was told about four tools it could not call. A Write
+chat turn takes this toolset plus `list_files`/`search_files` off `read_only_toolset` and the
+two `CONVERSATION_TOOLSET` tools — twelve, exactly what the snapshot names. Recorded at
+`core/prompt_blocks.WRITE_TOOL_SURFACE`; guarded by
+`test_prompt.py::test_the_prompts_tool_list_is_exactly_what_the_write_arm_registers`.
 """
 
 from __future__ import annotations
@@ -662,8 +694,9 @@ def sandbox_toolset[DepsT](
     sandbox_of: Callable[[RunContext[DepsT]], SandboxSession],
 ) -> FunctionToolset[DepsT]:
     """The eight sandbox tools over whatever deps `sandbox_of` resolves the session from. Generic
-    on the deps type for the same reason `read_only_toolset` is: ONE tool body, two consumers (the
-    legacy harness's `BuildDeps`, a Write chat turn's own deps).
+    on the deps type for the same reason `read_only_toolset` is: ONE tool body, composed over
+    whatever deps its consumer carries (a Write chat turn's `ChatDeps`; the tool tests' own).
+    It served the deleted harness's `BuildDeps` the same way.
 
     The inner tools annotate `RunContext[Any]` rather than the enclosing PEP-695 type param,
     because pydantic-ai resolves tool annotations with `get_type_hints` at registration and that

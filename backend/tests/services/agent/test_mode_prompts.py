@@ -29,6 +29,9 @@ from pydantic_ai.tools import ToolDefinition
 
 from src.core.prompt_blocks import (
     BUILD_THIS_PLAN_LABEL,
+    BUILD_WORKING_RULES_HEAD,
+    BUILD_WORKING_RULES_TAIL,
+    DATA_INTEGRITY_RULES,
     DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY,
     KEEP_PLANNING_LABEL,
     NARRATION_VOICE,
@@ -44,12 +47,6 @@ from src.services.agent.mode_prompts import (
     workspace_note,
 )
 from src.services.agent.toolsets import registered_tool_definitions
-from src.services.orchestrator.prompt import (
-    BUILD_SYSTEM_PROMPT,
-    BUILD_WORKING_RULES_HEAD,
-    BUILD_WORKING_RULES_TAIL,
-    DATA_INTEGRITY_RULES,
-)
 
 _CONTEXT = PromptContext(
     user_name="Asha",
@@ -92,7 +89,8 @@ def test_composition_is_base_plus_exactly_its_own_segment(kind: ChatKind) -> Non
 def test_every_kind_carries_the_truthful_portal_self_description(
     kind: ChatKind,
 ) -> None:
-    """It lives in BASE, so neither kind can be missing it."""
+    """It lives in BASE, so neither kind can be missing it — the fix for a model inventing
+    portal features it does not have cannot depend on which segment was selected."""
     composed = compose_kind_prompt(kind, _CONTEXT)
     assert PORTAL_SURFACES in composed
     # The two clauses that do the actual work: the closed world, and honesty over invention.
@@ -107,7 +105,8 @@ def test_every_kind_carries_the_truthful_portal_self_description(
         "Admin review area",
     ):
         assert real_surface in composed
-    # Guards against the retired relay wording ("a chat beside a live preview") creeping back.
+    # The unified chat's right pane is the APP — guards against the retired relay's wording
+    # ("a chat beside a live preview") being used to re-describe this layout.
     assert "the right pane shows the app itself" in composed
 
 
@@ -119,24 +118,32 @@ def test_base_survives_an_undescribed_project() -> None:
 
 
 def test_build_composes_like_the_other_kind() -> None:
-    """A Build chat has a segment like any other."""
+    """A Build chat has a segment like any other. Composing one used to raise, on the reading
+    that a Write segment could only duplicate `orchestrator/prompt.py`; importing the shared
+    blocks removes that reason, so the refusal was an unfinished seam and not architecture."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert "WRITE MODE" in composed
     assert 'on "Visitor Log"' in composed  # the same BASE both kinds carry
 
 
 def test_the_write_segment_and_the_build_prompt_come_from_one_source() -> None:
-    """Assert they genuinely share the blocks, so a future edit to either cannot silently fork
-    the two Write prompts."""
+    """The original objection to a Write segment — "it could only drift from the build prompt" —
+    is true of a copy and false of a shared import, and this is the assertion that the import is
+    what it is.
+
+    THERE IS ONLY ONE WRITE PROMPT NOW. The standalone `BUILD_SYSTEM_PROMPT` and the harness that
+    was its only consumer were deleted, so the drift this guarded against has no second party
+    left. What it still buys is the other half of the same property: the composition assembles
+    from the shared `core/prompt_blocks` constants rather than typing their text out, so a block
+    edited at its source reaches the prompt, and a composition that stopped including one fails
+    here."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert BUILD_WORKING_RULES_HEAD in composed
     assert BUILD_WORKING_RULES_TAIL in composed
     assert WRITE_IDENTITY in composed
-    assert WRITE_IDENTITY in BUILD_SYSTEM_PROMPT
-    assert BUILD_WORKING_RULES_HEAD in BUILD_SYSTEM_PROMPT
-    # Shared the same way, through the TAIL both prompts already share.
+    # The audience block arrives the same way — one constant, reached through `_base()`, so
+    # the prompt cannot grow a voice the shared source does not have.
     assert NARRATION_VOICE in composed
-    assert NARRATION_VOICE in BUILD_SYSTEM_PROMPT
 
 
 def test_write_states_the_data_integrity_rules_exactly_once() -> None:
@@ -198,19 +205,30 @@ def test_write_speaks_to_the_person_who_asked_for_the_app() -> None:
 
 
 def test_the_audience_block_is_emitted_exactly_once() -> None:
-    """The DATA_INTEGRITY_RULES trap, one block over, now at three sites (`_base()` for both
-    kinds, plus `BUILD_SYSTEM_PROMPT`, which can't call `_base`) instead of one.
+    """The DATA_INTEGRITY_RULES trap, one block over: the contract is named by `_base()` for
+    every kind AND rides `BUILD_WORKING_RULES_TAIL` into the Write segment, so each is a place a
+    second copy could appear — and a prompt that states the same contract twice in slightly
+    different places is how one wording starts drifting from the other.
 
-    `== 1` rather than `<= 1`: a count of ZERO — the block lifted out of the TAIL and never
-    named at the standalone build prompt — passes every `<=` or `in` formulation."""
+    (It used to be three sites: the standalone `BUILD_SYSTEM_PROMPT` named the block itself,
+    because it could not call `_base()`. That prompt went with the build harness; the two
+    surviving sites are both reached through `compose_kind_prompt`, which is what this counts.)
+
+    IT IS ALSO THE DELETION GUARD. The block restricts WHO the agent writes for, not what it may
+    say, and it was removed once — twice in production consequences — before that distinction
+    was written down. The pass that deleted every length cap and vocabulary rule beside it left
+    this one alone deliberately, and a count of zero here is what catches the next attempt.
+
+    COUNTING IS THE POINT, and `== 1` rather than `<= 1` is the point of the counting: the
+    failure this guard exists to catch — the block being lifted out of the TAIL and never named
+    at a composition site — is a count of ZERO, which every `<=` and every `in` formulation
+    passes."""
     for kind in ChatKind:
         composed = compose_kind_prompt(kind, _CONTEXT)
         assert composed.count(NARRATION_VOICE) == 1
         assert composed.count("TALKING TO THE USER") == 1
         # No length bar drifts back in beside the contract it used to ride with.
         assert "HOW LONG —" not in composed
-    assert BUILD_SYSTEM_PROMPT.count(NARRATION_VOICE) == 1
-    assert "HOW LONG —" not in BUILD_SYSTEM_PROMPT
 
 
 def test_the_name_the_files_instruction_went_with_the_segment_that_carried_it() -> None:
@@ -270,30 +288,32 @@ _RETIRED_GIT_INSTRUCTIONS = (
 )
 
 
-@pytest.mark.parametrize(
-    "prompt_name", ["write_mode_segment", "build_system_prompt"], ids=["write_mode", "build"]
-)
-def test_neither_write_prompt_instructs_the_agent_in_git(prompt_name: str) -> None:
-    """★ The inertness guard. Asserted as a SET so the failure names every instruction that
-    crept back, and on BOTH Write prompts since either composition site could grow one.
+def test_neither_write_prompt_instructs_the_agent_in_git() -> None:
+    """★ THE INERTNESS GUARD. Asserted as a SET so the failure names every instruction that
+    crept back.
+
+    IT USED TO RUN TWICE, over the composed Write prompt and the standalone `BUILD_SYSTEM_PROMPT`
+    beside it, because either composition site could grow one. The standalone prompt went with
+    the build harness and the composed one is the whole Write surface now, so the
+    parametrization went with it — the blocks it composes are unchanged and still the place a git
+    instruction would come back.
 
     Mutation check: put any of the six back into `BUILD_WORKING_RULES_HEAD` and this goes red."""
-    prompt = (
-        compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
-        if prompt_name == "write_mode_segment"
-        else BUILD_SYSTEM_PROMPT
-    )
-    lowered = prompt.lower()
+    lowered = compose_kind_prompt(ChatKind.BUILD, _CONTEXT).lower()
     found = {phrase for phrase in _RETIRED_GIT_INSTRUCTIONS if phrase in lowered}
-    assert found == set(), f"{prompt_name} instructs the agent in git again: {sorted(found)}"
+    assert found == set(), f"the Write prompt instructs the agent in git again: {sorted(found)}"
     # The header of the deleted block, named separately so a reworded revival still trips.
     assert "commit as you work" not in lowered
 
 
 def test_the_write_prompt_still_says_not_to_restart_the_dev_server() -> None:
-    """★ The liveness guard: the agent can start its own dev server via `run_command`, and the
-    supervisor's child env carries no marker to tell that apart from the harness's — so this
-    sentence is the whole of what stops a second `next dev` racing the one the harness verifies."""
+    """★ THE LIVENESS GUARD, and the one rule this unit must not take with it.
+
+    The agent can start a dev server of its own through `run_command` — the supervisor's child
+    env carries no marker that would tell the platform's flag apart from the real one — so this
+    sentence is the whole of what stops a second `next dev` racing the one the turn engine reads
+    (through `selfheal.verify`) to decide whether the app is healthy. It survives every prompt
+    trim."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     lowered = composed.lower()
     assert "the dev server (`next dev`) is already running" in lowered
@@ -315,8 +335,8 @@ def test_a_plan_chat_stays_lean() -> None:
 
 _FORBIDDEN_FRUIT = (
     # Prohibition prose aimed at tools the mode doesn't have. The registry already
-    # removed them — ban text would teach the model to reason about absent capabilities
-    # (the research doc's anti-pattern 1/2).
+    # removed them, and ban text would teach the model to reason about capabilities it
+    # cannot reach.
     "do not",
     "don't",
     "never",
@@ -347,11 +367,10 @@ def test_the_plan_still_says_nothing_technical_even_with_its_shape_freed() -> No
 
 
 def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
-    """This asserts the PROMPT's shape only — the ground-truth check is an eyeballed rendered
-    Plan turn against PLAN-FORMAT-RESEARCH.md's AFTER, since a prompt string cannot prove the
-    model's OUTPUT stays jargon-free."""
+    """This asserts the PROMPT's shape only. Whether the model's OUTPUT stays jargon-free is
+    read off a rendered Plan turn by eye — a prompt string cannot prove it."""
     lowered = _PLAN_SEGMENT.lower()
-    # The real retired phrases, not the model-output headings from the research BEFORE example.
+    # The real retired phrases, not the model-output headings they used to produce.
     assert "the files you would touch" not in lowered
     assert "trade-offs the user should weigh" not in lowered
     assert "trade-offs" not in lowered
@@ -505,7 +524,6 @@ def test_no_prompt_surface_names_a_button_the_interface_does_not_draw() -> None:
     surfaces: dict[str, str] = {
         f"composed {kind.value} prompt": compose_kind_prompt(kind, _CONTEXT) for kind in ChatKind
     }
-    surfaces["BUILD_SYSTEM_PROMPT"] = BUILD_SYSTEM_PROMPT
     for kind in ChatKind:
         for name, definition in (await_definitions(kind)).items():
             surfaces[f"{kind.value} tool `{name}`"] = definition.description or ""

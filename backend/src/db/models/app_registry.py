@@ -76,12 +76,26 @@ approval_route_enum = sa.Enum(
 # decision: remove it and an owner can no longer pull their own pending submission out of
 # the queue. A transition is applied as an atomic `UPDATE ... WHERE status = ANY(allowed)`;
 # zero rows updated is a rejected (illegal) transition (→ 409), never a silent no-op.
+#
+# `DISABLED` accepts DRAFT and REJECTED as well as APPROVED. The kill switch used
+# to reach approved apps ONLY, and the ORDINARY member of the marketplace catalog is a
+# DRAFT — one-click deploy never writes a status (`deployment.py`: "a self-deployed app is
+# still `draft`") — so the two categories most likely to need switching off could only be
+# hard-deleted, which destroys the owner's work. PENDING is deliberately NOT in the set: an
+# app sitting in the review queue is REJECTED, not switched off, and adding it would let an
+# admin bypass the review decision with the ops lever.
+#
+# THE `DRAFT` ROW IS NOT THE PLACE TO UNDO THIS, and the temptation is real: a switched-off
+# draft has no approval to be re-enabled back to, so the obvious repair is to let
+# `disabled → draft`. Do not. `apps/router.py::withdraw` is CITIZEN-facing and reads this
+# same row with only an ownership predicate, so widening it would let the OWNER of an app an
+# administrator killed walk it straight back to draft — containment turned into a bypass.
 STATUS_TRANSITIONS: dict[AppStatus, frozenset[AppStatus]] = {
     AppStatus.DRAFT: frozenset({AppStatus.PENDING}),
     AppStatus.PENDING: frozenset({AppStatus.DRAFT, AppStatus.REJECTED, AppStatus.APPROVED}),
     AppStatus.APPROVED: frozenset({AppStatus.PENDING, AppStatus.DISABLED}),
     AppStatus.REJECTED: frozenset({AppStatus.PENDING}),
-    AppStatus.DISABLED: frozenset({AppStatus.APPROVED}),
+    AppStatus.DISABLED: frozenset({AppStatus.APPROVED, AppStatus.DRAFT, AppStatus.REJECTED}),
 }
 
 # Publishable app-key shape (Express `bial_${randomBytes(24).base64url}`): the
@@ -143,6 +157,25 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     status: Mapped[AppStatus] = mapped_column(
         app_status_enum, server_default=AppStatus.DRAFT.value, nullable=False
     )
+
+    # WHAT THE APP WAS BEFORE THE KILL SWITCH. `disable` writes the pre-disable status here —
+    # from the column itself, inside the same guarded UPDATE, so it can never record a status
+    # the row had stopped holding — and `enable` restores from it.
+    #
+    # IT EXISTS BECAUSE `disable` NOW REACHES DRAFT AND REJECTED APPS. Enable used to resolve
+    # to the literal APPROVED, which on a never-approved app invents an approval nobody gave;
+    # with the widened source set above, a switched-off draft would either be promoted past
+    # the review gate or stranded in DISABLED forever. Neither is acceptable, and the obvious
+    # repair — widening the DRAFT row so `disabled → draft` becomes a legal transition — is
+    # the citizen-facing bypass the STATUS_TRANSITIONS comment forbids. So the target is
+    # remembered rather than derived.
+    #
+    # NULL IS A REAL STATE, TWICE OVER, AND NEITHER IS AN ERROR: an app that is not switched
+    # off has nothing to remember (`enable` clears this on the way back out), and a row that
+    # was already DISABLED before this column existed has nothing to have remembered —
+    # migration 0038 backfills those to `approved`, and `enable` reads a NULL as `approved`
+    # for the same reason, because that is what the code before it resolved them to.
+    previous_status: Mapped[AppStatus | None] = mapped_column(app_status_enum, nullable=True)
 
     # Code continuity's original store — same shape as the retired
     # `conversations.code`'s `{current: {source, entry, ...}}`. IT HAS NO WRITER ANY MORE:

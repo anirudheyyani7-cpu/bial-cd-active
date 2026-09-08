@@ -23,7 +23,6 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 from src.api.v1.build_sessions.deps import (
-    run_build_dependency,
     sandbox_dependency,
     sandbox_or_none_dependency,
     session_manager_dependency,
@@ -53,7 +52,7 @@ from src.services.usage.gate import record_usage
 from tests.api.v1.build_sessions.conftest import _sandbox_config
 from tests.api.v1.conversations.conftest import _headers
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, FakeSandboxClient
+from tests.fakes import FakeSandboxClient
 
 _PLAN = (
     "Here is what your visitor log will do.\n\n"
@@ -81,7 +80,6 @@ def wire(app, db_session, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     app.dependency_overrides[session_manager_dependency] = lambda: manager
     app.dependency_overrides[sandbox_dependency] = lambda: sbx
     app.dependency_overrides[sandbox_or_none_dependency] = lambda: sbx
-    app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     return SimpleNamespace(app=app, manager=manager, sbx=sbx)
 
 

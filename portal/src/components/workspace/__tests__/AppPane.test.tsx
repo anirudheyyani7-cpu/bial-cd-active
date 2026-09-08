@@ -99,7 +99,7 @@ const region = () => screen.getByTestId('app-pane-region')
 /** What a mounted surface publishes for the pane's chrome — every field at its resting value. */
 const PANE_VIEW = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -183,7 +183,7 @@ describe('the seam is the resolved address, not a URL that happens to be in hand
   it('frames the host once an address is resolved, and shows no sentence over it', () => {
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -281,7 +281,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // Mutation receipt: change the gate back to `address.url !== null` and this goes red.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(null))
-      c.address.set({ url: null, status: 'provisioning', projectId: 'p1' })
+      c.address.set({ url: null, status: 'provisioning', serving: false, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
       // A surface mid-build publishes its pane view; the host's own "nothing to host at all" early
@@ -299,7 +299,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // app that went to sleep showed a card saying "nothing is lost" with no way to bring it back.
     renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep', restorable: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -313,7 +313,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // frame somebody is looking at. `could-not-read` is deliberately absent from the veto set.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'unknown' })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -327,7 +327,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // up, that frame is better evidence than the press was.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep' }), { kind: 'timed-out' }))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -379,7 +379,7 @@ describe('the column a plan chat does not get', () => {
     // Unmounting would re-issue the frame's `src` on the way back — see `AppPaneHost`.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.pane.set(PANE_VIEW)
     }, false)
@@ -403,7 +403,7 @@ describe('the movement between the two layouts', () => {
   /** A build chat with a running app framed: the state a citizen actually leaves FROM. */
   const framed = (c: WorkspaceChannel) => {
     c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-    c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+    c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
     c.project.set('p1')
     c.pane.set(PANE_VIEW)
   }
@@ -797,14 +797,35 @@ describe('★ taking the workspace back', () => {
     await act(async () => { hold.settle(); await Promise.resolve() })
   })
 
-  it('the row the two controls sit in is a polite region, mounted before it has anything to say', async () => {
-    // The one-live-region rule, other half: `LivePreview` keeps the pane's permanent region and
-    // is not mounted on this arm, so the take-back's wait would otherwise pass in silence. The
-    // region is the ROW — never a second `sr-only` copy of a sentence already on screen.
+  it('the pane itself is a polite region, mounted before it has anything to say and on arms with no buttons', () => {
+    // ★ THE DEFECT THIS TEST NOW GUARDS. This asserted the region was `takeBack().parentElement`
+    // — the ROW THE TWO CONTROLS SIT IN — which was true and was the defect: the region lived
+    // inside the block that renders the buttons, so any state with `action: null` had no live
+    // region at all. `starting` is exactly such a state, and it is the one wait in the product
+    // with nothing to press, so a sandbox start announced NOTHING. What this test now rejects is
+    // a region scoped to the controls rather than to the pane.
+    //
+    // The rule still holds and is why the region exists here at all: `LivePreview` keeps the
+    // pane's other permanent region and is not mounted on these arms, so without this one the
+    // wait would pass in silence. Never a second `sr-only` copy of a sentence already on screen —
+    // the two regions divide the pane, and this one owns the states with no app in them.
     heldPane()
-    const row = takeBack().parentElement
-    expect(row?.getAttribute('role')).toBe('status')
-    expect(row?.getAttribute('aria-live')).toBe('polite')
+    const region = screen.getByTestId('app-pane-live')
+    expect(region.getAttribute('role')).toBe('status')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    // It is the pane, not the controls: the take-back row is INSIDE it rather than being it.
+    expect(region.contains(takeBack())).toBe(true)
+    expect(takeBack().parentElement?.getAttribute('role')).not.toBe('status')
+
+    // ★ THE ARM THE MOVE WAS FOR. `starting` offers no action, so under the old scoping it had no
+    // region on any screen. Asserted with liveness — the board really rendered — so a pane that
+    // failed to mount cannot pass by having no region either.
+    cleanup()
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'starting' }))))
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('starting')
+    const starting = screen.getByTestId('app-pane-live')
+    expect(starting.getAttribute('role')).toBe('status')
+    expect(starting.getAttribute('aria-live')).toBe('polite')
   })
 
   it('★ unmounting mid-sequence updates nothing and crashes nothing — and the server sequence finishes', async () => {
@@ -937,5 +958,63 @@ describe('★ taking the workspace back', () => {
         'held-by-another-project',
       )
     })
+  })
+})
+
+describe('★ the wait counter measures the wait, it does not count its own ticks', () => {
+  // This line is the ONLY thing the pane can say truthfully about how long a start has taken —
+  // there is no progress bar, so honesty is the whole feature. `setSeconds(was => was + 1)` counted
+  // how many times the interval FIRED, and a browser throttles a hidden tab's timers (to 1/s,
+  // and to 1/MINUTE after ~5 minutes hidden). A citizen who switches tabs during a two-minute
+  // start and comes back was told a number minutes short of the truth.
+  const starting = () => reportFor(reading(), null, true)
+
+  // THE CLOCK IS DRIVEN BY HAND, because the counter reads `performance.now()` — monotonic, so
+  // an NTP correction cannot make the wait count backwards — and `vi.setSystemTime` moves only
+  // the Date clock. Holding the reading here is also what lets the throttled-tab case exist at
+  // all: real time has to advance while the interval does NOT fire, which no timer API models.
+  let clock = 0
+  beforeEach(() => {
+    clock = 0
+    vi.useFakeTimers()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  /** Advance real time AND fire the interval, the ordinary case. */
+  const tick = (ms: number) => {
+    clock += ms
+    vi.advanceTimersByTime(ms)
+  }
+
+  it('starts at zero and advances with the clock', () => {
+    renderPane((c) => c.workspace.set(starting()))
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('0s so far')
+
+    act(() => { tick(3_000) })
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('3s so far')
+  })
+
+  it('★ tells the truth after a throttled tab has swallowed most of the ticks', () => {
+    renderPane((c) => c.workspace.set(starting()))
+    act(() => { tick(3_000) })
+
+    // The tab goes to the background: real time keeps passing, the interval does not fire.
+    // Then it comes forward and gets ONE tick.
+    act(() => { clock += 117_000 })
+    act(() => { tick(1_000) })
+
+    // 121 seconds of wall clock, 5 firings. The number is the wait, not the firings.
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('2m 01s so far')
+  })
+
+  it('is not announced — it sits inside the pane`s polite region', () => {
+    // A counter that ticks inside a live region is a screen reader reading a number every
+    // second for two minutes.
+    renderPane((c) => c.workspace.set(starting()))
+    expect(screen.getByTestId('app-pane-elapsed').getAttribute('aria-live')).toBe('off')
   })
 })

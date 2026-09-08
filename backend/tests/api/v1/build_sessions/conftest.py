@@ -1,12 +1,10 @@
 """Shared fixtures for the build-session router + SSE tests: cookie/CSRF auth, the
-dep-override wiring, and a blocking brain that keeps a session live for the HTTP boundary."""
+dep-override wiring, and `a_live_session` — the one door left into a live in-process session."""
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import uuid
-from contextlib import suppress
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -14,22 +12,18 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 from redis.exceptions import ConnectionError as RedisConnectionError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.deps import (
     sandbox_dependency,
     sandbox_or_none_dependency,
     session_manager_dependency,
 )
-from src.api.v1.build_sessions.schemas import (
-    BuildResult,
-    BuildSessionStatus,
-    StepEvent,
-)
 from src.config import settings
 from src.db.models.user import User
 from src.services.auth.csrf import issue_csrf_token
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.build_sessions import SessionManager, write_heartbeat
+from src.services.build_sessions import BuildSession, SessionManager, write_heartbeat
 from src.services.redis import REGISTRY_STATE_READY, lock_key, registry_key
 from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
@@ -65,33 +59,43 @@ def auth_headers(user: User, *, with_csrf: bool = True) -> dict[str, str]:
     return {"Cookie": f"session={jwt}; csrf={csrf}", "X-CSRF-Token": csrf}
 
 
-class BlockingBrain:
-    """Emits one step then blocks until `release()` — keeps a session live across the
-    HTTP request boundary so status / lock / stop tests aren't racing a fast completion."""
+async def a_live_session(
+    wire: SimpleNamespace,
+    db: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    *,
+    may_write: bool = True,
+) -> BuildSession:
+    """A live in-process session holding this project's container — THE door, packaged once.
 
-    def __init__(self) -> None:
-        self._gate = asyncio.Event()
+    `ensure_sandbox` is the allocator production actually uses, and since `manager.start` and
+    the bare `POST /v1/build-sessions` were deleted it is the ONLY one: nothing else claims the
+    one-per-user slot, registers in `_active_by_user`, or hands back a session id the surviving
+    `{session_id}` routes can resolve. Every test in this package that used to conjure a session
+    by starting a build now comes through here.
 
-    def release(self) -> None:
-        self._gate.set()
+    Two things the deleted start route produced that this deliberately does NOT: a `run_build` task
+    (`session.task` is `None` on every session production can build now) and any envelopes. A
+    test that needs progress frames pushes them through `manager.on_progress`, which documents
+    that it must derive correct state from envelopes handed to it directly; a test that needs a
+    terminal drives `manager.stop(...)`, the same method the surviving stop route calls.
 
-    async def __call__(self, session_id, user_id, sandbox_client, on_progress) -> BuildResult:
-        await on_progress(StepEvent(seq=1, name="scaffold", label="Scaffolding", state="started"))
-        await self._gate.wait()
-        return BuildResult(
-            status=BuildSessionStatus.ENDED,
-            reason="completed",
-            app_id=uuid.uuid4(),
-            preview_url=None,
-            last_seq=1,
-            snapshot_committed=False,
-        )
+    `may_write=True` by default because that is what the guards this package tests actually
+    branch on — `_writing_session_holds` is what makes Save refuse — and a read-only default
+    would silently turn those refusals into passes."""
+    return await wire.manager.ensure_sandbox(
+        db, user, project_id, sandbox_client=wire.sbx, may_write=may_write
+    )
 
 
 @pytest.fixture
 def wire(app: FastAPI, db_session, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Configure the sandbox + override the manager/sandbox deps with fakes. The test
-    sets its own `run_build_dependency` override (FakeBrain / BlockingBrain / None).
+    """Configure the sandbox + override the manager/sandbox deps with fakes.
+
+    The manager it binds is the one `a_live_session` above allocates against, so a test drives
+    the same instance the routes resolve. (This fixture used to say the test sets its own
+    `run_build_dependency` override; that seam is deleted along with the start route.)
 
     The manager's session factory is bound to the ROLLED-BACK test session: the end sequence
     writes the build outcome through its own session, so an unbound manager would commit real
@@ -116,10 +120,11 @@ def wire(app: FastAPI, db_session, monkeypatch: pytest.MonkeyPatch) -> SimpleNam
 
 class DeadRedis:
     """A Redis client where EVERY command raises `redis.exceptions.ConnectionError` — the
-    shape a real outage takes at the call site. Bound in place of the client singleton
-    (below) so `get_redis()` hands it to the manager exactly as it would a live client: the
-    routes under test never learn they are talking to a stub, which is the point — the 503
-    has to come from the seam, not from the fixture.
+    shape a real outage takes at the call site once the client's bounded retry has spent its
+    attempts. Bound in place of the client singleton (below) so `get_redis()` hands it to the
+    manager exactly as it would a live client: the routes under test never learn they are
+    talking to a stub, which is the point — the 503 has to come from the seam, not from the
+    fixture.
 
     `__getattr__` rather than a list of methods, deliberately: a total outage does not pick
     and choose commands, and enumerating them would quietly stop covering any new one."""
@@ -160,12 +165,3 @@ async def seed_live_sandbox_state(redis, user_id: uuid.UUID) -> None:
     )
     await redis.set(lock_key(user_id), "another-processes-token", ex=900)
     await write_heartbeat(redis, user_id)
-
-
-async def drain(manager: SessionManager, session_id: str) -> None:
-    """Await a session's background task to a clean finish. A stopped/force-ended task ends
-    cancelled (CancelledError is BaseException, not Exception), so suppress both."""
-    session = manager.get(uuid.UUID(session_id))
-    if session is not None and session.task is not None:
-        with suppress(asyncio.CancelledError, Exception):
-            await session.task

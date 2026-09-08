@@ -79,6 +79,27 @@ describe('getConversation', () => {
       { id: 'srv_1_a_1', role: 'assistant', parts: [{ type: 'text', text: 'hello!' }], seq: 1 },
     ])
   })
+
+  it('★ carries the chat’s occupancy, and reads its absence as unmeasured (#194)', async () => {
+    // The read is where the "this chat is getting long" line gets its number on a cold load, and
+    // that number is the RAW prompt count the provider reported — the same one the send route
+    // refuses on. Passed through untouched; the moment this client adjusts it, it is estimating.
+    const measured = vi.fn(async () =>
+      ok({ conversation: { _id: 'c1', kind: 'build' }, projection: [], contextTokens: 412_345 }),
+    )
+    expect((await getConversation('c1', deps(measured))).contextTokens).toBe(412_345)
+
+    // `null` and a missing field mean the same thing — nobody has counted — and NEITHER may
+    // become `0`, which would be the browser claiming the chat is empty.
+    const explicitNull = vi.fn(async () =>
+      ok({ conversation: { _id: 'c1', kind: 'build' }, projection: [], contextTokens: null }),
+    )
+    const absent = vi.fn(async () =>
+      ok({ conversation: { _id: 'c1', kind: 'build' }, projection: [] }),
+    )
+    expect((await getConversation('c1', deps(explicitNull))).contextTokens).toBeNull()
+    expect((await getConversation('c1', deps(absent))).contextTokens).toBeNull()
+  })
   it('returns null on 404', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }))
     expect(await getConversation('missing', deps(fetchImpl))).toBeNull()

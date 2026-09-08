@@ -190,6 +190,42 @@ class PublishState(StrEnum):
     DID_NOT_START = "did_not_start"
 
 
+class SavedState(StrEnum):
+    """WHY `saved_head`/`saved_at` are absent, which the two nulls cannot say themselves
+    (plan 001, U16, R37a).
+
+    THE SENTINEL WAS ONE VALUE FOR THREE FACTS. `_saved_version_for_publish_state`
+    answered `head=None, saved_at=None` when the store was not configured, when its HEAD
+    raised, AND when there was simply no bundle — three situations that are the same
+    answer to "is there newer work" (`LIVE_DRIFT_UNKNOWN`, and rightly so: unknown is
+    never spelled "up to date") and three DIFFERENT answers to "has this citizen ever
+    saved". The rail could only render the union of them, so it told a citizen who had
+    never saved that their last save could not be found — on the panel they open
+    precisely when they are unsure their work is safe.
+
+    So the drift question keeps reading one value and this axis is reported separately.
+    Only `NEVER_SAVED` is a claim about the citizen's work; the other two are claims
+    about the platform's own reach, and a client must not present them as the same thing.
+
+    An **API** StrEnum like `PublishState` above: nothing persists it, and the wire value
+    equals the member's own string."""
+
+    # A bundle exists at the citizen's save key. Either half of the pair may still be
+    # null — an unstamped bundle knows WHEN without knowing WHICH — and that is a saved
+    # app whose version is unknown, never an unsaved one.
+    SAVED = "saved"
+    # The store answered, and there is no bundle: nothing has ever been saved. The one
+    # member on which the rail omits its row entirely.
+    NEVER_SAVED = "never_saved"
+    # No object store is bound to this deployment — a supported dev/test posture this
+    # whole route already accommodates. The platform cannot see the citizen's saves at
+    # all; it must not report that as their absence.
+    STORE_UNCONFIGURED = "store_unconfigured"
+    # The store was asked and would not answer. Retrying can help, which is exactly what
+    # distinguishes it from the two above.
+    STORAGE_ERROR = "storage_error"
+
+
 # Mirrors `deploy/service.py`'s own private `_ROUTED_CODES`, which in turn mirrors the
 # portal's `ROUTED_FAILURE_CODES` (`deployApi.ts`) — a third copy of one string, for the
 # same reason the other two stay apart: `service.py`'s set exists to steer its
@@ -328,6 +364,13 @@ class DeploymentResponse(CamelModel):
     # avoid, arriving through the back door.
     saved_head: str | None
     saved_at: datetime | None
+    # WHY THE PAIR ABOVE IS ABSENT (U16, R37a) — see `SavedState`. The two nulls above are
+    # reached four ways and only one of them means "this citizen has never saved"; without
+    # this field a client rendering their absence has to speak all four with one sentence,
+    # and the sentence it chose ("we could not tell") is false in the frightening direction
+    # on the one case that matters most. No default, for the same reason `publish_state`
+    # and the pair above have none.
+    saved_state: SavedState
 
     @classmethod
     def of(
@@ -338,6 +381,7 @@ class DeploymentResponse(CamelModel):
         publish_state: PublishState,
         saved_head: str | None,
         saved_at: datetime | None,
+        saved_state: SavedState,
     ) -> DeploymentResponse:
         # `image_digest`, `acr_run_id` and `revision_name` are deliberately NOT surfaced:
         # they are operator facts with no meaning to a citizen, and the digest in particular
@@ -363,4 +407,5 @@ class DeploymentResponse(CamelModel):
             publish_state=publish_state,
             saved_head=saved_head,
             saved_at=saved_at,
+            saved_state=saved_state,
         )

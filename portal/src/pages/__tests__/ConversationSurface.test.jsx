@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
   listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(), stopTurn: vi.fn(),
   resolvePlanOptions: vi.fn(),
-  stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(), relaunchPreview: vi.fn(),
+  stop: vi.fn(), getStatus: vi.fn(), relaunchPreview: vi.fn(),
   fetchSaveState: vi.fn(), fetchPreviewState: vi.fn(), saveProject: vi.fn(),
 }))
 
@@ -60,6 +60,7 @@ import {
   planReply, turnStreaming, PLAN_CARD_ID, findStartAppControl,
 } from './_builderSession.jsx'
 import { ApiError } from '../../utils/apiError'
+import { DEFAULT_CONTEXT_SOFT } from '../../utils/contextLimits'
 
 const deps = () => {
   const fake = new FakeEventSource('x')
@@ -240,15 +241,30 @@ describe('the per-conversation guardrail reaches the composer', () => {
   // So this asserts the SEAM: a long conversation loaded into the surface puts the sentence on
   // the composer. Delete the `contextWarning` prop pass in `ConversationSurface.tsx`, or the
   // `useMemo` that feeds it, and this is what goes red.
-  const conversationOf = (chars) => ({
+  //
+  // ══ WHAT "A LONG CONVERSATION" MEANS CHANGED, AND SO DID THIS FIXTURE (#194) ══
+  //
+  // It used to be a pile of characters: 600,000 of them, priced at four to the token by an
+  // estimator this browser ran. That estimator is deleted on both sides — it read a 61-page
+  // document as 1,600 tokens when it really cost 153,342 — so a transcript's LENGTH now tells
+  // the browser nothing at all, and a fixture built out of characters would be asserting against
+  // a guess nobody makes any more.
+  //
+  // The conversation is long because the SERVER says it is: `contextTokens` on the read is the
+  // raw prompt count the provider reported, the same figure the send route refuses on. The wider
+  // wiring — the send's own 202, the chat switch, the unmeasured case — is
+  // `ConversationSurface-contextmeter.test.tsx`'s; what stays here is the seam this file exists
+  // for, in the file that noticed it going missing the first time.
+  const conversationOf = (contextTokens) => ({
     id: 'build-X',
     kind: 'build',
-    messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'x'.repeat(chars) }] }],
+    messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'make it nicer' }] }],
+    contextTokens,
   })
 
   it('a conversation past the soft threshold warns on the composer', async () => {
-    // Past the default 150k-token soft limit: (150_000 - 8_000 reserve) * 4 chars, plus slack.
-    h.getBuild.mockResolvedValue(conversationOf(600_000))
+    // The default soft threshold, as the profile-less session resolves it.
+    h.getBuild.mockResolvedValue(conversationOf(DEFAULT_CONTEXT_SOFT))
     h.readTurnStream.mockImplementation(() => new Promise(() => {}))
     renderBuilder({ deps: deps().deps })
 
@@ -257,13 +273,26 @@ describe('the per-conversation guardrail reaches the composer', () => {
   })
 
   it('and an ordinary conversation says nothing', async () => {
-    h.getBuild.mockResolvedValue(conversationOf(200))
+    h.getBuild.mockResolvedValue(conversationOf(1_000))
     h.readTurnStream.mockImplementation(() => new Promise(() => {}))
     renderBuilder({ deps: deps().deps })
 
     // PAIRED WITH A LIVENESS ASSERTION. `queryByTestId(...) === null` is also what a surface
     // that threw would produce, and this repo has been bitten by exactly that: the absence only
     // means something once the composer is proven to be on screen next to it.
+    await waitForGateOpen()
+    expect(screen.getByTestId('composer-input')).toBeTruthy()
+    expect(screen.queryByTestId('composer-context-warning')).toBeNull()
+  })
+
+  it('★ and a conversation NOBODY has measured says nothing either', async () => {
+    // The honest cost of reading a measurement instead of guessing one: a chat the provider has
+    // never served has no figure, and the line stays off rather than being invented. Asserted so
+    // that "silent" is a decision on this branch and not an accident of the fixture above.
+    h.getBuild.mockResolvedValue(conversationOf(null))
+    h.readTurnStream.mockImplementation(() => new Promise(() => {}))
+    renderBuilder({ deps: deps().deps })
+
     await waitForGateOpen()
     expect(screen.getByTestId('composer-input')).toBeTruthy()
     expect(screen.queryByTestId('composer-context-warning')).toBeNull()

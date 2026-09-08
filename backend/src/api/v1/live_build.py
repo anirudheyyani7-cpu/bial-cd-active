@@ -7,6 +7,12 @@ SCOPE. The lock is keyed on the USER, not the app — a bare `lock_is_held` answ
 building ANYTHING?", the wrong question when one user has several projects. Pass `app_id` for the
 narrow per-app answer; every current caller does. Omitting it is a decision to justify.
 
+THREE ANSWERS, AND THE FIRST IS THE SURPRISING ONE. `RedisNotConfiguredError` means PROCEED:
+with no Redis there is no build-session subsystem at all, so no lock can be held (dev and test
+only — production requires Redis at the settings gate). `RedisError` means 503: the store exists
+and failed to answer, so the check decided nothing, and any error or ambiguity denies. A lock
+genuinely held means 409, in the caller's own words.
+
 WHY THIS EXISTS — do not read a passing guard as "no container is serving this app". A
 relaunched preview holds no lock by design (`manager.py::relaunch_preview` releases the
 per-user lock on exit; the container's lifetime is owned by an explicit stay of execution on
@@ -16,8 +22,11 @@ refusing, and it is the CALLER's job to deal with whatever is still running.
 
 CLOSED ON THE DELETE PATH, AND ONLY THERE. `projects.delete_project` reaps the container
 itself: post-commit it asks the registry whether it still names this project's app and, if
-so, hands it to `reap_user` under the per-user start lock — best-effort, so a busy start lock,
-an unconfigured sandbox, or a Redis blip still leave the container to the scheduled sweep.
+so, hands it to `reap_user` under the per-user start lock — best-effort, so a busy start
+lock, an unconfigured sandbox, or a Redis blip still leave the container standing, and
+nothing automatic comes for it outside production: `may_destroy_on_this_control_plane`
+gates the scheduled sweep's destroy half on `environment == "production"`, so the delete
+path alarms and files a `project:teardown-incomplete` audit row naming what survived.
 Submit and deploy still only want the refusal, so the gap stays open for them. Pinned by
 `test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
@@ -79,7 +88,13 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     as unsaved on purpose: claiming work is safe when nobody could check is the one wrong answer
     here. Two message shapes because only one situation is about saving — a project whose agent
     is mid-build cannot be released until the build stops, so "has unsaved changes" would point
-    at a Save button the server will refuse."""
+    at a Save button the server will refuse.
+
+    The hand-over dialog needs this same answer before the citizen chooses, and asking by
+    SENDING is legitimate because every refusal on the send path is side-effect-free before
+    anything is persisted. So all three routes that can raise it — send, the plan offer's build
+    action, and relaunch — come through this one function rather than each wording its own; the
+    count moves when a call site is added or removed."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:

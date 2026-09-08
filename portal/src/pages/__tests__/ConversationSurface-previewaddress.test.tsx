@@ -44,7 +44,7 @@ const h = vi.hoisted(() => ({
   listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(), stopTurn: vi.fn(),
   resolvePlanOptions: vi.fn(),
-  relaunchPreview: vi.fn(), stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(),
+  relaunchPreview: vi.fn(), stop: vi.fn(), getStatus: vi.fn(),
   fetchPreviewState: vi.fn(), fetchSaveState: vi.fn(),
   // THE TWO PROBES THAT RIDE THE PREVIEW TICK, mocked only so they cannot reach a real `fetch`.
   // Neither was needed while every scenario here answered the read `unknown`: both are gated on a
@@ -332,6 +332,65 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
 
     expect(frame()).toBe(framedByTheTurn)
     expect(framedUrl()).toBe(TURN_URL)
+    view.unmount()
+  })
+
+  it('★ AE5 — a SECOND SEND does not remount the app (#200)', async () => {
+    // ★ THE DEFECT, MEASURED THE WAY THE ISSUE MEASURED IT. `#200` was proven by stamping a marker
+    // on the live `<iframe>` before the send and finding `marked === false` when the card came
+    // back: the element was REPLACED, so the generated app re-requested its document on every
+    // message and discarded its in-app state — form entries, selected tab, scroll position. The
+    // backend read `{"state":"alive"}` before and after; same container, same URL throughout.
+    //
+    // SO THIS ASSERTS ELEMENT IDENTITY, NOT THE ADDRESS MATCHING. Those are different claims: the
+    // src is byte-identical across a remount, which is exactly why the URL comparison the earlier
+    // scenarios use cannot see this. The dataset marker is carried too, because it is the same
+    // evidence the issue was closed on and it survives nothing but the original node.
+    //
+    // WHAT MADE THE FRAME COME DOWN: a send resets the turn narrative, so the turn's status drops
+    // to `null` while its preview URL stays — and the status fell through to the transcript's own
+    // `'ended'`. With liveness spelled as "a turn TERMINATED successfully", it was false for that
+    // render, `keepFramed` collapsed, and `frameContext` unmounted the iframe. Liveness on the
+    // address answers from the preview the turn published, which does not blink off at a send.
+    //
+    // Mutation check: narrow the resolver's turn arm to `turnStatus === 'ended'` and this goes red
+    // with `frame()` a different node — and the pane briefly reading "no longer running", which is
+    // what the citizen was shown over a container that was up the whole time.
+    h.getBuild.mockResolvedValue({
+      id: 'chat-A',
+      messages: [
+        { id: 'm0', role: 'user', parts: [{ type: 'text', text: 'a visitor app' }], seq: 0 },
+        {
+          id: 'm1',
+          role: 'assistant',
+          seq: 1,
+          // The persisted build outcome is what makes the address's status fall to `'ended'` on the
+          // send. Without it the scenario is vacuous — nothing terminal, so nothing to outrank.
+          parts: [{ type: 'build', status: 'ended', sessionId: 's-old', previewUrl: TURN_URL }],
+        },
+      ],
+    })
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+
+    h.readTurnStream.mockImplementation(turnFraming(TURN_URL))
+    await send('build me a visitor app')
+    await waitFor(() => expect(framedUrl()).toBe(TURN_URL))
+
+    const framed = frame()
+    // The app's own state, standing in for the form entries and scroll position a remount loses.
+    framed?.setAttribute('data-citizen-typed-here', 'yes')
+
+    // THE SECOND MESSAGE. `hold: true` so the turn stays open across the assertions below — the
+    // remount happened at the START of a send, which is the moment being pinned.
+    const second = scriptBuildTurn({ hold: true })
+    h.readTurnStream.mockImplementation(second.impl)
+    await send('now add a chart')
+
+    expect(frame()).toBe(framed)
+    expect(frame()?.getAttribute('data-citizen-typed-here')).toBe('yes')
+    // …and the pane never tells them their preview ended while it is up. Paired with the identity
+    // assertion above, so a pane that rendered nothing at all cannot satisfy the absence.
+    expect(screen.queryByText(/no longer running/i)).toBeNull()
     view.unmount()
   })
 

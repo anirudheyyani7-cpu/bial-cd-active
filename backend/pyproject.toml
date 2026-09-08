@@ -19,7 +19,11 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
-    "pypdf>=6.17.0",
+    # UPPER-BOUNDED, alone among these, because `services/parse/parsers.py` calls pypdf's
+    # PRIVATE `PdfReader._flatten(list_only=True)` — the only entry point that the
+    # encrypted-file short-circuit in `get_num_pages()` does not stand in front of (#194).
+    # A major that renames or drops it turns every PDF into a 400 "malformed file".
+    "pypdf>=6.17.0,<7",
     "python-docx>=1.2.0",
     "sqlalchemy>=2.0.52",
     "structlog>=26.1.0",

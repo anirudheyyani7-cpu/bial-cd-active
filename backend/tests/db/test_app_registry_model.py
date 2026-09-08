@@ -24,15 +24,25 @@ from tests.factories import AppRegistryFactory, UserFactory
 
 
 def test_status_transitions_pinned_verbatim() -> None:
-    # Target → allowed sources. `DRAFT: {PENDING}` is the one post-Express addition: the
-    # withdrawal path, where an owner pulls their own pending submission back out of the
-    # queue — draft stopped being provision-only the day that route landed.
+    # Target → allowed sources. If this fails, someone changed the lifecycle state
+    # machine — that must be a deliberate, reviewed decision, not a side effect.
+    # Two post-Express additions, each one such a decision:
+    #   * `DRAFT: {PENDING}` is the withdrawal path — an owner pulls their own pending
+    #     submission back out of the queue, and draft stopped being provision-only the day
+    #     that route landed.
+    #   * `DISABLED: {APPROVED, DRAFT, REJECTED}` is the kill switch reaching the
+    #     ordinary catalog member (a self-published DRAFT) and a REJECTED app, not approved
+    #     ones only. PENDING is deliberately absent: an app in the review queue is rejected,
+    #     not switched off.
+    # And one deliberate NON-change, which this pin is the guard for: the DRAFT row stays
+    # `{PENDING}`. `apps/router.py::withdraw` reads it with only an ownership predicate, so
+    # DISABLED in that set would let an owner undo an administrator's kill switch.
     assert STATUS_TRANSITIONS == {
         AppStatus.DRAFT: frozenset({AppStatus.PENDING}),
         AppStatus.PENDING: frozenset({AppStatus.DRAFT, AppStatus.REJECTED, AppStatus.APPROVED}),
         AppStatus.APPROVED: frozenset({AppStatus.PENDING, AppStatus.DISABLED}),
         AppStatus.REJECTED: frozenset({AppStatus.PENDING}),
-        AppStatus.DISABLED: frozenset({AppStatus.APPROVED}),
+        AppStatus.DISABLED: frozenset({AppStatus.APPROVED, AppStatus.DRAFT, AppStatus.REJECTED}),
     }
 
 

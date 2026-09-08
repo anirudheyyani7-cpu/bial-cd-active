@@ -8,11 +8,20 @@ relay has since retired; this copy is why the router did not have to change when
 
 Each frame is `id: {seq}\\n` + `data: {compact-envelope-json}\\n\\n`; the terminal `ended`
 envelope is followed by `data: [DONE]\\n\\n`. Unlike that relay, this does NOT await a
-first queued item before committing to the StreamingResponse: the producer (`run_build`)
-already ran at `start` and this GET is a pure CONSUMER, so a freshly-registered subscriber
-queue receives only future puts — awaiting it would hang a quiet-but-live or already-ended
-session (whose terminal lives in the replay BUFFER, not the queue). The only synchronous
-pre-stream failure is the 404 ownership check.
+first queued item before committing to the StreamingResponse: the producer already ran by
+the time anyone subscribes and this GET is a pure CONSUMER, so a freshly-registered
+subscriber queue receives only future puts — awaiting it would hang a quiet-but-live or
+already-ended session (whose terminal lives in the replay BUFFER, not the queue). The only
+synchronous pre-stream failure is the 404 ownership check.
+
+HISTORICAL SESSIONS ONLY. The route this serves survives the deletion of the standalone build
+stack as the reader for `build_started` transcript rows that are permanent in production — a
+citizen reloading such a thread still gets a `build_in_progress` anchor carrying a session id.
+Nothing produces a NEW one (a Write chat turn registers its workspace without ever serialising a
+session id), and nothing emits the six BRAIN envelope members any more, so in practice the
+ownership check answers 404 and this generator never runs. Kept because the alternative was
+deleting the portal's reattach path and the projection's `BuildInProgressItem` with live rows
+still in the database.
 """
 
 from __future__ import annotations
@@ -93,9 +102,9 @@ def build_sse_response(session: BuildSession, last_event_id: int | None) -> Stre
                 except TimeoutError:
                     pass
         finally:
-            # Client disconnect (GeneratorExit) or normal close: drop this subscriber. The
-            # run_build task keeps running — the SessionManager owns it, decoupled from the
-            # SSE lifecycle (the chat-relay drain analogue).
+            # Client disconnect (GeneratorExit) or normal close: drop this subscriber.
+            # Whatever is working in the session keeps working — the SessionManager owns it,
+            # decoupled from the SSE lifecycle (the chat-relay drain analogue).
             session.subscribers.discard(queue)
 
     return StreamingResponse(generator(), media_type="text/event-stream", headers=_SSE_HEADERS)

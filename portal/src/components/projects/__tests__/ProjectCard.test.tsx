@@ -106,6 +106,47 @@ describe('ProjectCard', () => {
     expect(screen.queryByRole('tooltip')).toBeNull()
   })
 
+  /**
+   * U15 / R37 — the description is clipped by CSS, never by JavaScript, and it advertises no
+   * interaction of its own.
+   *
+   * The tile already had this shape; these pin it, because the obvious "fix" applied to its
+   * sibling row (cut the string, show the rest on hover) would arrive here next and would take
+   * the full text out of the accessible tree in the process.
+   */
+  const LONG =
+    'A visitor log for the north gate that records arrivals, departures, badge numbers and the ' +
+    'host each visitor came to see, with a weekly export for the security desk.'
+
+  it('★ keeps the WHOLE description in the accessible tree, clipped only visually', () => {
+    render(<ProjectCard project={mkProject('Roster', { description: LONG })} onOpen={vi.fn()} onDelete={vi.fn()} />)
+
+    // Found by its complete text — a JavaScript truncation would fail this outright, and an
+    // ellipsis appended in JS would fail it too.
+    const description = screen.getByText(LONG)
+    expect(description.textContent).toBe(LONG)
+    // The clipping is the BOX, and it is CSS.
+    expect(description.className).toMatch(/line-clamp-/)
+  })
+
+  it('★ advertises no interaction on the description — and the tile still opens by its name', () => {
+    // Paired on purpose: `queryByRole('tooltip') === null` passes just as well on a render that
+    // crashed, so the second half proves the tile is alive and the affordance it DOES have works.
+    stubClip(true)
+    const onOpen = vi.fn()
+    render(<ProjectCard project={mkProject('Roster', { description: LONG })} onOpen={onOpen} onDelete={vi.fn()} />)
+
+    const description = screen.getByText(LONG)
+    expect(description.className).not.toMatch(/cursor-pointer/)
+    expect(description.getAttribute('title')).toBeNull()
+    fireEvent.focus(description)
+    fireEvent.mouseOver(description)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Roster' }))
+    expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to "Untitled project" for an empty name and still labels delete', () => {
     render(<ProjectCard project={mkProject('')} onOpen={vi.fn()} onDelete={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Untitled project' })).toBeTruthy()

@@ -10,6 +10,7 @@ the shared `error_responses(...)` + `AUTH_401` builders.
 from __future__ import annotations
 
 import asyncio
+import enum
 import math
 import uuid
 from typing import Annotated
@@ -34,6 +35,8 @@ from src.api.v1.pagination import (
     clean_limit,
     clean_search,
 )
+from src.config import settings
+from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.core.errors import AppApiError
 from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.conversation import Conversation
@@ -55,9 +58,11 @@ from src.schemas import (
 from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth, teardown_handles
 from src.services.audit.log import append_audit
+from src.services.audit.teardown import record_what_survived
 from src.services.build_sessions import SessionManager, app_name_for, read_registry, reap_user
 from src.services.build_sessions.manager import restorable_presence
 from src.services.deploy.liveness import live_app_ids
+from src.services.deploy.registry_delete import sweep_app_repositories
 from src.services.deploy.teardown import sweep_published_apps
 from src.services.projects import (
     delete_project_cascade,
@@ -66,6 +71,7 @@ from src.services.projects import (
     owned_project_or_404,
     resweep_submission_prefixes,
 )
+from src.services.ratelimit import InProcessRateLimiter, RateLimitExceededError
 from src.services.redis import get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 from src.services.sandbox import SandboxClient
@@ -424,7 +430,7 @@ _BUILD_LIVE_DELETE_MSG = (
 )
 
 # HOW LONG THE POST-COMMIT REAP WILL WAIT FOR THE PER-USER START LOCK, and it is short on
-# purpose. `manager.py`'s `_start_locked` holds that lock across an ENTIRE provision — ACA
+# purpose. `manager.py`'s `ensure_sandbox` holds that lock across an ENTIRE provision — ACA
 # create, image pull, bundle restore, `wait_ready` — so an unbounded acquire parks a delete
 # that has ALREADY COMMITTED behind a build the citizen started in another project. Worse
 # than slow: if the browser or the proxy gives up first the request is cancelled mid-wait,
@@ -434,20 +440,84 @@ _BUILD_LIVE_DELETE_MSG = (
 _SANDBOX_REAP_LOCK_WAIT_SECONDS = 2.0
 
 
+class _WhoseContainer(enum.Enum):
+    """Whose container the per-user sandbox registry currently names — THREE answers, because
+    two of them are not the same fact and reading them as one silences a real leak.
+
+    `OURS` — this project's; anything left standing is genuinely ours.
+    `SOMEONE_ELSES` — the same citizen's container for a DIFFERENT project.
+    `NOTHING_REGISTERED` — the registry was read and holds nothing.
+    `UNREADABLE` — the question could not be asked at all.
+
+    THE EMPTY REGISTRY MEANS DIFFERENT THINGS ON THE TWO SIDES OF THE LOCK, which is why it is
+    its own value rather than being folded into either neighbour. `SandboxClient._write_registry`
+    hydrates the hash for a JUST-CREATED container, at the END of a 30-60s provision and under
+    the per-user start lock. So OUTSIDE the lock, "empty" is exactly the shape of a provision in
+    flight — quite possibly for the very project being deleted — and reading it as "nothing of
+    ours survives" would silence the record for a container that is coming up holding that
+    project's database credential, with nothing written down and nothing automatic coming for it
+    outside production. INSIDE the lock, no provision can be in flight, so "empty" really does
+    mean nothing is standing, and treating it as a survivor would file a teardown-incomplete row
+    on every ordinary delete of a project whose app is not currently running.
+    """
+
+    OURS = "ours"
+    SOMEONE_ELSES = "someone_elses"
+    NOTHING_REGISTERED = "nothing_registered"
+    UNREADABLE = "unreadable"
+
+
+async def _whose_container_is_registered(user_id: uuid.UUID, app_id: uuid.UUID) -> _WhoseContainer:
+    """Read the per-user sandbox registry and say whose container it names.
+
+    THE REGISTRY KEY IS PER-USER, which is the whole reason this question exists: without it,
+    "the reap did not happen" and "this project had a container to reap" are the same sentence,
+    and the two are not the same fact.
+    """
+    try:
+        reg = await read_registry(get_redis(), user_id)
+    except Exception:  # noqa: BLE001 — an unanswerable question, not a failure to report
+        logger.warning(
+            "project_delete_sandbox_identity_unreadable",
+            app_id=str(app_id),
+            user_id=str(user_id),
+            exc_info=True,
+        )
+        return _WhoseContainer.UNREADABLE
+    if reg is None:
+        return _WhoseContainer.NOTHING_REGISTERED
+    return (
+        _WhoseContainer.OURS
+        if reg.get(REGISTRY_FIELD_APP_NAME) == app_name_for(app_id)
+        else _WhoseContainer.SOMEONE_ELSES
+    )
+
+
 async def _reap_the_project_sandbox_or_shrug(
     manager: SessionManager,
     sandbox: SandboxClient | None,
     *,
     user_id: uuid.UUID,
     app_id: uuid.UUID | None,
-) -> None:
+) -> str | None:
     """Take the deleted project's sandbox container down with it. NEVER RAISES.
 
+    Returns the name of a container that is STILL STANDING, or `None` when nothing of this
+    project's is left running — which the caller turns into the teardown record. A skip
+    that leaves nothing behind (no app, no sandbox configured, a registry naming somebody
+    else's container) returns `None`, because nothing survived: only a real leak is reported.
+
     Post-commit and best-effort, like every other sweep on this path: the rows are already
-    gone, so anything that fails here is a logged orphan for the scheduled sweep, never a 500
-    on a delete that in fact succeeded. `reap_user` guards only `SandboxError` around the
-    teardown — its Redis calls are bare by module policy — so the explicit `except Exception`
-    below is the mechanism, not the intention (it mirrors `salt_the_earth`'s own posture).
+    gone, so anything that fails here leaves a RUNNING CONTAINER for a human to kill, never a
+    500 on a delete that in fact succeeded. It used to say "a logged orphan for the scheduled
+    sweep"; there is no scheduled sweep that will take this one. `sweep_all` runs on a timer,
+    but `may_destroy_on_this_control_plane` gates the destroy half on `environment ==
+    "production"`, and no other reconciler on this path is on a timer at all — the storage and
+    database ones are operator-invoked (and the database one deletes nothing), and the
+    reclamation janitor's destroy flag is off everywhere. Hence the alarm, and hence the record.
+    `reap_user` guards only `SandboxError` around the teardown — its Redis calls are bare by
+    module policy — so the explicit `except Exception` below is the mechanism, not the
+    intention (it mirrors `salt_the_earth`'s own posture).
 
     NO SECOND TEARDOWN SEQUENCE. `manager.release_project_sandbox` already does exactly this
     — registry identity check, then `reap_user` — and its docstring states the invariant: there
@@ -467,8 +537,10 @@ async def _reap_the_project_sandbox_or_shrug(
     holds no lock by design).
 
     `strict=False`, unlike `release_project_sandbox`'s `True`: that caller is about to act on
-    the outcome, and this one is not — a failed teardown here is left for a later sweep rather
-    than raised at a delete that has already committed.
+    the outcome, and this one is not — a failed teardown here is recorded and left for an
+    operator rather than raised at a delete that has already committed. (This said "left for a
+    later sweep". `strict=False` does keep the registry entry so a sweep COULD retry, and in
+    production one does; everywhere else the entry sits there and the container runs on.)
 
     `app_id=None` INTO THE DURABLE-COPY GATE IS DELIBERATE, and is the one place this diverges
     from the janitor. The gate spares a container whose work is not provably preserved by
@@ -479,7 +551,7 @@ async def _reap_the_project_sandbox_or_shrug(
     deleted, and stated why.
     """
     if app_id is None:
-        return  # a project that never built owns no container
+        return None  # a project that never built owns no container
     if sandbox is None:
         # `OptionalSandbox`, NEVER `SandboxDep`: an eager dependency raises
         # `SandboxNotConfiguredError` before the route body, where no `except` of the route's
@@ -491,7 +563,7 @@ async def _reap_the_project_sandbox_or_shrug(
             app_id=str(app_id),
             user_id=str(user_id),
         )
-        return
+        return None
     try:
         # THE LOCK GOES AROUND BOTH THE CHECK AND THE REAP, because without it they are a
         # TOCTOU pair: `reap_user` does its own fresh `read_registry` and tears down whatever
@@ -501,24 +573,83 @@ async def _reap_the_project_sandbox_or_shrug(
         try:
             await asyncio.wait_for(lock.acquire(), _SANDBOX_REAP_LOCK_WAIT_SECONDS)
         except TimeoutError:
+            # ASK WHETHER THERE WAS ANYTHING TO REAP BEFORE CLAIMING ONE SURVIVED. The identity
+            # check below is on the far side of this lock, so this arm used to report a
+            # survivor purely from the fact that it could not get in — and the commonest way in
+            # to it is a citizen provisioning a workspace for ANOTHER project, whose 30-60s
+            # provision holds the lock for the whole wait. That filed a permanent
+            # `project:teardown-incomplete` row naming a container of this project's that was
+            # never running, and sent an operator after it. Reading the registry is a lock-free
+            # HGETALL and answers the same question the in-lock check asks, so the two arms now
+            # agree on the same evidence.
+            # ONLY POSITIVE EVIDENCE SUPPRESSES THE RECORD. Out here an EMPTY registry is not
+            # "nothing of ours" — it is precisely what a provision in flight looks like, and a
+            # provision is the commonest holder of the lock we just failed to take. Naming
+            # another project's container is the only reading that actually rules ours out.
+            whose = await _whose_container_is_registered(user_id, app_id)
+            if whose is _WhoseContainer.SOMEONE_ELSES:
+                logger.info(
+                    "project_delete_sandbox_reap_skipped_not_ours",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                    reason="the lock wait timed out and another project's container is registered",
+                )
+                return None
+            # THE CONTAINER IS STILL UP AND STILL BILLING, and outside production nothing will
+            # come for it — `may_destroy_on_this_control_plane` gates the scheduled reap on
+            # `environment == "production"`. This line used to say "the scheduled sweep
+            # reclaims this container", which was true of exactly one environment and read as
+            # true of all of them. An UNREADABLE registry lands here too, deliberately: not
+            # knowing is not the same as knowing there is nothing.
             logger.warning(
-                "project_delete_sandbox_reap_skipped_lock_busy",
+                TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                artefact="sandbox_container",
+                artefact_id=app_name_for(app_id),
+                reason="another start held the per-user lock for the whole wait",
                 app_id=str(app_id),
                 user_id=str(user_id),
                 waited_seconds=_SANDBOX_REAP_LOCK_WAIT_SECONDS,
-                hint="a start is in flight; the scheduled sweep reclaims this container",
             )
-            return
+            return app_name_for(app_id)
         try:
             redis = get_redis()
-            reg = await read_registry(redis, user_id)
-            if reg is None or reg.get(REGISTRY_FIELD_APP_NAME) != app_name_for(app_id):
+            # IN HERE, EMPTY REALLY DOES MEAN NOTHING SURVIVED, and that asymmetry with the
+            # two lock-free arms is the point rather than an oversight: holding the per-user
+            # start lock excludes the concurrent provision that makes an empty registry
+            # ambiguous out there.
+            registered = await _whose_container_is_registered(user_id, app_id)
+            if registered is _WhoseContainer.UNREADABLE:
+                # THE QUESTION COULD NOT BE ASKED, which is not an answer. The reap's own first
+                # act is to read this same registry, so there is nothing to gain by pressing
+                # on, and reporting a survivor is the conservative direction when the platform
+                # cannot see.
+                #
+                # ANSWERED HERE RATHER THAN BY RAISING INTO THE BROAD ARM. It used to raise a
+                # `RuntimeError` purely to reach that handler — which hardcodes
+                # `reason="the reap raised"`, a sentence that is false (`reap_user` was never
+                # called) and would send an operator reading the alarm looking for a teardown
+                # failure that did not happen. It also cost a second Redis round trip, because
+                # that handler asks the same unanswerable question again.
+                logger.warning(
+                    TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                    artefact="sandbox_container",
+                    artefact_id=app_name_for(app_id),
+                    reason="the sandbox registry could not be read, so nothing could be checked",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                )
+                return app_name_for(app_id)
+            if registered is not _WhoseContainer.OURS:
+                # NOT A LEAK, so not an alarm: either nothing is registered — and under this
+                # lock that really does mean nothing is coming up either — or what is
+                # registered is a container this citizen is running for a DIFFERENT project
+                # and must keep. Nothing of this project's survives.
                 logger.info(
                     "project_delete_sandbox_reap_skipped_not_ours",
                     app_id=str(app_id),
                     user_id=str(user_id),
                 )
-                return
+                return None
             reaped = await reap_user(redis, user_id, sandbox, strict=False, app_id=None)
             logger.info(
                 "project_delete_sandbox_reaped",
@@ -526,15 +657,47 @@ async def _reap_the_project_sandbox_or_shrug(
                 user_id=str(user_id),
                 reaped=reaped,
             )
+            if not reaped:
+                # The identity check above already confirmed the registry names THIS project's
+                # container, so a lenient `reap_user` answering False here means the teardown
+                # failed — not that there was nothing to reap.
+                logger.warning(
+                    TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                    artefact="sandbox_container",
+                    artefact_id=app_name_for(app_id),
+                    reason="the teardown did not remove the registered container",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                )
+                return app_name_for(app_id)
         finally:
             lock.release()
-    except Exception:  # noqa: BLE001 — post-commit: a logged orphan, never a 500
+    except Exception:  # noqa: BLE001 — post-commit: an alarm and a record, never a 500
+        # SAME QUESTION AS THE TIMEOUT ARM, and for the same reason: a Redis blip on the way in
+        # is not evidence about what is standing, and neither is an empty hash while a provision
+        # may be mid-flight. Only another project's name rules ours out — if the registry can be
+        # read now and names someone else's, nothing of this project's survived and the record
+        # must not say otherwise. Unreadable or ours -> report, which is where an actual failed
+        # teardown lands.
+        if await _whose_container_is_registered(user_id, app_id) is _WhoseContainer.SOMEONE_ELSES:
+            logger.info(
+                "project_delete_sandbox_reap_skipped_not_ours",
+                app_id=str(app_id),
+                user_id=str(user_id),
+                reason="the reap raised and the registry names another project's container",
+            )
+            return None
         logger.warning(
-            "project_delete_sandbox_reap_failed",
+            TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+            artefact="sandbox_container",
+            artefact_id=app_name_for(app_id),
+            reason="the reap raised",
             app_id=str(app_id),
             user_id=str(user_id),
             exc_info=True,
         )
+        return app_name_for(app_id)
+    return None
 
 
 @router.delete(
@@ -589,14 +752,36 @@ async def delete_project(
     #
     # THE FORCE-DROP IS STILL THE GUARANTEE, and the reap does not demote it. The reap is
     # best-effort and skippable by design — an unconfigured sandbox, a busy start lock or a
-    # Redis blip all leave the container standing for the scheduled sweep — and a DEPLOYED or
+    # Redis blip all leave the container standing, and outside production nothing automatic
+    # takes it down (the scheduled reap's destroy half is production-only) — and a DEPLOYED or
     # published container was never in the sandbox registry to be found at all. So the
     # project's own database is torn down with `salt_the_earth` (sever, then `DROP DATABASE
     # ... WITH (FORCE)`) exactly as before: whatever is still holding live connections at
     # delete time, the force-drop is what guarantees it stops reading. It runs post-commit and
-    # never raises: the rows are already gone, so a failed drop is a logged orphan for the
-    # reconciler, never a 500 on a delete that in fact succeeded.
+    # never raises: the rows are already gone, so a failed drop is a leak a human has to
+    # clear — the per-project-database reconciler is operator-invoked and report-only, so
+    # nothing collects it on its own — never a 500 on a delete that in fact succeeded.
+    #
+    # WHAT SURVIVED IS ON THE RECORD. Each post-commit arm reports what it could not destroy;
+    # anything left standing raises `TEARDOWN_ARTEFACT_SURVIVED_EVENT` and lands, once, in a
+    # `project:teardown-incomplete` audit row naming every surviving artefact. The citizen is
+    # not told, deliberately: for them a delete is done when the code, the files and the
+    # database are gone, and this platform has no notification path to promise an operator has
+    # been alerted. The response is `{"ok": true}` either way.
     project = await owned_project_or_404(db, user.id, project_id)
+    # READ FIRST, BEFORE ANYTHING ELSE IN THIS FUNCTION RUNS. This is the only copy of the
+    # description that will exist after the cascade: it lives on the `projects` row
+    # `delete_project_cascade` deletes, and `description_tsv` is a lossy `to_tsvector` of it
+    # rather than a second copy. The tombstone insert below is only PENDING until the
+    # cascade's autoflush, so binding the value into a local HERE — rather than reaching for
+    # `project.description` down there — is what makes the read's ordering explicit instead of
+    # incidental: a later change that moves the insert past the cascade (to get an exact
+    # count, say) would silently record an empty description otherwise, and there is no source
+    # to repair it from. Coalesced because `projects.description` is NULL when there is none
+    # and the column that keeps it is NOT NULL — the explicit half of a bridge the model's two
+    # defaults also make; see there for why that asymmetry is deliberate and why none of the
+    # three is load-bearing alone.
+    doomed_description = project.description or ""
     # THE TOMBSTONE, written before the cascade removes what it describes.
     # Inside the caller's transaction, so a rolled-back delete leaves no record of a
     # deletion that did not happen — and a committed one always has its reason.
@@ -635,6 +820,8 @@ async def delete_project(
         DeletedProject(
             project_id=project.id,
             project_name=project.name,
+            # Captured at the top of the function, not read here — see `doomed_description`.
+            project_description=doomed_description,
             owner_id=project.user_id,
             owner_email=user.email,
             deleted_by=user.id,
@@ -703,49 +890,138 @@ async def delete_project(
         # (including a caller sharing this session) should have to know that.
         await db.rollback()
         raise AppApiError(status.HTTP_404_NOT_FOUND, "Project not found.") from None
+    # WHAT THE TEARDOWN COULD NOT DESTROY, as `(artefact, identifier)` pairs. Every arm below
+    # reports rather than raises — a raise would 500 a delete that has already committed — and
+    # the list becomes ONE audit row at the bottom. It stays empty on the overwhelming majority
+    # of deletes, which is what makes a row that exists at all worth reading.
+    survivors: list[tuple[str, str]] = []
     if handles is not None:
         # FIRST of the post-commit sweeps, because it is the one that stops data being read:
         # sever, then force-drop the database, then drop the role. Never raises.
-        await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name)
+        if not await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name):
+            survivors.append(("app_database", handles.db_name))
     # Post-commit, pre-sweep: re-walk the submission prefixes so the sweep list reflects the
     # store as it is NOW. `app_container_ids` are plain UUIDs captured pre-commit, so reading
     # them here triggers no `expire_on_commit` lazy I/O. Dedup preserves order and keeps
     # the pre-commit list in play even if the re-walk fails (it logs rather than raising).
     resweep = await resweep_submission_prefixes(storage, cleanup.app_container_ids)
-    await sweep_blobs(storage, list(dict.fromkeys([*cleanup.blob_keys, *resweep])))
-    await sweep_app_containers(container_store, cleanup.app_container_ids)
-    # Last: the published container app itself. Same pre-commit id list — the published name
-    # is a pure function of the app id — because after the cascade there is nothing left in
-    # the database that names the running container, and the sandbox reaper cannot see it
-    # (it sweeps the Redis registry, which a published app is never written to).
-    await sweep_published_apps(cleanup.app_container_ids)
+    survivors.extend(
+        ("blob", key)
+        for key in await sweep_blobs(storage, list(dict.fromkeys([*cleanup.blob_keys, *resweep])))
+    )
+    survivors.extend(
+        ("app_container", str(container_id))
+        for container_id in await sweep_app_containers(container_store, cleanup.app_container_ids)
+    )
+    # The published container app. Same pre-commit id list — the published name is a pure
+    # function of the app id — because after the cascade there is nothing left in the database
+    # that names the running container, and the sandbox reaper cannot see it (it sweeps the
+    # Redis registry, which a published app is never written to).
+    #
+    # IT ANSWERS WITH SURVIVORS, like every other arm on this path. It used to answer with a
+    # COUNT, which made this block guess: short of the id count meant "one did not go", so it
+    # named EVERY id as a survivor — and it had to re-read `settings.deploy` first, because a
+    # count of zero also meant "publishing is switched off and nothing was ever published".
+    # Both problems were the return type's. An audit row that names an app which was in fact
+    # deleted is worse than one that names none: it sends an operator after something that is
+    # not there. The per-id detail is on the alarm the helper itself raised.
+    # Read once and handed to the registry sweep below, which needs the config itself.
+    published_config = settings.deploy
+    survivors.extend(
+        ("published_app", str(i)) for i in await sweep_published_apps(cleanup.app_container_ids)
+    )
+    # ...and the image the published container was built from. Deleting a project must not
+    # leave the citizen's compiled source sitting in the registry under a name nothing in the
+    # database points at any more. Derived, never stored — see `registry_delete`.
+    #
+    # ONLY THE APPS THAT COULD HAVE ONE, captured pre-commit by the cascade: a registry that
+    # refuses the delete credential answers 401/403 for every id it is handed, so sweeping apps
+    # that were never built would name repositories that never existed as survivors on every
+    # delete — an operator sent looking for something that was never there.
+    survivors.extend(
+        ("registry_repository", repository)
+        for repository in await sweep_app_repositories(
+            cleanup.built_app_ids, config=published_config
+        )
+    )
     # ...and LAST, the sandbox container, if the registry still says one of this project's is
     # up. After the sweeps deliberately: the durable-copy gate reads the snapshot they have
     # just destroyed, which is why the reap is opted OUT of that gate (see the helper).
-    await _reap_the_project_sandbox_or_shrug(manager, sandbox, user_id=user.id, app_id=app_id)
+    standing = await _reap_the_project_sandbox_or_shrug(
+        manager, sandbox, user_id=user.id, app_id=app_id
+    )
+    if standing is not None:
+        survivors.append(("sandbox_container", standing))
+    await record_what_survived(db, actor_id=user.id, project_id=project_id, survivors=survivors)
     return OkResponse(ok=True)
+
+
+# THE DESCRIPTION GENERATOR'S ONLY PER-USER SPEND BOUND, and the reason it needs one:
+# what this route spends is deliberately recorded under `review` and never counted back
+# into the citizen's daily budget — the platform's reasoning about their code is
+# not theirs to pay for. That exemption travelled here from the classification review;
+# the BOUND that made it safe there did not. Without one, `enforce_daily_limit` admits
+# call N for every N, and each call ships up to 600,000 characters of app source to the
+# premium deployment — from a citizen who may have already exhausted their build budget.
+#
+# Six in a quarter of an hour is far more than revising a description ever needs (the
+# revise loop is a person reading a paragraph and pressing again), and the refusal costs
+# nothing that cannot be retried: the description that exists stays, and the button works
+# again shortly.
+DESCRIPTION_RATE_LIMIT = 6
+DESCRIPTION_RATE_WINDOW_SECONDS = 15 * 60
+
+
+# THE BUCKET IS CHARGED AT THE POINT OF SPEND, not at the door, which is why this is a plain
+# limiter object rather than the `rate_limit(...)` dependency its siblings use. A dependency
+# runs before the route body, so it would count every refusal too — and this route's commonest
+# refusal is a 409 for a project with nothing built yet, which spends nothing at all. Six of
+# those and a citizen who then builds their app finds the button locked for a quarter of an
+# hour over requests that never reached the model. The route hits this AFTER the 409/503/429
+# guards, so what is bounded is generations, which is what the bound is for.
+_description_limiter = InProcessRateLimiter(
+    limit=DESCRIPTION_RATE_LIMIT, window_seconds=DESCRIPTION_RATE_WINDOW_SECONDS
+)
+
+_DESCRIPTION_RATE_MESSAGE = (
+    "Too many description generations in a short time. Please wait a few minutes and try again."
+)
 
 
 @router.post(
     "/{project_id}/description:generate",
     response_model=ProjectResponse,
-    responses=error_responses(
-        AUTH_401,
-        (404, ErrorEnvelope, "Project not found"),
-        (409, ErrorEnvelope, "Nothing to generate from yet (no app / no code)"),
-        (429, DailyTokenLimitBody, "Daily token limit exceeded"),
-        (500, ErrorEnvelope, "The description generation failed"),
-        (503, ErrorEnvelope, "Claude client not configured"),
-    ),
+    responses={
+        # TWO DIFFERENT 429 BODIES REACH THIS ROUTE and `error_responses` refuses a
+        # duplicated code, so this one is written out: the daily gate answers its 5-key
+        # body, the limiter above answers the plain `{"error": {"message"}}` envelope.
+        # Documented as the union rather than as whichever one was written first — a
+        # client that parses the schema would break on the other.
+        429: {
+            "model": DailyTokenLimitBody | ErrorEnvelope,
+            "description": (
+                "Daily token limit exceeded (5-key body), or too many generations "
+                "started in a short time (error envelope)"
+            ),
+        },
+        **error_responses(
+            AUTH_401,
+            (404, ErrorEnvelope, "Project not found"),
+            (409, ErrorEnvelope, "Nothing to generate from yet (no app / no code)"),
+            (500, ErrorEnvelope, "The description generation failed"),
+            (503, ErrorEnvelope, "Claude client not configured"),
+        ),
+    },
 )
 async def generate_description(
     project_id: uuid.UUID, user: CurrentUser, db: DbSession, model: ModelDep
 ) -> ProjectResponse | JSONResponse:
     """Generate (or revise) the project description from its app's code. Reads the
     project's ONE app's `current_code`; a fresh project (no app / NULL code) is a
-    409 "nothing to generate from yet". Bills against the daily gate like a chat turn;
-    if a description already exists it is fed in so generation revises it. The result
-    is length-capped and stored on the project."""
+    409 "nothing to generate from yet". A citizen already at their daily limit is refused
+    here, but what this generates does not itself come out of that limit; if a
+    description already exists it is fed in so generation revises it. The result is
+    length-capped and stored on the project."""
     project = await owned_project_or_404(db, user.id, project_id)
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
@@ -761,11 +1037,23 @@ async def generate_description(
             status.HTTP_409_CONFLICT, "Nothing to generate from yet — build the app first."
         )
 
-    # Bills like a normal turn: gate BEFORE the model call, 429 with the 5-key body.
+    # GATED LIKE A NORMAL TURN, BILLED UNLIKE ONE. The check runs BEFORE the model call and
+    # answers with the 5-key 429 body, so someone out of budget is told the same thing here as
+    # anywhere else. What this turn then spends is recorded under `review` and never counted
+    # back into that budget (see `services/projects/describe.py`) — the platform's reasoning
+    # about the citizen's code is not the citizen's to pay for.
     try:
         await enforce_daily_limit(db, user.id)
     except DailyTokenLimitExceededError as exc:
         return exc.as_response()
+
+    # LAST GUARD BEFORE THE MODEL, deliberately. Everything above can refuse without spending
+    # anything — no app, no code, no client, or a citizen already out of daily budget — and a
+    # bound charged for those would take the button away over requests that cost nothing. From
+    # here on, a request that passes is a request that generates. Per-user bucket; the key is
+    # built from the validated session, never from anything the caller sends.
+    if not _description_limiter.hit(f"project-description:{user.id}"):
+        raise RateLimitExceededError(_DESCRIPTION_RATE_MESSAGE)
 
     try:
         project.description = await generate_project_description(
@@ -782,8 +1070,8 @@ async def generate_description(
         await db.commit()
     except StaleDataError:
         # The project was deleted mid-generate. The usage row rides this commit, so the
-        # 404 rolls the billing back too — an accepted, bounded loss on this rare race
-        # (not worth rewiring billing into its own transaction).
+        # 404 rolls the metering back too — an accepted, bounded loss on this rare race
+        # (not worth rewiring the usage write into its own transaction).
         raise AppApiError(status.HTTP_404_NOT_FOUND, "Project not found.") from None
     await db.refresh(project)
     return _to_response(project, app.id, app.status, is_serving=await _serving_now(db, app.id))

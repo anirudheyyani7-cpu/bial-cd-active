@@ -26,7 +26,7 @@ const h = vi.hoisted(() => ({
   loadBuilds: vi.fn(), newBuild: vi.fn(), createBuild: vi.fn(), getBuild: vi.fn(),
   deleteBuild: vi.fn(), listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(), resolvePlanOptions: vi.fn(),
-  stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(),
+  stop: vi.fn(), getStatus: vi.fn(),
   relaunchPreview: vi.fn(), fetchPreviewState: vi.fn(), fetchSaveState: vi.fn(),
   handOverWorkspace: vi.fn(),
 }))

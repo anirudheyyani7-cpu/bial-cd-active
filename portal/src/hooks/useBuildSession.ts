@@ -1,7 +1,7 @@
 /**
- * Owns a build session's lifecycle: RE-ATTACHES to a session, stops or force-ends it,
- * subscribes to its SSE feed, and derives `BuildSessionStatus`. Every cockpit surface
- * (LivePreview, the conversation surface's banners) reads from here.
+ * Owns a build session's lifecycle: RE-ATTACHES to a session, stops it, subscribes to its SSE
+ * feed, and derives `BuildSessionStatus`. Every cockpit surface (LivePreview, the conversation
+ * surface's banners) reads from here.
  *
  * It no longer STARTS or RELAUNCHES a session — a composer send is a TURN and the build
  * lives inside the turn's transaction; the live restore path is `relaunchPreview`, called
@@ -16,12 +16,14 @@
  * deliberate cost recovered on the next prompt behind a labelled wait.
  *
  * Status derives from the envelope stream (`provisioning → building → ready`; terminal read
- * off `ended.status`, never `reason` — though force-end overrides with `ForceEndResponse.status`).
- * `reattach` seeds `previewUrl` from the status response, so a `preview_ready` fired before
- * connecting still frames the app. There is no `reclaimed` state — the frozen-tab case is
- * `LivePreview`'s own `asleep` poll state — and `feedDisconnected` is a distinct, bounded
- * reconnect-exhaustion flag with manual `reconnect()`. `buildLock` is not consulted here: the
- * composer pre-checks it; the 409 barrier is server-side.
+ * off `ended.status`, never `reason`). `reattach` seeds `previewUrl` from the status response,
+ * so a `preview_ready` fired before connecting still frames the app. There is no force-end here
+ * any more — its one control was the block banner's Force-end button, which went with the
+ * banner, so `stop()` is the surviving way to settle a live session from this hook. There is no
+ * `reclaimed` state either — the frozen-tab case is `LivePreview`'s own `asleep` poll state —
+ * and `feedDisconnected` is a distinct, bounded reconnect-exhaustion flag with manual
+ * `reconnect()`. `buildLock` is not consulted here: the composer pre-checks it; the 409 barrier
+ * is server-side.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../utils/apiError'
@@ -53,7 +55,7 @@ export interface UseBuildSessionResult {
   /**
    * WHY the session reached its terminal, from the `ended` envelope's `reason` (or the local
    * action that settled it): 'completed' | 'stopped_by_user' | 'quota_exceeded' | … — null while
-   * live, and null when the terminal arrived without a reason (reclaim, force-end, reattach onto
+   * live, and null when the terminal arrived without a reason (reclaim, reattach onto
    * an already-ended session). 'completed' is the one the preview pane cares about: the
    * server PARDONS a completed build's container (it stays up under an idle lease), so
    * `ended` + 'completed' + `previewUrl` means "done, preview live" — not "no longer running".
@@ -75,17 +77,11 @@ export interface UseBuildSessionResult {
   reconnecting: boolean
   quota: QuotaState | null
   error: string | null
-  /** ms epoch the current session started, for elapsed-time display in the force-end confirm. */
+  /** ms epoch the current session started, read from its `createdAt` — for elapsed-time display. */
   startedAt: number | null
   reattach: (sessionId: string) => Promise<void>
   /** Graceful stop. Resolves `false` when the stop FAILED and the session is still live (the caller must not start over it). */
   stop: () => Promise<boolean>
-  /**
-   * The owner-only kill switch. No surface carries a control for it since the block banner's
-   * Force-end button went; it is kept because it is the only thing that can settle a session
-   * stuck mid-`building` that never emits a terminal `ended`.
-   */
-  forceEnd: (targetSessionId?: string) => Promise<void>
   reconnect: () => void
   reset: () => void
 }
@@ -117,7 +113,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
 
   // Refs mirror the state that async callbacks (timers, SSE handlers) must read WITHOUT a stale
   // closure. `statusRef` is the source of truth for lifecycle transitions; `settledRef` guards the
-  // terminal transition so it runs exactly once (idempotent across SSE-ended / reclaim / force-end).
+  // terminal transition so it runs exactly once (idempotent across SSE-ended / reclaim / stop).
   // `mountedRef` guards `reattach`: if the component unmounts WHILE its network call is in flight,
   // the unmount cleanup has already run, so a feed subscribed afterwards is never closed. Bail.
   const mountedRef = useRef(true)
@@ -144,7 +140,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     subRef.current = null
   }, [])
 
-  /** The single terminal transition. Idempotent: only the FIRST caller (SSE ended / reclaim / force-end / stop) wins — including its `reason`, so a late duplicate can never repaint WHY. */
+  /** The single terminal transition. Idempotent: only the FIRST caller (SSE ended / reclaim / stop) wins — including its `reason`, so a late duplicate can never repaint WHY. */
   const finishSession = useCallback(
     (terminal: BuildSessionStatus, opts: { reason?: string } = {}) => {
       if (settledRef.current) return
@@ -263,7 +259,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
       setPhase(st.status)
       setPreviewUrl(st.previewUrl)
       // Elapsed-time is measured from the session's TRUE start (createdAt), not the moment of
-      // reattach — a reload onto a 12-minute-old build must not report it as 0s (force-end confirm).
+      // reattach — a reload onto a 12-minute-old build must not report it as 0s.
       const createdMs = Date.parse(st.createdAt)
       setStartedAt(Number.isFinite(createdMs) ? createdMs : Date.now())
       if (st.status === 'ended' || st.status === 'failed') {
@@ -292,28 +288,6 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
       return false // the session is STILL LIVE — a caller must not start over it
     }
   }, [client, finishSession])
-
-  const forceEnd = useCallback(
-    async (targetSessionId?: string): Promise<void> => {
-      const own = sessionIdRef.current
-      const sid = targetSessionId ?? own
-      if (!sid) return
-      if (sid === own && settledRef.current) return // own session already terminal — no redundant call
-      try {
-        const res = await client.forceEnd(sid)
-        // The terminal comes from the CONTROL-PLANE response, overriding any envelope-derived
-        // status. A caller may still name ANOTHER session by id, in which case there is nothing
-        // local to settle.
-        if (sid === own) finishSession(res.status)
-      } catch (e) {
-        if (sid === own && settledRef.current) return // our own session was concurrently settled — no stale error
-        // 403 build_session_forbidden (non-owner) is surfaced fail-closed, never swallowed. A failed
-        // force-end of ANOTHER session still surfaces (only the own-session case is guarded above).
-        setError(e instanceof ApiError ? e.message : 'Could not force-end the build.')
-      }
-    },
-    [client, finishSession],
-  )
 
   const reconnect = useCallback(() => {
     const sid = sessionIdRef.current
@@ -371,7 +345,6 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     startedAt,
     reattach,
     stop,
-    forceEnd,
     reconnect,
     reset,
   }

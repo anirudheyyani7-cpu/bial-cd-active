@@ -6,26 +6,38 @@ Two rules run through the whole file:
 * The completion barrier sits above every assertion that depends on it — each test waits on
   the stop's own task, or a bounded poll of the real condition, before checking the outcome.
 
-The stop is ASKED FOR by one request and REPORTED BY another, so the manager keeps its own
-record of having asked — nothing else could tell a later poll "stopped" from "nothing was
-running".
+The shape under test is a one-container-two-projects hand-over: the stop is ASKED FOR by one
+request and REPORTED BY another, so the manager keeps its own record of having asked — nothing
+else could tell a later poll "stopped" from "nothing was running".
+
+WHAT IS BEING STOPPED, since `SessionManager.start` was deleted: `_stop_the_held_session` used to
+branch on two kinds of live work, a build session's `run_build` task and a Write turn's workspace;
+only the Write branch remains, so every test here drives a real turn on a real `TurnEngine`
+(`_HoldsItsOwnUnwind` + the `_fresh_engine` fixture) instead of a fake brain the manager could
+cancel directly. The subject is unchanged — the three states, the ask/answer split, one stop per
+project — reached the one way production now reaches it.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
+import contextlib
 import uuid
 
 import pytest
 import redis.asyncio as aioredis
 from pydantic import SecretStr
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
 from src.config import settings
+from src.db.models.conversation import ChatKind
 from src.db.models.user import User
+from src.services.agent.mode_prompts import PromptContext
 from src.services.build_sessions import manager as manager_module
+from src.services.build_sessions.locks import read_registry
 from src.services.build_sessions.manager import (
     BuildSessionConflictError,
     SessionManager,
@@ -35,11 +47,13 @@ from src.services.build_sessions.snapshot import (
     SNAPSHOT_EXEC_TIMEOUT_SECONDS,
     SNAPSHOT_EXECS,
 )
-from src.services.sandbox import ExecResult
 from src.services.sandbox.config import SandboxConfig
-from src.services.storage import snapshot_key
-from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, FakeSandboxClient, FakeStorage
+from src.services.turns.engine import TurnEngine, set_turn_engine_for_tests
+from src.services.turns.guard import _mid_reply
+from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.fakes import FakeSandboxClient, FakeStorage
+
+_CTX = PromptContext(user_name="Ada", project_name="Visitors", project_description=None)
 
 
 @pytest.fixture(autouse=True)
@@ -66,51 +80,105 @@ async def _mk(db: AsyncSession, email: str) -> tuple[User, uuid.UUID]:
     return user, project.id
 
 
-def _bundles_to(client: FakeSandboxClient, sha: str) -> FakeSandboxClient:
-    """Script a container that is AT `sha` and hands back a PARSEABLE bundle.
-
-    Needed because a stopped build still runs its snapshot step, and "no work was lost" is
-    asserted against what that step actually stored. The default fake answers every exec with
-    empty stdout, which would make a save that stored nothing indistinguishable from one that
-    worked — the exact ambiguity these tests exist to remove."""
-    bundle = base64.b64encode(b"# v2 git bundle\n" + sha.encode() + b" HEAD\n\nPACK").decode()
-
-    def handler(cmd: list[str]) -> ExecResult:
-        if cmd[0] == "sh" and "rev-parse" in cmd[-1]:
-            return ExecResult(stdout=f"{sha}\n@@@@3", stderr="", exit=0)
-        return ExecResult(stdout=bundle, stderr="", exit=0)
-
-    client.exec_handler = handler
-    return client
+@pytest.fixture(autouse=True)
+def _fresh_engine():
+    """THE ENGINE THE STOP ACTUALLY REACHES. `_stop_the_held_session` calls
+    `get_turn_engine().stop_user_turn_and_wait(...)`, so a test that does not register its own
+    engine would stop a global one no turn here is running in and read `NOTHING_WAS_RUNNING`
+    off a live session."""
+    _mid_reply.clear()
+    engine = TurnEngine()
+    set_turn_engine_for_tests(engine)
+    yield engine
+    set_turn_engine_for_tests(None)
+    _mid_reply.clear()
 
 
-class _HoldsItsOwnUnwind(FakeBrain):
-    """A build that parks INSIDE its cancellation handler until the test lets it go.
+@pytest.fixture
+def session_factory(db_session):
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield db_session
+
+    return lambda: _session()
+
+
+class _HoldsItsOwnUnwind:
+    """A turn that parks INSIDE its cancellation handler until the test lets it go.
 
     This is the state every honest-stop test needs and the one no committed test had:
     cancellation is a request, not an event, so between `task.cancel()` and the workspace
-    actually being free there is a real window in which the turn is *still running*. A brain that
+    actually being free there is a real window in which the turn is *still running*. A model that
     dies the instant it is cancelled closes that window and every assertion about it passes
     vacuously.
 
-    `stepped` says the build is genuinely under way; `unwinding` says the cancel has been
+    IT IS A REAL TURN ON THE REAL ENGINE, which is the only kind of work left to stop: the build
+    session that used to hold this slot (a `run_build` task the manager cancelled itself) went
+    with `SessionManager.start`, and `_stop_the_held_session` has one arm now — ask the turn
+    engine to settle the user's turn, then look at whether anything still holds the app. So the
+    hold has to live where production's does, inside the streaming model.
+
+    `stepped` says the turn is genuinely under way; `unwinding` says the cancel has been
     delivered and the cleanup has begun; `let_go` is the test's hand on the tap."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.stepped = asyncio.Event()
         self.unwinding = asyncio.Event()
         self.let_go = asyncio.Event()
 
-    async def __call__(self, session_id, user_id, sandbox_client, on_progress):
-        self.stepped.set()
-        try:
-            await asyncio.Event().wait()  # never set: only a cancel ends this
-        except asyncio.CancelledError:
-            self.unwinding.set()
-            await self.let_go.wait()
-            raise
-        raise RuntimeError("halted by the test")  # unreachable: only a cancel leaves the try
+    def model(self) -> FunctionModel:
+        async def _stall(_messages: list[ModelMessage], _info: AgentInfo):
+            yield "working on it"
+            self.stepped.set()
+            try:
+                await asyncio.Event().wait()  # never set: only a cancel ends this
+            except asyncio.CancelledError:
+                self.unwinding.set()
+                await self.let_go.wait()
+                raise
+            yield "unreachable"  # only a cancel leaves the try
+
+        return FunctionModel(stream_function=_stall)
+
+
+async def _a_turn_holding_the_workspace(
+    db: AsyncSession,
+    engine: TurnEngine,
+    session_factory,
+    manager: SessionManager,
+    client: FakeSandboxClient,
+    user: User,
+    project_id: uuid.UUID,
+    turn: _HoldsItsOwnUnwind,
+) -> None:
+    """Start a real Write turn on `project_id` and return once it is genuinely streaming.
+
+    The turn pins the project's container through `manager.ensure_sandbox`, so the manager's
+    one-per-user slot is held by work the stop can actually reach — which is what every
+    assertion below about `STILL_RUNNING` / `STOPPED` is a statement about."""
+    conversation = await ConversationFactory.create(
+        db, user.id, project_id=project_id, kind=ChatKind.BUILD
+    )
+    await engine.start_turn(
+        conversation=conversation,
+        user_id=user.id,
+        prompt="build it",
+        history=[],
+        prompt_context=_CTX,
+        app_id=None,
+        project_id=project_id,
+        model=turn.model(),
+        session_factory=session_factory,
+        persist_user_turn=_nothing_to_persist,
+        manager=manager,
+        sandbox_client=client,
+    )
+    await asyncio.wait_for(turn.stepped.wait(), timeout=10)
+
+
+async def _nothing_to_persist() -> None:
+    """The user's row is the route's job, not the engine's — and no test here reads it."""
+    return None
 
 
 async def _the_slot_is_free(manager: SessionManager, user_id: uuid.UUID) -> None:
@@ -136,6 +204,14 @@ def test_the_stop_budget_sits_above_the_unwind_each_branch_actually_runs() -> No
     recomputes the branch's real cost and the budget has to keep up. A budget below either
     branch's real bound reports a healthy stop as one that did not finish.
 
+    ONE OF THE TWO BRANCHES IS NO LONGER REACHED FROM THIS BUDGET, and it is kept anyway. The
+    build arm of `_stop_the_held_session` went with `SessionManager.start`, so a stop no longer
+    runs `_do_finalize` — but `_do_finalize` still costs exactly this much on the `stop` /
+    `force_end` path, and `_STOP_ACTIVE_WORK_TIMEOUT_SECONDS`'s own derivation in `manager.py`
+    still names it as the larger of the two it is set from. Dropping the assertion would let the
+    constant fall under the number its comment says it clears, silently. The WRITE assertion is
+    the live one; the build assertion holds the constant to its own stated derivation.
+
     Mutation check: make the budget the sum of the recovery autosave and the record again and the
     build-branch assertion goes red while the write-branch one stays green."""
     build_branch = (
@@ -155,27 +231,30 @@ def test_the_stop_budget_sits_above_the_unwind_each_branch_actually_runs() -> No
 
 
 async def test_the_status_read_says_still_running_until_the_work_has_really_unwound(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """The headline contract: it flips to `STOPPED` when the work stops, and not one poll before.
 
-    The brain is held inside its own cancellation handler, so between the ask and the release the
+    The turn is held inside its own cancellation handler, so between the ask and the release the
     turn is genuinely mid-cleanup — the state that used to be reported as success."""
     user, project_a = await _mk(db_session, "stop1@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "1" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
 
     asked = await manager.request_stop_of_active_work(
         db_session, user, project_a, sandbox_client=client
     )
     assert asked is StopOutcome.STILL_RUNNING
-    await asyncio.wait_for(brain.unwinding.wait(), timeout=5)
+    await asyncio.wait_for(turn.unwinding.wait(), timeout=5)
 
     # Mid-unwind, and it says so — repeatedly, because the browser polls this.
     for _ in range(5):
@@ -183,7 +262,7 @@ async def test_the_status_read_says_still_running_until_the_work_has_really_unwo
         assert state is StopOutcome.STILL_RUNNING
 
     # THE BARRIER. Nothing below this line runs until the stop itself says it is finished.
-    brain.let_go.set()
+    turn.let_go.set()
     record = manager._stop_records[(user.id, project_a)]
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STOPPED
 
@@ -195,7 +274,11 @@ async def test_the_status_read_says_still_running_until_the_work_has_really_unwo
 
 
 async def test_the_status_read_never_says_stopped_while_the_turn_is_still_unwinding(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """*However long it takes* — including after the stop's OWN budget has expired.
 
@@ -205,13 +288,12 @@ async def test_the_status_read_never_says_stopped_while_the_turn_is_still_unwind
     must still refuse, because the fact that decides it is the session map, not the clock."""
     user, project_a = await _mk(db_session, "stop2@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "2" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
 
     await manager.request_stop_of_active_work(
         db_session, user, project_a, sandbox_client=client, timeout_s=0.05
@@ -219,7 +301,7 @@ async def test_the_status_read_never_says_stopped_while_the_turn_is_still_unwind
     record = manager._stop_records[(user.id, project_a)]
     # The stop gave up WAITING — it did not stop stopping, and it did not report success.
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STILL_RUNNING
-    assert brain.unwinding.is_set()
+    assert turn.unwinding.is_set()
 
     # The task that was asked to watch this is finished, and the answer is still the honest one.
     for _ in range(10):
@@ -227,7 +309,7 @@ async def test_the_status_read_never_says_stopped_while_the_turn_is_still_unwind
             StopOutcome.STILL_RUNNING
         )
 
-    brain.let_go.set()
+    turn.let_go.set()
     await _the_slot_is_free(manager, user.id)
     assert await manager.stop_state_of_active_work(db_session, user, project_a) is (
         StopOutcome.STOPPED
@@ -253,7 +335,11 @@ async def test_a_status_read_for_a_project_nobody_asked_about_is_nothing_was_run
 
 
 async def test_a_stop_that_times_out_is_reported_as_still_running_never_as_success(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """*The regression*: `stop_active_work` used to answer `True` after its wait expired.
 
@@ -262,31 +348,34 @@ async def test_a_stop_that_times_out_is_reported_as_still_running_never_as_succe
     under a task that is still inside its `finally`."""
     user, project_a = await _mk(db_session, "stop4@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "3" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
 
     timed_out = await manager.stop_active_work(
         db_session, user, project_a, sandbox_client=client, timeout_s=0.05
     )
 
     assert timed_out is StopOutcome.STILL_RUNNING
-    assert brain.unwinding.is_set()  # ...and the turn really was mid-cleanup, not merely slow
+    assert turn.unwinding.is_set()  # ...and the turn really was mid-cleanup, not merely slow
     assert manager.active_session_for(user.id) is not None
     # The container is NOT taken while that is the answer, which is what makes it worth reporting.
     with pytest.raises(BuildSessionConflictError):
         await manager.release_project_sandbox(db_session, user, project_a, sandbox_client=client)
 
-    brain.let_go.set()
+    turn.let_go.set()
     await _the_slot_is_free(manager, user.id)
 
 
 async def test_a_stop_longer_than_a_request_still_completes_and_is_reported_correctly(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """Nothing is held open for the length of a stop, which is what makes the budget affordable.
 
@@ -296,13 +385,12 @@ async def test_a_stop_longer_than_a_request_still_completes_and_is_reported_corr
     this repo — stops constraining the design."""
     user, project_a = await _mk(db_session, "stop5@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "4" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
 
     asked = await manager.request_stop_of_active_work(
         db_session, user, project_a, sandbox_client=client
@@ -313,7 +401,7 @@ async def test_a_stop_longer_than_a_request_still_completes_and_is_reported_corr
     assert not record.task.done()  # the ask returned FIRST — nothing waited for the stop
     assert manager.active_session_for(user.id) is not None
 
-    brain.let_go.set()
+    turn.let_go.set()
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STOPPED
     assert await manager.stop_state_of_active_work(db_session, user, project_a) is (
         StopOutcome.STOPPED
@@ -321,26 +409,39 @@ async def test_a_stop_longer_than_a_request_still_completes_and_is_reported_corr
 
 
 async def test_a_dropped_connection_mid_stop_loses_no_work_and_takes_no_container(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """The citizen's tab dies mid-hand-over. Nothing about the stop was theirs to lose.
 
     Two halves. WHILE it is unwinding, the container is untouched and the release still refuses,
     so a dropped connection cannot leave a workspace half-taken. AFTER it settles, asking again
     picks the answer up exactly where it was — which is only possible because the stop is a
-    detached task and the ask was recorded, not because anything guessed from elapsed time."""
+    detached task and the ask was recorded, not because anything guessed from elapsed time.
+
+    WHAT "LOST NOTHING" MEANS ON THIS PATH, since it used to mean a stored bundle. A stopped
+    BUILD ran `_do_finalize`, whose step 1 pushed the saved snapshot, and this ended by finding
+    it in storage. A stopped TURN takes the other ending: `finish_turn_sandbox` PARDONS the
+    container rather than tearing it down, deliberately — a Write turn's container is the
+    preview the citizen is looking at, and the turn ending is not a reason for their app to
+    vanish. So the tree that held their work is still running behind a lease, which is asserted
+    here instead: nothing torn down and the registry — the sweep's only map to it — still
+    there. Weaker in no direction that matters: on the build path the container went and the
+    bundle was all that survived; here the container itself survives."""
     user, project_a = await _mk(db_session, "stop6@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "5" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    session = await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
     await manager.request_stop_of_active_work(db_session, user, project_a, sandbox_client=client)
     record = manager._stop_records[(user.id, project_a)]
-    await asyncio.wait_for(brain.unwinding.wait(), timeout=5)
+    await asyncio.wait_for(turn.unwinding.wait(), timeout=5)
 
     # THE DROP: the caller that was polling goes away mid-read.
     poller = asyncio.create_task(manager.stop_state_of_active_work(db_session, user, project_a))
@@ -355,12 +456,13 @@ async def test_a_dropped_connection_mid_stop_loses_no_work_and_takes_no_containe
         await manager.release_project_sandbox(db_session, user, project_a, sandbox_client=client)
 
     # THE BARRIER, then the resume: a fresh read answers, and nothing was lost on the way.
-    brain.let_go.set()
+    turn.let_go.set()
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STOPPED
     assert await manager.stop_state_of_active_work(db_session, user, project_a) is (
         StopOutcome.STOPPED
     )
-    assert snapshot_key(session.app_id) in fake_storage.objects
+    assert client.torn_down == []  # pardoned, not destroyed — the workspace outlived the stop
+    assert await read_registry(fake_redis, user.id) is not None  # ...and is still findable
 
 
 async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
@@ -368,6 +470,8 @@ async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
     fake_redis: aioredis.Redis,
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """Two tabs, one workspace, one stop: two asks could race into two cancels, so one record per
     project must catch both. The barrier sits inside `_existing_app_id`, after its real DB round
@@ -380,13 +484,12 @@ async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
     (Verified by injecting it and watching this test — and only this test — go red.)"""
     user, project_a = await _mk(db_session, "stop7@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "6" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
 
     real_app_id = manager_module._existing_app_id
     # Two parties, and only the first two asks are held: the sequential third ask further down
@@ -439,17 +542,20 @@ async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
     assert manager._stop_records[(user.id, project_a)].task is record.task
 
     # THE BARRIER FIRST, THEN THE COUNT — the rule this whole file runs on. A second stop task
-    # would be parked inside the same unwind, and asking about it before letting the brain go
+    # would be parked inside the same unwind, and asking about it before letting the turn go
     # would leave this test hanging on its own failure instead of reporting it.
-    brain.let_go.set()
+    turn.let_go.set()
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STOPPED
 
     # …and only ONE stop was ever started behind that key.
     assert stops_started == [record.app_id]
 
-    # ONE container destroyed, and only the one that was provisioned.
+    # ONE container, and it is still standing. Two stops would have been two endings against
+    # the same workspace; one ending means one provision and one pardon. `torn_down == []` is
+    # the pardon (`finish_turn_sandbox` never destroys a turn's container — see the drop test),
+    # so a second stop firing into the finished cleanup is what this pair would catch.
     assert len(client.provisioned) == 1
-    assert client.torn_down == client.provisioned
+    assert client.torn_down == []
     assert await manager.stop_state_of_active_work(db_session, user, project_a) is (
         StopOutcome.STOPPED
     )
@@ -460,6 +566,8 @@ async def test_a_stop_that_breaks_is_logged_against_the_citizen_it_broke_for(
     fake_redis: aioredis.Redis,
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
+    _fresh_engine: TurnEngine,
+    session_factory,
 ) -> None:
     """A detached stop that raises names WHO it failed for, not just that something failed.
 
@@ -471,13 +579,12 @@ async def test_a_stop_that_breaks_is_logged_against_the_citizen_it_broke_for(
     red while the message assertion stays green."""
     user, project_a = await _mk(db_session, "stop8@rvaiglobal.com")
     manager = SessionManager()
-    client = _bundles_to(FakeSandboxClient(), "7" * 40)
-    brain = _HoldsItsOwnUnwind()
+    client = FakeSandboxClient()
+    turn = _HoldsItsOwnUnwind()
 
-    await manager.start(
-        db_session, user, project_a, "build it", run_build=brain, sandbox_client=client
+    await _a_turn_holding_the_workspace(
+        db_session, _fresh_engine, session_factory, manager, client, user, project_a, turn
     )
-    await brain.stepped.wait()
     session = manager.active_session_for(user.id)
     assert session is not None
     app_id = session.app_id
@@ -515,7 +622,7 @@ async def test_a_stop_that_breaks_is_logged_against_the_citizen_it_broke_for(
         )
         is StopOutcome.STILL_RUNNING
     )
-    brain.let_go.set()
+    turn.let_go.set()
     retry = manager._stop_records[(user.id, project_a)]
     assert await asyncio.wait_for(retry.task, timeout=10) is StopOutcome.STOPPED
 

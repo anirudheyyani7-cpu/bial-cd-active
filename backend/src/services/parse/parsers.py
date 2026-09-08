@@ -51,14 +51,41 @@ those stay collapsed behind a single sentence on purpose."""
 
 
 def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
-    """A PDF page count via pypdf in the governor child, never `extract/deck.py::count_pdf_pages`,
-    whose `/Type /Page` byte-scan (reliable only for LibreOffice/Gotenberg) silently UNDER-counts
-    pages in a compressed object stream: an admission cap can't tolerate that — it would admit what
-    the charge can't cover. The deck path keeps its own scan and 100-page limit; the divergence is
-    deliberate, revisited when decks are enabled. `len(reader.pages)` (not `/Count`) walks the page
-    tree, so a file only CLAIMING to be short counts honestly; pypdf's traversal limits turn a
-    page-tree bomb into an exception not a hang, other failures (truncated, broken xref, recursion
-    limit) map to 400, and `MemoryError` re-raises as the governor's 413, not malformed."""
+    """A real PDF's page count, read by a real PDF reader. Runs INSIDE the governor child.
+
+    ★ THIS IS NOT `extract/deck.py::count_pdf_pages`, AND MUST NOT BECOME IT. That one scans
+    the raw bytes for `/Type /Page` markers, which is documented as reliable for the
+    LibreOffice/Gotenberg output it was written for and silently UNDER-counts any PDF whose
+    page objects live in a compressed object stream — the one failure mode an admission cap
+    cannot have, because under-counting is what admits the document the charge cannot cover.
+    The deck path keeps its scan and its own 100-page limit; the two caps disagreeing is
+    deliberate and is revisited when decks are enabled.
+
+    ★ THE PAGE TREE IS WALKED, AND `len(reader.pages)` DOES NOT WALK IT FOR AN ENCRYPTED FILE.
+    This line used to read `len(reader.pages)` and this docblock used to claim the count was
+    therefore honest. That was true of an unencrypted file and false of every encrypted one:
+    `get_num_pages()` short-circuits to `root_object["/Pages"]["/Count"]` — the catalog's own
+    DECLARATION — whenever `is_encrypted` is set, and `is_encrypted` is nothing but
+    `"/Encrypt" in trailer`, which stays true forever, including after a successful
+    decryption. So the shortcut was permanent for encrypted files, and since pypdf opens a
+    permission-restricted document automatically (empty user password), 120 KB declaring one
+    page and carrying twenty thousand was counted as one and admitted straight past the
+    30-page cap. `_flatten` is the traversal the unencrypted path already took, so the fix is
+    to stop asking the question that has a wrong answer rather than to hand-roll a second walk
+    beside the library's — a home-grown one has to reproduce pypdf's ancestor-path cycle guard
+    exactly or hang forever on a leaf-less loop. `list_only=True` skips materialising each
+    page's inherited attributes; nothing here reads a page.
+
+    pypdf's own traversal limits (depth, entry count) turn a page-tree bomb into an exception
+    here rather than a hang, and everything it can still raise — a truncated file, a broken
+    cross-reference, a page tree that eats its own tail, a recursion limit — is mapped to one
+    400. `MemoryError` is deliberately re-raised: the governor maps it to its own 413, and
+    swallowing it would report a contained OOM as a malformed file.
+
+    ENCRYPTION IS NOT A REFUSAL HERE and must never become one. pypdf attempts an empty
+    password on construction, so a permission-restricted or owner-password-only document opens
+    and is counted like any other file; only a genuinely password-locked one — where an empty
+    password leaves the document undecryptable — reaches the `FileNotDecryptedError` arm."""
     # Imported HERE, not at module scope: `spawn` re-imports this module in every governor
     # child, so a top-level pypdf import would be paid by the office kinds too — and by the
     # API process at boot, which never counts a page.
@@ -67,7 +94,20 @@ def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
 
     try:
         reader = PdfReader(io.BytesIO(buffer))
-        pages = len(reader.pages)
+        # Private, and deliberately so: it is the only entry point to pypdf's traversal that
+        # the encrypted short-circuit does not stand in front of. `len(reader.pages)` is the
+        # bug this closes, and `list(reader.pages)` is the same bug wearing a hat — the
+        # virtual list's own iterator is `range(len(self))`, so it yields the declared count
+        # too. See the docblock.
+        reader._flatten(list_only=True)
+        walked = reader.flattened_pages
+        if walked is None:
+            # Unreachable — the top-level call assigns `[]` before it descends — and written
+            # out rather than defaulted to zero because a walk that did not happen has to
+            # REFUSE the file. Under-counting is the one direction an admission cap cannot
+            # take; this falls into the broad arm below as one more 400.
+            raise ValueError("the page tree was not walked")
+        pages = len(walked)
     except MemoryError:
         raise
     except FileNotDecryptedError as exc:

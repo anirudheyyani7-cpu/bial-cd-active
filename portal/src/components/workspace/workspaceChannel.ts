@@ -1,14 +1,57 @@
 /**
  * THE UPWARD CHANNEL between the mounted surface and the shell.
  *
- * The pane host is a SIBLING of the `<Outlet/>` — `AppPaneHost` owns that rule — so it cannot read
- * by props what the surfaces below it produce. This is that seam, named once. It carries no
- * fetching: the surface below still owns every request it makes.
- * ONE CELL PER PAYLOAD, each with its own listener set and read through `useSyncExternalStore`,
- * because a context whose value is an object re-renders every consumer on any change. `address`,
- * `rail` and `workspace` are VALUE-compared; the pane view is not, because it is rebuilt by
- * identity every render — so do not "fix" its re-render with a shallow comparator without
- * memoising its handler closures too. The context carries only the channel handle, created once.
+ * WHY THIS MODULE EXISTS AT ALL. The app pane host is a SIBLING of the `<Outlet/>`, not a
+ * descendant of it — `AppPaneHost` owns that rule. Everything it needs is produced below that
+ * Outlet — the resolved address, the pane's toolbar slots, whether the surface wants the pane
+ * visible, the reclaim dialog's state, the tri-state save state — and a sibling cannot read any
+ * of it by props. So the mechanism has to be named once, in one place, or three implementers
+ * will pick three and the seam will have three shapes.
+ *
+ * WHAT TRAVELS ON IT, AND NOTHING ELSE:
+ *
+ *  1. the resolved preview address, its status and its liveness  (`utils/previewAddress.ts`)
+ *  2. the pane's view — visibility and the pane's own pass-through props
+ *  3. the reclaim dialog's open state
+ *  4. the tri-state save state
+ *  5. the app-revealed callback, the reveal stop-clock
+ *  6. the rail mode, its collapse, and an opaque per-mode bag that outlives a chat
+ *  7. what to SAY about the workspace — one computed value, and the handlers for its one action
+ *  8. what the toolbar row NAMES, and the save control's values and its action
+ *
+ * TWO RULES MAKE IT SAFE, and they are the whole contract:
+ *
+ *  - A PUBLISH MUST NOT CHANGE THE PANE'S IDENTITY INPUTS unless the address genuinely changed.
+ *    That is why the address is its own cell with a VALUE comparison rather than a field on the
+ *    pane view: the surface re-renders on every keystroke, so a channel that republished one
+ *    object would hand the host a new address object per character typed. The iframe's key is
+ *    the URL plus its reload nonce, so a new object with the same URL would not actually remount
+ *    it — but relying on that is relying on a coincidence, and `AppPaneHost.test.tsx`'s identity
+ *    scenarios are what enforce this rule.
+ *  - THE CHANNEL CARRIES NO FETCHING. The surface below still owns every request it makes. "The
+ *    shell owns no chat state" means it starts no fetch and holds no conversation; it does hold
+ *    this channel, and it also holds the rail mode.
+ *
+ * THE SHAPE, AND WHY IT IS CELLS RATHER THAN A CONTEXT VALUE. A plain context whose value is an
+ * object re-renders EVERY consumer whenever ANY field changes. Each payload is therefore its own
+ * cell with its own listener set, read through `useSyncExternalStore`.
+ *
+ * BE PRECISE ABOUT WHAT THAT BUYS, because the tempting sentence is not true. A save-state publish
+ * reaches only the shell's unload effect. A keystroke touches neither the address nor the save
+ * state nor the visibility — but it DOES republish the pane view, because that view is rebuilt by
+ * identity every render (its toolbar nodes and its handlers are fresh closures), so the pane host
+ * re-renders once per character exactly as `LivePreview` did when the page rendered it directly.
+ * What the split protects is the thing that matters: the address is the VALUE-compared cell and
+ * the frame's identity input, so no amount of typing can move what is framed. Do not "fix" the
+ * PANE's re-render with a shallow comparator — its view is rebuilt by identity every render, with
+ * fresh handler closures on it, so a comparator would buy nothing without memoising those too.
+ *
+ * THAT WARNING IS ABOUT THE PANE, AND ONLY THE PANE. `address`, `rail` and `workspace` are all
+ * value-compared, because each carries plain data (plus, for `workspace`, handlers that are
+ * provably interchangeable — see `sameReport`, which states the rule that keeps them so).
+ *
+ * The context carries the CHANNEL HANDLE, which is created once and never replaced. That handle
+ * is stable for the life of the shell, so the context itself never re-renders anybody.
  */
 import { createContext, useContext, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react'
 // TYPE-ONLY, so this stays a leaf at runtime: the import is erased and the channel keeps no
@@ -49,7 +92,7 @@ function createCell<T>(initial: T, equals: (a: T, b: T) => boolean = Object.is):
 }
 
 const sameAddress = (a: WorkspaceAddress, b: WorkspaceAddress) =>
-  a.url === b.url && a.status === b.status && a.projectId === b.projectId
+  a.url === b.url && a.status === b.status && a.serving === b.serving && a.projectId === b.projectId
 
 /**
  * VALUE-COMPARED, for the same reason the address is. The rail's flags are rebuilt on every render
@@ -84,9 +127,18 @@ export interface PaneView {
      could never fire and the session state above it could never move: three of the four were
      published as constants on both surfaces already. `lastBuildFailed` had to leave here and there
      in ONE change, which is exactly what `UnacceptedPaneProps` below exists to force. */
+  /* `restoredFromFailedBuild` IS GONE, and so is its renderer. It fed one chip drawn over the
+     framed app's own navigation, both publishers hardcoded it `false`, and the chip is deleted —
+     so the field described a claim nothing could make to a renderer that no longer exists. That
+     notice still needs a NEW home (the toolbar row, or a transcript line); when it gets one, the
+     field comes back beside it rather than here. */
+  /* `completedLive` HAS MOVED ONTO THE ADDRESS, as `serving`. It was the one field on this view
+     that decided whether the frame stayed MOUNTED, which is why the host had to hold its last
+     value across an unmount — a pane field cleared on a leave was tearing down an app the server
+     was still serving. Liveness is a fact about what is framed, so it rides on the address cell,
+     which is KEPT across an unmount by design; the hold, and the hazard it was written against,
+     are both gone with it. Nothing on THIS view can unmount the frame any more. */
   /** Project-scoped: the project's one workspace and its restore path. */
-  restoredFromFailedBuild: boolean
-  completedLive: boolean
   hasSavedBuild: boolean | null
   previewState: PreviewLifeState | null
   occupyingProjectName: string | null
@@ -256,7 +308,7 @@ export interface WorkspaceAddress extends PreviewAddress {
   projectId: string | null
 }
 
-export const NO_ADDRESS: WorkspaceAddress = { url: null, status: null, projectId: null }
+export const NO_ADDRESS: WorkspaceAddress = { url: null, status: null, serving: false, projectId: null }
 
 export const NO_RAIL: RailSlot = { mode: null, stacked: false, collapsed: false }
 
@@ -463,7 +515,10 @@ export function useWorkspaceActions(): () => WorkspaceActions {
 //
 //   address    KEPT     — the router unmounts the conversation on a move to the project screen,
 //                         and clearing here would destroy the running app with it. Bounded by
-//                         the project instead (see `useWorkspaceAddress`).
+//                         the project instead (see `useWorkspaceAddress`). This is also why
+//                         LIVENESS belongs on this cell rather than on the pane view: a fact that
+//                         decides whether the frame stays mounted has to survive the same leave
+//                         the URL does, or the two would disagree on exactly this transition.
 //   project    KEPT     — the cell must not go blank between an unmounting surface and the one
 //                         replacing it, because the next publisher's address is judged against
 //                         it. Note what KEPT does NOT buy: after a move to a surface that
@@ -554,7 +609,7 @@ export function usePublishAddress(address: PreviewAddress, projectId: string | n
   if (!saysNothing) hasStanding.current = true
   usePublish(
     channel?.address,
-    { url: address.url, status: address.status, projectId },
+    { url: address.url, status: address.status, serving: address.serving, projectId },
     undefined,
     saysNothing && !hasStanding.current,
   )

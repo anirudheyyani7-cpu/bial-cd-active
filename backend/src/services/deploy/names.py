@@ -51,6 +51,21 @@ def revision_name(app_id: uuid.UUID, deployment_id: uuid.UUID) -> str:
     return f"{published_app_name(app_id)}--{revision_suffix(deployment_id)}"
 
 
+def repository_name(*, repository_prefix: str, app_id: uuid.UUID) -> str:
+    """The REPOSITORY inside the registry that holds every image ever built for this app.
+
+    Derived from the app id, never stored — which is what lets the delete path name the
+    repository it must destroy after the row that would have carried it is gone (#184).
+
+    ONE definition, three readers. The push tag, the digest-pinned container reference and the
+    registry delete all compose from here, because the delete is only safe while it names the
+    exact repository the build pushed to: a second spelling of this string is a delete that
+    silently misses (leaving the image) or, worse, names something else. `str(app_id)` —
+    hyphenated, lowercase — is the form already in the registry, so this is a re-expression of
+    what shipped, not a new convention."""
+    return f"{repository_prefix}/{app_id}"
+
+
 def image_reference(
     *, acr_server: str, repository_prefix: str, app_id: uuid.UUID, digest: str
 ) -> str:
@@ -59,11 +74,13 @@ def image_reference(
     Digest-pinning is load-bearing, not hygiene: ACA resolves a TAG once, at revision
     creation, and will not notice a later push to the same tag. A tag-referenced app looks
     deployed while silently serving whatever the tag meant at revision time."""
-    return f"{acr_server}/{repository_prefix}/{app_id}@{digest}"
+    repository = repository_name(repository_prefix=repository_prefix, app_id=app_id)
+    return f"{acr_server}/{repository}@{digest}"
 
 
 def image_tag(*, repository_prefix: str, app_id: uuid.UUID, deployment_id: uuid.UUID) -> str:
     """The repository:tag the build pushes to. The tag carries the DEPLOYMENT id so an
     operator can attribute any image in the registry back to a row in `deployments`; the
     container spec then references the resulting digest, never this tag."""
-    return f"{repository_prefix}/{app_id}:{deployment_id.hex[:12]}"
+    repository = repository_name(repository_prefix=repository_prefix, app_id=app_id)
+    return f"{repository}:{deployment_id.hex[:12]}"

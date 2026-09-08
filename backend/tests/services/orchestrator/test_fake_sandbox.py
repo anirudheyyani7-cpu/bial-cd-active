@@ -185,10 +185,10 @@ async def test_scripted_model_drives_per_turn_usage_verbatim() -> None:
     per_step: list[tuple[int, int]] = []
     deps: list[str] = []
     async with agent.iter("build", deps=deps, model=model) as run:
-        # Annotated and walked with `isinstance`, for the reason `harness.py` writes out at
-        # length: `Agent.is_end_node` binds its `TypeIs` type-var to `Unknown` on the bare class,
-        # so the NEGATIVE branch it is used for here does not narrow and `run.next(node)` reads
-        # as possibly-End.
+        # Annotated and walked with `isinstance`, for the reason the deleted build harness used
+        # to write out at length and `turns/engine.py` still lives with: `Agent.is_end_node`
+        # binds its `TypeIs` type-var to `Unknown` on the bare class, so the NEGATIVE branch it
+        # is used for here does not narrow and `run.next(node)` reads as possibly-End.
         node: AgentNode[list[str], str] | End[FinalResult[str]] = run.next_node
         while not isinstance(node, End):
             node = await run.next(node)

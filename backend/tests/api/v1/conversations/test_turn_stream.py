@@ -656,6 +656,63 @@ async def test_no_workspace_service_refuses_the_send_identically_in_both_kinds(
     assert (rows or 0) == 0
 
 
+# --- R41a: a switched-off app is said in words, at the moment of sending -------------------
+
+
+@pytest.mark.parametrize("kind", [ChatKind.PLAN, ChatKind.BUILD])
+async def test_a_switched_off_app_refuses_the_send_with_the_reason(
+    client, db_session, set_chat_model, _fresh_engine, kind
+) -> None:
+    """U31/R41a — a MESSAGE, not the gate. Read the sentence, then read what it is not.
+
+    The enforcement lives in `resolve_app_for_project` and holds with or without this route
+    ever asking (`tests/services/build_sessions/test_appdata.py` pins it there). What this
+    line buys is WORDS: that refusal is raised inside the detached turn, where the engine's
+    attach arm catches it as an unexpected failure and tells the citizen "the workspace
+    service is not available" — wrong, and retryable-sounding, for an app an administrator
+    deliberately switched off. Said here, the citizen gets the true reason and spends no turn.
+
+    Both kinds, because the kill switch has no opinion about which chat you are in.
+    """
+    import sqlalchemy as sa
+
+    from src.db.models.app_registry import AppRegistry, AppStatus
+    from src.db.models.message import Message
+    from src.services.build_sessions.appdata import APP_SWITCHED_OFF_CODE
+    from tests.factories import AppRegistryFactory
+
+    user, conv = await _auth_with_conversation(db_session, kind=kind)
+    await AppRegistryFactory.create(
+        db_session,
+        user_id=user.id,
+        project_id=conv.project_id,
+        status=AppStatus.DISABLED,
+    )
+    set_chat_model(_streaming_text("never reached"))
+
+    resp = await _post_turn(client, _headers(user), conv, text="add a column")
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == APP_SWITCHED_OFF_CODE
+    message = resp.json()["error"]["message"]
+    # It says WHAT THEY CANNOT DO, and it does not say "publish": a never-published draft can
+    # be switched off too (#163), and its owner learns nothing from a publishing sentence.
+    assert "cannot make changes" in message
+    assert "publish" not in message.lower()
+    # Nothing claimed, nothing written, no partial reply — the refusal sits above the first
+    # committing write, exactly where the workspace-unavailable one does.
+    assert _fresh_engine.peek(conv.id) is None
+    rows = await db_session.scalar(
+        sa.select(sa.func.count()).select_from(Message).where(Message.conversation_id == conv.id)
+    )
+    assert (rows or 0) == 0
+    # And the row is untouched — a refused send is not a lifecycle event.
+    fresh = await db_session.scalar(
+        sa.select(AppRegistry).where(AppRegistry.project_id == conv.project_id)
+    )
+    assert fresh is not None and fresh.status is AppStatus.DISABLED
+
+
 def test_nothing_builds_a_saved_copy_workspace_for_a_turn() -> None:
     """An inertness guard over the retired degrade arm.
 

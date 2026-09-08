@@ -10,14 +10,21 @@ blob. The ordering here is the whole point:
   1. Enumerate the project's children **owner-scoped** (`WHERE project_id = … AND
      user_id = …`) — that enumeration IS the ownership boundary, because the app-purge
      cores are keyed by id with no `user_id` predicate.
-  2. GATHER every object-store key to sweep while the rows still resolve them.
-  3. DELETE all rows INSIDE the caller's transaction.
+  2. GATHER every object-store key to sweep (each app's snapshot bundle + conversation
+     attachment blobs + deck-PDF siblings) while the rows still resolve them.
+  3. DELETE all rows (apps, conversations, the project) INSIDE the caller's transaction.
   4. Return the gathered keys; the caller commits, re-enumerates each app's
-     `submissions/{app_id}/` prefix, and sweeps the union.
+     `submissions/{app_id}/` prefix (`resweep_submission_prefixes`), and sweeps the union.
 
 Blobs are swept only AFTER the caller commits, so a mid-cascade DB error rolls back without
 having destroyed a blob a restored row still points at. `nuke_app` is deliberately NOT used:
-it sweeps blobs INLINE before dropping the app row, the exact ordering this service avoids."""
+it sweeps blobs INLINE before dropping the app row, the exact ordering this service avoids.
+
+Step 4's re-enumeration exists because the step-2 gather necessarily runs BEFORE the authorizing
+commit: a submission bundle written into the prefix in between would be swept by nothing and
+reachable by no query, its app row gone. The post-commit re-walk makes the sweep list reflect the
+store as it is at sweep time, and it lives in the caller because the commit boundary does — this
+service is commit-less by contract."""
 
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ from src.db.models.app_registry import AppRegistry
 from src.db.models.conversation import Conversation
 from src.db.models.project import Project
 from src.services.conversations import gather_and_delete_conversations
+from src.services.deploy.registry_delete import app_ids_that_could_have_an_image
 from src.services.storage import (
     ObjectStorage,
     all_keys_under,
@@ -54,6 +62,12 @@ class ProjectCascadeCleanup:
 
     blob_keys: list[str]
     app_container_ids: list[uuid.UUID]
+    # THE SUBSET THAT COULD HAVE AN IMAGE IN THE CONTAINER REGISTRY — the apps with a deployment
+    # row. Captured here rather than derived by the caller because `deployments` cascades with
+    # the app, so after the commit the answer is empty for everything. See
+    # `deploy/registry_delete.app_ids_that_could_have_an_image` for why the sweep is narrowed
+    # at all when a delete of an absent repository already succeeds.
+    built_app_ids: list[uuid.UUID]
 
 
 async def delete_project_cascade(
@@ -61,12 +75,21 @@ async def delete_project_cascade(
 ) -> ProjectCascadeCleanup:
     """Delete a project and every child it owns inside the caller's transaction; return the
     object-store cleanup to sweep after the caller commits. Commit-less and owner-scoped by
-    `user_id`. `storage` only enumerates each app's submission-bundle prefix — never deletes; a
-    `StorageError` here re-raises, because swallowing it would commit the row deletes and strand
-    citizen source — possibly holding a secret — in the store forever. The caller re-walks the
-    same prefixes after commit. RESIDUAL WINDOW — surfaced, not closed: the re-walk
-    does not eliminate it, only narrows it — a bundle landing after it sits under its prefix
-    with no owning row until the retention policy (D7) is decided, and is only ever reported."""
+    `user_id` — enumeration by `(project_id, user_id)` IS the ownership boundary, because the
+    app-purge cores carry no `user_id` predicate. `storage` only enumerates each app's
+    submission-bundle prefix (a paginated walk) — never deletes; a `StorageError` there RAISES so
+    the whole delete rolls back with nothing destroyed and the caller retries, where swallowing it
+    would commit the row deletes and strand citizen source — possibly holding a secret — in the
+    store forever.
+
+    RESIDUAL WINDOW — surfaced, not closed. The caller's post-commit re-walk narrows the race to
+    writes landing after it; it does not eliminate it. `submit` puts its bundle BEFORE the guarded
+    UPDATE that authorizes it (`api/v1/apps/router.py`) and this delete takes no submit interlock,
+    so a bundle written after the re-walk sits under its prefix with no owning row. Nothing
+    reclaims it automatically: the reconciling sweep is REPORT-ONLY on that prefix until the
+    retention policy (D7) is decided, so it reaches an operator's report and an operator reclaims
+    it — the same bounded, reported leak `apps/router.py` already books when its guarded UPDATE
+    refuses after the copy lands, not a new class of one."""
     blob_keys: list[str] = []
 
     # Apps (one per project today, but enumerate defensively). Gather each app's snapshot
@@ -87,6 +110,9 @@ async def delete_project_cascade(
         .scalars()
         .all()
     )
+    # BEFORE the rows go: `deployments` cascades with the app, so this question has to be asked
+    # while there is still something to ask it about.
+    built_app_ids = await app_ids_that_could_have_an_image(db, app_ids)
     for app_id in app_ids:
         # The app's snapshot bundle lives in the platform store — sweep its blob.
         blob_keys.append(snapshot_key(app_id))
@@ -123,12 +149,14 @@ async def delete_project_cascade(
     await db.execute(
         sa.delete(Project).where(Project.id == project.id, Project.user_id == user_id)
     )
-    # The app ids double as the per-app Blob CONTAINER ids to delete wholesale — a different
-    # store than `blob_keys` (the platform store); both swept post-commit. They are plain UUID
-    # values (a `select(AppRegistry.id)`, not an ORM attribute), so the caller may read them
-    # AFTER its commit without tripping `expire_on_commit` lazy I/O — which is exactly what
-    # `resweep_submission_prefixes` needs them for.
-    return ProjectCascadeCleanup(blob_keys=blob_keys, app_container_ids=list(app_ids))
+    # The app ids double as the per-app Blob CONTAINER ids to delete wholesale — a
+    # different store than `blob_keys` (the platform store); both swept post-commit.
+    # They are plain UUID values (a `select(AppRegistry.id)`, not an ORM attribute), so the
+    # caller may read them AFTER its commit without tripping `expire_on_commit` lazy I/O
+    # — which is exactly what `resweep_submission_prefixes` needs them for.
+    return ProjectCascadeCleanup(
+        blob_keys=blob_keys, app_container_ids=list(app_ids), built_app_ids=built_app_ids
+    )
 
 
 async def resweep_submission_prefixes(

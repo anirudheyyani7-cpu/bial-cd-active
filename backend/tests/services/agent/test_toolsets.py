@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.abstract import AbstractToolset
@@ -34,9 +34,10 @@ from src.services.agent.toolsets import (
     toolsets_for_kind,
     workspace_from_read_deps,
 )
-from src.services.orchestrator.agent import build_agent
-from src.services.orchestrator.deps import BuildDeps, SandboxSession
+from src.services.orchestrator.deps import SandboxSession
 from src.services.orchestrator.progress import ProgressEmitter
+from src.services.orchestrator.tools import sandbox_toolset
+from tests.fakes import ToolDeps
 from tests.services.orchestrator.conftest import CollectingSink
 from tests.services.orchestrator.fake_sandbox import FakeSandbox
 from tests.services.orchestrator.model_harness import text_turn, tool_turn
@@ -114,7 +115,7 @@ async def test_the_surface_answers_may_write_rather_than_leaving_it_to_be_re_der
     assert plan.may_write is False
     # ANNOTATED, not inferred: both accessors are bare lambdas, so `DepsT` has nothing to
     # be resolved from and the surface would come back over `Never`.
-    build: ToolSurface[BuildDeps] = toolsets_for_kind(
+    build: ToolSurface[ToolDeps] = toolsets_for_kind(
         ChatKind.BUILD, lambda _ctx: workspace, lambda ctx: ctx.deps.sandbox
     )
     assert build.may_write is True
@@ -193,10 +194,10 @@ async def test_an_offer_with_no_plan_is_not_a_deferral_at_all(
     assert not isinstance(result.output, DeferredToolRequests)
 
 
-def _build_deps() -> BuildDeps:
+def _build_deps() -> ToolDeps:
     fake = FakeSandbox()
     emitter = ProgressEmitter(CollectingSink())
-    return BuildDeps(
+    return ToolDeps(
         sandbox=SandboxSession(
             sandbox_client=fake,
             handle=fake.handle(),
@@ -208,11 +209,27 @@ def _build_deps() -> BuildDeps:
     )
 
 
-async def test_build_agent_still_carries_the_whole_sandbox_set_natively() -> None:
-    # `build_agent` is constructed with `sandbox_toolset` directly, unchanged by the registry
-    # below — pinned so that work cannot quietly move the harness's own surface too.
+def _sandbox_of(ctx: RunContext[ToolDeps]) -> SandboxSession:
+    """The accessor `sandbox_toolset` resolves its session through. A named function rather than
+    a bare lambda so `DepsT` has something to be inferred from — the same reason the composed
+    surfaces below are annotated at the call."""
+    return ctx.deps.sandbox
+
+
+async def test_the_sandbox_toolset_still_carries_the_whole_sandbox_set_natively() -> None:
+    # The RAW factory's own surface, pinned beside the composed one below so the registry work
+    # cannot quietly move either. `sandbox_toolset` is the single tool body a Build chat turn
+    # composes over its own deps, so this is that set before anything is borrowed onto it.
+    #
+    # It was pinned through the module-level build agent until the standalone build stack was
+    # deleted; that agent went with the harness it served, and the toolset it had been
+    # constructed with is the live half that outlived it — so the claim moved down onto the
+    # factory rather than being deleted with its old driver.
     seen: dict[str, Any] = {}
-    await build_agent.run(
+    agent: Agent[ToolDeps, str] = Agent(
+        deps_type=ToolDeps, toolsets=[sandbox_toolset(_sandbox_of)]
+    )
+    await agent.run(
         "build it", deps=_build_deps(), model=_tool_listing_model(seen, [text_turn("done")])
     )
     assert seen["tool_names"] == {"read_file", "run_command"} | _SANDBOX_ONLY_TOOLS
@@ -220,13 +237,13 @@ async def test_build_agent_still_carries_the_whole_sandbox_set_natively() -> Non
 
 def _write_toolsets(
     workspace: ExtractedSnapshotWorkspace,
-) -> list[AbstractToolset[BuildDeps]]:
-    """A Build chat's composed surface over `BuildDeps`. The workspace accessor is a captured
+) -> list[AbstractToolset[ToolDeps]]:
+    """A Build chat's composed surface over `ToolDeps`. The workspace accessor is a captured
     fixture here rather than a live sandbox view — which workspace the two structured reads
     resolve through is not what these tests are about."""
     # ANNOTATED, not inferred: both accessors are bare lambdas, so `DepsT` has nothing to
     # be resolved from and the surface would come back over `Never`.
-    surface: ToolSurface[BuildDeps] = toolsets_for_kind(
+    surface: ToolSurface[ToolDeps] = toolsets_for_kind(
         ChatKind.BUILD,
         lambda _ctx: workspace,
         lambda ctx: ctx.deps.sandbox,
@@ -237,12 +254,12 @@ def _write_toolsets(
 async def test_a_build_chat_is_the_sandbox_set_plus_exactly_two_structured_reads(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
-    # Build is composed HERE now, not delegated to build_agent. The surface is the sandbox
-    # tools plus `list_files`/`search_files` borrowed off the read-only registry —
-    # and nothing else. Mutation-check: widen `_WRITE_STRUCTURED_READS` to include
-    # `read_file` and the CombinedToolset raises on the duplicate name → red.
+    # Build is composed HERE now. It used to be delegated to `build_agent`, which is deleted.
+    # The surface is the sandbox tools plus `list_files`/`search_files` borrowed off the
+    # read-only registry — and nothing else. Mutation-check: widen `_WRITE_STRUCTURED_READS` to
+    # include `read_file` and the CombinedToolset raises on the duplicate name → red.
     seen: dict[str, Any] = {}
-    agent: Agent[BuildDeps, str] = Agent(deps_type=BuildDeps)
+    agent: Agent[ToolDeps, str] = Agent(deps_type=ToolDeps)
     await agent.run(
         "add a field",
         deps=_build_deps(),
@@ -267,7 +284,7 @@ async def test_writes_run_command_is_the_sandbox_one_not_the_read_only_guest_lis
             captured[tool.name] = tool.description or ""
         return text_turn("done")
 
-    agent: Agent[BuildDeps, str] = Agent(deps_type=BuildDeps)
+    agent: Agent[ToolDeps, str] = Agent(deps_type=ToolDeps)
     await agent.run(
         "install zod",
         deps=_build_deps(),

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { renderHook, act, cleanup } from '@testing-library/react'
 import { useBuildSession } from '../useBuildSession'
 import type { BuildSessionClient } from '../../utils/buildSessionApi'
-import { ApiError } from '../../utils/apiError'
 import { FakeEventSource } from '../../utils/buildSessionMock'
 import type { ProgressEnvelope, BuildSessionStatusResponse } from '../../utils/buildSessionTypes'
 
@@ -18,7 +17,6 @@ function makeClient(over: Partial<BuildSessionClient> = {}): BuildSessionClient 
     relaunchPreview: vi.fn(async () => ({ appId: 'a1', previewUrl: PREVIEW_URL, status: 'ready' as const, restoredFromFailedBuild: false, ready: true })),
     stop: vi.fn(async () => ({ sessionId: 's1', status: 'ended' as const })),
     getStatus: vi.fn(async () => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'provisioning' as const, previewUrl: null, lastSeq: null, createdAt: 'c', updatedAt: 'u' })),
-    forceEnd: vi.fn(async () => ({ sessionId: 's1', status: 'ended' as const })),
     ...over,
   }
 }
@@ -191,32 +189,18 @@ describe('useBuildSession — endReason: the pardoned preview signal', () => {
   })
 })
 
-describe('useBuildSession — stop / force-end', () => {
-  it('forceEnd resolves terminal from the control-plane response, overriding the envelope stream (mid-building, no ended envelope)', async () => {
-    const forceEnd = vi.fn(async () => ({ sessionId: 's1', status: 'ended' as const }))
-    const { result, fake } = setup(makeClient({ forceEnd }))
-    await act(async () => { await result.current.reattach('s1') })
-    act(() => { fake.open() })
-    act(() => { fake.emitEnvelope(STEP) }) // building, mid-stream, NO terminal ended envelope
-    expect(result.current.status).toBe('building')
-
-    await act(async () => { await result.current.forceEnd() })
-    expect(forceEnd).toHaveBeenCalledWith('s1')
-    expect(result.current.status).toBe('ended') // driven by ForceEndResponse.status, not the stream
-  })
-
-  it('forceEnd 403 (non-owner) is surfaced fail-closed, not swallowed; the session is not silently ended', async () => {
-    const forceEnd = vi.fn(async () => { throw new ApiError('Not the owner.', 403, 'build_session_forbidden') })
-    const { result, fake } = setup(makeClient({ forceEnd }))
-    await act(async () => { await result.current.reattach('s1') })
-    act(() => { fake.open() })
-    act(() => { fake.emitEnvelope(STEP) })
-
-    await act(async () => { await result.current.forceEnd() })
-    expect(result.current.error).toMatch(/not the owner/i)
-    expect(result.current.status).toBe('building') // still active — the failed force-end did not fake a terminal
-  })
-})
+/*
+ * THE FORCE-END SUITE IS GONE — two tests, and both died WITH their subject rather than
+ * losing coverage. One pinned the control-plane override (a stuck-mid-`building` session settles
+ * from `ForceEndResponse.status`, never from the stream); the other pinned the non-owner 403
+ * surfacing fail-closed. There is nothing left for either to describe: the hook wrapper, the
+ * client function and the backend route were deleted together, the kill switch having had no UI
+ * call site since the block banner took its Force-end button with it.
+ *
+ * What still settles a live session from this hook is `stop`, and it keeps its own coverage — the
+ * full lifecycle hop above ends on one, and `endReason` pins that a user stop reads as
+ * 'stopped_by_user' and never as the pardoned 'completed'.
+ */
 
 describe('useBuildSession — an open tab is NOT a keep-alive writer', () => {
   /*

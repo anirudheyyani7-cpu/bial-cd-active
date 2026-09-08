@@ -1,11 +1,13 @@
-"""The per-run dependency bundles the sandbox tools and the build harness receive.
+"""The per-run dependency bundle the sandbox tools receive.
 
-Two dataclasses split along the seam between what each consumer needs: `SandboxSession` is
-EVERYTHING the eight sandbox tools touch and nothing else — held by `BuildDeps.sandbox` (the
-legacy `/build-sessions` harness) and by a Write chat turn's own deps, so one tool body serves
-both (`tools.sandbox_toolset`). `BuildDeps` is the harness-only surround: owner `user_id`, the
-single `ProgressEmitter` (tools and harness share ONE seq source), and the claim-once
-preview-frame guard.
+ONE dataclass now. `SandboxSession` holds EVERYTHING the eight sandbox tools touch, and nothing
+else; a Write chat turn carries it on its own `ChatDeps.sandbox`, so one tool body serves the
+whole surface (`tools.sandbox_toolset`).
+
+`BuildDeps` — the harness-only surround (owner `user_id`, the single `ProgressEmitter`, the
+claim-once preview-frame guard) — was deleted with the standalone build harness. The turn engine
+keeps its own equivalents on the turn state (`turns/engine.py::claim_preview_frame`); they were
+never shared with this file, only mirrored.
 
 There are deliberately NO caches: an uncached `view` is always correct; a cache without
 invalidation risks stale content mid-self-heal.
@@ -27,13 +29,16 @@ from src.services.sandbox import SandboxClient, SandboxHandle
 
 @dataclass(frozen=True)
 class HeldOutput:
-    """One command's output, held so `fetch_output_slice` can read the middle the cap removed.
+    """One command's output, held for this turn so `fetch_output_slice` can read the middle the
+    cap removed.
 
     `lines` IS ALREADY REDACTED — THE WHOLE SECURITY PROPERTY OF THIS CLASS: it is
     `scrub_untrusted`'s output (capped, de-escaped, masked) split on newlines, nothing else may
-    ever go in it. Raw stdout would be a direct path to an unmasked secret, and a secret sitting
-    entirely in an elided middle is the ordinary case here, not a boundary one. Frozen: a held
-    capture is a historical fact about an already-exited command.
+    ever go in it. The returned artifact was only ever an already-redacted head; a handle retains
+    a SECOND artifact, and the middle it holds is precisely the part a human never read. Raw
+    stdout would be a direct path to an unmasked secret, and a secret sitting entirely in an
+    elided middle is the ordinary case here, not a boundary one. Frozen: a held capture is a
+    historical fact about an already-exited command.
     """
 
     #: The command this output came from, redacted and capped — model-facing header text only.
@@ -60,6 +65,12 @@ class SandboxSession:
     # ── Mutable per-run signals the tools set and the loop reads ──────────────────────────────
     done_requested: bool = False
     done_summary: str = ""
+    # `uncommitted_writes` LIVED HERE and is gone. It counted file mutations since the model's
+    # last `git commit` so `tools._note_write_and_maybe_remind` could nag at a cadence — and the
+    # instruction it nagged about (the Write segment's COMMIT AS YOU WORK block) has been
+    # deleted, because the platform commits the tree itself at every turn boundary. A counter
+    # enforcing an instruction nobody gives is worse than no counter: it appends a reminder to
+    # tool results for a discipline the prompt no longer teaches.
     # Did this turn MUTATE the tree? Set by `write_file` / `edit_file` / `insert_lines` and by
     # `declare_done`, never reset mid-turn — "did anything change in this whole turn" is the
     # question. A Write turn that only read files is an ordinary chat turn and must not pay for a
@@ -79,8 +90,10 @@ class SandboxSession:
     # Redacted, not raw, for the same reason `HeldOutput.lines` is: an argv token can carry
     # a credential, and this lives on the session for the whole turn.
     commands_seen: set[str] = field(default_factory=set)
-    # The legacy build feed. `None` on a chat turn, where the turn ENGINE emits the step frames
-    # from the run's own tool events — see `tools._step` for why emitting both would double-render.
+    # The legacy build feed, and NOTHING IN PRODUCTION SETS IT ANY MORE: the only constructor
+    # of a `ProgressEmitter` was the deleted harness, so on every live turn this is `None` and
+    # `tools._step` takes its early return. It stays because `tools._step` still has to handle
+    # both shapes and the tool tests drive the emitting arm; treat a non-None value as test-only.
     emitter: ProgressEmitter | None = None
 
     def hold_output(self, handle: str, held: HeldOutput) -> None:
@@ -101,45 +114,10 @@ class SandboxSession:
         so a pathological turn cannot grow the set unbounded; a repeat may then go uncounted,
         understating the metric but never affecting model behavior. Entries are whole argv
         strings, not hashed or shortened — a shortened key could collide two different commands
-        into a false repeat, and an invented event is worse than a missed one.
+        into a false repeat, and an invented event is worse than a missed one. Each is already
+        bounded by the argv redaction cap the caller applies.
         """
         repeated = redacted_command in self.commands_seen
         if not repeated and len(self.commands_seen) < REPEATED_COMMAND_MEMORY:
             self.commands_seen.add(redacted_command)
         return repeated
-
-
-@dataclass
-class BuildDeps:
-    """The legacy build harness's per-run agent dependencies: the sandbox session the tools resolve
-    through, plus the harness-only surround (owner scope, the emitter, the preview-frame
-    guard)."""
-
-    sandbox: SandboxSession
-    emitter: ProgressEmitter
-    user_id: uuid.UUID
-    # The SHARED "preview is framed" guard, hoisted out of the `_run_loop` local it used to
-    # be so ALL THREE initial-frame emit sites consult ONE flag: (a) the warm-resume immediate
-    # emit, (b) the decoupled early readiness watcher, (c) the between-steps verify. Seeded from
-    # `handle.ready` in `__post_init__` so a warm/resumed sandbox that emits `preview_ready`
-    # immediately never double-fires with the watcher's first poll. The watcher exclusively owns
-    # the later crash→reconnect→reframe cycle (verify never re-claims), so this is claim-once.
-    preview_framed: bool = False
-
-    def __post_init__(self) -> None:
-        # A warm/resumed sandbox is already serving — treat the frame as claimed at construction so
-        # the warm-resume emit (gated on `handle.ready`) fires once and the watcher/verify see it
-        # taken. A cold sandbox starts unframed; the watcher or verify claims it on first serve.
-        if self.sandbox.handle.ready:
-            self.preview_framed = True
-
-    def claim_preview_frame(self) -> bool:
-        """Synchronously claim the one-time preview-framed transition — True for EXACTLY ONE caller
-        across the initial-frame emit sites. The test-and-set has NO `await` between the "is it
-        set?" check and the "set it" write, so the early watcher and the between-steps loop can
-        never both see it unset and both emit `preview_ready` with two different seqs (a
-        double-frame). This is what makes a second concurrent emitter safe."""
-        if self.preview_framed:
-            return False
-        self.preview_framed = True
-        return True

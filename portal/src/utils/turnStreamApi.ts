@@ -580,12 +580,28 @@ export interface NewConversationParentage {
   title?: string
 }
 
+/**
+ * What a 202 hands back.
+ *
+ * `contextTokens` IS THE NUMBER THE SERVER JUST ADMITTED ON — the same expression, on this same
+ * request, that would have refused the turn one token higher. The meter and the wall are
+ * therefore one number rather than two readings of one scale, which is what the deleted
+ * estimator was (#194). Nothing is sized BEFORE a send: the figure is measured from turns the
+ * provider has already served, and it arrives on the send the citizen was making anyway.
+ *
+ * `null` means nobody has measured this chat yet — unmeasured, not empty.
+ */
+export interface TurnStarted {
+  turnId: string
+  contextTokens: number | null
+}
+
 export async function startTurn(
   conversationId: string,
   message: StartTurnMessage,
   deps: AuthFetchDeps = {},
   create?: NewConversationParentage,
-): Promise<{ turnId: string }> {
+): Promise<TurnStarted> {
   const resp = await authFetch(
     `/api/conversations/${conversationId}/turns`,
     {
@@ -612,7 +628,14 @@ export async function startTurn(
     const detail = body?.error?.message ?? `turn start failed (${resp.status})`
     throw new TurnStartError(resp.status, detail, body?.error?.code ?? null, body?.error ?? null)
   }
-  return (await resp.json()) as { turnId: string }
+  const body = (await resp.json()) as { turnId?: unknown; contextTokens?: unknown }
+  return {
+    turnId: asString(body.turnId),
+    // NARROWED, never coerced. A server that has not learned this field, and one answering
+    // `null` for an unmeasured chat, both mean "no measurement" — and reading either as `0`
+    // would be the browser claiming the chat is empty.
+    contextTokens: typeof body.contextTokens === 'number' ? body.contextTokens : null,
+  }
 }
 
 export class TurnStartError extends Error {

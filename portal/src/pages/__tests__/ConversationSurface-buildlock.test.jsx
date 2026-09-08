@@ -38,7 +38,7 @@ const h = vi.hoisted(() => ({
   resolvePlanOptions: vi.fn(), uuidv7: vi.fn(),
   loadBuilds: vi.fn(), getBuild: vi.fn(),
   listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
-  stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(),
+  stop: vi.fn(), getStatus: vi.fn(),
 }))
 
 // Both kinds of chat run on the turn stream now, so the mock below is the only transport this

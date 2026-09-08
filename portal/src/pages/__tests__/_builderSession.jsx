@@ -50,16 +50,17 @@ export const ENDED_RESP = { sessionId: 's1', status: 'ended' }
 
 /** Assemble a BuildSessionClient from a per-file `h` bag of vi.fn()s.
  *
- *  FOUR MEMBERS NOW: `acquireLock`/`releaseLock`/`start` are gone — the build lives inside the
- *  turn's own transaction. `forceEnd` has no UI control left, but stays: it is the only thing
- *  that settles a session stuck mid-`building`. Pinned against the real client in
+ *  THREE MEMBERS NOW: `acquireLock`/`releaseLock` went with the keep-alive loop that was their
+ *  only caller; `start` went the same way, because the build lives inside the turn's own
+ *  transaction and nothing provisions a session from the browser; and `forceEnd` went with the
+ *  route it spoke to — its one control was the block banner's button, deleted with the banner, so
+ *  no surface can reach the kill switch any more. Pinned against the real client in
  *  `utils/__tests__/buildSessionApi.test.ts`. */
 export function makeClient(h) {
   return {
     relaunchPreview: h.relaunchPreview,
     stop: h.stop,
     getStatus: h.getStatus,
-    forceEnd: h.forceEnd,
   }
 }
 
@@ -67,7 +68,6 @@ export function makeClient(h) {
 export function primeClient(h) {
   h.stop.mockResolvedValue(ENDED_RESP)
   h.getStatus.mockResolvedValue(statusResp())
-  h.forceEnd.mockResolvedValue(ENDED_RESP)
 }
 
 // ─── The turn half (streamed plan + the options card) ───────────────────

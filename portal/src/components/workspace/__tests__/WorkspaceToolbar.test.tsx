@@ -11,10 +11,13 @@
  * chip's states (from `ProjectPage.test.tsx`).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { useState } from 'react'
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import WorkspaceShell from '../WorkspaceShell'
+import { rememberProjectsSearch } from '../../../utils/projectsListMemory'
 import {
   useAppPaneVisible,
   usePublishAddress,
@@ -50,7 +53,7 @@ const APP_URL = 'https://app-a.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -99,7 +102,7 @@ function Surface({
 }: SurfaceProps) {
   useWorkspaceProject(heading.projectId)
   usePublishHeading(heading)
-  usePublishAddress({ url: appUrl, status: appUrl ? 'ready' : null }, heading.projectId)
+  usePublishAddress({ url: appUrl, status: appUrl ? 'ready' : null, serving: appUrl !== null }, heading.projectId)
   // A FRESH OBJECT PER RENDER, which is what the real conversation surface publishes — the pane
   // cell is identity-compared, so this is what makes a keystroke reach the channel at all.
   usePublishPaneView({ ...EMPTY_PANE })
@@ -656,6 +659,61 @@ describe('the back control and the rename', () => {
   })
 })
 
+describe('the back control carries the projects list state back (R45, plan U35, `#208`)', () => {
+  /* `#208` put `page`, `pageSize` and `q` in `/projects`'s own address, which is a one-way fix:
+     reading it in is `ProjectsPage.test.tsx`'s job. This control is mounted on a DIFFERENT
+     address — a project, a chat — and has to name a destination without ever having read that
+     query string itself. Before this it hardcoded a bare `/projects`, so leaving a filtered,
+     paged list and pressing Back landed on page one with the search cleared:
+     `projectsListMemory.ts`'s own docblock calls this "addressable in one direction and silent
+     in the other". `Navbar` is the one place that remembers what the address bar carried, since
+     `ProjectsPage` mounts its own instance of it — this suite only has to seed that memory. */
+
+  function WhereFull() {
+    return <span data-testid="where-full">{useLocation().pathname + useLocation().search}</span>
+  }
+
+  function renderAt(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="/projects/:projectId" element={<Surface heading={PROJECT_HEADING} />} />
+          </Route>
+          <Route path="/projects" element={<WhereFull />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  afterEach(() => {
+    // Leaves the module in the same "nothing remembered" state it starts in — every other test
+    // in this file presses this same button and expects a bare `/projects`.
+    rememberProjectsSearch('')
+  })
+
+  it('★ returns to the remembered page, search and page size — not to page one', () => {
+    rememberProjectsSearch('?page=2&pageSize=20&q=ramp')
+    renderAt('/projects/pA')
+
+    // LIVENESS FIRST: the project screen actually rendered — not a crash a bare presence check
+    // on the destination below would miss.
+    expect(screen.getByTestId('surface')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects?page=2&pageSize=20&q=ramp')
+  })
+
+  it('falls back to the bare list when nothing has been remembered this session', () => {
+    renderAt('/projects/pA')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects')
+  })
+})
+
 describe('the row does not wake with the composer', () => {
   /**
    * A chat surface with a composer in it, republishing its pane view on every keystroke exactly as
@@ -714,5 +772,257 @@ describe('the row does not wake with the composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rename the chat' }))
     expect(h.rowRenders).toBeGreaterThan(before)
     expect(title().textContent).toBe('Add an out-time and an in-time')
+  })
+})
+
+/**
+ * ═══ THE NARROW-WIDTH CONTRACT (plan 001, U17 + U19 — R38, R38a, R40, `#201`) ═══
+ *
+ * EVERY SCENARIO BELOW IS STRUCTURAL, AND THE NAMES SAY SO. jsdom has no layout engine:
+ * `getBoundingClientRect()` returns zeroes for every element on this page, `matchMedia` evaluates
+ * nothing, and no Tailwind utility exists in the unit environment at all. A test here that called
+ * itself "measures 44×44" would be asserting a class name and lying about it — which is precisely
+ * the false pass this campaign has already produced once, and the reason `reducedMotion.test.ts`
+ * exists as source-text rules rather than as a DOM test.
+ *
+ * So the division of labour is explicit. THESE scenarios pin the structure: which class is on
+ * which control, that the floors are variant-gated so nothing changes above the threshold, that
+ * the glyph attributes are untouched, and that the `narrow` screen those variants depend on is
+ * really declared — without it every `narrow:` class compiles to nothing and each assertion below
+ * would still be green. THE MEASUREMENTS — 44×44 in CSS pixels at a 360px viewport, a non-zero
+ * title width, a row that scrolls instead of clipping — belong to the browser suite, where a
+ * layout engine actually runs.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: an overflow menu. `#201` offered two remedies and the owner took
+ * the lighter one (D22) — the row scrolls, and all nine occupants stay on it. `every occupant is
+ * still on the row` below is what makes a future re-introduction of the menu go red rather than
+ * quietly ship.
+ */
+describe('the narrow-width contract — STRUCTURAL assertions, never measurements', () => {
+  const cls = (el: Element) => el.getAttribute('class') ?? ''
+  /** The class list a viewport ABOVE the stacking threshold actually sees — every `narrow:` token
+   *  dropped, which is the only honest way jsdom can ask "did anything change up there?". */
+  const aboveThreshold = (el: Element) =>
+    cls(el)
+      .split(/\s+/)
+      .filter((token) => !token.startsWith('narrow:'))
+      .join(' ')
+  /** Lucide writes `size` straight onto the svg's width/height attributes, so the DRAWN size is
+   *  readable in jsdom even though the laid-out one is not. */
+  const glyph = (el: Element) => {
+    const svg = el.querySelector('svg')
+    return svg === null ? null : `${svg.getAttribute('width')}×${svg.getAttribute('height')}`
+  }
+
+  /** The project screen with an app framed, unsaved work, and the rail collapsed — the one state
+   *  in which all nine of the row's occupants are on screen at once. */
+  const everything = () => {
+    render(
+      <Workspace
+        project={{
+          heading: PROJECT_HEADING,
+          save: { dirty: true, saving: false, error: null },
+          actions: { save: () => {}, rename: () => {} },
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Hide details' }))
+  }
+
+  const back = () => screen.getByRole('button', { name: 'Back to projects' })
+  const pencil = () => screen.getByRole('button', { name: 'Rename project' })
+  const devices = () => ['Desktop', 'Tablet', 'Mobile'].map((name) => screen.getByRole('button', { name }))
+  const reload = () => screen.getByRole('button', { name: 'Reload your app' })
+  const newTab = () => screen.getByRole('link', { name: 'Open your app in a new tab' })
+  const save = () => screen.getByTestId('save-project')
+  const railToggle = () => screen.getByRole('button', { name: 'Show details' })
+
+  it('★ the row owns a horizontal scroller, so overflow is reachable instead of clipped', () => {
+    // `#201` IN ONE LINE. The shell's root is `overflow-hidden` for the rail and the pane, so what
+    // did not fit in this row was not merely off to the right — it was clipped, with nothing
+    // anywhere to bring it back, and Save was the control it took away. The scroller is on the ROW
+    // rather than on the root because the row's own box never exceeds the root's width; only its
+    // contents do.
+    everything()
+    expect(cls(row())).toMatch(/\boverflow-x-auto\b/)
+    // Not decoration: `overflow-x: auto` alone computes `overflow-y` to `auto` too, which would
+    // put a second scrollbar inside a 54px row the moment the first one took height from it.
+    expect(cls(row())).toMatch(/\boverflow-y-hidden\b/)
+    expect(cls(row())).toMatch(/h-\[54px\]/)
+  })
+
+  it('★ every occupant is still on the row — nothing was moved into a menu (D22)', () => {
+    // The guard on the remedy that was NOT taken. `#201` sanctioned either a collapsing menu or a
+    // scrolling ancestor; the scroller shipped, so all nine stay put. If an overflow menu is ever
+    // added, this goes red before anyone has to notice the row lost a control.
+    everything()
+    expect(back()).toBeTruthy()
+    expect(title().textContent).toBe('Visitor Log — Airport Office')
+    expect(screen.getByTestId('publish-chip-stub')).toBeTruthy()
+    expect(pencil()).toBeTruthy()
+    expect(devices()).toHaveLength(3)
+    expect(reload()).toBeTruthy()
+    expect(newTab()).toBeTruthy()
+    expect(save()).toBeTruthy()
+    expect(railToggle()).toBeTruthy()
+  })
+
+  it('★ every pressable control declares the 44px floor below the stacking threshold (R38a)', () => {
+    // STRUCTURAL: this asserts the class, not the rectangle. The rectangle is the browser suite's.
+    // The floor is `min-h`/`min-w` rather than a bigger glyph, which is the half of R38a jsdom
+    // CAN see — `hit areas grow by padding` below is its other half.
+    everything()
+    for (const control of [back(), pencil(), ...devices(), reload(), newTab(), railToggle()]) {
+      expect(cls(control)).toContain('narrow:min-h-[44px]')
+      expect(cls(control)).toContain('narrow:min-w-[44px]')
+      // A 44px box with a 15px glyph in its top-left corner is not a 44px target anyone can aim
+      // at. Both axes have to centre.
+      expect(cls(control)).toMatch(/\bitems-center\b/)
+      expect(cls(control)).toMatch(/\bjustify-center\b/)
+    }
+    // Save is past 44px wide on its own words in every state, so only its HEIGHT needs a floor.
+    expect(cls(save())).toContain('narrow:min-h-[44px]')
+    expect(cls(save())).not.toContain('narrow:min-w-[44px]')
+  })
+
+  it('★ the hit areas grow by padding — every glyph keeps the size the canvas drew it at', () => {
+    // The requirement is a bigger TARGET, not a bigger picture. Growing the icons would be the
+    // easy way to 44×44 and would rebuild the row's visual weight at every width.
+    everything()
+    expect(glyph(back())).toBe('16×16')
+    expect(glyph(pencil())).toBe('13×13')
+    for (const device of devices()) expect(glyph(device)).toBe('14×14')
+    expect(glyph(reload())).toBe('15×15')
+    expect(glyph(newTab())).toBe('15×15')
+    expect(glyph(railToggle())).toBe('15×15')
+    expect(glyph(save())).toBe('14×14')
+  })
+
+  it('★ above the stacking threshold every control keeps exactly the geometry it shipped with', () => {
+    // The whole point of gating the floors behind a variant. Strip the `narrow:` tokens — which is
+    // what a 1200px viewport does — and what is left must be the pre-existing class list, with no
+    // 44px floor leaking up into the desktop row.
+    everything()
+    const desktop = [back(), pencil(), ...devices(), reload(), newTab(), railToggle(), save()].map(aboveThreshold)
+    for (const list of desktop) expect(list).not.toMatch(/min-[hw]-\[44px\]/)
+
+    // …and the sizes those controls are actually drawn at up there, named so a silent change to
+    // any of them has to be deliberate: 20×20, 21×21, 28×32, 28×30.
+    expect(aboveThreshold(back())).toContain('p-0.5')
+    expect(aboveThreshold(pencil())).toContain('p-1')
+    for (const device of devices()) expect(aboveThreshold(device)).toMatch(/\bh-7\b.*\bw-8\b/)
+    expect(aboveThreshold(railToggle())).toMatch(/\bh-7\b.*\bw-\[30px\]/)
+  })
+
+  it('★ the title carries a floor of its own, and still truncates (R40)', () => {
+    // WHY IT COLLAPSED TO ZERO. Every sibling in this row is `flex-shrink-0` and the title carried
+    // `min-w-0` with no floor — so it was the only flexible participant, and 100% of any width
+    // deficit landed on it, all the way down. 144px is about ten characters and the ellipsis.
+    everything()
+    expect(cls(title())).toContain('narrow:min-w-[9rem]')
+    // The floor must not cost the truncation: a long name still has to end in an ellipsis rather
+    // than push Save off the row.
+    expect(cls(title())).toMatch(/\btruncate\b/)
+    expect(cls(title())).toMatch(/\bmin-w-0\b/)
+
+    // The chat shape's heading is a different <h1> in a different branch, and it needs the floor
+    // for the same reason.
+    cleanup()
+    render(<Workspace entry="/chat/c1" />)
+    expect(title().textContent).toBe('Add an out-time column')
+    expect(cls(title())).toContain('narrow:min-w-[9rem]')
+    expect(cls(title())).toMatch(/\btruncate\b/)
+  })
+
+  it("★ the title's floor is variant-gated, so a SHORT name is untouched above the threshold", () => {
+    // NOT A STYLE PREFERENCE — a real defect an ungated `min-width` would have shipped. In flex,
+    // `min-width` does not only stop an item shrinking, it GROWS one whose content is narrower
+    // than the floor. Ungated, "Ops" would be padded out to 144px at every width and shove the
+    // status chip and the rename pencil away from the name they belong to.
+    render(<Workspace project={{ heading: { ...PROJECT_HEADING, projectName: 'Ops' } }} />)
+    expect(title().textContent).toBe('Ops')
+    expect(aboveThreshold(title())).not.toMatch(/min-w-\[9rem\]/)
+    // Liveness: the floor is genuinely on this element — the assertion above is a gate, not an
+    // absence that would pass just as well if U19 had never landed.
+    expect(cls(title())).toContain('narrow:min-w-[9rem]')
+  })
+
+  it('a very long title truncates rather than shrinking the row or pushing anything off it', () => {
+    // STRUCTURAL HALF of the edge case: jsdom cannot show that the text is clipped, but it can
+    // show that the row did not respond by dropping occupants, and that the full string is still
+    // in the accessibility tree for a reader that does not care about pixels.
+    const long = 'Add an out-time column and a visitor photo and an escort field and a badge number'
+    render(
+      <Workspace
+        entry="/chat/c1"
+        chat={{
+          heading: { ...CHAT_HEADING, chatTitle: long },
+          save: { dirty: true, saving: false, error: null },
+          actions: { save: () => {}, rename: null },
+        }}
+      />,
+    )
+
+    expect(title().textContent).toBe(long)
+    expect(cls(title())).toMatch(/\btruncate\b/)
+    expect(cls(row())).toMatch(/h-\[54px\]/)
+    expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy()
+    expect(save()).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reload your app' })).toBeTruthy()
+  })
+})
+
+/**
+ * THE SCREEN THOSE VARIANTS DEPEND ON, ASSERTED AGAINST THE CONFIG SOURCE.
+ *
+ * Without `narrow` in `tailwind.config.js`, every `narrow:`-prefixed class above compiles to
+ * absolutely nothing and every scenario in the block above stays green while the product ships
+ * 15×15 targets. That is the one failure mode a class-name suite cannot see from inside the DOM,
+ * so it is checked here instead — the same reason `reducedMotion.test.ts` reads this file as text.
+ *
+ * (What jsdom still cannot do is prove the class RESOLVES. Compiling the real config through
+ * PostCSS emits `@media (max-width: 1099.98px){ .narrow\:min-h-\[44px\]{min-height:44px} }`, which
+ * was checked out of band; the browser suite is where it is checked continuously.)
+ */
+describe('the narrow screen is declared, and does not overlap the wide one', () => {
+  const CONFIG = readFileSync(path.resolve(process.cwd(), 'tailwind.config.js'), 'utf8')
+  // Closed on `\n<indent>},` rather than on the first `},`, which `narrow: { max: … },` supplies
+  // one line early — a reader that stopped there would drop the very entry it exists to find.
+  const SCREENS_BLOCK = /screens:\s*\{([\s\S]*?)\n\s*\},/
+  const capture = (pattern: RegExp, source: string) => source.match(pattern)?.[1] ?? null
+  const screens = (source: string) => {
+    const block = capture(SCREENS_BLOCK, source) ?? ''
+    return {
+      wide: capture(/\bwide:\s*'(\d+(?:\.\d+)?)px'/, block),
+      narrowMax: capture(/\bnarrow:\s*\{\s*max:\s*'(\d+(?:\.\d+)?)px'\s*\}/, block),
+    }
+  }
+
+  it('★ declares `narrow` as a max-width screen below the 1100px stacking threshold', () => {
+    const { wide, narrowMax } = screens(CONFIG)
+    expect(wide).toBe('1100')
+    expect(narrowMax).not.toBeNull()
+    // Disjoint by construction: no element may ever be inside both variants at once.
+    expect(Number(narrowMax)).toBeLessThan(Number(wide))
+  })
+
+  it('★ has no `min` on that screen — the floors must survive below 360px, not switch off', () => {
+    // A `min: '360px'` would take the finger-sized targets away from exactly the narrowest devices
+    // that need them. 360px is the DECLARED minimum supported width, which means every control is
+    // reachable there — not that the CSS stops caring underneath it.
+    const block = capture(SCREENS_BLOCK, CONFIG)
+    expect(block).not.toBeNull()
+    expect(block ?? '').not.toMatch(/\bmin:\s*'/)
+    // …and the reader is told what "declared minimum" does and does not promise, because the
+    // shared navbar still overflows 360px by ~18px on three routes.
+    expect(CONFIG).toMatch(/360px/)
+  })
+
+  it('the reader goes red rather than silently matching nothing', () => {
+    // Every pattern above answers `null` on a config that does not declare these screens, so the
+    // assertions are pure functions over a string that a broken parser cannot fake green.
+    const gutted = CONFIG.replace(/\bnarrow:\s*\{\s*max:\s*'[\d.]+px'\s*\},?/, '')
+    expect(screens(gutted).narrowMax).toBeNull()
+    expect(screens(gutted).wide).toBe('1100')
   })
 })

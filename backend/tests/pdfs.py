@@ -6,6 +6,11 @@ with itself, and a bug in how the reader is driven would be invisible. These emi
 syntax — a classic cross-reference table, a catalog, a page-tree node and N page objects —
 so the byte-level page count is a fact of the fixture rather than of the reader.
 
+The ENCRYPTED three — `locked_pdf`, `restricted_pdf`, `ouroboros_pdf` — are the exception,
+and are built by `pypdf` for the opposite reason: a standard-security encryption dictionary
+is a key derivation rather than syntax, so hand-writing one would be testing the fixture. In
+each of them the page count is still set here, explicitly, so it stays a fact of the fixture.
+
 They are generated rather than committed because a 31-page binary in the tree is a blob
 nobody can review, and the hostile one is 8 KB of syntax whose whole meaning is what it
 does to a parser.
@@ -14,6 +19,7 @@ does to a parser.
 from __future__ import annotations
 
 import zlib
+from typing import cast
 
 _HEADER = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
 """Magic + the binary comment. The upload route's existing check reads the first 18 bytes,
@@ -49,6 +55,25 @@ def pdf_with_pages(pages: int) -> bytes:
     ]
     objects += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"] * pages
     return _assemble(objects)
+
+
+def pdf_bigger_on_the_inside(*, pages: int, declares: int) -> bytes:
+    """A PDF whose catalog DECLARES `declares` pages and whose page tree yields `pages`.
+
+    One page object, listed in `/Kids` `pages` times — which is legal, cheap (six bytes a
+    page) and exactly how a hostile upload buys twenty thousand pages inside a 120 KB file.
+    A reader that trusts `/Count` sees a short document; one that walks the tree sees the
+    real one. Hand-assembled like the rest of this module precisely because the gap between
+    the two numbers has to be a fact of the FIXTURE and not of the reader under test.
+    """
+    kids = b" ".join([b"3 0 R"] * pages)
+    return _assemble(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, declares),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        ]
+    )
 
 
 def unreadable_pdf() -> bytes:
@@ -149,8 +174,13 @@ def objstm_pdf(pages: int) -> bytes:
     return bytes(out)
 
 
-def encrypted_pdf(pages: int = 3, password: str = "letmein") -> bytes:
+def locked_pdf(pages: int = 3, password: str = "letmein") -> bytes:
     """A SHORT, VALID, PASSWORD-PROTECTED PDF — the shape that makes unfollowable advice.
+
+    ★ THE ONLY FIXTURE HERE THAT MAY BE REFUSED FOR BEING ENCRYPTED, and the name says so:
+    `restricted_pdf` below is encrypted too and must be ACCEPTED. What separates them is not
+    `/Encrypt` — both carry it — but whether an empty password opens the file. This one's does
+    not (`decrypt("")` answers `NOT_DECRYPTED`), so nothing can be read out of it at all.
 
     Deliberately under the page cap: the point of the fixture is that the document's LENGTH is
     fine and the citizen still cannot get past a refusal that talks about length. Built with
@@ -171,4 +201,77 @@ def encrypted_pdf(pages: int = 3, password: str = "letmein") -> bytes:
     locked.encrypt(password)
     out = io.BytesIO()
     locked.write(out)
+    return out.getvalue()
+
+
+def restricted_pdf(*, pages: int = 3, declares: int | None = None, owner: str = "") -> bytes:
+    """AN ENCRYPTED PDF THAT IS NOT LOCKED — permission-restricted, EMPTY user password.
+
+    The ordinary encrypted document in an office: the producer set permissions (no printing,
+    no copying) and left the user password empty, so every reader opens it without asking
+    anyone anything. pypdf attempts the empty password on construction, so it parses, and
+    `decrypt("")` answers `OWNER_PASSWORD` when `owner` is empty too and `USER_PASSWORD` when
+    it is not — never `NOT_DECRYPTED`. Both must be ACCEPTED; refusing on `/Encrypt` alone
+    would refuse most of the encrypted PDFs a citizen owns.
+
+    `declares` under-reports the catalog's `/Count` — the same "bigger on the inside" shape as
+    `pdf_bigger_on_the_inside`, now wearing an encryption dictionary. That pairing is the whole
+    of #194: pypdf's `get_num_pages()` returns `/Count` unwalked for ANY encrypted file, and
+    stays that way after a successful decryption, so the two fixtures differing only in
+    `/Encrypt` were counted as 20,000 pages and as 1.
+
+    Built by pypdf, unlike its plain twin, because a standard-security encryption dictionary is
+    a key derivation rather than syntax and hand-writing one would test the fixture. The page
+    count stays a fact of the fixture even so: `/Kids` is assigned here, explicitly, as one page
+    reference repeated `pages` times.
+    """
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    tree = cast(DictionaryObject, writer.root_object["/Pages"])
+    tree[NameObject("/Kids")] = ArrayObject([page.indirect_reference] * pages)
+    tree[NameObject("/Count")] = NumberObject(pages if declares is None else declares)
+    writer.encrypt("", owner_password=owner)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def ouroboros_pdf() -> bytes:
+    """A PAGE TREE THAT EATS ITS OWN TAIL: root `/Pages` → a second `/Pages` → root, forever.
+
+    There is no leaf anywhere in it, so a walk that does not carry a cycle guard never returns
+    — which is the reason the count is taken with pypdf's own traversal instead of a
+    hand-rolled one. pypdf tracks the ancestor path and raises `Detected cyclic page
+    references.`, and the dispatch turns that into the same 400 a truncated file gets.
+
+    Encrypted, because the plain version proves nothing new: the unencrypted path always
+    walked. Before #194's fix this file was never walked at all — the declared `/Count 1` was
+    handed straight back — so this fixture is red-if-reverted in exactly one direction, and if
+    the guard ever goes it hangs until the governor kills it rather than answering.
+    """
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    tree = cast(DictionaryObject, writer.root_object["/Pages"])
+
+    tail = DictionaryObject()
+    tail[NameObject("/Type")] = NameObject("/Pages")
+    tail[NameObject("/Count")] = NumberObject(1)
+    tail_ref = writer._add_object(tail)
+    tail[NameObject("/Kids")] = ArrayObject([tree.indirect_reference])
+
+    tree[NameObject("/Kids")] = ArrayObject([tail_ref])
+    tree[NameObject("/Count")] = NumberObject(1)
+    writer.encrypt("", owner_password="")
+    out = io.BytesIO()
+    writer.write(out)
     return out.getvalue()

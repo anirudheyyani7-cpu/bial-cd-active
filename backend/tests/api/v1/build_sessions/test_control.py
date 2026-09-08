@@ -1,30 +1,24 @@
-"""Build-session control ops: start / stop / status (cookie auth + CSRF, owner-scoping)."""
+"""Build-session control ops: stop / status (cookie auth + CSRF, owner-scoping).
+
+`start` is gone from the title and from this file. The bare `POST /v1/build-sessions` was
+deleted along with `SessionManager.start`, and every test whose subject was that route went with
+it; the ones below test surfaces that survive it, re-fixtured onto `a_live_session` — the
+`ensure_sandbox` door production uses."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import re
-import uuid
 
 from fastapi import FastAPI
 from httpx import AsyncClient
-from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.v1.build_sessions.deps import run_build_dependency
-from src.services.build_sessions.locks import lock_is_held
+from src.api.v1.build_sessions.schemas import PreviewReadyEvent, StepEvent
 from src.services.build_sessions.manager import StopOutcome
-from src.services.redis import BUILD_COORDINATION_UNAVAILABLE_MSG
-from src.services.storage import StorageError
-from tests.api.v1.build_sessions.conftest import (
-    BlockingBrain,
-    auth_headers,
-    drain,
-    seed_live_sandbox_state,
-)
+from tests.api.v1.build_sessions.conftest import a_live_session, auth_headers
 from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain
 
 
 async def _user_project(db: AsyncSession, email: str):
@@ -33,104 +27,28 @@ async def _user_project(db: AsyncSession, email: str):
     return user, project
 
 
-async def _no_sleep(_seconds: float) -> None:
-    """Collapse the retry backoff so the fail-closed path is tested at full speed."""
-
-
-async def test_start_happy_returns_201_provisioning(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl1@rvaiglobal.com")
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build me an app"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["status"] == "provisioning"
-    assert body["previewUrl"] is None
-    assert body["projectId"] == str(project.id)
-    assert uuid.UUID(body["sessionId"]) and uuid.UUID(body["appId"])
-    await drain(wire.manager, body["sessionId"])
-
-
-async def test_start_without_cookie_is_401(
-    client: AsyncClient, db_session: AsyncSession, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    resp = await client.post(
-        "/v1/build-sessions", json={"projectId": str(uuid.uuid4()), "prompt": "p"}
-    )
-    assert resp.status_code == 401
-
-
-async def test_start_without_csrf_is_403(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl2@rvaiglobal.com")
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user, with_csrf=False),
-    )
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "csrf_failed"
-
-
-async def test_start_without_configured_brain_is_503(
-    client: AsyncClient, db_session: AsyncSession, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: None
-    user, project = await _user_project(db_session, "ctl3@rvaiglobal.com")
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 503  # no `fake_redis`: the refusal lands before any Redis write
-
-
-async def test_second_start_while_live_is_409_carrying_session_id(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
-) -> None:
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
-    user, project = await _user_project(db_session, "ctl4@rvaiglobal.com")
-    r1 = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert r1.status_code == 201
-    sid = r1.json()["sessionId"]
-    r2 = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p2"},
-        headers=auth_headers(user),
-    )
-    assert r2.status_code == 409
-    err = r2.json()["error"]
-    assert err["code"] == "build_session_already_active"
-    assert err["sessionId"] == sid
-    brain.release()
-    await drain(wire.manager, sid)
-
-
 async def test_status_after_completion_carries_preview_and_last_seq(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
+    """The status read reports a FINISHED session's terminal state — the three fields the
+    portal branches on, and the reason the route survived the start route's deletion.
+
+    Re-fixtured onto `a_live_session` + the real end sequence. The two progress frames are
+    pushed straight through `manager.on_progress` (which documents that it must derive state
+    from envelopes handed to it directly) instead of coming out of a brain, and the terminal is
+    the one `manager.stop` synthesizes — the same seq-3 `ended` a natural completion produced,
+    from the same emitter."""
     user, project = await _user_project(db_session, "ctl5@rvaiglobal.com")
-    r = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
+    session = await a_live_session(wire, db_session, user, project.id)
+    await wire.manager.on_progress(
+        session, StepEvent(seq=1, name="scaffold", label="Scaffolding the app", state="started")
     )
-    sid = r.json()["sessionId"]
-    await drain(wire.manager, sid)
+    await wire.manager.on_progress(
+        session, PreviewReadyEvent(seq=2, preview_url="https://preview.example/")
+    )
+    await wire.manager.stop(session, wire.sbx, reason="completed")
+
+    sid = session.session_id
     s = await client.get(f"/v1/build-sessions/{sid}", headers=auth_headers(user))
     assert s.status_code == 200
     body = s.json()
@@ -142,176 +60,28 @@ async def test_status_after_completion_carries_preview_and_last_seq(
 async def test_status_of_another_users_session_is_404(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     owner, project = await _user_project(db_session, "ctl6a@rvaiglobal.com")
     intruder = await UserFactory.create(db_session, email="ctl6b@rvaiglobal.com")
-    r = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(owner),
+    session = await a_live_session(wire, db_session, owner, project.id)
+    s = await client.get(
+        f"/v1/build-sessions/{session.session_id}", headers=auth_headers(intruder)
     )
-    sid = r.json()["sessionId"]
-    await drain(wire.manager, sid)
-    s = await client.get(f"/v1/build-sessions/{sid}", headers=auth_headers(intruder))
-    assert s.status_code == 404
+    assert s.status_code == 404  # non-leaking
 
 
 async def test_stop_is_idempotent(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
+    """Two stops on one session both answer `ended` — the second joins the first's shielded
+    end sequence (`_await_end_sequence`) rather than starting a second one. The session is a
+    live workspace rather than a build now; the route's idempotence is unchanged by that."""
     user, project = await _user_project(db_session, "ctl7@rvaiglobal.com")
-    r = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    sid = r.json()["sessionId"]
+    session = await a_live_session(wire, db_session, user, project.id)
+    sid = session.session_id
     s1 = await client.post(f"/v1/build-sessions/{sid}/stop", json={}, headers=auth_headers(user))
     assert s1.status_code == 200 and s1.json()["status"] == "ended"
     s2 = await client.post(f"/v1/build-sessions/{sid}/stop", json={}, headers=auth_headers(user))
-    assert s2.status_code == 200 and s2.json()["status"] == "ended"
-    await drain(wire.manager, sid)
-
-
-async def test_start_503s_with_the_exact_approved_copy_when_the_snapshot_is_unreachable(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, wire, monkeypatch
-) -> None:
-    # The 503 copy is pinned character-for-character (no trailing period): the portal renders
-    # `error.message` as-is, so a reworded string here is a silently reworded product.
-    from src.services.storage import accessor as storage_accessor
-    from tests.fakes import FakeStorage
-
-    class DeadStorage(FakeStorage):
-        async def head(self, key):
-            raise StorageError("blob is down", provider="fake", key=key)
-
-    storage_accessor._backend_singleton = DeadStorage()
-    monkeypatch.setattr("src.services.build_sessions.manager._asleep", _no_sleep)
-    try:
-        wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-        user, project = await _user_project(db_session, "ctl8@rvaiglobal.com")
-        resp = await client.post(
-            "/v1/build-sessions",
-            json={"projectId": str(project.id), "prompt": "refine it"},
-            headers=auth_headers(user),
-        )
-        assert resp.status_code == 503
-        assert (
-            resp.json()["error"]["message"]
-            == "Sandbox unavailable. Please try again later or contact the admin"
-        )
-        assert wire.sbx.provisioned == []
-        assert await lock_is_held(fake_redis, user.id) is False
-    finally:
-        storage_accessor._backend_singleton = None
-
-
-async def test_start_is_503_not_500_when_redis_is_entirely_unreachable(
-    client: AsyncClient, db_session: AsyncSession, dead_redis, fake_storage, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl-redis-dead@rvaiglobal.com")
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build me an app"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 503
-    assert resp.status_code not in (409, 500)
-    assert resp.json()["error"]["message"] == BUILD_COORDINATION_UNAVAILABLE_MSG
-    assert wire.sbx.provisioned == []
-
-
-async def test_start_is_503_not_409_when_only_the_lock_acquire_fails(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire, monkeypatch
-) -> None:
-    """Only `set` is cursed: `reconcile_user` reads with hgetall/get/exists and sails through,
-    so the request reaches `acquire_lock` before anything fails — cursing any other command
-    would fail earlier and prove a different thing."""
-    # Mutation check: revert `acquire_lock` to `return None` and this goes red with a 409.
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl-redis-acq@rvaiglobal.com")
-
-    async def only_the_acquire_is_down(*args: object, **kwargs: object) -> object:
-        raise RedisError("redis is down")
-
-    monkeypatch.setattr(fake_redis, "set", only_the_acquire_is_down)
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 503
-    body = resp.json()["error"]
-    assert body["message"] == BUILD_COORDINATION_UNAVAILABLE_MSG
-    assert body.get("code") != "build_session_already_active"
-    assert "sessionId" not in body
-
-
-async def test_start_is_503_when_redis_is_not_configured(
-    client: AsyncClient, db_session: AsyncSession, fake_storage, wire
-) -> None:
-    """Binds no `fake_redis`: that fixture binds the client singleton, and with it in place
-    `RedisNotConfiguredError` is unreachable by construction and this branch untestable."""
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl-redis-off@rvaiglobal.com")
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 503
-    assert resp.json()["error"]["message"] == BUILD_COORDINATION_UNAVAILABLE_MSG
-    assert wire.sbx.provisioned == []
-
-
-async def test_start_reaps_through_anothers_dead_residue_at_the_acquire_seam(
-    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
-) -> None:
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl-contend@rvaiglobal.com")
-    await seed_live_sandbox_state(fake_redis, user.id)
-
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-    assert resp.status_code == 201
-    assert wire.sbx.provisioned != []
-    await drain(wire.manager, resp.json()["sessionId"])
-
-
-async def test_start_documents_the_503_in_its_openapi_responses(client: AsyncClient) -> None:
-    schema = (await client.get("/openapi.json")).json()
-    responses = schema["paths"]["/v1/build-sessions"]["post"]["responses"]
-    assert "503" in responses
-    assert "coordination" in responses["503"]["description"]
-
-
-async def test_start_is_503_when_the_sandbox_is_not_configured(
-    client: AsyncClient, db_session: AsyncSession, app
-) -> None:
-    """Takes no sandbox fixture, and binds the brain deliberately: with the brain unbound the
-    `run_build is None` refusal answers first and masks the sandbox arm under test."""
-    app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
-    user, project = await _user_project(db_session, "ctl-sbx-off@rvaiglobal.com")
-
-    resp = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
-    )
-
-    assert resp.status_code == 503
-    body = resp.json()
-    assert (
-        body["error"]["message"]
-        == "Sandbox unavailable. Please try again later or contact the admin"
-    )
-    assert "detail" not in body
+    assert s2.status_code == 200 and s2.json()["status"] == "ended"  # idempotent
 
 
 # --- stop-and-switch, over HTTP -------------------------------------------------------
@@ -334,8 +104,12 @@ async def _stop_state(client: AsyncClient, user, project):
 
 
 async def _stopped_state(client: AsyncClient, user, project) -> str:
-    """A bounded poll of the real condition rather than a sleep: a fixed sleep here could only
-    be too short, and would then report an absence it had never waited long enough to observe."""
+    """THE COMPLETION BARRIER over HTTP: poll the status read until it stops saying "still
+    running", exactly as the browser does, and fail loudly if it never does.
+
+    A bounded poll of the real condition rather than a sleep. A fixed sleep here could only be
+    too short — and would then report an absence it had never waited long enough to observe,
+    which is the harness failure that once cost this repo an entire misdirected investigation."""
     for _ in range(400):
         body = (await _stop_state(client, user, project)).json()
         if body["state"] != "still_running":
@@ -347,19 +121,30 @@ async def _stopped_state(client: AsyncClient, user, project) -> str:
 async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    """THE BARRIER: the POST no longer waits, it asks — so the release below has to sit under
-    the STATUS READ and not under the ask, or it measures a system that has not finished."""
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
-    user, project = await _user_project(db_session, "ctl-stop1@rvaiglobal.com")
-    started = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build it"},
-        headers=auth_headers(user),
-    )
-    assert started.status_code == 201
-    sid = started.json()["sessionId"]
+    """THE ORDERING, end to end over HTTP: while the agent works, save and release BOTH refuse;
+    once the STATUS READ says the work has stopped, the release goes through.
 
+    That is the whole reason this route exists. The switch dialog used to offer "Save and switch"
+    to a user whose project was mid-build, and the server declined both halves — so the user
+    got a choice, then an error, whichever button they pressed.
+
+    THE BARRIER MOVED WITH THE DESIGN. This used to assert `stopped: true` on the POST's own
+    response and treat that as "settled by the time it answered". The POST no longer waits — it
+    asks — so the release must sit below the status read, not below the ask, or it is measuring a
+    system that has not finished. The old assertion could not have caught this: the field it read
+    was hardcoded true on every path.
+
+    WHAT PERFORMS THE UNWIND, re-fixtured. The live work is a TURN now, not a `run_build` task:
+    `_stop_the_held_session` asks the turn engine to cancel and then reads whether a session
+    still holds the app, and the step that actually frees the slot is `finish_turn_sandbox`, run
+    by the turn as it unwinds. With no turn engine in this test there is nothing to cancel, so
+    that unwind is invoked directly — which is exactly the event the ask is waiting for, and
+    keeps the barrier a poll of the real state rather than a wait on a clock."""
+    user, project = await _user_project(db_session, "ctl-stop1@rvaiglobal.com")
+    session = await a_live_session(wire, db_session, user, project.id)
+
+    # Mid-turn, both onward steps refuse — this is what makes the stop necessary rather than
+    # a nicety, and what keeps the ORDER an invariant instead of a client convention.
     save = await client.post(
         f"/v1/build-sessions/projects/{project.id}/save", headers=auth_headers(user)
     )
@@ -370,28 +155,34 @@ async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
     )
     assert release.status_code == 409
 
-    # The gate stays SHUT: releasing the brain first would let the build finish on its own and
-    # every assertion below would pass without the route having done anything.
+    # The gate stays SHUT while the session holds the workspace: the ask returns immediately and
+    # says so, and the release below must still refuse at this point.
     asked = await _stop_active(client, user, project)
 
     assert asked.status_code == 200
-    assert asked.json()["state"] == "still_running"
+    assert asked.json()["state"] == "still_running"  # the ask returned; the stop is in flight
 
+    # The turn unwinding — the one step that frees the slot the release is waiting on.
+    await wire.manager.finish_turn_sandbox(session, wire.sbx, touched=True)
+
+    # THE BARRIER. Nothing below this line runs until the status read says the work has stopped,
+    # and it is a poll of the real state rather than a wait on a clock.
     assert await _stopped_state(client, user, project) == "stopped"
 
     after = await client.post(
         f"/v1/build-sessions/projects/{project.id}/release", headers=auth_headers(user)
     )
     assert after.status_code != 409
-    brain.release()
-    await drain(wire.manager, sid)
 
 
 def test_the_published_api_names_the_stop_states_the_wire_actually_sends(app: FastAPI) -> None:
     """FastAPI publishes a route's docstring as its OpenAPI description, so prose in a route is
     API surface. `CamelModel` camelizes FIELD names only — `StopOutcome` values go out verbatim —
     so a docstring saying `nothingWasRunning` tells a reader to branch on a value the wire never
-    sends. SPELLING-BLIND rather than a list of known wrong spellings: any backticked token shaped
+    sends. A client written from it falls through its own guard and, on the shape the portal
+    uses, reads every answer as "still running": a hand-over that can never complete.
+
+    SPELLING-BLIND rather than a list of known wrong spellings: any backticked token shaped
     like a state name with its separators or casing changed is unmatchable, however it gets
     respelled later. Python MEMBER names (`STILL_RUNNING`) are allowed beside the values — that
     prose names the symbol, not the wire value."""
@@ -419,6 +210,13 @@ def test_the_published_api_names_the_stop_states_the_wire_actually_sends(app: Fa
 async def test_stopping_a_settled_project_says_nothing_was_running_not_an_error(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
+    """`nothing_was_running` is the answer, not a 409. The caller wants "settled" and it already is
+    — and the common path is exactly this, because the build usually finishes while the user
+    is still reading the dialog.
+
+    ITS OWN STATE NOW, where the old `stopped: false` shared a field with a timeout's hardcoded
+    `true`. The status read agrees, which is the property the browser depends on: an ask and a
+    read of the same untouched project cannot disagree."""
     user, project = await _user_project(db_session, "ctl-stop2@rvaiglobal.com")
     resp = await _stop_active(client, user, project)
     assert resp.status_code == 200
@@ -432,6 +230,9 @@ async def test_stopping_a_settled_project_says_nothing_was_running_not_an_error(
 async def test_stop_active_build_is_owner_scoped_and_csrf_guarded(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
+    """Owner-scoping and CSRF on a route that KILLS WORK IN PROGRESS. Another user's project is a
+    non-leaking 404, and a cookie without the CSRF header is refused — a forged cross-site POST
+    here would destroy an unfinished build."""
     owner, project = await _user_project(db_session, "ctl-stop3@rvaiglobal.com")
     stranger = await UserFactory.create(db_session, email="ctl-stop4@rvaiglobal.com")
 
@@ -442,25 +243,43 @@ async def test_stop_active_build_is_owner_scoped_and_csrf_guarded(
 async def test_the_stop_state_read_is_owner_scoped_and_needs_no_csrf(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
+    """Owner-scoping on the new half of the pair, and the reason it is a GET.
+
+    It changes nothing — no cancel, no teardown, nothing written — so a CSRF header would be
+    ceremony, and the browser polls it while it narrates. What it DOES leak if unscoped is
+    whether another citizen's project is busy, so a stranger gets the same non-leaking 404 the
+    ask gives."""
     owner, project = await _user_project(db_session, "ctl-stop5@rvaiglobal.com")
     stranger = await UserFactory.create(db_session, email="ctl-stop6@rvaiglobal.com")
 
     assert (await _stop_state(client, stranger, project)).status_code == 404
     mine = await _stop_state(client, owner, project)
-    assert mine.status_code == 200
+    assert mine.status_code == 200  # no CSRF header sent, and none needed
     assert mine.json()["state"] == "nothing_was_running"
 
 
 async def test_stop_active_build_answers_without_redis(
     client: AsyncClient, db_session: AsyncSession, fake_storage, wire
 ) -> None:
-    """Deliberately takes no `fake_redis` fixture: with the singleton unset `get_redis()` raises
+    """This route ANSWERS with no Redis, where `release` and `save` must refuse — and that
+    asymmetry is the reason it carries no `build_coordination_or_503` seam.
+
+    Those two ask the registry what is live, so an absent coordination subsystem leaves them
+    deciding nothing. This one asks "is this process running work for this user?", which lives
+    in `_active_by_user` and is answerable regardless. Wrapping it in the seam produced a
+    trailing `_coordination_is_gone()` that could never execute — a dead arm — and would have
+    refused on the one path that matters: a live in-process build during a Redis outage is
+    exactly when a user still needs to stop it.
+
+    Deliberately takes no `fake_redis` fixture: with the singleton unset `get_redis()` raises
     `RedisNotConfiguredError`, which is what a deployment with no Redis configured does."""
     user, project = await _user_project(db_session, "ctl-stop-noredis@rvaiglobal.com")
     resp = await _stop_active(client, user, project)
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"state": "nothing_was_running"}
+    assert resp.json() == {"state": "nothing_was_running"}  # and it could still say so
 
+    # The status read carries the same asymmetry, and needs it more: this is what the browser
+    # polls, so a Redis outage that silenced it would strand a hand-over mid-narration.
     read = await _stop_state(client, user, project)
     assert read.status_code == 200, read.text
     assert read.json() == {"state": "nothing_was_running"}

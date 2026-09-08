@@ -8,55 +8,52 @@
  * no reason. A guard only the client holds is not a guard. So this file only warns EARLY
  * ENOUGH to finish a thought and start a new chat, never refuses.
  *
- * THE ESTIMATE IS A FLOOR: the browser sees rendered prose/attachments, the server also
- * counts every tool call/result a Build turn generated, so this number can only under-count.
- * It carries the same `SYSTEM_PROMPT_RESERVE` and token ratio the server holds, so it never
- * claims room the server would refuse. Every constant below twins one in
- * `backend/src/services/usage/` (`context_window.py` / `limits.py`) — change one, change both.
+ * IT NO LONGER ESTIMATES ANYTHING, AND THAT IS THE POINT. This file used to carry a declared
+ * twin of the server's estimator — four characters to the token, a flat nominal for an image,
+ * another for a document — so that the meter a citizen watched and the wall the server enforced
+ * were two readings of one scale. They were two readings of one GUESS, and the guess was wrong
+ * by 47x on a document: a 61-page upload really cost 153,342 tokens and both sides recorded
+ * 1,600. Every one of those constants is deleted, here and on the server, and nothing estimates
+ * in their place.
+ *
+ * What decides the warning now is the token count the PROVIDER reported for a completed turn —
+ * the same number the server refuses on, so the two are the same number rather than two
+ * readings of one scale. `contextState` therefore takes that measurement as an argument rather
+ * than deriving it, and answers `null` for a conversation nobody has measured yet.
+ *
+ * WHERE THAT ARGUMENT COMES FROM, so nobody looks for a computation that is not here: two
+ * server replies the browser was already waiting for. The cold read carries `contextTokens` for
+ * the chat as stored, and every `startTurn` 202 carries what the admission just measured — the
+ * wiring is `ConversationSurface`'s. Both are raw `input_tokens`, cache-inclusive, never a
+ * cost-weighted spend. NOTHING asks the server to size a message before it is sent, and nothing
+ * may: the only honest count is one the provider has already taken.
+ *
+ * The window numbers below are still twins of `backend/src/services/usage/limits.py`; change one
+ * and change the other.
  */
 import { getStoredUser } from './auth'
 import type { ProfileLimits } from './auth'
-import type { ChatMessage } from './messageTypes'
-
-/** Twin of `context_window.CHARS_PER_TOKEN`. */
-export const CHARS_PER_TOKEN = 4
 
 /**
- * Twin of `context_window.NOMINAL_BINARY_TOKENS`. An IMAGE is worth roughly a thousand tokens
- * however many megabytes it is, so it is charged flat. Its byte length is the wrong number by
- * orders of magnitude.
+ * Twin of `limits.SYSTEM_PROMPT_RESERVE` — what a run costs before the citizen has typed
+ * anything: the per-run system prompt and the tool schemas that ride with it.
  *
- * It used to cover PDFs too — measured going wrong when a 61-page document really cost 153,342
- * tokens against a 1,600 charge. Documents now have their own number below.
- */
-export const NOMINAL_BINARY_TOKENS = 1_600
-
-/**
- * Twin of `context_window.NOMINAL_PDF_TOKENS`, and the two MUST move together — this file's own
- * rule, stated at the top: they are two readings of one scale.
- *
- * A flat charge sized to the largest document the upload cap admits (30 pages at a measured
- * ~2,514 tokens a page), so the browser's warning cannot sit further from the wall than the
- * server's refusal does. Charging a document the image nominal put the browser 47x under the
- * server: a citizen would watch a comfortable meter and then be refused mid-sentence, which is
- * the exact failure the twin rule exists to prevent.
- */
-export const NOMINAL_PDF_TOKENS = 75_000
-
-/** Twin of `context_window.PDF_MEDIA_TYPE` — the one media type charged as a document. */
-export const PDF_MEDIA_TYPE = 'application/pdf'
-
-/**
- * Twin of `limits.SYSTEM_PROMPT_RESERVE` — room for the per-run system prompt, which
- * neither side can see from here. Carried in the browser's number too so the warning cannot sit
- * further from the wall than the refusal does.
+ * IT IS A SIZE, NOT A CHARGE, ON EITHER SIDE. Nothing holds it back any more — the provider's
+ * count is of the whole prompt, system segment included, so there is nothing left to reserve
+ * for. It survives because `UsersLimitsPanel` derives the lowest ceiling an administrator may
+ * set from it, and that floor has to be the same number the server clamps to.
  */
 export const SYSTEM_PROMPT_RESERVE = 8_000
 
 /** Twins of `limits.DEFAULT_CONTEXT_SOFT` / `DEFAULT_CONTEXT_HARD`, used only when a session
- *  predates the profile carrying them. */
-export const DEFAULT_CONTEXT_SOFT = 150_000
-export const DEFAULT_CONTEXT_HARD = 200_000
+ *  predates the profile carrying them.
+ *
+ *  They moved with the server's, from 150,000/200,000, when the per-chat ceiling was corrected
+ *  against the window the deployment actually serves (1,000,000, measured off its own refusal).
+ *  A stale copy here does not refuse anything — the server owns the wall — but it would have an
+ *  older session warned at a threshold nobody set, well before the chat is anywhere near long. */
+export const DEFAULT_CONTEXT_SOFT = 375_000
+export const DEFAULT_CONTEXT_HARD = 500_000
 
 // `Number.isInteger` is typed `(x: unknown) => boolean` rather than a predicate, so it does not
 // narrow. This wraps the identical runtime check in a real one.
@@ -80,38 +77,9 @@ export function getContextLimits(): { soft: number; hard: number } {
   return { soft, hard }
 }
 
-/**
- * What this conversation is worth, in tokens, as far as the browser can see. EVERY attachment
- * counts on EVERY turn — a real change from the estimator this replaces, which charged
- * image/PDF parts only in the newest message. The turn engine rehydrates every stored
- * attachment on every turn (Foundry has no Files API), so charging once would under-count.
- * Office attachments count by extracted TEXT: a 200 KB spreadsheet is ~50k tokens, not 1,600.
- */
-export function estimateConversationTokens(messages: readonly ChatMessage[]): number {
-  let tokens = 0
-  for (const message of messages) {
-    for (const part of message?.parts || []) {
-      if (part?.type === 'text') {
-        tokens += Math.ceil((part.text || '').length / CHARS_PER_TOKEN)
-      } else if (part?.type === 'file' && part.kind === 'office') {
-        tokens += Math.ceil((part.text || '').length / CHARS_PER_TOKEN)
-      } else if (part?.type === 'file') {
-        // SPLIT BY MEDIA TYPE, exactly as `_tokens_in` does on the server: a document costs
-        // orders of magnitude more than an image and the two must not share a number. Anything
-        // that is neither falls to the image nominal — the smaller and more common shape, and
-        // the same fallback the server takes.
-        tokens += part.mediaType === PDF_MEDIA_TYPE ? NOMINAL_PDF_TOKENS : NOMINAL_BINARY_TOKENS
-      }
-      // Everything else — plan cards, steps, build banners — is chrome the browser draws, not
-      // content the model is sent. The server's own measurement never sees them either.
-    }
-  }
-  return tokens + SYSTEM_PROMPT_RESERVE
-}
-
 export interface ContextState {
-  /** The browser's floor estimate, reserve included. */
-  estimate: number
+  /** What the provider reported for this conversation, or null when nobody has measured it. */
+  occupied: number | null
   soft: number
   hard: number
   /** Past the warn threshold — the one thing that drives any UI. */
@@ -123,17 +91,23 @@ export interface ContextState {
 /**
  * Silent until it is useful, then one sentence — the same discipline `composerCap` follows.
  *
+ * ══ IT IS HANDED A MEASUREMENT; IT DOES NOT TAKE ONE ══
+ *
+ * `occupied` is the token count the provider reported for a completed turn in this
+ * conversation. `null` means nobody has measured it — a chat with no completed turn, or one
+ * whose measurement has not reached the browser — and an unmeasured conversation is SILENT
+ * rather than assumed full or assumed empty. Guessing is what this replaced.
+ *
  * The wording names the action rather than the condition, because "start a new chat" is the
  * only thing the reader can do about it and nothing else here is theirs to act on. It says
  * their work survives for the same reason the server's refusal does: the reason someone
  * hesitates to start a new chat is the fear that the app goes with the conversation.
  */
-export function contextState(messages: readonly ChatMessage[]): ContextState {
+export function contextState(occupied: number | null): ContextState {
   const { soft, hard } = getContextLimits()
-  const estimate = estimateConversationTokens(messages)
-  const gettingLong = estimate >= soft
+  const gettingLong = occupied !== null && occupied >= soft
   return {
-    estimate,
+    occupied,
     soft,
     hard,
     gettingLong,

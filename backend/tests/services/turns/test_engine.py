@@ -45,7 +45,7 @@ from src.api.v1.conversations.schemas import StepFrame, TurnStepPart, TurnTextPa
 from src.config import settings
 from src.db.models.conversation import ChatKind
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
-from src.db.models.token_usage import TokenUsage
+from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.services.agent.mode_prompts import PromptContext
 from src.services.build_sessions.manager import SessionManager, StopOutcome
 from src.services.messages.projection import (
@@ -627,6 +627,15 @@ async def test_completed_turn_bills_the_accumulated_usage(
     state = engine.peek(conv.id)
     assert state is not None and state.status == "completed"
     assert await _used(db_session, user.id) > 0  # billed from the run's usage accumulator
+
+    # …AND BILLED AS A BUILD, which is what makes it the citizen's own spend. The kind carries
+    # the whole carve-out: `gate._used_today` counts `build` rows and nothing else, so a turn
+    # recorded under any other kind would still write this row and still pass the line above
+    # while quietly costing the citizen nothing. Description generation is deliberately on the
+    # other side of that line (`services/projects/describe.py`); a chat turn must never drift
+    # there with it.
+    row = await db_session.scalar(sa.select(TokenUsage).where(TokenUsage.user_id == user.id))
+    assert row is not None and row.kind is TokenUsageKind.BUILD
 
 
 async def test_stopped_turn_still_bills_completed_model_requests(

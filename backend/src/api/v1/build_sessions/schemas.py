@@ -204,11 +204,19 @@ asserts every member is present). See `PreviewStateAction` for what each bucket 
 one rule this mapping exists to enforce: `UNKNOWN` never maps to `REMEDY`."""
 
 
-# --- Control operations: start / stop / status -----------------------
+# --- Control operations: stop / status ---------------------------------------
+#
+# THE START ROUTE IS GONE and these two shapes outlive it. The bare `POST` on the build-sessions
+# collection was deleted with the whole harness behind it — it had had no browser client for a
+# long time before the deletion. `StartBuildRequest` stays because `test_import_graph.py` freezes
+# this package's schema re-export set at this location and imports it by name; `StartBuildResponse`
+# stays beside it so the pair documents the wire shape the transcript's surviving `build_started`
+# rows were written against. Neither is served by any route, and neither should grow a field.
 
 
 class StartBuildRequest(CamelModel):
-    """`POST /v1/build-sessions` body."""
+    """The body the deleted start route took. NO ROUTE ACCEPTS IT — kept as the frozen schema
+    re-export `test_import_graph.py` pins."""
 
     project_id: uuid.UUID  # REQUIRED — project-first; no lazy Default project (never reintroduce).
     prompt: str  # the citizen-dev's natural-language build instruction for this turn (non-empty).
@@ -225,9 +233,12 @@ class StartBuildRequest(CamelModel):
 
 
 class StartBuildResponse(CamelModel):
-    """`POST /v1/build-sessions` → 201."""
+    """The 201 the deleted start route returned. NO ROUTE PRODUCES IT — and with it went the last
+    live producer of a session id the browser could hold. What still reaches the portal is a
+    `build_started` transcript row written before the deletion; those rows are permanent, which
+    is why `status`/`stop`/`events` survive as their reader."""
 
-    session_id: uuid.UUID  # the build-session id — path key for status/stop/lock/SSE + run_build.
+    session_id: uuid.UUID  # the build-session id — path key for status/stop/SSE.
     project_id: uuid.UUID
     app_id: uuid.UUID  # the app_registry row being built (== BIAL_APP_ID). Fresh per project.
     status: BuildSessionStatus  # always `provisioning` on a fresh start.
@@ -308,14 +319,21 @@ class BuildSessionStatusResponse(CamelModel):
     updated_at: datetime
 
 
-# --- Lock operations: force-end -----------------------------------------------
+# --- Lock operations: none left ------------------------------------------------
 # `acquire` / `renew` / `release` / `heartbeat` were retired along with their response models
-# (`LockStateResponse`, `LockReleaseResponse`, `HeartbeatResponse`). `force-end` is the sole
-# survivor of this section, and it carries no request body, same as its four retired neighbours.
+# (`LockStateResponse`, `LockReleaseResponse`, `HeartbeatResponse`) — the portal's keep-alive
+# loop that was their only caller was itself deleted, and nothing else ever called these
+# routes. `force-end` was the sole survivor and its route is now gone too: it had had no
+# control on any surface since the block banner's Force-end button went, which both
+# `buildSessionApi.ts` and `useBuildSession.ts` said in their own comments.
 
 
 class ForceEndResponse(CamelModel):
-    """`.../lock/force-end` → 200. The owner-only kill switch."""
+    """The 200 the deleted force-end lock op returned. NO ROUTE PRODUCES IT.
+    `SessionManager.force_end` itself survives — it is one of the two entry points into the
+    end sequence and carries the terminal-commit race invariant its service tests pin — but
+    nothing calls it any more, and retiring it is a separate change that reaches into
+    `_do_finalize`'s `force_ended` arms."""
 
     session_id: uuid.UUID
     status: BuildSessionStatus  # `ended`.
@@ -418,12 +436,11 @@ class ErrorSource(enum.StrEnum):
     SERVER = "server"  # dev-server stderr, read over the supervisor's /dev/logs.
     # The browser client-error arm. Its REPORT stays agent-only (see `agent_only_detail`): it
     # still reaches the agent channel (`build_repair_prompt` acts on it, a repair run follows)
-    # and the health verdict (`outcome.error` carries it unchanged), but both current emit
-    # sites — `turns/engine.py` and `orchestrator/harness.py` — skip the `DiagnosticFrame`
-    # emit for this source on purpose, so it is NOT rendered to the citizen today. It still
-    # gets a real citizen-facing sentence + action in `errors.user_facing` (not a
-    # placeholder), so that if this ever gets rendered, the copy already speaks product
-    # language rather than a JS stack trace.
+    # and the health verdict (`outcome.error` carries it unchanged), but the one emit site —
+    # `turns/engine.py` — skips the `DiagnosticFrame` emit for this source on purpose, so it is
+    # NOT rendered to the citizen today. It still gets a real citizen-facing sentence + action in
+    # `errors.user_facing` (not a placeholder), so that if this ever gets rendered, the copy
+    # already speaks product language rather than a JS stack trace.
     CLIENT = "client"
 
 

@@ -3,24 +3,46 @@ native-store edition.
 
 WHY THIS EXISTS. The plan had the portal append the outcome at its terminal, with a
 reconciliation pass for the closed-tab case — unimplementable: sessions live only in
-`SessionManager._sessions`, are evicted 5 minutes after the terminal, and do not survive a
-restart, so "the project's latest build session" is unanswerable once the tab is gone. Builds
-take minutes and users close tabs, so a portal-only design would miss exactly the users the
-record exists for. The thing that always knows a build finished is the thing that finished
-it, so the server writes.
+`SessionManager._sessions`, are evicted 5 minutes after the terminal
+(`_ENDED_RETENTION_SECONDS`), and do not survive a restart, so "the project's latest build
+session" is unanswerable once the tab is gone. Builds take minutes and users close tabs, so a
+portal-only design would miss exactly the users the record exists for. The thing that always
+knows a build finished is the thing that finished it, so the server writes.
 
-SHAPE. A `system_event` row: PAYLOAD is synthesized assistant text (plain prose — it replays
-to the model as history); build METADATA (`sessionId`/`startedSeq`/`previewUrl`/`status`/
-`reason`/`snapshotCommitted`) lives in `meta`, outside the payload. Idempotency keys on
-`meta->>'sessionId'`; the attachment boundary reads `meta->>'startedSeq'` (`attachments.py`).
-Seq allocation and the two-writer retry live in the store's `append_batch`.
+THE WRITE HALF IS HALF GONE. `write_build_started` — the hidden `build_started` marker — went
+with `SessionManager.start`, its only caller, when the start route was deleted; so did
+`transcript_head_seq`, which existed to capture that marker's `startedSeq`. `write_build_outcome`
+STAYS, but read the next sentence before trusting it: the live `stop` path does reach
+`_record_outcome` through `_end` -> `_finalize`, and `_record_outcome` then returns immediately
+on `if session.conversation_id is None`. Nothing in `src/` sets that field — the one production
+`BuildSession(...)` omits it, and the only assignment in the repository is a test fixture whose
+own docstring says it builds a shape production cannot produce. So the CALL is reachable and
+the BODY is not. The function is kept rather than deleted because the `{sessionId}` routes it
+belongs to are kept (they read `build_outcome` rows already in the production database), and
+cutting the writer while keeping that reader is the half-state this deletion deliberately
+avoided. Treat it as parked, not as live.
+
+Two consequences to know rather than rediscover. (1) No new `build_started`
+rows are written, so `projection._closed_sessions()` has nothing to close and the projection's
+`BuildInProgressItem` arm now serves only rows already in the database. (2) A build that runs as
+an ordinary Write chat turn records its ending as a `turn_terminal` row instead, which is the
+projection arm a citizen actually sees today.
+
+SHAPE. A `system_event` row: PAYLOAD is synthesized assistant text
+(`ModelResponse(TextPart(summary))`) — plain factual prose, because it replays to the model as
+history on the user's next turn; build METADATA (`sessionId`/`startedSeq`/`previewUrl`/`status`/
+`reason`/`snapshotCommitted`) lives in `meta`, OUTSIDE the payload, so the payload stays pure
+native. Idempotency keys on
+`meta->>'sessionId'`; `startedSeq` was the attachment-consumption boundary the now-deleted
+`attachments.py` read. Seq allocation and the two-writer retry live in the store's
+`append_batch`.
 
 Written BEFORE the terminal frame: `_do_finalize` calls this immediately before emitting
 `ended`, so the row exists before any client learns the build is over — reversed, this would
 race every reader.
 
-TODO: once the orchestrator persists a full per-step transcript, this row becomes that
-stream's terminal lifecycle entry; re-home the writer then.
+TODO: once BRAIN persists its full transcript per step, this row becomes that stream's terminal
+lifecycle entry (provisioned/quota/stopped/reaped entries join it); re-home the writer then.
 """
 
 from __future__ import annotations
@@ -36,7 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.schemas import BuildSessionStatus
 from src.db.models.conversation import ChatKind, Conversation
-from src.db.models.message import Message, MessageEntryKind, MessageVisibility
+from src.db.models.message import Message, MessageEntryKind
 from src.services.messages.store import (
     SeqContentionError,
     append_batch,
@@ -51,12 +73,12 @@ _log = structlog.get_logger()
 STOPPED_BY_USER: Final = "stopped_by_user"
 FORCE_ENDED: Final = "force_ended"
 # The idle reaper's reason — part of the documented terminal set (`build_sessions/schemas.py`).
+# NOTHING IN `src` IMPORTS IT, and it is not dead: `_summary` reads it below, and that arm is
+# reachable because `StopBuildRequest.reason` is caller-supplied — `stop_build` passes it straight
+# through to `manager.stop(..., reason=...)`. So a stop carrying this reason produces the prose
+# that names it rather than falling back to "Build finished.", which is the whole point of keying
+# these arms on the REASON rather than the status.
 IDLE_TEARDOWN: Final = "idle_teardown"
-
-# An empty thread's high-water seq. Not a sentinel for "unknown": seq starts at 0, so -1 is the
-# honest EXCLUSIVE lower bound for a thread with nothing in it — `seq > -1` collects everything,
-# which is exactly what a first build should see.
-EMPTY_TRANSCRIPT: Final = -1
 
 # The preview link is PARSED, not pattern-checked, and https-only — the same parse the deployed URL
 # gets at the admin boundary (`api/v1/admin/schemas.py::HttpsUrl`). `javascript:` and `data:` fall
@@ -130,12 +152,16 @@ def build_outcome_meta(
 ) -> dict[str, Any]:
     """The outcome row's `meta` — the build's structured record, OUTSIDE the native payload.
 
-    `startedSeq` (the transcript's high-water seq at build START) makes the attachment
-    boundary TEMPORAL, not positional: this row lands at build END, so a turn recorded while
-    the build ran can precede it. A reader keyed on this row's POSITION would silently drop
-    those turns' attachments from every later build — a stale client, a crashed build, or the
-    conversation-less start can each put a turn in that window. `_boundary` (`attachments.py`)
-    reads this field; omitted when the start recorded no marker."""
+    `startedSeq` was the build's START marker — the transcript's high-water seq at the moment the
+    build began — and it is what made the attachment boundary TEMPORAL rather than positional. Its
+    reader (`attachments._boundary`) is deleted, and so is the only writer that could stamp it
+    (`SessionManager.start`), so in practice this key is now absent from every new row: the
+    parameter stays because a caller may still pass one and because the rows already in the
+    database carry it. The reasoning is preserved rather than trimmed, since the trap it names is
+    the one any future re-introduction has to avoid — a row allocated at build END can land AFTER
+    a turn recorded while the build ran, so a reader keying on this row's POSITION drops those
+    turns permanently and silently.
+    """
     meta: dict[str, Any] = {
         "kind": "build_outcome",
         "status": status.value,
@@ -147,46 +173,6 @@ def build_outcome_meta(
     if started_seq is not None:
         meta["startedSeq"] = started_seq
     return meta
-
-
-async def write_build_started(
-    db: AsyncSession,
-    *,
-    user_id: uuid.UUID,
-    conversation_id: uuid.UUID,
-    session_id: uuid.UUID,
-    started_seq: int,
-) -> bool:
-    """Append the `build_started` lifecycle row: a HIDDEN `system_event` marking the moment a
-    build began. Payload is an EMPTY native batch — the record IS the row (`meta.kind =
-    'build_started'`); the reload projection reads it to anchor "a build ran here" even when
-    the build never reached its outcome (crash, kill -9). Returns True if written.
-
-    Best-effort by contract: the caller sits between lock adoption and task launch, where a
-    raise would leak the adopted container — a failure is the caller's to log-and-continue."""
-    try:
-        await append_batch(
-            db,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            messages=[],
-            entry_kind=MessageEntryKind.SYSTEM_EVENT,
-            kind=ChatKind.BUILD,
-            visibility=MessageVisibility.HIDDEN,
-            meta={
-                "kind": "build_started",
-                "sessionId": str(session_id),
-                "startedSeq": started_seq,
-            },
-        )
-    except SeqContentionError:
-        _log.warning(
-            "build_started marker not recorded after seq retries",
-            session_id=str(session_id),
-            conversation_id=str(conversation_id),
-        )
-        return False
-    return True
 
 
 async def write_build_outcome(
@@ -311,18 +297,3 @@ async def newest_build_outcome_status(
         return BuildSessionStatus(raw)
     except ValueError:
         return None
-
-
-async def transcript_head_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int:
-    """A thread's highest seq right now, or `EMPTY_TRANSCRIPT` (-1) when it holds no messages.
-
-    Scoped by conversation ALONE, deliberately: `uq_messages_conversation_seq` makes the
-    conversation the seq space, so a `user_id` predicate would narrow the wrong axis — every
-    row already belongs to its owner, established by the caller before asking.
-
-    Two callers need this for opposite reasons: the store allocates the next slot after it,
-    and `SessionManager.start` records it as the build's START marker for the next build."""
-    highest = await db.scalar(
-        sa.select(sa.func.max(Message.seq)).where(Message.conversation_id == conversation_id)
-    )
-    return EMPTY_TRANSCRIPT if highest is None else int(highest)

@@ -49,6 +49,7 @@ from src.api.v1.deploy.schemas import (
     DeployRoutedResponse,
     DeployStartedResponse,
     PublishState,
+    SavedState,
     UnpublishResponse,
     compute_publish_state,
 )
@@ -147,11 +148,11 @@ _SNAPSHOT_MOVED_MSG = (
     "Your app was saved again while this request was being decided, so nothing was "
     "submitted. Try again to publish the version that's saved now."
 )
-# NOT "could not be removed" — see the route. `sweep_published_apps` returns a count, and a
-# zero collapses "ARM refused" together with "the delete is still running past our ceiling",
-# whose outcome `await_lro` documents as genuinely unknown. Claiming removal failed would
-# assert something nobody observed; this says only what is true, and points at the retry that
-# settles it either way (`delete_app` is idempotent, so retrying is safe in both cases).
+# NOT "could not be removed" — see the route. `sweep_published_apps` names the ids that
+# SURVIVED, and a survivor collapses "ARM refused" together with "the delete is still running
+# past our ceiling", whose outcome `await_lro` documents as genuinely unknown. Claiming removal
+# failed would assert something nobody observed; this says only what is true, and points at the
+# retry that settles it either way (`delete_app` is idempotent, so retrying is safe in both).
 _TEARDOWN_UNCONFIRMED = "The takedown could not be confirmed. Retrying is safe and will settle it."
 
 
@@ -189,8 +190,8 @@ _TEARDOWN_UNCONFIRMED = "The takedown could not be confirmed. Retrying is safe a
                 503,
                 ErrorEnvelope,
                 "Object storage is unavailable (`storage_unavailable` — and so is "
-                "publishing), or deploying is unconfigured — checked only once a "
-                "branch actually needs the pipeline, so routing works without it",
+                "publishing, ASM21), or deploying is unconfigured — checked only once a "
+                "branch actually needs the pipeline, so routing works without it (ASM10)",
             ),
         ),
     },
@@ -834,16 +835,32 @@ class _SavedVersion:
 
     The two halves are INDEPENDENTLY nullable and that is deliberate: a bundle written
     before the stamp existed still has a last-modified, so it can say when without saying
-    which. Neither is ever invented — `None` is "no claim" on both axes."""
+    which. Neither is ever invented — `None` is "no claim" on both axes.
+
+    A THIRD FIELD SAYS WHY THEY ARE ABSENT. The pair alone cannot: it reads the same for a
+    citizen who has never saved and for a store that would not answer, and those are
+    opposite facts to the person reading the rail."""
 
     head: str | None
     saved_at: datetime | None
+    state: SavedState
 
 
-# Nothing to say on either axis: no store bound, no object, or a store that would not
-# answer. A single named value so the three "cannot tell" arms below are visibly the same
-# answer rather than three coincidentally-identical literals.
-_NOTHING_SAVED = _SavedVersion(head=None, saved_at=None)
+# THE SENTINEL WAS ONE VALUE FOR THREE FACTS, and this is the split.
+#
+# All three still answer the DRIFT question identically — `head=None`, which
+# `compute_publish_state` reads as `live_drift_unknown` and never as "up to date" — so
+# nothing about the publish state moves. What was missing is the OTHER question the same
+# read answers: has this citizen ever saved? "No store bound" and "the store would not
+# answer" are claims about the platform's reach; "there is no bundle" is a claim about
+# their work, and collapsing the three made the rail tell a citizen who had never saved
+# that their save could not be found.
+#
+# Three named values rather than three coincidentally-identical literals — and now they
+# are visibly NOT the same answer, which is the whole change.
+_NEVER_SAVED = _SavedVersion(head=None, saved_at=None, state=SavedState.NEVER_SAVED)
+_NO_STORE = _SavedVersion(head=None, saved_at=None, state=SavedState.STORE_UNCONFIGURED)
+_STORE_REFUSED = _SavedVersion(head=None, saved_at=None, state=SavedState.STORAGE_ERROR)
 
 
 async def _saved_version_for_publish_state(
@@ -870,7 +887,7 @@ async def _saved_version_for_publish_state(
     # reader "fixes" this back to match its two neighbours, that is the regression — the
     # difference is deliberate, and the reason for it lives here, beside the code.
     if storage is None:
-        return _NOTHING_SAVED
+        return _NO_STORE
     try:
         # THE KEY CHOICE, AND IT IS THE CITIZEN'S SAVE — `snapshot_key`, which
         # `snapshot.Destination.saved` names "the user's explicit Save; the one key a
@@ -886,13 +903,22 @@ async def _saved_version_for_publish_state(
         meta = await storage.head(snapshot_key(app_id))
     except StorageError:
         _log.warning("publish_state_saved_head_unavailable", app_id=str(app_id))
-        return _NOTHING_SAVED
+        return _STORE_REFUSED
     if meta is None:
-        return _NOTHING_SAVED
+        return _NEVER_SAVED
     # `head_sha_from_metadata` answers None for an unstamped bundle; `last_modified` is
     # whatever the store knows (also nullable). Neither absence is filled in from the
     # other — an unstamped bundle reports its date and withholds its id.
-    return _SavedVersion(head=head_sha_from_metadata(meta.metadata), saved_at=meta.last_modified)
+    #
+    # THE OBJECT EXISTS, so this is `SAVED` whatever the two halves say. A bundle whose
+    # metadata answers neither question is a save the platform cannot describe, not an
+    # absent one — that is the case "We could not tell" was written for, and the one case
+    # this deliberately leaves saying it.
+    return _SavedVersion(
+        head=head_sha_from_metadata(meta.metadata),
+        saved_at=meta.last_modified,
+        state=SavedState.SAVED,
+    )
 
 
 @router.get(
@@ -922,7 +948,8 @@ async def latest_deployment(
     # mount goes stale the moment the publish it is watching routes into the queue. One response,
     # one poll lifetime, two surfaces that cannot disagree. It reads the FULL registry row, not
     # `deploy_target`'s two-column projection, which carries neither the approval pin nor the
-    # rejection note.
+    # rejection note — with the ownership predicate in the WHERE clause, same as every other
+    # query here: a dropped `user_id` is a cross-user leak.
     #
     # IT DOES NOT NEED THE DEPLOY PIPELINE, and must not start requiring one. Every field it
     # returns is a committed row, so refusing without `DEPLOY__*` would 503 a request whose
@@ -957,9 +984,15 @@ async def latest_deployment(
         # registry row as a required input precisely because every OTHER member needs
         # one.
         # No app row means no bundle to have saved, so both halves of the saved row are
-        # null on the one path that never reaches the store at all.
+        # null on the one path that never reaches the store at all — and `NEVER_SAVED`
+        # rather than an "unknown", because this path knows: there is nothing that could
+        # have been saved, so the rail draws no saved row rather than one that cannot
+        # tell.
         return DeploymentResponse(
-            publish_state=PublishState.NOTHING_BUILT, saved_head=None, saved_at=None
+            publish_state=PublishState.NOTHING_BUILT,
+            saved_head=None,
+            saved_at=None,
+            saved_state=SavedState.NEVER_SAVED,
         )
 
     approval = ApprovalState.of(app_row)
@@ -993,6 +1026,7 @@ async def latest_deployment(
             publish_state=publish_state,
             saved_head=saved.head,
             saved_at=saved.saved_at,
+            saved_state=saved.state,
         )
     return DeploymentResponse.of(
         row,
@@ -1000,6 +1034,7 @@ async def latest_deployment(
         publish_state=publish_state,
         saved_head=saved.head,
         saved_at=saved.saved_at,
+        saved_state=saved.state,
     )
 
 
@@ -1034,10 +1069,7 @@ async def unpublish(
     IDEMPOTENT: an already-stamped attempt returns 200 and never touches Azure again. AN OPERATOR
     CONVENIENCE, NOT AN ENFORCEMENT LEVER — nothing in `deploy_project` consults `unpublished_at`
     or `AppRegistry.status`, so the owner republishes one click later. Against a compromised or
-    data-leaking app, `disable` fails CLOSED by severing the database — but it only accepts an
-    APPROVED app, and a one-click-deployed app is still DRAFT, so `disable` 409s on it. The
-    working takedown there pairs this lever with `POST /v1/admin/users/{user_id}/deactivate`, which
-    revokes every refresh family so the redeploy dies in the auth dependency."""
+    data-leaking app, `disable` is the answer instead: it fails CLOSED by severing the database."""
     # NOT the citizen-facing case, and no submit-for-review lineage is touched — a separate,
     # admin-only lever, same posture as `admin/router.py`'s `disable`. The convenience/enforcement
     # distinction matters against a hostile app: the right default here is an app misbehaving by
@@ -1097,20 +1129,23 @@ async def unpublish(
     # container.
     #
     # FAILS LOUD, NOT BEST-EFFORT: `sweep_published_apps` is reused exactly as it exists
-    # (best-effort, never-raising) rather than duplicating a second delete path, but its return
-    # count is read back here — 0 swept means this request never observed the delete succeed, and
-    # `unpublished_at` is deliberately NOT written in that case. The count is a weak signal in BOTH
-    # directions, and the route over-claims in neither: a non-zero count means "no error" rather
-    # than "something was deleted", because `delete_app` no-ops on an absent container and still
-    # counts; a zero means "not observed" rather than "failed", because the sweep collapses a
-    # terminal `AcaError` and an `AcaTransientError` from ceiling expiry into the same number. Both
-    # readings are right for a lever whose job is to guarantee absence rather than prove authorship
-    # of it. Retrying is safe either way, because `AcaPublishedApps.delete_app` is independently
-    # idempotent — a partial failure never leaves the row and reality permanently disagreeing.
+    # (best-effort, never-raising) rather than duplicating a second delete path, but the
+    # SURVIVORS it names are read back here — this app coming back as a survivor means this
+    # request never observed the delete succeed, and `unpublished_at` is deliberately NOT
+    # written in that case. The signal is weak in BOTH directions, and the route over-claims in
+    # neither: an empty survivor list means "no error" rather than "something was deleted",
+    # because `delete_app` no-ops on an absent container and still returns clean; a survivor
+    # means "not observed" rather than "failed", because the sweep collapses a terminal
+    # `AcaError` and an `AcaTransientError` from ceiling expiry into the same entry. Both
+    # readings are right for a lever whose job is to guarantee absence rather than prove
+    # authorship of it. Retrying is safe either way, because `AcaPublishedApps.delete_app` is
+    # independently idempotent — a partial failure never leaves the row and reality permanently
+    # disagreeing.
     # First, and before any query: an environment with `DEPLOY__*` unset has no publish plane
     # at all. Without this the `None` flows into `sweep_published_apps`, which re-resolves the
-    # singleton, catches `DeployNotConfiguredError` and returns 0 — landing in the
-    # unconfirmed-teardown branch below, which invites a retry that can never work here. This
+    # singleton, catches `DeployNotConfiguredError` and returns NO survivors — landing in the
+    # confirmed-teardown path below and stamping `unpublished_at` for a container that this
+    # deployment could never have published. That is the wrong lie in the wrong direction. This
     # is the one 503 on this route that is TERMINAL, hence the distinct `code`: the other says
     # "try again", and a client cannot tell them apart from the prose. Both sibling routes in
     # this module open with the same check against the same constant, whose "tell an
@@ -1177,18 +1212,19 @@ async def unpublish(
     # guarded UPDATE, not `row.unpublished_at`, remains the authority on who won the race.
     await db.commit()
 
-    if await sweep_published_apps([app_id], client=remover) == 0:
+    if await sweep_published_apps([app_id], client=remover):
         # UNCONFIRMED, NOT FAILED, and the distinction is the same one this route's audit
         # discipline is built on. `sweep_published_apps` collapses every exception into a
-        # count, so a zero means "we did not observe a success" — which covers a terminal
-        # `AcaError` (ARM refused; it really is still up) AND an `AcaTransientError` from
-        # `await_lro`'s ceiling expiry, whose docstring says the outcome is genuinely unknown
-        # because "the operation may still land". Recording that as a confirmed failure would
-        # be the same sin as recording an unobserved success, and the far likelier one here:
-        # the ceiling is 300s and the gateway gives up at 20, so a slow-but-fine delete is
-        # exactly what lands in this branch. `unpublished_at` stays NULL either way, which is
-        # the conservative choice — a retry re-attempts the delete (idempotent) and settles
-        # the row, whereas stamping it now could mark an app down that is still serving.
+        # survivor entry, so this app coming back means "we did not observe a success" — which
+        # covers a terminal `AcaError` (ARM refused; it really is still up) AND an
+        # `AcaTransientError` from `await_lro`'s ceiling expiry, whose docstring says the
+        # outcome is genuinely unknown because "the operation may still land". Recording that
+        # as a confirmed failure would be the same sin as recording an unobserved success, and
+        # it is the far likelier one here: the ceiling is 300s and the gateway gives up at 20,
+        # so a slow-but-fine delete is exactly what lands in this branch. `unpublished_at`
+        # stays NULL either way, which is the conservative choice — a retry re-attempts the
+        # delete (idempotent) and settles the row, whereas stamping it now could mark an app
+        # down that is still serving.
         _log.warning(
             "app_unpublish_teardown_unconfirmed", app_id=str(app_id), deployment_id=str(row.id)
         )

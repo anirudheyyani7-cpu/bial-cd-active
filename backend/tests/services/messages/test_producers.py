@@ -1,5 +1,11 @@
-"""Lifecycle producers around the native store: the hidden `build_started` marker and its
-non-interference with the outcome record's idempotency and status reads.
+"""The surviving lifecycle producer around the native store, `write_build_outcome`, and its
+non-interference with the legacy `build_started` marker's rows.
+
+`write_build_started` ITSELF IS DELETED — the build-start path it belonged to is gone. Rows of
+its shape are permanent in production transcripts, though, so both of the readers covered here
+(`write_build_outcome`'s idempotency probe and `newest_build_outcome_status`) still have to step
+around one. They are exercised against a faithful legacy row produced by
+`tests.fakes.write_legacy_build_started`, which is byte-identical to the deleted writer.
 
 The per-step BRAIN producer is tested with its own fixtures in
 `tests/services/orchestrator/test_transcript_steps.py`. There was a third producer on the relay,
@@ -19,10 +25,10 @@ from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.services.build_sessions.outcome import (
     newest_build_outcome_status,
     write_build_outcome,
-    write_build_started,
 )
 from src.services.messages.store import load_history, load_rows
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.fakes import write_legacy_build_started
 
 
 async def _thread(db_session):
@@ -33,10 +39,17 @@ async def _thread(db_session):
 
 
 async def test_build_started_row_is_hidden_and_replay_inert(db_session) -> None:
+    """Pins the SHAPE of a legacy `build_started` row, not the behaviour of a writer.
+
+    The production writer is deleted; what survives is a database full of rows it already wrote
+    and the live readers over them — the projection's `BuildInProgressItem` arm, the outcome
+    idempotency probe, `newest_build_outcome_status`. Those readers are only as trustworthy as
+    the row they are tested against, so this pins that row: hidden `system_event`, empty native
+    payload, `meta = {kind, sessionId, startedSeq}`, invisible to both transcript reads."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
 
-    written = await write_build_started(
+    written = await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
@@ -74,7 +87,7 @@ async def test_outcome_idempotency_ignores_the_started_marker(db_session) -> Non
     probe and silently suppress the real outcome."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
@@ -125,7 +138,7 @@ async def test_newest_outcome_status_skips_started_markers(db_session) -> None:
         reason="build_failed",
         started_seq=-1,
     )
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,

@@ -28,8 +28,9 @@ from src.schemas.base import CamelModel
 
 
 def _clean_name(value: str) -> str:
-    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` (create AND rename);
-    enforcing it only on create would leave rename with no server-side guard.
+    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` — so create and RENAME
+    are both covered. Fixing only create leaves the limit half real, and rename is the half
+    with no client-side guard at all.
 
     Messages are written for a person: they reach the screen verbatim (the portal flattens
     Pydantic's `detail[].msg` straight through), so a validator string IS product copy here,
@@ -84,16 +85,27 @@ class ProjectPatch(CamelModel):
     _v_description = field_validator("description")(_clean_description)
 
 
-def _clean_delete_remark(value: str) -> str:
-    """Why this project is being deleted — 5 to 50 WORDS, via `count_words` (pinned equal to
-    `portal/src/utils/words.ts`) so client and server enforce the same bound independently.
+def clean_deletion_reason(value: str, *, subject: str) -> str:
+    """Why this `subject` is being deleted — 5 to 50 WORDS.
 
-    The lower bound is deliberate: the remark exists so an administrator reading a deletion
-    months later learns something, and "no" or "done" would satisfy a required field without
-    satisfying that."""
+    The same shared rule as the title cap: `count_words` here,
+    `portal/src/utils/words.ts` in the browser, both pinned against the same inputs. The
+    client keeps the person inside the limit and the server enforces it independently.
+
+    A lower bound is unusual and deliberate. The reason exists so an administrator reading
+    a deletion months later learns something; "no" and "done" satisfy a required field
+    without satisfying that, and a field that can be dismissed in one word is a field that
+    will be.
+
+    ONE RULE, TWO DELETES. The citizen deleting their own project and the administrator
+    destroying somebody else's app answer the same question under the same bounds, and both
+    dialogs share `words.ts`'s counter — so they share the validator too, with `subject`
+    supplying the only word that differs. A second copy of these four checks is how the two
+    surfaces end up disagreeing about what a word is.
+    """
     value = value.strip()
     if not value:
-        raise ValueError("Say why you are deleting this project.")
+        raise ValueError(f"Say why you are deleting this {subject}.")
     # The paste backstop, which a person should never meet.
     if len(value) > MAX_DELETE_REMARK_CHARS:
         # The character cap fires on something a WORD cap cannot express: a 40-word paste of
@@ -112,9 +124,16 @@ def _clean_delete_remark(value: str) -> str:
     return value
 
 
+def _clean_delete_remark(value: str) -> str:
+    """The project delete's own binding of the shared rule."""
+    return clean_deletion_reason(value, subject="project")
+
+
 class ProjectDeleteRequest(CamelModel):
     """The body `DELETE /v1/projects/{id}` requires: deletion destroys the app, database,
-    files and all chats, permanently — a stated reason replaces an earlier type-the-name gate.
+    files and all chats, permanently — and a stated reason replaced an earlier type-the-name
+    gate, because retyping a name proves you can read, not that you meant it, while the reason
+    is the part still useful a month later.
 
     THE REASON IS THE ONLY THING THE CLIENT GETS TO SAY. WHO deleted it is stamped by the route
     from the authenticated session, never carried in the body — it was briefly a body field, and
@@ -130,13 +149,13 @@ class ProjectResponse(CamelModel):
     id: uuid.UUID
     name: str
     description: str | None
-    # Read-only discovery of the project's ONE app — additive and nullable: a
-    # fresh project has no app yet, so the SPA needs no mutating provision just to
-    # learn whether (and in what lifecycle state) an app exists.
+    # Read-only discovery of the project's ONE app — additive and nullable: a fresh project
+    # has no app yet, so the SPA needs no mutating provision just to learn whether (and in
+    # what lifecycle state) an app exists.
     app_id: str | None = None
     app_status: str | None = None
-    # IS IT SERVING RIGHT NOW? Defined as: "live = deployed / published — if
-    # the application is published and has url". That is a DEPLOYMENT fact and cannot be
+    # IS IT SERVING RIGHT NOW? Defined as: "live = deployed / published — if the application
+    # is published and has url". That is a DEPLOYMENT fact and cannot be
     # read off `app_status`: APPROVED means an administrator said yes, not that anything is
     # running, and `PublishStatusChip` keeps `Approved` and `Live` apart for the same
     # reason. Derived by `services/deploy/liveness.live_app_ids`, the one definition the
@@ -145,18 +164,18 @@ class ProjectResponse(CamelModel):
     #
     # `False` for a project with no app at all — there is nothing that could be live.
     # NO DEFAULT. `_to_response` was made keyword-only and required specifically to stop a
-    # call site silently omitting this: with `= False` here, three of five endpoints
-    # answered a live app as not serving. A default
-    # one layer down would let a future direct `ProjectResponse(...)` construction
-    # reintroduce exactly that bug; every call site already passes it via `_to_response`.
+    # call site silently omitting this: with `= False` here, three of five endpoints answered
+    # a live app as not serving. A default one layer down would let a future direct
+    # `ProjectResponse(...)` construction reintroduce exactly that bug; every call site
+    # already passes it via `_to_response`.
     is_serving: bool
     # Whether this project has a bundle a Relaunch could actually restore.
     # THREE-STATE ON PURPOSE: `true` = there is one, `false` = confirmed there is not,
     # `null` = the object store could not be reached, so the platform declines to claim
     # anything in either direction and the client renders the plain empty state.
     #
-    # Computed by `restorable_presence`, which is the platform's
-    # turn-boundary recovery copy OR the user's explicit Save — the same pair a restore
+    # Computed by `restorable_presence`, which is the platform's turn-boundary recovery copy
+    # OR the user's explicit Save — the same pair a restore
     # actually consults. The saved bundle alone under-reported by exactly one person: the
     # builder who worked across several turns and never pressed Save. The field name still
     # says "snapshot" because renaming a shipped wire field to fix a nuance is a worse trade
@@ -183,9 +202,9 @@ class ProjectCountsResponse(CamelModel):
     `in_production` reads the SAME `live_app_ids` collapse the status column does, so the
     headline number and the rows beneath it can never disagree."""
 
-    # "Live = deployed / published — if the application is published and has url".
-    # NOT `AppStatus.APPROVED`, which means an administrator said yes and nothing
-    # about whether anything is serving.
+    # "Live = deployed / published — if the application is published and has url". NOT
+    # `AppStatus.APPROVED`, which means an administrator said yes and nothing about whether
+    # anything is serving.
     in_production: int
     # Every application the citizen has ever created, whatever its state.
     total_applications: int
@@ -200,9 +219,10 @@ class ProjectListResponse(CamelModel):
     """An OFFSET page envelope, deliberately NOT the keyset one admin rosters use: numbered
     pages ("Page 1 of 2") need a `total`, which keyset declines to compute.
 
-    THE COST IS REAL, NOT ASSUMED AWAY: a row inserted underneath a page walk can duplicate or
-    skip an entry at a boundary, and `total` is a second read under READ COMMITTED rather than
-    one snapshot with the page. What makes it acceptable lives at `list_projects`, not here.
+    THE COST IS REAL, NOT ASSUMED AWAY. `pagination.py` refuses offset because a row inserted
+    underneath a page walk can duplicate or skip an entry at a boundary, and because `total` is
+    a second read under READ COMMITTED rather than one snapshot with the page. Both stay true
+    here; what makes them acceptable is written at `list_projects`, not here.
 
     `total` counts AFTER `q` is applied — it describes the search, never the whole collection."""
 

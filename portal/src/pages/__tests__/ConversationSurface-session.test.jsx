@@ -43,7 +43,6 @@ const h = vi.hoisted(() => ({
   relaunchPreview: vi.fn(),
   stop: vi.fn(),
   getStatus: vi.fn(),
-  forceEnd: vi.fn(),
   fetchPreviewState: vi.fn(),
 }))
 
@@ -197,7 +196,10 @@ describe('BuilderPage — the build-turn flow', () => {
     expect(h.readTurnStream).toHaveBeenCalledTimes(2) // one resume-once, then the honest error
   })
 
-  it('Stop → graceful end reflected in the UI (preview reaches the terminal placeholder)', async () => {
+  it('Stop → the turn ends and the running app stays framed', async () => {
+    // A snapshot frame is what seeds `liveTurnIdRef` — the fact Stop reads to know which turn to
+    // address — and cursor 0 gets one on every real subscribe (the wire contract `readTurnStream`
+    // documents); `scriptBuildTurn`'s default opening predates that, so it's supplied here.
     const turn = scriptedBuild({ opening: [T_SNAPSHOT(BUILD_TURN_ID), T_WORKSPACE()] })
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -213,14 +215,24 @@ describe('BuilderPage — the build-turn flow', () => {
     await waitFor(() => expect(h.stopTurn).toHaveBeenCalledWith(LIVE_CHAT_ID, BUILD_TURN_ID))
     expect(h.stop).not.toHaveBeenCalled() // never the build-session stop
 
+    // THE CONTAINER IS NOT TORN DOWN BY A STOP: `finish_turn_sandbox` pardons it with no branch
+    // on how the turn ended, and the stopped arm is reached precisely because Stop arrives as a
+    // cancellation into that `finally`. So the assertions below reject any path that turns a
+    // citizen's own interruption into "your app is gone" — held by element IDENTITY rather than
+    // by the src matching, because the two are not the same claim: a remount re-requests the
+    // document and throws away everything the citizen had typed into their app, while reporting
+    // the same URL either way.
+    const framed = document.querySelector('iframe')
     await turn.frame(T_BUILD_END({ status: 'stopped', reason: 'stopped_by_user' }))
     await turn.end()
-    // getAllBy: a persistent role="status" region also announces the state, so it appears twice.
-    await waitFor(() => expect(screen.getAllByText(/no longer running/i).length).toBeGreaterThan(0))
-    expect(document.querySelector('iframe')).toBeNull() // terminal collapses the dead frame
+    await waitFor(() => expect(h.stopTurn).toHaveBeenCalled())
+
+    expect(document.querySelector('iframe')).toBe(framed)
+    expect(screen.queryByText(/no longer running/i)).toBeNull()
+    expect(screen.queryByTestId('preview-ended-card')).toBeNull()
   })
 
-  it('a COMPLETED build keeps the preview framed — "done, preview live", never "no longer running"', async () => {
+  it('a COMPLETED build keeps the preview framed — never "no longer running"', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -228,19 +240,27 @@ describe('BuilderPage — the build-turn flow', () => {
     await turn.frame(T_PREVIEW())
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
 
+    const framed = document.querySelector('iframe')
     await turn.frame(T_BUILD_END({ status: 'completed' }))
     await turn.end()
-    // The server PARDONS a completed build's container (idle lease), so the frame stays live —
-    // only stop/force-end/failure collapse to the placeholder, never "turn over" into "app gone".
-    await waitFor(() => expect(screen.getByText(/your app is live below/i)).toBeTruthy())
+    // The server PARDONS a completed build's container (idle lease), so the frame stays live.
+    // "The turn is over" must never be flattened into "the app is gone" while the URL the user is
+    // looking at still serves — the chip that used to state a build outcome over the framed app's
+    // own navigation is deleted; liveness is now carried by the frame itself surviving, held by
+    // element identity so a remount cannot pass as continuity.
+    await waitFor(() => expect(screen.queryByText(/no longer running/i)).toBeNull())
+    expect(document.querySelector('iframe')).toBe(framed)
     expect(document.querySelector('iframe')?.getAttribute('src')).toBe(PREVIEW_URL)
-    expect(screen.queryByText(/no longer running/i)).toBeNull()
+    expect(screen.queryByText(/your app is live below/i)).toBeNull()
   })
 
   // ('Force-end → the kill switch confirms, then ends the session' is RETIRED.) It drove
-  // `session.forceEnd`, tearing a build SESSION's sandbox down out of band; the composer-initiated
-  // build path has no session to tear down, so `stopTurn` is the whole interrupt vocabulary now.
-  // The kill switch still belongs to the legacy session surfaces (SessionBanners), tested there.
+  // `session.forceEnd`, the kill switch that tore a build SESSION's sandbox down out of band —
+  // and the composer-initiated build path has no session to tear down, nor a turn-level
+  // equivalent of one. `stopTurn` is the whole interrupt vocabulary a build turn has, and the Stop
+  // test above is what pins it. The kill switch is gone everywhere now, not just from this
+  // surface: the client, the hook wrapper and the backend route were deleted together, once no UI
+  // call site was left anywhere — the block banner took its Force-end button with it.
 
   it('a self-heal diagnostic renders as a RETRY mid-build, and leaves no residue after completion', async () => {
     const turn = scriptedBuild()

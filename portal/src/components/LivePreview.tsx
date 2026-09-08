@@ -8,15 +8,14 @@ import type { CompileState } from '../utils/compileState'
 // Device-card widths drive the preview's REAL rendered pixel width (an inline style on
 // the wrapper, not a Tailwind max-width class) so the framed cross-origin doc's own media
 // queries evaluate against the TRUE viewport width — the actual fix for "doesn't look like
-// a real phone". The iframe itself stays `w-full` (100% of the
-// wrapper) rather than repeating the pixel value: `width` is excluded from the wrapper's
-// own transition (see the device-card className below), so it snaps to its target in one
-// paint — `w-full` just means the iframe always matches the card's width exactly, with no
-// separate inline value of its own to fall out of sync. `width: null` = full width
-// (Desktop, unchanged). Height is deliberately NOT constrained per mode — it stays bounded
-// to the pane (`h-full`, as today) with the iframe's own native scrollbar handling taller
-// content, matching the Lovable/v0 reference: a bounded-height card that scrolls
-// internally, never a fixed-aspect-ratio clip.
+// a real phone". The iframe itself stays `w-full` (100% of the wrapper) rather than repeating
+// the pixel value: `width` is excluded from the wrapper's own transition (see the device-card
+// className below), so it snaps to its target in one paint — `w-full` just means the iframe
+// always matches the card's width exactly, with no separate inline value of its own to fall
+// out of sync. `width: null` = full width (Desktop, unchanged). Height is deliberately NOT
+// constrained per mode — it stays bounded to the pane (`h-full`, as today) with the iframe's
+// own native scrollbar handling taller content, matching the Lovable/v0 reference: a
+// bounded-height card that scrolls internally, never a fixed-aspect-ratio clip.
 // THE WIDTH TABLE IS `WorkspaceToolbar`'S — the switcher that picks a width lives in the shell's
 // toolbar row. This component still reads the widths, so it imports the one table rather than
 // keeping a second copy that could disagree about what "Tablet" means.
@@ -36,8 +35,8 @@ const FRAME_LOAD_CAP_MS = 20000
 const RECONNECT_CAP_MS = 20000
 
 // The scheme://host[:port] of an absolute preview URL, or null if unset/malformed. Used to
-// VALIDATE inbound postMessage origins. A malformed value fails closed (null → no
-// frame trusted, every inbound message rejected).
+// VALIDATE inbound postMessage origins. A malformed value fails closed (null → no frame
+// trusted, every inbound message rejected).
 function originOf(url: string | null): string | null {
   try {
     if (!url) return null
@@ -212,35 +211,78 @@ function BouncingWait({ children, className = '' }: { children: ReactNode; class
 }
 
 /**
- * The live-preview pane. Phase-2 model: the agent builds a real Next.js app in a per-user
- * sandbox; this pane frames its cross-origin `previewUrl` once the dev server is up. All
- * single-file machinery (the `jsx:preview` fence, `previewCode` threading, postMessage
- * credentials, generation-stage theater, "View Code") is GONE — credentials come server-side
- * at provision. Driven entirely by the build-session props below; `onFrameMessage`'s
- * origin+source gate is explained at its `useEffect`.
+ * The live-preview pane.
+ *
+ * Phase-2 model: the agent builds a REAL running Next.js app inside a per-user sandbox, and
+ * this pane frames that app's genuinely CROSS-ORIGIN `previewUrl` once the dev server is up.
+ * All single-file machinery — the `jsx:preview` fence, `previewCode` threading, the outbound
+ * `postMessage` of `{previewCode, config, accessToken, user}`, the `generationStage` progress
+ * theater, and the "View Code" source panel — is GONE (the same-origin Babel `/preview` was
+ * already retired; the app now gets its data credentials server-side at provision — the portal
+ * feeds the app nothing).
+ *
+ * Driven entirely by the build session:
+ *   - `previewUrl` — the sandbox `next dev` root, from the status read / `preview_ready`.
+ *                    Framed once set.
+ *   - `status`     — the session lifecycle; drives loading / framed / terminal visuals.
+ *   - `iterating`  — true while the loop keeps emitting step/log envelopes AFTER the preview
+ *                    went live (a refine turn holding at `ready`); shows a subtle overlay.
+ *   - `onFrameMessage` — the client-error receiver seam. The inbound `message` listener
+ *                    validates BOTH `e.origin` against the preview origin AND `e.source` against
+ *                    this pane's own iframe window, and forwards only messages that pass both;
+ *                    the conversation surface relays them to the harness, where a reported
+ *                    browser crash makes the health verdict not-green. The source half is what
+ *                    survives every app sharing one hostname — origin alone no longer tells this
+ *                    pane's app from any other app in the document. Together they prove
+ *                    PROVENANCE, not content — the shape check lives on the receiving side. Note
+ *                    `scripts/skeleton/frame-proof` is a standalone Chromium rig with its OWN
+ *                    inline origin guard: it never renders this component, so it neither
+ *                    exercises nor regression-catches the gate written here.
+ *
+ *   - `serving`   — IS A CONTAINER STILL ANSWERING AT `previewUrl`? It arrives on the ADDRESS
+ *                    (`utils/previewAddress.ts`), not from the conversation, and it exists to
+ *                    outrank a terminal `status`: the backend pardons a turn's container
+ *                    unconditionally (it stays up under an idle lease), so `ended` plus a serving
+ *                    container means "the build is over and your app is still there" and the pane
+ *                    keeps framing it. Only a container that is genuinely gone collapses.
+ *
+ *                    IT WAS `completedLive`, AND THE RENAME IS THE FIX. That name answered two
+ *                    questions with one boolean — "the container is up" and "a build finished
+ *                    successfully" — and the second one is gone with the completion chip. What is
+ *                    left is liveness, and liveness alone: this prop is not evidence that anything
+ *                    compiled, and it must never be read as such. What the pane may SAY about the
+ *                    newest build comes from `compileState`, whose `unknown` asserts nothing.
+ *   - `reconnecting` — the dev-server PROCESS crashed after the preview was framed (a backend
+ *                    `preview_reconnecting` signal — the frontend can't poll /dev/status).
+ *                    DISTINCT from the "Building…" loading bounce and from `feedDisconnected` (the
+ *                    SSE feed dropping): the pane shows a "Reconnecting…" state over the dead frame
+ *                    until a fresh `preview_ready` re-frames. After a COMPLETED build (no loop left
+ *                    to recover it) it is BOUNDED — a cap collapses it to "preview unavailable" +
+ *                    Relaunch, never an unbounded spinner.
+ *   - `hasSavedBuild` — does the PROJECT have a snapshot a Relaunch could actually restore, so
+ *                    even a conversation with no build history of its own offers Relaunch from
+ *                    the EMPTY state (relaunch derives from project-level snapshot state, not
+ *                    this transcript). THREE-STATE, and each state means something different:
+ *                    `true` = there is one, `false` = confirmed there is not, `null` = the server
+ *                    could not reach the object store, so it declines to claim anything and this
+ *                    pane says nothing either. Only `true` makes a claim.
+ *
+ *                    It replaces `projectHasApp`, which keyed on the mere EXISTENCE of an app
+ *                    registry row — and that row is minted by PROVISION, before anything is
+ *                    built, so every project whose first build failed advertised a saved build
+ *                    and then 404'd on the click.
  */
 export interface LivePreviewProps {
   previewUrl?: string | null
   status?: BuildSessionStatus | null
   iterating?: boolean
   onFrameMessage?: (data: unknown) => void
-  // A restore of the last SAVED version, because the newest build FAILED (server-confirmed).
-  // A small overlay says so, so older code is never presented as the latest build.
-  restoredFromFailedBuild?: boolean
-  completedLive?: boolean
-  // THREE-STATE, the same discipline as `previewState`/`compileState` below, and each state
-  // means something different: `true` = the PROJECT has a snapshot a Relaunch could restore,
-  // `false` = confirmed there is not, `null` = the server could not reach the object store, so
-  // it declines to claim anything and this pane says nothing either. Only `true` makes a claim.
-  //
-  // It replaced a check on the mere EXISTENCE of an app registry row — and that row is minted by
-  // PROVISION, before anything is built, so every project whose first build failed advertised a
-  // saved build and then 404'd on the click.
+  serving?: boolean
   hasSavedBuild?: boolean | null
   reconnecting?: boolean
-  // The server's verdict on THIS project's container, in five
-  // values rather than the one boolean (`previewReclaimed`) it replaces. That boolean could
-  // only ever say "not serving", so a Redis blip, a sleeping workspace, a slot taken by a
+  // The server's verdict on THIS project's container, in five values rather than the one
+  // boolean (`previewReclaimed`) it replaces. That boolean could only ever say "not
+  // serving", so a Redis blip, a sleeping workspace, a slot taken by a
   // sibling project and a project nobody ever built all arrived here identically and got the
   // same "Preview unavailable" — a sentence that describes a fault for three situations that
   // are not one.
@@ -301,8 +343,11 @@ export default function LivePreview({
   status = null,
   iterating = false,
   onFrameMessage,
-  restoredFromFailedBuild = false,
-  completedLive = false,
+  // Absent means NOTHING IS KNOWN TO BE SERVING, which is restrictive on purpose: it is the only
+  // default under which a caller that forgot the prop cannot keep framing a URL nobody is
+  // answering. The cost of the restrictive default is a frame that collapses on a terminal status,
+  // which is what this pane did for its whole life before the flag existed.
+  serving = false,
   // Absent means UNKNOWN, never "confirmed there is not" — a default of false would let a
   // caller that forgot the prop render the definite "this project has no saved build" claim.
   hasSavedBuild = null,
@@ -374,26 +419,12 @@ export default function LivePreview({
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  // The reconnect cap. After a COMPLETED build, a dev-process crash that never recovers
-  // has no build loop left to re-frame it; cap the reconnecting state and collapse to a terminal
-  // "preview unavailable" line. While a build is still running, its loop owns recovery, so we wait
-  // it out (no cap) — the running build itself is bounded by its own wall-clock deadline.
-  const [reconnectExpired, setReconnectExpired] = useState(false)
-  useEffect(() => {
-    if (!(reconnecting && completedLive)) {
-      setReconnectExpired(false)
-      return
-    }
-    const t = setTimeout(() => setReconnectExpired(true), RECONNECT_CAP_MS)
-    return () => clearTimeout(t)
-  }, [reconnecting, completedLive])
-
   const isTerminal = status === 'ended' || status === 'failed'
-  // A completed build's container is PARDONED server-side (alive under an idle
-  // lease), so its `ended` is "done, preview live", not "gone": keep framing the URL. Only
-  // with a URL, though — a completed build whose preview never came up still gets the
-  // placeholder rather than a blank pane.
-  const keepFramed = completedLive && !!previewUrl
+  // A finished turn's container is PARDONED server-side (alive under an idle lease), so
+  // its `ended` is "done, your app is still there", not "gone": keep framing the URL. Only with a
+  // URL, though — a build whose preview never came up still gets the placeholder rather than a
+  // blank pane.
+  const keepFramed = serving && !!previewUrl
   // Precedence: a terminal session collapses to a defined placeholder even if a `previewUrl` is
   // still around (post-ready teardown must NOT keep displaying a now-dead URL) — UNLESS the pardon
   // says the URL is genuinely live. Otherwise a live `previewUrl` frames the app; else we are still
@@ -405,14 +436,44 @@ export default function LivePreview({
   // Narrowed ONCE, here, so every render site below reads the union off this value instead of
   // asserting it with a cast. `notServing` keeps its exact previous meaning — none of the three
   // state strings is falsy, so `goneState !== null` is the same boolean it always was.
+  //
+  // NOT THE NEGATION OF THE `serving` PROP, however much the two names rhyme, and they are allowed
+  // to disagree. This one is the SERVER'S verdict on the project's workspace, from the preview-state
+  // read; `serving` is the ADDRESS's liveness, which a turn that just ended can assert before the
+  // next poll has run. When they disagree this one wins on screen — it replaces the frame entirely
+  // — which is the right precedence: a confirmed "asleep" is newer news than a pardon.
   const goneState: GoneState | null =
     previewState === 'asleep' || previewState === 'slot_taken' || previewState === 'never_built'
       ? previewState
       : null
   const notServing = goneState !== null
-  // The pane WOULD frame the app here (live preview or pardoned completed build). A dev-process
-  // crash (`reconnecting`) pre-empts the live frame with the reconnecting/unavailable states.
+  // The pane WOULD frame the app here (a live preview, or a pardoned container after the turn
+  // ended). A dev-process crash (`reconnecting`) pre-empts the live frame with the
+  // reconnecting/unavailable states.
   const frameContext = !!previewUrl && (!isTerminal || keepFramed)
+
+  // THE RECONNECT CAP. Once the session is OVER, a dev-process crash that never recovers
+  // has no build loop left to re-frame it; cap the reconnecting state and collapse to a terminal
+  // "preview unavailable" line. While a build is still running, its loop owns recovery, so we wait
+  // it out (no cap) — the running build itself is bounded by its own wall-clock deadline.
+  //
+  // IT KEYS ON THE TERMINAL, NOT ON LIVENESS, and the distinction only became visible when the two
+  // stopped being the same boolean. This read `reconnecting && completedLive`, which happened to
+  // mean "the build is over" only because that flag was set by a turn ENDING. `serving` is now true
+  // during a running build as well — the preview-state read says so — so a straight substitution
+  // would arm this timer mid-build and answer a recovery the loop was about to make with "preview
+  // unavailable". `isTerminal` is what "no loop is left" actually is; `keepFramed` keeps the cap
+  // scoped to the frame it degrades, which is the only state `reconnectExpired` is read in.
+  const [reconnectExpired, setReconnectExpired] = useState(false)
+  const capReconnect = reconnecting && isTerminal && keepFramed
+  useEffect(() => {
+    if (!capReconnect) {
+      setReconnectExpired(false)
+      return
+    }
+    const t = setTimeout(() => setReconnectExpired(true), RECONNECT_CAP_MS)
+    return () => clearTimeout(t)
+  }, [capReconnect])
   const showReconnecting = frameContext && reconnecting && !notServing && !reconnectExpired
   const showUnavailable = frameContext && (notServing || (reconnecting && reconnectExpired))
   const showFrame = frameContext && !reconnecting && !notServing
@@ -680,9 +741,35 @@ export default function LivePreview({
                     ? // The honest sentence for a check that did not happen. It deliberately does
                       // NOT disturb the frame — nothing was learned, so nothing changes on screen.
                       'We could not check on your preview just now — it may still be running'
-                    : revealed
-                      ? 'Your app preview is live'
-                      : ''
+                    : // THE LIVE CLAIM IS EARNED NOW, NOT ASSUMED.
+                      //
+                      // This arm used to read `revealed ? 'Your app preview is live' : ''`, and
+                      // that was false. `revealed` is `frameLoaded && !covered`, and `frameLoaded`
+                      // is the framed document's `load` event — which fires for a 500 exactly as
+                      // it does for a 200, on a cross-origin frame whose status code this pane
+                      // cannot read, and which the in-container proxy emits even on the 502 it
+                      // returns when the dev server is down. So the one sentence in this chain
+                      // making a claim about the APP rested on the one signal carrying no health
+                      // term at all: a citizen using a screen reader was told their preview was
+                      // live over a framework error screen.
+                      //
+                      // It is not simply deleted, because deleting it leaves the success path
+                      // SILENT while the failure path speaks — a screen-reader user hears the wait
+                      // end and then nothing, and cannot tell "it worked" from "it stopped
+                      // announcing". The failure verdict gets a sentence; so should its opposite.
+                      //
+                      // So the claim is made only where there is evidence for it, from the two
+                      // signals that carry one: `serving` (a container is answering at this
+                      // address) and a `clean` compile verdict (the build the platform actually
+                      // asked about). BOTH are required and neither is `revealed`.
+                      //
+                      // `unknown` and `null` say NOTHING — that is the rule, and the reason this
+                      // is a `=== 'clean'` test rather than `!== 'failed'`. "Not failure" read as
+                      // success is exactly the collapse that republishes the false live claim on
+                      // the reload where nothing is serving.
+                      revealed && serving && compileState === 'clean'
+                        ? 'Your app preview is live'
+                        : ''
 
   return (
     <div className="flex flex-col h-full">
@@ -804,52 +891,30 @@ export default function LivePreview({
               // never loads, and `load` is the only thing that reveals it.
               className={`shrink-0 mx-auto h-full transition-[box-shadow,border-radius,opacity] duration-300 rounded-xl overflow-hidden shadow-lg bg-white relative ${revealed ? 'opacity-100' : 'opacity-0'}`}
             >
-              {/* A subtle "still working" overlay while the loop keeps refining a LIVE preview
-                  (status holds at `ready` and new step/log envelopes keep arriving). Non-blocking
-                  (pointer-events-none) so the operator can still interact with the framed app. */}
-              {iterating && (
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                  <div className="flex items-center gap-2 bg-white/90 backdrop-blur border border-bial-border rounded-full px-3 py-1 shadow-sm">
-                    <span className="flex gap-1">
-                      {[0, 1, 2].map((i) => (
-                        <span key={i} className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                      ))}
-                    </span>
-                    <span className="text-[11px] font-semibold text-neutral">Still working…</span>
-                  </div>
-                </div>
-              )}
-              {keepFramed && !showCover && (
-                // Honesty chip: the build is DONE and this is the live result — without
-                // it, an ended status with a working frame reads as "is it still building?".
-                //
-                // AND IT SITS BENEATH THE OVERLAY CHAIN, which is not a z-index remark: the
-                // cover is `z-20` over this `z-10`, so the chip was already invisible under it
-                // and still in the DOM, which is where a screen reader lives. A pane covered by
-                // the retraction announced "your app stopped running" and "Build complete — your
-                // app is live below" in the same breath, and the reader who most needs the first
-                // sentence is the one who heard both. Every other overlay in this file already
-                // loses to `showCover` (the two waits, the stalled card); the completion claim is
-                // the one that must lose hardest, because it is the claim being retracted.
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                  <div className="bg-white/90 backdrop-blur border border-bial-border rounded-full px-3 py-1 shadow-sm">
-                    <span className="text-[11px] font-semibold text-neutral">
-                      Build complete — your app is live below
-                    </span>
-                  </div>
-                </div>
-              )}
-              {restoredFromFailedBuild && (
-                // Honesty overlay: this frame restored the LAST SAVED version because the
-                // newest build failed — never present older code as the latest build's result.
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                  <div className="bg-white/90 backdrop-blur border border-warning/40 rounded-full px-3 py-1 shadow-sm">
-                    <span className="text-[11px] font-semibold text-neutral">
-                      Showing your last saved version — the most recent build failed
-                    </span>
-                  </div>
-                </div>
-              )}
+              {/* THE THREE CHIPS THAT USED TO SIT HERE ARE GONE.
+                  "Still working…", "Build complete — your app is live below" and "Showing your
+                  last saved version — the most recent build failed" were three sibling overlays
+                  sharing ONE rectangle: `absolute top-3 left-1/2 -translate-x-1/2 z-10`. That
+                  rectangle is where every app this platform builds puts its own navigation, so the
+                  platform was drawing its chrome across the citizen's app — three nav items
+                  unreadable, a focus ring behind our card, and a fill measuring 1.01:1 against the
+                  app header. The justification is GEOMETRIC, so it applied identically to all
+                  three; deleting only the middle one would have left the same collision in the
+                  iterating and restored states.
+
+                  WHERE EACH ONE'S NEWS LIVES NOW, so nothing is merely dropped:
+                   · "Still working…"    — the transcript's own activity line, which narrates the
+                                           running turn where the citizen is already reading it.
+                   · "Build complete"    — the turn's closing message. The pane frames a live app;
+                                           it no longer also asserts a build outcome.
+                   · the restore notice  — HAS NO RENDERER, and that is stated rather than hidden.
+                                           Nothing could produce it (both publishers hardcoded it
+                                           `false`), so it still needs a new home — the toolbar row
+                                           or a transcript line — not this rectangle.
+
+                  The pane still speaks: everything it has to say is in the cover, the waits and the
+                  permanent live region below, none of which are drawn over the app's own controls
+                  while it is revealed. */}
               <iframe
                 /* Key on `frameKey` = url + reload nonce. A NEW url still remounts exactly as it
                    always did; the nonce adds the case the url alone cannot express — same

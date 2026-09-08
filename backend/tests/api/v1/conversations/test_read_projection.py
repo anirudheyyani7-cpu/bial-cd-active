@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.usage import RequestUsage
 
 from src.api.v1.build_sessions.schemas import BuildSessionStatus
 from src.config import settings
@@ -101,6 +102,62 @@ async def test_empty_conversation_projects_an_empty_list(client, db_session) -> 
     resp = await client.get(f"/v1/conversations/{conversation.id}", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["projection"] == []
+
+
+async def test_the_read_carries_how_full_the_chat_is(client, db_session) -> None:
+    """★ THE COLD READ'S HALF OF THE METER (#194, R8a). The browser's "this chat is getting long"
+    line is fed by this field, so a reopened chat that is already past the threshold says so on
+    first paint instead of staying silent until the citizen has sent one more message into it.
+
+    It is the RAW prompt count the provider reported — cache-inclusive, never a cost-weighted
+    spend — and it is the same number `enforce_context_limit` refuses on. The transcript above it
+    and this figure come from ONE `load_rows`, so they cannot describe different conversations.
+
+    Mutation: drop the field from the route and the first assertion goes red; read the last
+    response rather than the largest and the third does, because the platform spoke last."""
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conversation = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+
+    empty = await client.get(f"/v1/conversations/{conversation.id}", headers=headers)
+    # UNMEASURED IS NOT EMPTY: a chat nobody has served answers null, and the browser stays
+    # silent on it. A `0` here would be the server claiming the chat is empty.
+    assert empty.json()["contextTokens"] is None
+
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content="carry on")]),
+            ModelResponse(
+                parts=[TextPart(content="here you go")],
+                usage=RequestUsage(input_tokens=190_000, cache_read_tokens=185_000),
+            ),
+        ],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.PLAN,
+    )
+    # …then the PLATFORM has the last word, carrying no measurement of its own.
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[ModelResponse(parts=[TextPart(content="Starting your build.")])],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.PLAN,
+    )
+
+    body = (await client.get(f"/v1/conversations/{conversation.id}", headers=headers)).json()
+
+    assert body["contextTokens"] == 190_000
+    # LIVENESS: the transcript really came back too, so the figure above is part of a working
+    # read rather than the only thing this route still answers.
+    assert [item["type"] for item in body["projection"]] == [
+        "user_text",
+        "assistant_text",
+        "assistant_text",
+    ]
 
 
 async def test_cross_user_read_is_a_404(client, db_session) -> None:

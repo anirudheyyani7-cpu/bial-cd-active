@@ -16,8 +16,29 @@ export default {
        * framework default — and named `wide` rather than `xl` so it cannot be mistaken for a
        * position in the stock ramp.
        */
+      /**
+       * …AND THE NARROW HALF OF THE SAME LINE (plan 001, U17).
+       *
+       * `narrow` is the exact complement of `wide`: everything below the stacking threshold, which
+       * is where the columns are already stacked and where the pointer is a finger. It is the only
+       * place the toolbar's 44×44 touch floors apply — above it every control keeps the size the
+       * canvas drew it at. The two are disjoint by construction, so no element is ever in both.
+       *
+       * WHAT "THE DECLARED MINIMUM SUPPORTED WIDTH IS 360px" ACTUALLY MEANS (R38). 360px is the
+       * floor the product supports: it matches the rail's own existing minimum and the narrow edge
+       * of current phones. It means every control is REACHABLE at 360px — the workspace toolbar
+       * scrolls sideways there rather than clipping, exactly as `/projects`, `/marketplace` and
+       * `/help` already do. It does NOT mean everything FITS cleanly: the shared navbar overflows
+       * 360px by roughly 18px on three routes today, scroll-reachable and no worse than before.
+       * Saying so here is cheaper than letting "declared" imply a promise the layout does not keep.
+       *
+       * There is no `min: '360px'` on this screen on purpose. A floor that switched OFF below 360px
+       * would take the finger-sized targets away from precisely the narrowest devices that need
+       * them most.
+       */
       screens: {
         wide: '1100px',
+        narrow: { max: '1099.98px' },
       },
       colors: {
         // shadcn/ui token names — ADDITIVE ONLY. Every pre-existing name

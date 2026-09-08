@@ -37,7 +37,7 @@ from src.core.errors import AppApiError
 from src.db.models.conversation import ChatKind, Conversation
 from src.schemas import AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.conversations import gather_and_delete_conversation
-from src.services.messages.projection import project_rows
+from src.services.messages.projection import measured_context_tokens, project_rows
 from src.services.messages.store import load_rows
 from src.services.projects import owned_project_or_404
 from src.services.storage import ObjectStorage, sweep_blobs
@@ -228,6 +228,10 @@ async def get_conversation(conversation_id: str, user: CurrentUser, db: DbSessio
 
     `activeTurn`: the in-process turn registry's answer — `{turnId, lastSeq}` while a
     turn runs (the cursor a subscriber resumes `GET /events` from), null when settled.
+
+    `contextTokens`: how full the chat is — the provider's raw prompt count for the largest
+    turn served here, the same figure the send route refuses on. Null when nothing has been
+    measured yet, which a client should read as unknown rather than as empty.
     """
     owned = await _load_owned(db, user.id, conversation_id)
     # include_hidden=True: hidden rows render nothing, but the projection needs the unclosed
@@ -244,6 +248,9 @@ async def get_conversation(conversation_id: str, user: CurrentUser, db: DbSessio
                 if active is not None
                 else None
             ),
+            # The SAME rows the projection above walked — one read, two derivations, so the
+            # transcript on screen and the meter under it can never describe different chats.
+            "contextTokens": measured_context_tokens(rows),
         }
     )
 

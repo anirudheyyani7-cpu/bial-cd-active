@@ -25,12 +25,25 @@ import { SYSTEM_PROMPT_RESERVE } from '../../utils/contextLimits'
 // so a larger number here widens nothing — this constant only keeps the hint truthful. Both
 // enforcement halves are real: the server 413s past the max (`enforce_context_limit`), and
 // this browser warning is the friendly guard at the soft threshold, not the boundary itself.
-const MODEL_CONTEXT_WINDOW = 200_000
+//
+// HAND-KEPT TWIN of `limits.MODEL_CONTEXT_WINDOW`; move one and move the other in the same
+// commit — this copy is what the form VALIDATES against, so a stale one refuses a
+// per-conversation max the server would have accepted and tells the administrator the model
+// cannot do something it demonstrably does. The value is measured rather than quoted: the
+// deployment named it in its own refusal, "prompt is too long: 1963668 tokens > 1000000
+// maximum".
+const MODEL_CONTEXT_WINDOW = 1_000_000
 // The lowest per-conversation max that still leaves a usable chat, mirroring the server's
 // `CONTEXT_HARD_FLOOR`. Derived from `SYSTEM_PROMPT_RESERVE` exactly as the server derives
-// it — not a written-out number — so the two can't drift apart on one side only. Below this,
-// the server's context gate refuses every chat the admin's target user opens, even a brand
-// new empty one; this constant exists only so an admin is told BEFORE they submit, not after.
+// it — not a written-out number — so the two can't drift apart on one side only.
+//
+// A NUMBER THE FORM HAS TO KNOW, not a duplicated rule: the server refuses anything below it
+// with a message naming it, so the two can never disagree about the OUTCOME; what this copy
+// buys is that an administrator is told before they submit rather than after. Below this,
+// the overhead of a single run — the system prompt and its tool schemas, which the provider
+// counts in the first turn it reports — already exceeds that person's ceiling, so every chat
+// they own refuses their SECOND message, and the sentence they read tells them to start a new
+// chat, which is the one thing that also fails.
 const CONTEXT_HARD_FLOOR = SYSTEM_PROMPT_RESERVE * 2
 // The wire page size (how many rows one fetchUsers call asks for — capped at the
 // server's MAX_PAGE_SIZE=100) is deliberately larger than the table's on-screen page
@@ -146,7 +159,7 @@ function EditModal({ user, defaults, onClose, onSaved, onToast }: EditModalProps
       return
     }
     if (hardNum < CONTEXT_HARD_FLOOR) {
-      setErr(`Per-conversation max can't be below ${fmt(CONTEXT_HARD_FLOOR)} — under that, every chat this person opens is refused before they have typed anything.`)
+      setErr(`Per-conversation max can't be below ${fmt(CONTEXT_HARD_FLOOR)} — under that, this person can't get past the first message in any chat they open.`)
       return
     }
     if (softNum >= hardNum) {

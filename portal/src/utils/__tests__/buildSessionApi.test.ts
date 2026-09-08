@@ -3,7 +3,6 @@ import {
   relaunchPreview,
   stop,
   getStatus,
-  forceEnd,
   buildSessionClient,
   BuildSessionAlreadyActiveError,
   asReclaimBlocked,
@@ -44,15 +43,18 @@ function headerOf(m: ReturnType<typeof jsonFetch>, name: string, call = 0): stri
   return (optsOf(m, call).headers as Record<string, string> | undefined)?.[name]
 }
 
-// Pinned member set — the portal's mirror of the backend's
-// `test_abstractmethod_set_equals_the_pinned_contract`. Guards against a drifted mock: a call
-// site once went on mocking `acquireLock`/`renewLock`/`releaseLock`/`heartbeat` after they were
-// gone, unnoticed because nothing checked its stale keys against the real surface. This fails
-// LOUDLY the moment `buildSessionClient` gains or loses a member.
-const _CLIENT_MEMBERS = new Set(['relaunchPreview', 'stop', 'getStatus', 'forceEnd'])
+// The frozen `buildSessionClient` member set — the portal's mirror of the backend's
+// `test_abstractmethod_set_equals_the_pinned_contract`. A drifted mock bag is what this
+// guards: one call site (`ConversationSurface-memo.test.jsx`) went on mocking `acquireLock` /
+// `renewLock` / `releaseLock` / `heartbeat` after they were gone, unnoticed because nothing
+// forced its stale keys to be read against the real surface. This test fails LOUDLY the
+// moment `buildSessionClient` gains or loses a member, so the next removal cannot leave the
+// same kind of residue behind unnoticed — it did its job again for `forceEnd`'s removal,
+// which is why the set is DOWN to three and not quietly still four.
+const _CLIENT_MEMBERS = new Set(['relaunchPreview', 'stop', 'getStatus'])
 
 describe('buildSessionApi — buildSessionClient member set (inertness guard)', () => {
-  it('exposes exactly the four surviving client operations', () => {
+  it('exposes exactly the three surviving client operations', () => {
     expect(new Set(Object.keys(buildSessionClient))).toEqual(_CLIENT_MEMBERS)
   })
 })
@@ -163,21 +165,20 @@ describe('buildSessionApi — control operations', () => {
 })
 
 describe('buildSessionApi — CSRF discipline', () => {
-  it('attaches X-CSRF-Token on every mutating POST (start / stop / forceEnd)', async () => {
+  // RE-POINTED OFF THE DELETED LOCK OPS. This ran a `cases` loop over `acquireLock` /
+  // `releaseLock`, then over the lone surviving `forceEnd`; with the kill switch gone the loop
+  // had nothing to iterate. `relaunchPreview` and `stop` are the mutating session POSTs the
+  // portal still makes, and the contract — every one of them carries the token — is unchanged.
+  it('attaches X-CSRF-Token on every mutating POST (relaunchPreview / stop)', async () => {
     const stopImpl = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', {}, { fetchImpl: stopImpl })
     expect(headerOf(stopImpl, 'X-CSRF-Token')).toBe(CSRF)
+    expect(optsOf(stopImpl).method).toBe('POST')
 
-    // `acquireLock` / `releaseLock` are gone — `forceEnd` is the one lock op left.
-    const cases: Array<[(id: string, deps: { fetchImpl: FetchImpl }) => Promise<unknown>, unknown]> = [
-      [forceEnd, { sessionId: 's', status: 'ended' }],
-    ]
-    for (const [fn, body] of cases) {
-      const impl = jsonFetch(200, body)
-      await fn('s', { fetchImpl: impl })
-      expect(headerOf(impl, 'X-CSRF-Token')).toBe(CSRF)
-      expect(optsOf(impl).method).toBe('POST')
-    }
+    const relaunchImpl = jsonFetch(200, { appId: 'a1', previewUrl: null, status: 'ready', ready: true, restoredFromFailedBuild: false })
+    await relaunchPreview({ projectId: 'p1' }, { fetchImpl: relaunchImpl })
+    expect(headerOf(relaunchImpl, 'X-CSRF-Token')).toBe(CSRF)
+    expect(optsOf(relaunchImpl).method).toBe('POST')
   })
 
   it('omits the CSRF header when no csrf cookie is readable (parity with auth.js)', async () => {
@@ -194,29 +195,34 @@ describe('buildSessionApi — lock ops + fail-closed errors', () => {
     await stop('s', { reason: 'user cancelled' }, { fetchImpl: withReason })
     expect(JSON.parse(optsOf(withReason).body as string)).toEqual({ reason: 'user cancelled' })
 
-    // {} is a complete StopBuildRequest (reason defaults to None); the lock ops below take
-    // NO body at all, asserted via the absent Content-Type.
+    // A bare stop still carries a body — {} is a complete StopBuildRequest (reason
+    // defaults to None), so it always satisfies the body model. The bodyless
+    // POSTs, by contrast, send NO body (asserted below via the absent Content-Type).
     const noReason = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', {}, { fetchImpl: noReason })
     expect(JSON.parse(optsOf(noReason).body as string)).toEqual({})
   })
 
-  // Re-anchored onto `forceEnd`: `acquireLock`/`releaseLock`, which this used to run against,
-  // are gone — `forceEnd` is the surviving bodyless lock POST, and the contract still holds.
-  it('lock ops take NO request body — forceEnd sends neither body nor Content-Type', async () => {
-    const impl = jsonFetch(200, { sessionId: 's', status: 'ended' })
-    await forceEnd('s', { fetchImpl: impl })
+  // RE-POINTED OFF `forceEnd`, the same way it was once re-pointed onto it off
+  // `acquireLock` / `releaseLock`. The CONTRACT is `postJson`'s `body === undefined` branch — send
+  // no JSON body and therefore no Content-Type — and the kill switch was only ever its vehicle.
+  // The branch is still live and still has three callers, all project-scoped commands that name
+  // their target in the path and carry nothing else, so the assertion moves onto one of them
+  // rather than dying with the route.
+  it('a bodyless POST sends neither body nor Content-Type — releaseProject names its target in the path', async () => {
+    const impl = jsonFetch(200, { released: true })
+    await releaseProject('p-b', { fetchImpl: impl })
     expect(optsOf(impl).body).toBeUndefined()
     expect(headerOf(impl, 'Content-Type')).toBeUndefined()
+    // LIVENESS: the call really went out as the mutating POST whose body we just asserted away.
+    expect(optsOf(impl).method).toBe('POST')
+    expect(headerOf(impl, 'X-CSRF-Token')).toBe(CSRF)
   })
 
-  it('forceEnd: a 403 build_session_forbidden is surfaced fail-closed, not swallowed', async () => {
-    const fetchImpl = jsonFetch(403, { error: { code: 'build_session_forbidden', message: 'Not the owner.' } })
-    const err = await forceEnd('s', { fetchImpl }).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(403)
-    expect((err as ApiError).code).toBe('build_session_forbidden')
-  })
+  // `forceEnd`'s OWN test — the kill switch's `403 build_session_forbidden` surfacing fail-closed
+  // — is gone rather than re-pointed, because it had no contract left to describe once the client
+  // AND the route went in the same change: no other call can answer that code. The generic
+  // non-2xx → `ApiError` mapping it rode is pinned by the 409 and boundary cases either side.
 
   // `renew`'s 409 and `heartbeat`'s 404 are not tested here — the keep-alive loop that called
   // them is gone. The backend routes keep their own tests.

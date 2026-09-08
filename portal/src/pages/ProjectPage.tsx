@@ -80,9 +80,18 @@ export default function ProjectPage() {
   // branches are still this project's screen, and the row draws its back control and holds its own
   // height on both, rather than appearing once the fetch lands. `chatTitle`/`chatKind` are `null`
   // here and that IS the signal: a heading with no kind is a project screen.
+  //
+  // THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES (R46). `projectId` is a route param on
+  // a route that is NOT remounted when it changes (see the wait region's own note below), so
+  // moving from one project to another re-renders this same instance with the OLD `project` still
+  // in state until the new fetch resolves. Without the guard, the rename pencil kept gating on
+  // `project?.name` alone — non-null, so still drawn — while `ProjectWorkspace`, the only
+  // registrar of the actual rename handler, had already unmounted for the load: a control that
+  // still LOOKS live over a project that is no longer on screen, and does nothing pressed. Gating
+  // on the id agreeing is what `ChatRoute.tsx` does for the identical hazard.
   usePublishHeading({
     projectId: projectId ?? null,
-    projectName: project?.name ?? null,
+    projectName: project !== null && project.id === projectId ? project.name : null,
     chatTitle: null,
     chatKind: null,
   })

@@ -18,7 +18,6 @@ from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.deps import (
-    run_build_dependency,
     sandbox_dependency,
     sandbox_or_none_dependency,
 )
@@ -48,9 +47,8 @@ from src.services.sandbox.client import AcaSandboxClient
 from src.services.sandbox.config import SandboxConfig
 from src.services.storage import recovery_key, snapshot_key
 from tests.api.v1.build_sessions.conftest import (
-    BlockingBrain,
+    a_live_session,
     auth_headers,
-    drain,
     seed_live_sandbox_state,
 )
 from tests.conftest import forget_every_harness_count
@@ -158,18 +156,18 @@ async def test_relaunch_without_snapshot_is_404(
 async def test_relaunch_while_a_build_is_running_is_409(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
+    """A live session owns the one-per-user slot; relaunch 409s and carries its session id.
+
+    Re-fixtured onto `a_live_session`. The slot has to be genuinely OCCUPIED for this to prove
+    anything, and relaunch provably cannot occupy it itself — asserted directly by
+    `test_relaunch_happy_returns_200_ready_preview`: `_active_by_user == {}` — so the occupant
+    comes from `ensure_sandbox`, the only allocator left that claims the slot. Same project as
+    the relaunch, which is what earns the BARE conflict rather than the hand-over 409
+    (`_slot_conflict_for`)."""
     user, project = await _user_project(db_session, "rl3@rvaiglobal.com")
     await _seed_snapshot(db_session, user, project, fake_storage)
 
-    started = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build it"},
-        headers=auth_headers(user),
-    )
-    assert started.status_code == 201
-    sid = started.json()["sessionId"]
+    session = await a_live_session(wire, db_session, user, project.id)
 
     conflict = await client.post(
         "/v1/build-sessions/relaunch",
@@ -179,10 +177,7 @@ async def test_relaunch_while_a_build_is_running_is_409(
     assert conflict.status_code == 409
     err = conflict.json()["error"]
     assert err["code"] == "build_session_already_active"
-    assert err["sessionId"] == sid
-
-    brain.release()
-    await drain(wire.manager, sid)
+    assert err["sessionId"] == str(session.session_id)
 
 
 async def test_relaunch_another_users_project_is_404(
@@ -851,27 +846,26 @@ async def test_a_press_refused_by_the_one_slot_conflict_still_counts_as_a_press(
     wire,
     empty_harness_counts,
 ) -> None:
-    # Mutation check: move the attempted emit below the snapshot gate and this goes red.
-    brain = BlockingBrain()
-    wire.app.dependency_overrides[run_build_dependency] = lambda: brain
+    """★ ONE OF THE TWO REFUSALS THAT SIT ABOVE THE 404 GATE, and the reason the emit is at
+    function entry rather than after it. A live build owns the one-per-user slot; the citizen
+    pressed the control and did not see their app, which is exactly the press this counter has
+    to catch.
+
+    Mutation check: move the attempted emit below the snapshot gate and this goes red.
+
+    The occupant is an `ensure_sandbox` session (re-fixtured off the deleted start route). It
+    emits none of the three counters this asserts on — those live in `relaunch_preview` alone —
+    so the single `[1]` below is still the single press this test is about."""
     user, project = await _user_project(db_session, "rl-count-409@rvaiglobal.com")
     await _seed_snapshot(db_session, user, project, fake_storage)
 
-    started = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build it"},
-        headers=auth_headers(user),
-    )
-    assert started.status_code == 201
+    await a_live_session(wire, db_session, user, project.id)
 
     assert (await _relaunch(client, user, project)).status_code == 409
 
     assert await _counter_values(HarnessCounter.APP_START_ATTEMPTED) == [1]
     assert await _counter_values(HarnessCounter.APP_START_REACHED_RUNNING) == []
     assert await _counter_values(HarnessCounter.APP_COLD_START_MS) == []
-
-    brain.release()
-    await drain(wire.manager, started.json()["sessionId"])
 
 
 async def test_a_press_refused_because_reclaiming_would_destroy_work_still_counts(

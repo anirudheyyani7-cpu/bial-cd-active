@@ -6,14 +6,22 @@ answers about saved code, a live sandbox about the tree in front of the model. W
 these tools allow is written once, here; WHICH workspace answers is a fact about the
 run, not the ability.
 
-WHY THIS EXISTS: `run_command` is contained fail-closed and layered — exec-style argv
-only (no shell), argv[0] must be on `_GUEST_LIST` with per-command deny flags for
-write-capable forms (`sed` restricted to numeric range-print), every token vetted
-against path escape. It runs through the supervisor in the app's own container (which
-holds `BIAL_DATABASE_URL` and a Blob SAS) or, with no sandbox configured, jailed on the
-control-plane server under `_minimal_env` (no DSN, no tokens) — the policy is identical
-either way. Output is capped, de-escaped, redacted, de-noised, and cut to head+tail with
-the loss stated — mirrors, never imports, `orchestrator/tools._redact_command_output`; a
+WHY THIS EXISTS: `run_command` is contained fail-closed and layered — exec-style argv only, no
+shell, so pipes, redirection, and chaining are structurally impossible, and `sh`/`bash` are not
+on the guest list. argv[0] must be on `_GUEST_LIST` (POSIX read-only classics), with per-command
+deny flags catching each binary's write-capable forms (`sed -i`, `find -delete`/`-exec`/
+`-fprintf`, `tail -f`); `sed` additionally goes through a script validator because its danger
+lives in the script argument (`w`/`W` write files, GNU `e` executes) — only the numeric
+range-print form (`sed -n '40,80p' file`) is admitted. Every argv token is vetted against path
+escape (absolute, `~`, `..` segments). WHERE it runs depends on the workspace, and the two differ
+materially: on the LIVE container (the normal case) the command goes through the supervisor into
+the app's own environment — which holds `BIAL_DATABASE_URL` and a Blob SAS — with the
+supervisor's own timeout and secret redaction; on the snapshot fallback (only when no sandbox
+service is configured) it runs jailed on the control-plane server under `_minimal_env` (no DSN,
+no tokens). The policy above is identical either way; the surroundings are not, and the richer
+one is now the normal case. Output is capped, de-escaped, redacted, de-noised, and cut to
+head+tail with the loss stated — mirrors, never imports, `orchestrator/tools`'s
+`_redact_command_output` so this module adds no runtime edge into the sandbox tool module; a
 table-driven test pins the pair identical. `psql` is never on this allowlist.
 
 THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY: pydantic-ai sends each
@@ -505,9 +513,9 @@ def _minimal_env(home: Path) -> dict[str, str]:
 
 def _vet_sed_script(argv: Sequence[str]) -> str | None:
     """`sed`'s write/execute surface lives in its SCRIPT (`w`/`W` write files, GNU `e`
-    runs commands), so flags alone can't make it safe. Admit only the one shape the plan
-    names — numeric range printing (`sed -n '40,80p' file`) — and teach everything else
-    toward `read_file`/`search_files`."""
+    runs commands), so flags alone can't make it safe. Admit only the one safe shape —
+    numeric range printing (`sed -n '40,80p' file`) — and teach everything else toward
+    `read_file`/`search_files`."""
     scripts: list[str] = []
     files: list[str] = []
     tokens = list(argv[1:])
@@ -890,10 +898,10 @@ def read_only_toolset[DepsT](
     """Build the four read tools over whatever workspace `workspace_of` resolves. Generic
     over deps so ONE surface serves every consumer — Plan (`ReadDeps`), classification
     review (`ReviewDeps`), Build's borrowed reads (which must add ONLY
-    `list_files`/`search_files`; `read_file`/`run_command` already exist on
-    `build_agent`, so tool names stay unique per run). Inner tools annotate
-    `RunContext[Any]`, not `RunContext[DepsT]`, because pydantic-ai's `get_type_hints`
-    can't see the enclosing PEP-695 type param; the `cast` at the return narrows back."""
+    `list_files`/`search_files`; `read_file`/`run_command` already exist on the sandbox
+    toolset, so tool names stay unique per run). Inner tools annotate `RunContext[Any]`,
+    not `RunContext[DepsT]`, because pydantic-ai's `get_type_hints` can't see the
+    enclosing PEP-695 type param; the `cast` at the return narrows back."""
 
     async def read_file(ctx: RunContext[Any], path: str, start_line: int = 1) -> str:
         """Read a file from the app (line-numbered), up to 400 lines per call. Pass

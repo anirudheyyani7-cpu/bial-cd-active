@@ -46,8 +46,11 @@ async def test_suspended_at_set_and_clear_roundtrip(db_session) -> None:
 
 
 def test_chain_ends_at_a_single_linear_head() -> None:
-    # Pins the exact head, not just the count `test_alembic_single_head.py` already guards,
-    # so a rebase that silently re-parents a revision fails here instead of at deploy.
+    # Pins the exact head, not just the count `test_alembic_single_head.py` already guards, so a
+    # rebase that silently re-parents a revision fails here instead of at deploy. The head moved
+    # past 0037_deleted_project_description to 0038_app_previous_status (the app row remembers
+    # what it was before the kill switch, so a re-enable puts it back rather than inventing an
+    # approval).
     #
     # SAY THIS OUT LOUD IN THE PULL REQUEST when it moves: CI runs the static gates and the
     # single-head COUNT and deliberately does not run pytest, so this name-pinned assertion
@@ -56,4 +59,4 @@ def test_chain_ends_at_a_single_linear_head() -> None:
     # `down_revision` really is the head you expected to build on.
     config = Config(str(_BACKEND_ROOT / "alembic.ini"))
     heads = ScriptDirectory.from_config(config).get_heads()
-    assert heads == ["0036_deleted_projects"]
+    assert heads == ["0038_app_previous_status"]

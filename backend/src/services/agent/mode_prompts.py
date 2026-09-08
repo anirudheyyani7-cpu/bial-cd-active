@@ -23,6 +23,7 @@ from src.core.prompt_blocks import (
     DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY,
     FIRST_SLICE_RULE,
     KEEP_PLANNING_LABEL,
+    NARRATION_EXAMPLES,
     NARRATION_VOICE,
     PORTAL_SURFACES,
     WRITE_IDENTITY,
@@ -42,8 +43,15 @@ class PromptContext:
 
 
 def _base(context: PromptContext, kind: ChatKind) -> str:
-    """BASE — identity, project grounding, the portal self-description, and the one
-    cross-mode safety block. Shared by every kind, each wording exactly once.
+    """BASE — the voice examples, identity, project grounding, the truthful portal
+    self-description, and the one cross-mode safety block. Shared by every kind so each wording
+    exists exactly once.
+
+    THE EXAMPLES COME BEFORE THE IDENTITY SENTENCE. The audience contract has never been missing
+    from this prompt; what it lacked was a position and a pair of sentences to match against.
+    `NARRATION_VOICE` still states the rule where it always has, some 530 words in — this is the
+    same contract shown first, in three pairs the model reads before it writes anything.
+    Anything inserted above it takes that away.
 
     THE ONE THING BASE VARIES BY KIND: the same `DATA_INTEGRITY_RULES` string with two
     Build-only clauses dropped (the destructive-SQL sentinel, the migration channel) via
@@ -66,7 +74,7 @@ def _base(context: PromptContext, kind: ChatKind) -> str:
         else DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY
     )
     return (
-        f"{identity}\n\n{PORTAL_SURFACES}\n\n{integrity}\n\n"
+        f"{NARRATION_EXAMPLES}\n\n{identity}\n\n{PORTAL_SURFACES}\n\n{integrity}\n\n"
         f"{NARRATION_VOICE}\n\n{FIRST_SLICE_RULE}"
     )
 
@@ -138,21 +146,25 @@ _WRITE_SEGMENT = f"""\
 {BUILD_WORKING_RULES_HEAD}
 
 {BUILD_WORKING_RULES_TAIL}"""
-"""WRITE's segment — the same shared blocks `BUILD_SYSTEM_PROMPT` composes from, so the two can
-never drift. The original objection to a Write segment here — "it could only ever drift
-from `orchestrator/prompt.py`" — is true of a COPY and false of a shared import, which is what
-this is.
+"""WRITE's segment, and since the build harness was deleted THE ONLY WRITE PROMPT THERE IS. It
+composes from the shared `core/prompt_blocks.py` sources rather than typing the text out, which is
+what kept it from drifting against the standalone `BUILD_SYSTEM_PROMPT` while that existed — and
+is now simply where the one copy lives. The original objection to a Write segment here — "it
+could only ever drift from `orchestrator/prompt.py`" — was true of a COPY and false of a shared
+import, which is what this is.
 
-`DATA_INTEGRITY_RULES` is deliberately ABSENT from this list even though the build prompt names
-it: `_base(context)` already appends it for every mode, so naming it again would emit the whole
-block twice in every Write prompt.
+`DATA_INTEGRITY_RULES` is deliberately ABSENT from this list even though a Write turn is told the
+rules: `_base(context)` already appends them for every mode, so naming them again would emit the
+whole block twice in every Write prompt.
 
 `NARRATION_VOICE` (the audience contract) is ABSENT for the same reason and must
-stay so: `_base(context)` names it for every kind now, so adding it here would print the whole
-voice rule twice in a composed Build prompt while the standalone build prompt printed it once —
-the two build prompts drifting in the one dimension the shared blocks exist to keep identical.
-A test counts it at exactly one in the composed prompt, and that count is the guard against the
-deletion this block has already suffered twice."""
+stay so: `_base(context)` names it for every kind, so adding it here would print the whole voice
+rule twice. A test counts it at exactly one in the composed prompt, and that count is the guard
+against the deletion this block has already suffered twice.
+
+`NARRATION_EXAMPLES` is ABSENT for a third reason on top of that one: `_base()` names it, and it
+has to lead the composed prompt. Naming it in a segment would put a second copy six hundred words
+down — the position is the point, and a copy in the middle quietly cancels it."""
 
 
 # --- THE PER-TURN RESTATEMENT IS GONE, and nothing replaced it ------------------------

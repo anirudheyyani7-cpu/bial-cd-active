@@ -99,7 +99,7 @@ const shellRoot = () => grid().parentElement as HTMLElement
 /** Every pane prop at its quiet default. Individual tests set only what they are about. */
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: false, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -349,7 +349,7 @@ describe('the workspace channel — a publish wakes only what it concerns', () =
 describe('the workspace channel — what survives its publisher\'s unmount, and what must not', () => {
   function Surface() {
     useWorkspaceProject('p1')
-    usePublishAddress({ url: 'https://app.example/', status: 'ready' }, 'p1')
+    usePublishAddress({ url: 'https://app.example/', status: 'ready', serving: true }, 'p1')
     usePublishPaneView(EMPTY_PANE)
     useAppPaneVisible(true)
     usePublishSaveState(true)
@@ -407,7 +407,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
     // The asymmetry is the whole point: a `null` project claims nothing, and only a DIFFERENT one
     // invalidates a held address. `AppPaneHost` owns the rule.
     function Declarer({ project }: { project: string | null }) {
-      usePublishAddress({ url: 'https://app.example/', status: 'ready' }, 'p1')
+      usePublishAddress({ url: 'https://app.example/', status: 'ready', serving: true }, 'p1')
       useWorkspaceProject(project)
       return null
     }

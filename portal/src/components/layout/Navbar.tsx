@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // `Info` is NOT left over from the removed settings menu — it is the toast's own icon
 // (see the toast render below). The nine icons that went with the deleted header controls
@@ -11,6 +11,7 @@ import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import type { UsageToday } from '../../utils/usage'
 import { revokeAllAttachmentUrls } from '../../utils/attachmentApi'
 import { fetchAppStatusCounts } from '../../utils/appRegistryApi'
+import { projectsListHref, rememberProjectsSearch } from '../../utils/projectsListMemory'
 import WaitingCountBadge from '../admin/WaitingCountBadge'
 import FeedbackModal from '../FeedbackModal'
 import BIALLogo from '../BIALLogo'
@@ -46,6 +47,15 @@ export default function Navbar() {
   const navigate = useNavigate()
   // The workspace's unsaved-work guard, or a pass-through on every page that has no workspace.
   const exit = useWorkspaceExit()
+
+  // THE HALF THE ADDRESS BAR CANNOT DO BY ITSELF. `ProjectsPage` mounts its own instance of this
+  // same component, so THIS is the one place already positioned to notice every time the address
+  // bar reads `/projects` and remember what it carried. The brand link below reads it back when
+  // leaving from somewhere else, rather than resetting the list to page one.
+  const location = useLocation()
+  useEffect(() => {
+    if (location.pathname === '/projects') rememberProjectsSearch(location.search)
+  }, [location.pathname, location.search])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [usage, setUsage] = useState<UsageToday | null>(null)
@@ -55,10 +65,9 @@ export default function Navbar() {
   // user is a superadmin (see the effect below).
   const [waiting, setWaiting] = useState<number | null>(null)
   // The /auth/me profile carries { id, email, display_name, is_admin, limits, chat_kinds } —
-  // this comment used to say it had no role or isAdmin and that RBAC was deferred, which is
-  // contradicted three lines of this same component later: `isAdmin` gates the waiting-count
-  // fetch and the admin link. Only the DISPLAY bits are derived, and only because the profile
-  // has no separate name/username field.
+  // role IS on it, and this component depends on that three lines later: `isAdmin` gates both
+  // the waiting-count fetch and the admin link. Only the DISPLAY bits are derived, and only
+  // because the profile has no separate name/username field.
   const user = getStoredUser()
   const displayName = user?.display_name || user?.email || 'User'
   const secondaryLine = user?.display_name ? user?.email || '' : ''
@@ -178,13 +187,17 @@ export default function Navbar() {
                 every other page's navigation is untouched by this.
 
                 THE DESTINATION IS `/projects`, not `/dashboard`: that address is a redirect now,
-                and the most-clicked element in the product should not pay an extra hop
-                through it. The guard is unchanged — only where it lets you go. */}
+                and the most-clicked element in the product should not pay an extra hop through it.
+                The guard is unchanged — only where it lets you go.
+
+                THE DESTINATION CARRIES THE LIST BACK. Read fresh at click time rather than memoised
+                at render, so a search typed a moment ago on `/projects` is what this lands on — not
+                a page-one reset the citizen never asked for. */}
             <NavLink
               to="/projects"
               onClick={(e) => {
                 e.preventDefault()
-                exit(() => navigate('/projects'))
+                exit(() => navigate(projectsListHref()))
               }}
               className="flex items-center whitespace-nowrap"
             >

@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   fetchUsageToday: vi.fn(),
@@ -471,5 +471,79 @@ describe('Navbar — the workspace exit guard', () => {
     fireEvent.click(screen.getByRole('link', { name: /^projects$/i }))
 
     expect(screen.getByTestId('where').textContent).toBe('/projects')
+  })
+})
+
+/**
+ * THE BRAND LINK CARRIES THE PROJECTS LIST STATE BACK (R45, plan U35, `#208`).
+ *
+ * `#208` put `page`, `pageSize` and `q` in `/projects`'s own address — reading that in is
+ * `ProjectsPage.test.tsx`'s job. This link is mounted on a DIFFERENT address (a project, a chat,
+ * admin, marketplace, help) and has always had to name a destination without ever having read
+ * that query string itself; before this it hardcoded a bare `/projects`. `ProjectsPage` mounts
+ * its OWN instance of this exact component, which is what lets THIS suite drive both halves —
+ * render while the address bar reads `/projects?…`, navigate away, and check where the brand
+ * link goes — without needing `ProjectsPage` in the tree at all.
+ */
+describe('Navbar — the brand link carries the projects list state back (R45, `#208`)', () => {
+  // Every test in this block sees a clean, "nothing remembered yet" tab — otherwise the FIRST
+  // test's memory would silently stand in for the second's fresh session.
+  afterEach(() => sessionStorage.removeItem('projectsListSearch'))
+
+  function WhereFull() {
+    const loc = useLocation()
+    return <span data-testid="where-full">{loc.pathname + loc.search}</span>
+  }
+
+  function GoTo({ to }) {
+    const navigate = useNavigate()
+    return (
+      <button type="button" data-testid="goto" onClick={() => navigate(to)}>
+        go
+      </button>
+    )
+  }
+
+  const renderAcross = (from) =>
+    render(
+      <MemoryRouter initialEntries={[from]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <Navbar />
+                <WhereFull />
+                <GoTo to="/chat/c1" />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+  it('★ remembers the list address seen on `/projects` and returns to it, not to page one', async () => {
+    renderAcross('/projects?page=2&pageSize=20&q=ramp')
+    // LIVENESS FIRST: the navbar actually rendered on this address, not a crash a bare
+    // destination check below would miss.
+    expect(await screen.findByTestId('usage-meter')).toBeTruthy()
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects?page=2&pageSize=20&q=ramp')
+
+    // Leave for a page that has nothing to do with the list — the memory has to outlive this.
+    fireEvent.click(screen.getByTestId('goto'))
+    expect(screen.getByTestId('where-full').textContent).toBe('/chat/c1')
+
+    fireEvent.click(screen.getByRole('link', { name: /kempegowda/i }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects?page=2&pageSize=20&q=ramp')
+  })
+
+  it('falls back to the bare list when this tab never saw a search on `/projects`', async () => {
+    renderAcross('/chat/c1')
+    expect(await screen.findByTestId('usage-meter')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('link', { name: /kempegowda/i }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects')
   })
 })

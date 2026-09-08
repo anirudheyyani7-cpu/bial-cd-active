@@ -9,7 +9,7 @@
  * chat that bypasses the guardrail below. The kind picker is this file's: a chat's kind is fixed
  * at creation, and what each kind is CALLED and what it DOES come from `utils/chatKind.ts`.
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import { ShieldAlert, X } from 'lucide-react'
@@ -89,6 +89,31 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   const [kind, setKind] = useState<ChatKind>('build')
   const [guardRailModal, setGuardRailModal] = useState<PromptViolation | null>(null)
   const [urgent, setUrgent] = useState<string | null>(null)
+  const railRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * CLOSING THE GUARDRAIL PUTS THE CARET BACK IN THE MESSAGE (R43, #187).
+   *
+   * This dialog is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
+   * captures the element that had focus and nothing restores it. Dismissing it dropped focus on
+   * `<body>`, where the next Tab starts again from the top of the document: a keyboard citizen
+   * who pressed Send had to tab all the way back through the shell to reach their own message.
+   *
+   * THE BOX, NOT THE SEND CONTROL, is the target — the primary action here says "Edit My Prompt",
+   * and the refusal deliberately keeps everything typed (`SendRefusal`, above), so the one thing
+   * left to do is edit the text that is still sitting there. Both routes out of the dialog lead
+   * to the same place, so both use this.
+   *
+   * FOUND IN THIS RAIL'S OWN SUBTREE, the way the library's `ComposerPrimitive.Root` finds it to
+   * implement click-blank-space-to-focus: the composer's input is the one textarea here, and it
+   * belongs to a component this file mounts rather than renders, so there is no ref to hold. The
+   * scope is the ref, never the document — the same idiom the four hand-rolled dialogs beside
+   * this one use for their focus traps.
+   */
+  const closeGuardRail = useCallback((): void => {
+    setGuardRailModal(null)
+    railRef.current?.querySelector('textarea')?.focus()
+  }, [])
 
   /**
    * ASKS FOR THE WORKSPACE BEFORE IT NAVIGATES, which is why this is not a two-line navigate.
@@ -194,7 +219,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   const picked = useMemo(() => chatKindFor(kind), [kind])
 
   return (
-    <div className="font-manrope">
+    <div ref={railRef} className="font-manrope">
       {/* THE BOARD'S SEGMENTED CONTROL: a #F0F4F8 track with a white pill on the selected item.
           No hue at all — the selection is signalled by elevation, which is what keeps it legible
           and is why the icon takes its colour from the label rather than from the kind. */}
@@ -282,7 +307,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setGuardRailModal(null)}
+                onClick={closeGuardRail}
                 className="text-neutral hover:text-tertiary"
               >
                 <X size={16} />
@@ -302,7 +327,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
             <div className="flex justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setGuardRailModal(null)}
+                onClick={closeGuardRail}
                 className="rounded-xl bg-primary px-5 py-2 text-sm font-bold text-white transition hover:bg-primary/90"
               >
                 Edit My Prompt

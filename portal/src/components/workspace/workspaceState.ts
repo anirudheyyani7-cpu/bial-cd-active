@@ -318,7 +318,7 @@ export interface WorkspaceState {
    * every one of them to restate two nulls they have no opinion about buys nothing: the totality
    * that matters is the MAP's, and `workspaceState.test.ts` pins its whole key set, so an arm that
    * forgets either field fails a test rather than passing a compile. The same note applies to
-   * `note` below.
+   * `note` and `busy` below.
    *
    * A SLOT RATHER THAN A LIST, and the choice is worth recording because a list was the obvious
    * shape. Two things decided it. The pane's two controls are not peers — one is the remedy the
@@ -345,6 +345,31 @@ export interface WorkspaceState {
    * `null` everywhere else, which is every state that did nothing to anybody.
    */
   readonly note?: string | null
+  /**
+   * THE PLATFORM IS WORKING ON THIS RIGHT NOW — the wait's own flag.
+   *
+   * A wait has to say three things: what it is doing, that it IS doing it, and when it stops. The
+   * first is the headline and the detail, which every state has. This is the second, and until it
+   * existed the only state with a wait in it — `starting` — exposed nothing a reader could hear:
+   * no `aria-busy` anywhere on the pane, and no action row to carry one, because `starting` offers
+   * no action at all.
+   *
+   * IT IS A FACT ABOUT THE WORKSPACE, NOT A RENDERING DECISION, which is why it lives here beside
+   * the sentence rather than being re-derived from `name === 'starting'` at each of the two
+   * surfaces. A second surface deriving it is a second author for the same claim, and the moment a
+   * second waiting state exists the two would disagree.
+   *
+   * TRUE ON EXACTLY ONE ARM TODAY. `could-not-read` is pointedly not busy — a read that failed is
+   * not work in progress — and neither are the three start outcomes, which describe a press that
+   * has already finished.
+   *
+   * OPTIONAL IN THE TYPE, MANDATORY IN THE MAP, for the reason `secondAction` states above: the
+   * suites that hand-build a state must not have to restate a `false` they have no opinion about,
+   * and `workspaceState.test.ts` pins the map's whole key set so an arm that forgets it goes red.
+   * IT IS ALSO COMPARED BY {@link sameWorkspaceState} — a field this map can change and that
+   * comparator cannot see is a pane that never re-renders, with nothing red anywhere.
+   */
+  readonly busy?: boolean
 }
 
 /**
@@ -352,17 +377,56 @@ export interface WorkspaceState {
  * them, so this is exact — and it is what lets a poll that keeps returning the same answer stop
  * waking the surfaces rendering it.
  */
+/**
+ * ONE COMPARISON PER FIELD, KEYED BY THE FIELD — so a new member of `WorkspaceState` that nobody
+ * compares is a COMPILE error here, not a test failure somewhere else.
+ *
+ * This used to be an `&&` chain, and its own docblock admitted the hazard: an implementer who
+ * added a field and forgot it "fails a test rather than passing a compile". That is exactly
+ * backwards for the cell this guards — `sameReport` delegates to it and the report's subscriber
+ * is the whole shell, so a field it does not compare is a field the pane never re-renders for.
+ * The failure is silent, and it is one someone has to already suspect to go looking for.
+ *
+ * `Required<WorkspaceState>` is what does the work: mapping over it makes every key mandatory in
+ * this record, including the ones that are optional in the state itself, so omitting an entry is
+ * `TS2741` AT THE RECORD — where the person adding the field is standing.
+ *
+ * `?? null` / `?? false` on the optional members because an omitted field and an explicit null
+ * are the same claim and must compare equal: otherwise a hand-built value and the map's own would
+ * look like two different states to the cell.
+ */
+const STATE_FIELD_EQ: {
+  [K in keyof Required<WorkspaceState>]: (a: WorkspaceState[K], b: WorkspaceState[K]) => boolean
+} = {
+  name: (a, b) => a === b,
+  headline: (a, b) => a === b,
+  detail: (a, b) => a === b,
+  note: (a, b) => (a ?? null) === (b ?? null),
+  busy: (a, b) => (a ?? false) === (b ?? false),
+  action: (a, b) => sameAction(a, b),
+  secondAction: (a, b) => sameAction(a ?? null, b ?? null),
+}
+
+/** The field names the comparator covers — the test's totality pin reads this rather than a
+ *  second hand-kept list, so the two cannot drift apart. */
+export const WORKSPACE_STATE_FIELDS = Object.keys(STATE_FIELD_EQ).sort()
+
+/** One field, compared by its own entry. Generic in the KEY, which is what lets TypeScript
+ *  correlate the three lookups — the comparator's parameter types and both operands are all
+ *  `WorkspaceState[K]` for the same `K` — so no cast is needed to read them together. Written
+ *  out rather than inlined for exactly that reason: inline, `key` widens to the union and the
+ *  three types stop lining up. */
+const fieldsAgree = <K extends keyof Required<WorkspaceState>>(
+  key: K,
+  a: WorkspaceState,
+  b: WorkspaceState,
+): boolean => STATE_FIELD_EQ[key](a[key], b[key])
+
 export const sameWorkspaceState = (a: WorkspaceState, b: WorkspaceState): boolean =>
   a === b ||
-  (a.name === b.name &&
-    a.headline === b.headline &&
-    a.detail === b.detail &&
-    // `?? null` because the two new fields are optional in the TYPE (see `WorkspaceState`), so an
-    // omitted one and an explicit `null` are the same claim and must compare equal — otherwise a
-    // hand-built value and the map's own would look like two different states to the cell.
-    (a.note ?? null) === (b.note ?? null) &&
-    sameAction(a.action, b.action) &&
-    sameAction(a.secondAction ?? null, b.secondAction ?? null))
+  (Object.keys(STATE_FIELD_EQ) as Array<keyof Required<WorkspaceState>>).every((key) =>
+    fieldsAgree(key, a, b),
+  )
 
 const sameAction = (a: WorkspaceAction | null, b: WorkspaceAction | null): boolean =>
   a === b ||
@@ -451,6 +515,7 @@ export function resolveWorkspaceState(inputs: WorkspaceInputs): WorkspaceState {
         action: null,
         secondAction: null,
         note: null,
+        busy: false,
       }
     case 'starting':
       return gettingReady()
@@ -508,6 +573,7 @@ function heldElsewhere(preview: PreviewState, startOutcome: StartOutcome | null)
       action: null,
       secondAction: null,
       note: null,
+      busy: false,
     }
   }
   return {
@@ -531,6 +597,7 @@ function heldElsewhere(preview: PreviewState, startOutcome: StartOutcome | null)
     note: failure?.stoppedHolder
       ? `“${failure.stoppedHolder}” was stopped, and it still holds your workspace.`
       : null,
+    busy: false,
   }
 }
 
@@ -550,6 +617,7 @@ function fromStartOutcome(outcome: StartOutcome): WorkspaceState {
         action: RETRY,
         secondAction: null,
         note: null,
+        busy: false,
       }
     case 'timed-out':
       return {
@@ -561,6 +629,7 @@ function fromStartOutcome(outcome: StartOutcome): WorkspaceState {
         action: RETRY,
         secondAction: null,
         note: null,
+        busy: false,
       }
     case 'failed':
       return {
@@ -572,6 +641,7 @@ function fromStartOutcome(outcome: StartOutcome): WorkspaceState {
         action: RETRY,
         secondAction: null,
         note: null,
+        busy: false,
       }
     case 'take-back-failed':
       // A FAILED TAKE-BACK'S SECOND ENDING, AND THE EXPECTATION IT SUPERSEDES. "Returns to the
@@ -588,6 +658,7 @@ function fromStartOutcome(outcome: StartOutcome): WorkspaceState {
         // Reached with a holder only from the arm that stopped one. A take-back whose very first
         // ask failed never got that far, and says nothing it did not do.
         note: outcome.stoppedHolder ? `“${outcome.stoppedHolder}” was stopped.` : null,
+        busy: false,
       }
     default:
       return assertNever(outcome)
@@ -620,6 +691,7 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
       action: START,
       secondAction: null,
       note: null,
+      busy: false,
     }
   }
   return {
@@ -631,6 +703,7 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
     action: null,
     secondAction: null,
     note: null,
+    busy: false,
   }
 }
 
@@ -640,16 +713,37 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
  * half a minute" are both dropped; a duration arrives from a measured constant or not at all.
  *
  * ONE FUNCTION FOR TWO ARRIVALS. The server's `starting` and this surface's own in-flight press are
- * the same state — a start is happening — and one sentence keeps them from drifting into two waits.
+ * the same state — a start is happening — and giving them one sentence is what keeps them from
+ * drifting into two slightly different waits.
+ *
+ * THE SECOND SENTENCE, AND THE CLAUSE IT SHIPS WITHOUT. The board draws this state as a still
+ * glyph, a headline and a second sentence, and this arm used to carry only the first two — a
+ * half-second-long headline standing alone over a wait that can run for two minutes. The second
+ * sentence says what the platform is actually doing, which is the difference between a wait a
+ * person can sit through and a screen that looks hung.
+ *
+ * ITS DURATION CLAUSE IS STILL DROPPED, on the rule the docblock above states: the canvas pairs
+ * this sentence with "about thirty seconds" and nothing in this tree has ever measured a cold
+ * start. What replaces it is not a smaller guess but ELAPSED TIME, which `AppPane` counts from the
+ * moment this state arrives — a fact rather than an estimate.
+ *
+ * AND NO PROGRESS BAR. A step-determinate one would advance on the workspace claim, the container
+ * start and the first document served, but the wire carries a single opaque `starting`/`ready`
+ * field — all three happen inside one synchronous backend call — so a bar here could only be
+ * time-determinate, and a bar that sits at 80% for two minutes is worse than the honest still
+ * card.
  */
 function gettingReady(): WorkspaceState {
   return {
     name: 'starting',
     headline: 'Getting your app ready.',
-    detail: null,
+    detail: 'Setting up somewhere for it to run.',
     action: null,
     secondAction: null,
     note: null,
+    // THE ONE ARM THAT IS BUSY. See `WorkspaceState.busy` — this is the state with a wait in it and
+    // no action row, so before this field the pane had no way to say a wait was under way at all.
+    busy: true,
   }
 }
 
@@ -668,5 +762,6 @@ function couldNotRead(): WorkspaceState {
     action: RETRY,
     secondAction: null,
     note: null,
+    busy: false,
   }
 }

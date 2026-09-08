@@ -188,14 +188,34 @@ class StepItem(CamelModel):
 
 
 class TurnTerminalItem(CamelModel):
-    """One turn ended — the row a transcript rebuilds with no live stream to read. A STORED ROW,
-    NOT THE LIVE FRAME: a reload or restart has no frame and can't tell "finished" from "still
-    going" from the last reply. `terminal` reuses `_banner_kind`'s vocabulary so reload and live
-    agree. `reason` travels beside it: `_banner_kind` reads status before reason and collapses
-    named graceful ends into `failed`; the client picks its sentence from `reason`, a MACHINE TOKEN
-    (`stopped_by_user`, `quota_exceeded`) never prose, and `None` when nothing was named, so the
-    client falls back to the neutral sentence. NO `unknown` MEMBER: a killed turn writes no row at
-    all — that absence is a stronger signal than a value a future writer could forget to set."""
+    """One turn ended — the row a transcript rebuilds with no live stream to read.
+
+    A STORED ROW, NOT THE LIVE FRAME: `TurnEndedFrame` says the same thing exactly once, to
+    whoever happened to be subscribed, so a reload or a restart has no frame and cannot tell
+    "this turn finished" from "this turn is still going" — the last thing in the transcript is a
+    reply either way, and anything rendering a turn as a unit (a collapsible group, a spinner, a
+    control that only makes sense while a turn runs) is then stuck on the wrong answer.
+
+    `terminal` REUSES `_banner_kind`'s vocabulary rather than inventing a parallel one, so reload
+    and live derive the same word from the same stored meta; two spellings of "the turn stopped"
+    is how a client ends up with two states for one fact. `reason` TRAVELS BESIDE IT because
+    `_banner_kind` reads status before reason, so every named graceful end collapses into
+    `failed` here, and `failed` alone cannot say whether a citizen pressed Stop, spent their
+    day's limit or had their workspace put back. Coarsening `terminal` was the deliberate trade
+    (see `test_the_terminal_reads_through_the_banners_own_vocabulary`); carrying the reason
+    beside it is the other side of it.
+
+    THE REASON IS A MACHINE TOKEN AND NEVER PROSE — `stopped_by_user`, `quota_exceeded`,
+    `workspace_restored`, `self_heal_budget_exhausted` — a key to look up, never a string to
+    show. `None` for a turn that ended with no named reason, and that absence is meaningful too:
+    it is what makes a client fall back to the neutral sentence for its `terminal` instead of
+    naming a cause nobody recorded.
+
+    ENDED-UNKNOWN IS THE ABSENCE OF THIS ITEM: there is no `unknown` member, because a turn
+    killed by a restart writes no row at all — the process that would have written it is gone.
+    A consumer that finds a turn's rows with no terminal among them knows the turn did not
+    finish cleanly, which is a stronger signal than a value a future writer could forget to
+    set."""
 
     type: Literal["turn_terminal"] = "turn_terminal"
     seq: int
@@ -219,8 +239,14 @@ class BannerItem(CamelModel):
 
 class BuildInProgressItem(CamelModel):
     """A build began here and no outcome closed it — mid-build (live) or lost to a crash.
-    The catch-up snapshot's `active_turn` disambiguates; this item only states the durable
-    truth."""
+    The catch-up snapshot's `active_turn` disambiguates; this item only states the durable truth.
+
+    HISTORICAL ROWS ONLY. Its source, the hidden `build_started` marker, had exactly one writer
+    (`outcome.write_build_started`, called from `SessionManager.start`), and that writer is deleted
+    with the standalone build stack. No new `build_started` row can be created, so this item can
+    only ever be derived from rows already in the database — which is precisely why it, and the
+    three `{session_id}` routes the portal reattaches through, were kept. A build that runs as an
+    ordinary Write chat turn records its ending as a `turn_terminal` row instead."""
 
     type: Literal["build_in_progress"] = "build_in_progress"
     seq: int
@@ -364,9 +390,10 @@ def _file_step_label(tool_name: str, path: str | None) -> tuple[str, bool]:
     `write_file` reads as *Building*, edits as *Updating*, a read as *Looking at*; the state
     glyph carries done-ness.
 
-    READS COME THROUGH HERE TOO: a read arm with its own label (`f"Read {path}"`) would leak
-    a filename via `_friendly_area`'s exact loophole and reach BOTH feeds, live and reload.
-    Routing it through the same helper as the writes makes that structurally impossible."""
+    READS COME THROUGH HERE TOO: a read arm building its own label (`f"Read {path}"`) shows a
+    citizen a FILENAME, which is the one thing `_friendly_area` exists to prevent — and it
+    reaches BOTH feeds, live and reload. Routing it through the same helper the writes use is
+    what makes that structurally impossible to reintroduce on one side only."""
     area, hidden = _friendly_area(path) if path else (_AREA_GENERIC, False)
     verb = {"write_file": "Building", "read_file": "Looking at"}.get(tool_name, "Updating")
     return (f"{verb} {area}", hidden)
@@ -424,8 +451,9 @@ def command_needs_the_long_timeout(argv: list[str]) -> bool:
     """Is this a command that LEGITIMATELY runs for minutes?
 
     Reuses `_classify_command`'s mapping so this can't disagree with the labels about what a
-    command is. Only install and type-check/build qualify — a cold `npm install` or `next
-    build` can burn the full long bound. Everything else gets the short one: the observed
+    command is. Only install and type-check/build qualify — a cold-base `npm install` routinely
+    burns the full long bound and `next build` can too, so killing either at the short bound
+    would fail healthy builds. Everything else gets the short one: the observed
     wedge was a `drizzle-kit generate` blocking on an interactive prompt for 4m09s, and it is
     DELIBERATELY excluded — a migration generate should take seconds, and past minutes the
     honest move is to kill it and tell the model."""
@@ -449,8 +477,11 @@ def long_operation_line(label: str) -> str:
     """A step's friendly label, restated for an operation that has outrun the stillness
     threshold — the harness's own words for "this is still running".
 
-    FAILS CLOSED like the table: an empty label degrades to `_LBL_FALLBACK`, never to
-    nothing, because a blank status line is worse than a generic one. IDEMPOTENT ON
+    FAILS CLOSED LIKE THE TABLE. The input is always a label this module already produced, so
+    it is already free of argv and file paths; an empty one degrades to `_LBL_FALLBACK` rather
+    than to nothing, because a blank status line is a still screen with extra steps.
+
+    IDEMPOTENT ON
     PURPOSE — re-derived from the step's label each refresh and must come back byte-identical,
     or the portal's atomic live region (only re-announces on change) would re-read an
     unchanged line to a screen reader."""
@@ -530,7 +561,13 @@ def _index_tool_results(rows: Sequence[Message]) -> dict[str, tuple[str, bool, i
 
 
 def _closed_sessions(rows: Sequence[Message]) -> set[str]:
-    """Session ids that have a recorded `build_outcome` row."""
+    """Session ids that have a recorded `build_outcome` row.
+
+    Both halves of the pair it answers about are legacy now: `write_build_started` is deleted and
+    `write_build_outcome` only still runs on the `stop` path of a session nothing can create. The
+    two writers had to go or stay TOGETHER — deleting the start marker's writer alone would have
+    left every legacy build rendering as permanently in progress, and deleting the outcome
+    writer alone would have done the same to any build that did start."""
     closed: set[str] = set()
     for row in rows:
         if (
@@ -645,11 +682,20 @@ def update_from_args(args: Any) -> str | None:
     """The words a `tell_the_user` call carries, or None when it carries none that may be shown.
 
     ★ THE SINGLE PLACE THE VOICE CHANNEL'S RULE LIVES — both emitters call this (live at
-    `FunctionToolCallEvent`, reload at the stored part), so nothing renders on either path
-    alone. THE CHARACTER CEILING IS GONE, from here and the tool body together — removing it
-    from only one would have taught the model it may write at length while the renderer kept
-    deleting it. Malformed args (via `_args_dict`) read as missing, not raised — one bad row
-    must not take a whole transcript down."""
+    `FunctionToolCallEvent`, reload at the call's stored part), so a call carrying nothing
+    renders nothing on either path.
+
+    THE CHARACTER CEILING IS GONE, from here and the tool body together. A number here decided
+    how much of what the model had written a citizen was allowed to read, and a call one
+    character over it vanished entirely — refused at the tool, dropped at the renderer, so the
+    citizen got silence where the agent had spoken. Removing it from only one of the two would
+    have been worse than leaving it: the model would be taught it may write at length while the
+    renderer went on deleting it.
+
+    Both stored shapes go through `_args_dict`: pydantic-ai persists a tool call's `args` as a
+    JSON string or as an object depending on the provider. A malformed argument is the same
+    answer as a missing one, and a projection that raised would take a whole transcript down
+    over one row."""
     parsed = _args_dict(args)
     update = parsed.get("update")
     if not isinstance(update, str):
@@ -752,12 +798,17 @@ def finished_from_args(args: Any) -> str | None:
 def agreed_slice(messages: Sequence[Any]) -> list[str]:
     """What the citizen last agreed to build first, read out of the conversation's own record.
 
-    ★ LATEST WINS, no stored linkage anywhere: the agreed list is the arguments of the most
-    recent `propose_first_slice` call in these messages, so re-proposing mid-build replaces
-    the agreement with nothing that can go stale when a deferred piece is delivered later.
-    ORDER-DEPENDENT ON PURPOSE — callers must pass messages oldest-first (both do). Accepts
-    serialized payload dicts OR pydantic-ai message objects: the engine holds live
-    `ModelResponse`s, a reader over stored rows holds payload dicts."""
+    ★ LATEST WINS, and there is no stored linkage anywhere: the agreed list is the arguments of
+    the most recent HONOURABLE `propose_first_slice` call in these messages. That is the same
+    route the plan itself travels — the conversation's own rows — so re-proposing mid-build
+    replaces the agreement without a column, a table, or anything that can go stale when a later
+    build quietly delivers a deferred piece.
+
+    ORDER-DEPENDENT ON PURPOSE — callers must pass messages oldest-first, and both do: the run's
+    `message_history` and `load_rows`'s `ORDER BY seq` are the only two sources. Accepts
+    serialized payload dicts OR pydantic-ai message objects, because the two callers hold
+    different shapes of the same fact: the engine has live `ModelResponse`s, a reader over
+    stored rows has payload dicts."""
     agreed: list[str] = []
     for message in messages:
         for part in _parts_of(message):
@@ -777,7 +828,9 @@ def finished_slice(messages: Sequence[Any]) -> set[str]:
     THE OTHER HALF OF `agreed_slice`: the agreement is re-derived every turn, so its marks must
     be too, or turn two would falsely report turn one's finished piece as still outstanding.
     A NEW PROPOSAL CLEARS THEM, mirroring the live rule — marks against a since-re-proposed
-    slice are not evidence about the new one. SCOPED TO WHAT WAS AGREED: a mark naming
+    slice are not evidence about the new one, the same reasoning `_already_marked_against`
+    gives. Scoping by POSITION rather than by name matters because a piece can be named in both
+    the old agreement and the new one. SCOPED TO WHAT WAS AGREED: a mark naming
     something outside the current agreement is ignored, or an invented name would make the
     remainder's honest arm unreachable."""
     agreed = agreed_slice(messages)
@@ -932,6 +985,52 @@ def _project_response_parts(
         # thinking / builtin-tool / file / compaction parts render nothing (reasoning and
         # provider internals are not chat content); unknown kinds are skipped, not raised —
         # a NEWER writer's part must degrade to invisible, never break every reload.
+
+
+def measured_context_tokens(rows: Sequence[Message]) -> int | None:
+    """How full this conversation is, off the stored rows — or None when nobody has measured it.
+
+    ★ THE TWIN OF `usage.context_window.enforce_context_limit`'s occupancy, and they must stay
+    twins: this is the number the browser's meter shows and that one is the number the server
+    refuses on. Same rule, two inputs — the check reads a validated `list[ModelMessage]` the
+    route already loaded, and this reads the RAW JSONB, because that is what this module is
+    allowed to touch (validating here would coerce a stored attachment marker into a
+    `CachePoint` and demand a rehydration a read must never pay for — see the module docstring).
+    `tests/services/messages/test_context_measure.py` pins the two against each other.
+
+    ★ RAW `input_tokens`, AND NEVER `billable_spend` / `weighted_spend`. Under pydantic-ai
+    `input_tokens` is ALREADY INCLUSIVE of both cache classes, which is exactly the occupancy
+    wanted; the weighted helpers are COST figures that discount a cache read to a tenth because
+    that is what it costs. A cached token still occupies the window, byte for byte. Real
+    conversations here run 97-99% cache-read, so a spend-shaped number reads a 190,000-token
+    chat as a 23,500-token one. This codebase has shipped that confusion three times, twice past
+    review; verify any change by RUNNING `RequestUsage.extract` on a cache-heavy payload, never
+    by reading a docstring — reading is what reinforced the wrong belief twice.
+
+    ★ THE LARGEST, NOT THE LAST. Rows the PLATFORM wrote carry a `RequestUsage` whose every
+    field is zero, because no provider ever served them; so does the hidden per-turn terminal
+    row, which carries no payload at all. "The last response" reads one of those zeros and
+    hands a full conversation back as an empty one — the under-count that lets an over-long
+    chat past the meter. A maximum cannot be fooled that way, and a prompt only grows, so the
+    largest measurement is also the most recent real one. A zero is therefore NOT a
+    measurement, and a conversation with none answers None: unmeasured, not empty."""
+    measured: list[int] = []
+    for row in rows:
+        payload = row.payload
+        if not isinstance(payload, list):
+            continue  # system-event rows carry no messages (the turn terminal is one)
+        for message in payload:
+            if not isinstance(message, dict) or message.get("kind") != "response":
+                continue
+            usage = message.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            reported = usage.get("input_tokens")
+            # `bool` is an `int` in Python and `True` would sort as 1; narrowed, not cast,
+            # because `payload` is untyped JSON and a non-number there is no measurement.
+            if isinstance(reported, int) and not isinstance(reported, bool) and reported > 0:
+                measured.append(reported)
+    return max(measured, default=None)
 
 
 def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:

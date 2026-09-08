@@ -12,12 +12,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import delete, select
 
+from src.api.v1.projects.router import DESCRIPTION_RATE_LIMIT
 from src.config import settings
 from src.db.models.project import Project
-from src.db.models.token_usage import TokenUsage
+from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.db.models.user_limit import UserLimit
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.usage.gate import record_usage
+from src.services.projects import describe
+from src.services.usage.gate import record_usage, usage_today
+from src.services.usage.limits import MODEL_CONTEXT_WINDOW
 from tests.factories import (
     AppRegistryFactory,
     ProjectFactory,
@@ -148,23 +151,60 @@ async def test_generated_result_is_length_capped(client, db_session, set_chat_mo
     assert len(resp.json()["description"]) == 2000  # capped at MAX_PROJECT_DESCRIPTION
 
 
-async def test_generation_bills_usage(client, db_session, set_chat_model) -> None:
-    # Generation is a normal billed turn: a successful run MUST fold its tokens into
-    # today's usage — dropping record_usage would otherwise keep the suite green.
-    set_chat_model(TestModel(custom_output_text="Billed description."))
+async def test_generation_is_metered_against_the_citizen_but_not_billed_to_them(
+    client, db_session, set_chat_model
+) -> None:
+    """★ BOTH HALVES ARE THE TEST. The platform reasons about the citizen's code because they
+    pressed "generate a description", not because they asked for tokens — so the spend is
+    RECORDED against them (it stays attributable, and an operator can see what the feature
+    costs) and does NOT come out of the day's allowance they build with.
+
+    It writes under `review`, the kind `gate._used_today` does not read — the same carve-out the
+    pre-publish classification review already uses, reached through the same `kind` parameter
+    rather than a second mechanism.
+
+    THE CONTROL AT THE END IS LOAD-BEARING. Without it this test passes just as well against a
+    daily meter that reads nothing at all; with it, the only thing that can explain the two
+    numbers is the kind on the row."""
+    set_chat_model(TestModel(custom_output_text="Metered description."))
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id)
     await AppRegistryFactory.create(
         db_session, user_id=user.id, project_id=project.id, current_code=_CODE
     )
+    before = (await usage_today(db_session, user.id)).used
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
+
+    # Recorded: a row exists, it carries real tokens, and it is the citizen's own.
     row = await db_session.scalar(select(TokenUsage).where(TokenUsage.user_id == user.id))
     assert row is not None
-    # The billable total is input + output (cache is already inside input_tokens).
-    total = row.input_tokens + row.output_tokens
-    assert total > 0
+    assert row.input_tokens + row.output_tokens > 0
+    # …under the kind the gate does not count. Drop the `kind=` argument in `describe.py` and
+    # this line goes red, then so does the next one.
+    assert row.kind is TokenUsageKind.REVIEW
+
+    # Not billed: the number the daily gate compares against a cap has not moved.
+    assert (await usage_today(db_session, user.id)).used == before
+
+    # THE CONTROL: an ordinary build turn's spend still moves it, unchanged.
+    await record_usage(db_session, user.id, input_tokens=1_000, output_tokens=100)
+    assert (await usage_today(db_session, user.id)).used > before
+
+
+def test_the_code_budget_is_an_absolute_number_not_a_share_of_the_window() -> None:
+    """★ THE MUTANT THIS FILE HAD NO GUARD FOR. The budget used to be `MODEL_CONTEXT_WINDOW * 3`,
+    so correcting the window from 200,000 to the 1,000,000 the deployment actually serves would
+    have handed this generator FIVE TIMES more source — a cost and latency change nobody decided,
+    in a feature that writes two to four sentences.
+
+    So the number is pinned as a number, and the first assertion goes red the moment anyone
+    re-derives it. The second is the subtler guard: it fails whenever the budget once again
+    happens to EQUAL the window times three — the coincidence that let the derivation look
+    harmless for as long as it did, and the state a revert of the window would restore."""
+    assert describe._CODE_CHAR_BUDGET == 600_000
+    assert describe._CODE_CHAR_BUDGET != MODEL_CONTEXT_WINDOW * 3
 
 
 async def test_blank_generation_clears_to_null_not_empty_string(
@@ -317,8 +357,8 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
     assert resp.json() == {"error": {"message": "Project not found."}}
     # The turn DID bill before losing the race, so record_usage rode the failed commit — the
     # usage write and the description write share one transaction (record_usage never commits
-    # on its own; the success side is pinned by test_generation_bills_usage), so the 404 rolls
-    # the billing back with it rather than charging for a turn that never landed.
+    # on its own; the success side is pinned by the metered-but-not-billed test above), so the
+    # 404 rolls the billing back with it rather than charging for a turn that never landed.
     assert billed["n"] == 1
 
 
@@ -328,3 +368,94 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
 # description — and never in another user's — is a property of the surface that SENDS, which is a
 # different thing from where a description is written. It is pinned in
 # `tests/api/v1/conversations/test_project_grounding.py`; do not re-add it here.
+
+
+async def test_a_burst_of_generations_is_rate_limited_per_user(
+    client, db_session, set_chat_model
+) -> None:
+    """THE ROUTE'S ONLY PER-USER SPEND BOUND. Its daily-token exemption is deliberate —
+    what this route spends is recorded under `review` and never counted back into the
+    citizen's budget — so `enforce_daily_limit` above admits call N for every N.
+    Each admitted call ships up to `CODE_BUDGET_CHARS` of app source to the premium
+    deployment. Without the limiter the exemption is an uncapped spend channel, which is
+    exactly the pairing the classification review already ships (its exemption travelled
+    here; its bound did not).
+    """
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=project.id, current_code=_CODE
+    )
+    url = f"/v1/projects/{project.id}/description:generate"
+
+    codes = [
+        (await client.post(url, headers=headers)).status_code
+        for _ in range(DESCRIPTION_RATE_LIMIT + 1)
+    ]
+
+    assert codes[-1] == 429
+    assert codes[:-1] == [200] * DESCRIPTION_RATE_LIMIT  # every admitted call really generated
+    # The refusal is the LIMITER's envelope, not the daily gate's 5-key body — the two
+    # 429s on this route are different shapes and the schema documents both.
+    over = await client.post(url, headers=headers)
+    assert "error" in over.json() and "message" in over.json()["error"]
+
+
+async def test_a_refusal_that_spends_nothing_does_not_burn_the_bound(
+    client, db_session, set_chat_model
+) -> None:
+    """★ THE BOUND IS ON GENERATIONS, NOT ON ATTEMPTS, and the difference is a citizen locked
+    out of a working button for a quarter of an hour.
+
+    The commonest refusal on this route is the 409 for a project with nothing built yet — a
+    fresh project, the state every project starts in. Charged at the door (a FastAPI dependency
+    runs before the body), six of those would exhaust the window before the citizen had an app
+    at all; they would then build one, press Generate, and be told to wait, over six requests
+    that never reached the model and cost nothing."""
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    headers, user = await _auth(db_session)
+    empty = await ProjectFactory.create(db_session, user.id)  # no app: every press is a 409
+
+    for _ in range(DESCRIPTION_RATE_LIMIT + 2):
+        refused = await client.post(
+            f"/v1/projects/{empty.id}/description:generate", headers=headers
+        )
+        assert refused.status_code == 409  # LIVENESS: these really are the non-spending arm
+
+    ready = await ProjectFactory.create(db_session, user.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=ready.id, current_code=_CODE
+    )
+
+    resp = await client.post(f"/v1/projects/{ready.id}/description:generate", headers=headers)
+
+    assert resp.status_code == 200
+
+
+async def test_the_generation_limiter_is_per_user_not_global(
+    client, db_session, set_chat_model
+) -> None:
+    """A second citizen is unaffected by the first's burst. The bucket is keyed by user
+    id, so one person hammering Generate cannot take the button away from everyone else."""
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    noisy_headers, noisy = await _auth(db_session)
+    noisy_project = await ProjectFactory.create(db_session, noisy.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=noisy.id, project_id=noisy_project.id, current_code=_CODE
+    )
+    for _ in range(DESCRIPTION_RATE_LIMIT + 1):
+        await client.post(
+            f"/v1/projects/{noisy_project.id}/description:generate", headers=noisy_headers
+        )
+
+    quiet_headers, quiet = await _auth(db_session)
+    quiet_project = await ProjectFactory.create(db_session, quiet.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=quiet.id, project_id=quiet_project.id, current_code=_CODE
+    )
+    resp = await client.post(
+        f"/v1/projects/{quiet_project.id}/description:generate", headers=quiet_headers
+    )
+
+    assert resp.status_code == 200

@@ -14,6 +14,14 @@ import { relativeTimeVerbose } from '../../utils/relativeTime'
 import { readDeclaration, shortSha, MIN_REJECTION_NOTE } from './declaration'
 import type { ReadDeclaration } from './declaration'
 import { auditLabel } from './auditLabels'
+import {
+  countWords,
+  MIN_DELETE_REASON_WORDS,
+  MAX_DELETE_REASON_WORDS,
+  MAX_DELETE_REASON_CHARS,
+} from '../../utils/words'
+import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
+import { Textarea } from '../ui/textarea'
 
 /** What to call an app on screen. The internal id used to stand in for a missing name, but
  *  a UUID is not a name — it identifies the row for the platform, not the app for a person,
@@ -28,8 +36,18 @@ const STATUS: Record<AppStatus, { label: string; cls: string }> = {
   rejected: { label: 'Rejected', cls: 'bg-red-100 text-red-700' },
   disabled: { label: 'Disabled', cls: 'bg-gray-200 text-gray-600' },
 }
-// Admin reviews these statuses (draft is builder-side and hidden here).
-const TABS: AppStatus[] = ['pending', 'approved', 'rejected', 'disabled']
+// Draft used to be hidden here as "builder-side", which was true of the REVIEW flow and
+// false of the ops one: a self-published app is a draft (one-click deploy never writes a
+// status), so the ordinary live app in the marketplace had no row on this screen at all —
+// and the kill switch below can now reach it. A lever nobody can get to is not a
+// lever. Pending stays the default tab; this only adds a place to stand.
+const TABS: AppStatus[] = ['pending', 'draft', 'approved', 'rejected', 'disabled']
+
+// `STATUS_TRANSITIONS[DISABLED]` on the server (`db/models/app_registry.py`), mirrored so
+// the control appears exactly where the transition is legal. PENDING is absent on purpose:
+// an app waiting for review is REJECTED, not switched off, and the server refuses it — an
+// affordance whose only outcome is a refusal is a bug, not a safety net.
+const CAN_DISABLE: readonly AppStatus[] = ['approved', 'draft', 'rejected']
 
 const fmtWhen = (iso: string | null): string => {
   // NULL IS ITS OWN ANSWER, and it cannot be routed through Date. `new Date(0)` is the
@@ -133,7 +151,10 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
               <h3 id="admin-review-title" className="text-base font-bold text-tertiary">Review “{appLabel(app)}”</h3>
               <p className="text-sm text-neutral mt-0.5">Owner: {app.ownerUsername || '—'}</p>
             </div>
-            <button onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
+            {/* NAMED, because it is an icon on its own: without the label this dismiss control
+                reads as "button" to a screen reader, and it is the route out of the dialog that
+                the focus restore below is measured on. */}
+            <button aria-label="Close" onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
           </div>
           <p data-testid="review-criterion" className="mt-3 text-xs text-tertiary bg-bial-bg border border-bial-border rounded-xl px-3 py-2.5 leading-relaxed">
             {THE_CRITERION}
@@ -421,6 +442,9 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [review, setReview] = useState<RegistryApp | null>(null)
+  /** The app awaiting a delete reason, or null. See `onDelete`. */
+  const [deleting, setDeleting] = useState<RegistryApp | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   // Non-null once the developer withdraws the submission under review. Cleared
   // whenever a different item is opened, so one race can never haunt the next review.
   const [withdrawn, setWithdrawn] = useState<string | null>(null)
@@ -436,6 +460,50 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   // response must not overwrite fresher state. Ref-token variant of the `let live`
   // idiom, since `load` is also called imperatively (Refresh, act's reload).
   const loadSeq = useRef(0)
+  // The queue's own tab — the nearest stable, always-mounted landmark on this panel, and
+  // the fallback for the review below when the row that opened it is gone.
+  const queueTabRef = useRef<HTMLButtonElement>(null)
+  // The Review control that opened the modal, CAPTURED AT PRESS TIME rather than read back
+  // off `document.activeElement`: a click focuses the button in a browser but not under
+  // `fireEvent`, so reading it back would make the restore untestable and — worse — silently
+  // correct in the suite while landing on `<body>` for the citizen. Doubles as the "a review
+  // was opened at some point" flag the effect below keys off.
+  const reviewTriggerRef = useRef<HTMLButtonElement | null>(null)
+
+  /**
+   * PUT FOCUS SOMEWHERE REAL WHEN THE REVIEW CLOSES.
+   *
+   * The review modal is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
+   * captures the element that had focus and nothing restores it. Closing it dropped focus on
+   * `<body>`, where the next Tab restarts at the top of the document.
+   *
+   * IT RESTORES THE ROW'S OWN Review BUTTON, which is where an administrator who dismissed a
+   * review belongs — three rows down a queue of forty, not back at the top of it.
+   *
+   * AND IT FALLS BACK, because approving or rejecting DESTROYS that button: the app leaves the
+   * pending queue, so the reload this panel does on success takes the whole row with it. That is
+   * the same detached-trigger case `ProjectsPage`'s delete path documents, and it takes the same
+   * remedy — the nearest stable landmark, here the queue's own tab.
+   *
+   * IN AN EFFECT, NOT IN THE CLOSE HANDLERS, AND THE SUITE CANNOT TELL THE TWO APART — which is
+   * exactly why this note exists. Success closes the modal from an async continuation, and both
+   * of the questions asked below are questions about the DOM: whether the trigger is still
+   * attached, and whether the tab is there to fall back to. In a browser that continuation is a
+   * microtask and React's commit is a scheduled task, so the answers describe the PREVIOUS render
+   * — mid-reload, where `loading` has replaced this whole panel with a spinner, that is a
+   * detached trigger AND a null tab ref, and focus stays on `<body>`. An effect runs after the
+   * commit, so it asks the DOM the citizen actually has. Under RTL both readings pass, because
+   * `act` flushes the commit before the continuation resumes: moving this into `settleReview`
+   * leaves the tests green and the browser broken.
+   */
+  useEffect(() => {
+    if (review !== null) return
+    const trigger = reviewTriggerRef.current
+    if (trigger === null) return // no review has been opened yet — nothing to restore
+    reviewTriggerRef.current = null
+    if (document.contains(trigger)) trigger.focus()
+    else queueTabRef.current?.focus()
+  }, [review])
 
   const load = useCallback(async () => {
     const seq = ++loadSeq.current
@@ -508,12 +576,23 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     const url = answer.trim()
     return act(app.appId, () => markDeployed(app.appId, url), `Deployment recorded for “${appLabel(app)}”`)
   }
+  // THE DELETE ASKS WHY, AND A `window.confirm` COULD NOT.
+  //
+  // The route now REQUIRES a 5-50 word reason, so a confirm-and-send would 422 every time. The
+  // reason rides the `app:delete` audit row, which is written before destruction and has no
+  // foreign key to the app — so it outlives the thing it describes, which is the whole point.
+  //
+  // It uses the SAME word rule as the citizen's own project delete (`utils/words.ts`, mirrored
+  // at `src/core/words.py`), because the harsher act — destroying somebody else's work — should
+  // not ask for less than the gentler one.
   const onDelete = (app: RegistryApp) => {
-    // Names the two things that do not come back. "Data and files" undersold it: the app's
-    // own PostgreSQL database is dropped outright — no export, no snapshot, no undo — and
-    // the delete is the only place an admin is told so.
-    if (!window.confirm(`Permanently delete “${appLabel(app)}”? Its database is dropped and its files are deleted. This cannot be undone.`)) return
-    act(app.appId, () => deleteApp(app.appId), `“${appLabel(app)}” deleted`)
+    // THE REASON IS PER-APP AND MUST NOT TRAVEL. `deleteReason` lives on the panel, so a
+    // justification typed for one app and abandoned would open pre-filled on the next one —
+    // and if it happened to be valid, one press away from destroying a different citizen's
+    // work under words that were never about it. Cleared on OPEN rather than only on close,
+    // because close is the path a mid-flight failure deliberately does not take.
+    setDeleteReason('')
+    setDeleting(app)
   }
 
   // Pending is the only tab that is a REVIEW QUEUE — the only one ordered oldest-first,
@@ -543,6 +622,9 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
         {TABS.map((t) => (
           <button
             key={t}
+            // The review can only be opened from the queue, so the queue's tab is the landmark
+            // focus comes back to when the row it was opened from is gone.
+            ref={t === 'pending' ? queueTabRef : undefined}
             data-testid={`apps-tab-${t}`}
             onClick={() => setTab(t)}
             className={`text-xs font-medium px-3 py-1.5 rounded-md transition inline-flex items-center gap-1.5 ${tab === t ? 'bg-white text-primary shadow-sm border border-bial-border' : 'text-neutral hover:text-primary'}`}
@@ -620,7 +702,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                     <td className="py-3">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {app.status === 'pending' && (
-                          <button data-testid={`review-${app.appId}`} onClick={() => { setWithdrawn(null); setReview(app) }} disabled={busy} className="px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition text-xs font-medium disabled:opacity-50">Review</button>
+                          <button data-testid={`review-${app.appId}`} onClick={(e) => { reviewTriggerRef.current = e.currentTarget; setWithdrawn(null); setReview(app) }} disabled={busy} className="px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition text-xs font-medium disabled:opacity-50">Review</button>
                         )}
                         {app.status === 'approved' && app.redeployNeeded && (
                           <span data-testid={`redeploy-needed-${app.appId}`} title="The approved build has not been deployed (or was re-approved since the last deploy) — run the go-live runbook, then mark it deployed" className="inline-flex items-center text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-100 text-amber-700">Deploy needed</span>
@@ -633,14 +715,14 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                         {app.status === 'approved' && app.approvalRoute !== 'self_publish' && (
                           <button data-testid={`mark-deployed-${app.appId}`} onClick={() => onMarkDeployed(app)} disabled={busy} title="Record that the go-live runbook was run for the approved build" className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-bial-border text-neutral hover:text-primary hover:bg-bial-bg transition disabled:opacity-50"><Rocket size={12} /> Mark deployed</button>
                         )}
-                        {app.status === 'approved' && (
-                          <button onClick={() => onDisable(app)} disabled={busy} title="Disable (kill switch)" className="p-1.5 rounded-lg border border-bial-border text-amber-600 hover:bg-amber-50 transition disabled:opacity-50"><Power size={13} /></button>
+                        {CAN_DISABLE.includes(app.status) && (
+                          <button data-testid={`disable-${app.appId}`} onClick={() => onDisable(app)} disabled={busy} title="Disable (kill switch)" className="p-1.5 rounded-lg border border-bial-border text-amber-600 hover:bg-amber-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         {app.status === 'disabled' && (
-                          <button onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>
+                          <button data-testid={`enable-${app.appId}`} onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         <button data-testid={`audit-${app.appId}`} onClick={() => setAuditing(app)} disabled={busy} title="View audit" className="p-1.5 rounded-lg border border-bial-border text-neutral hover:text-primary hover:bg-bial-bg transition disabled:opacity-50"><ScrollText size={13} /></button>
-                        <button onClick={() => onDelete(app)} disabled={busy} title="Delete app" className="p-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition disabled:opacity-50"><Trash2 size={13} /></button>
+                        <button data-testid={`delete-${app.appId}`} onClick={() => onDelete(app)} disabled={busy} title="Delete app" className="p-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition disabled:opacity-50"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>
@@ -653,6 +735,136 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
       {review && <ReviewModal app={review} withdrawn={withdrawn} onClose={() => { setReview(null); setWithdrawn(null) }} onApprove={() => onApprove(review)} onReject={(note) => onReject(review, note)} />}
       {auditing && <AuditDrawer app={auditing} onClose={() => setAuditing(null)} />}
+      {deleting && (
+        <DeleteAppDialog
+          app={deleting}
+          reason={deleteReason}
+          onReason={setDeleteReason}
+          busy={busyIds.has(deleting.appId)}
+          onClose={() => { setDeleting(null); setDeleteReason('') }}
+          onConfirm={async () => {
+            const target = deleting
+            const outcome = await act(target.appId, () => deleteApp(target.appId, deleteReason), `“${appLabel(target)}” deleted`)
+            // Close only on success — a 422 on the reason must leave the words on screen to fix,
+            // not throw them away behind a dialog that has already gone.
+            if (!(outcome instanceof Error)) { setDeleting(null); setDeleteReason('') }
+          }}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * THE ADMIN DELETE'S REASON.
+ *
+ * ON THE VENDORED RADIX `Dialog`, like every other dialog in this portal — and this one was
+ * hand-rolled when it first landed, which reintroduced in the admin panel the exact defect a
+ * vendored dialog exists to close: a `fixed inset-0` div with `role="dialog"` gives no focus
+ * trap, no Escape, and no focus restored to the trash control that opened it. Its sibling
+ * review modal in this same file carries an explicit `reviewTriggerRef` restore for that
+ * reason. The most destructive control on this screen must not be the one with the weakest
+ * keyboard contract. Radix gives the trap, Escape and the overlay click (both routed through
+ * `onOpenChange`, so `busy` guards them the way the hand-rolled overlay only guarded its own
+ * click), and the restore — via `useFocusBackstop` in `ui/dialog.tsx`, because this dialog is
+ * rendered conditionally like the rest.
+ *
+ * A `window.confirm` stood here before that. It could not collect anything, and the route now
+ * REQUIRES a 5-50 word justification — so the old control would 422 on every press. The words ride the
+ * `app:delete` audit row, which is written before destruction and carries no foreign key to
+ * the app, so it is still readable long after what it describes is gone.
+ *
+ * SAME WORD RULE AS THE CITIZEN'S OWN DELETE, from the shared `utils/words.ts` (mirrored at
+ * `src/core/words.py`): the harsher act — an administrator destroying work that is not theirs,
+ * with no undo and no export — should not ask for less than the gentler one. The client keeps
+ * the person inside the bounds; the server is what enforces them.
+ */
+function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
+  app: RegistryApp
+  reason: string
+  onReason: (value: string) => void
+  busy: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  const words = countWords(reason)
+  const valid = words >= MIN_DELETE_REASON_WORDS && words <= MAX_DELETE_REASON_WORDS
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        // Radix routes Escape, the overlay click and its own close through here, and `busy`
+        // holds it open mid-request — the same guard the hand-rolled overlay carried, now
+        // covering the two exits it never did.
+        if (!next && !busy) onClose()
+      }}
+    >
+      <DialogContent
+        hideClose
+        // The scrim this dialog already used, kept exactly — the vendored default is
+        // `bg-black/80`, which is a different design.
+        overlayClassName="bg-black/40"
+        className="font-manrope w-full max-w-md rounded-2xl bg-white p-6 shadow-xl gap-0 border-0"
+      >
+        <DialogTitle className="text-base font-bold text-tertiary">Delete “{appLabel(app)}”?</DialogTitle>
+        {/* Names the two things that do not come back. "Data and files" undersold it: the app's
+            own PostgreSQL database is dropped outright — no export, no snapshot, no undo. */}
+        <p className="mt-2 text-sm text-neutral">
+          Its database is dropped and its files are deleted. This cannot be undone.
+        </p>
+        <label className="block mt-4">
+          <span className="text-xs font-semibold text-tertiary">Why are you deleting this app?</span>
+          {/* The SHARED `Textarea`, like the citizen dialog this one models itself on down to
+              the word rule — two dialogs with the same job drifting apart on their input is how
+              a design system stops being one. `maxLength` mirrors the server's own 2,000-char
+              backstop (`clean_deletion_reason`): a paste guard, not the rule a person is told
+              about, which is the word count below. */}
+          <Textarea
+            data-testid="admin-delete-reason"
+            value={reason}
+            onChange={(e) => onReason(e.target.value)}
+            rows={3}
+            maxLength={MAX_DELETE_REASON_CHARS}
+            aria-describedby="admin-delete-reason-count"
+            className="mt-1.5 resize-y"
+          />
+          <span id="admin-delete-reason-count" className="mt-1 block text-xs text-neutral">
+            Between {MIN_DELETE_REASON_WORDS} and {MAX_DELETE_REASON_WORDS} words. Kept on the audit record.{' '}
+            {words}/{MAX_DELETE_REASON_WORDS} words
+          </span>
+        </label>
+        <div className="flex gap-3 mt-5">
+          <button
+            type="button"
+            onClick={() => { if (!busy) onClose() }}
+            aria-disabled={busy}
+            className={`rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg ${busy ? 'cursor-not-allowed opacity-50' : ''}`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="admin-delete-confirm"
+            // `aria-disabled`, never `disabled`, and this is the control it matters most on:
+            // it is the one holding focus at the instant it goes busy, because the citizen just
+            // pressed it. A real `disabled` attribute throws focus to the document body from
+            // under them, mid-request, which is the defect `ui/dialog.tsx`'s backstop exists to
+            // clean up after — better not to cause it. The refusal is enforced in the handler,
+            // the only place it can be once the attribute is gone.
+            aria-disabled={!valid || busy}
+            onClick={() => {
+              if (!valid || busy) return
+              onConfirm()
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm ${
+              !valid || busy ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Delete app
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

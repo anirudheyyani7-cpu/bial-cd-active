@@ -1,101 +1,44 @@
-"""How much of the model's context window a conversation already occupies.
+"""The per-conversation admission check: how much of the window a conversation already holds.
 
-WHY THIS EXISTS: this is NOT a spend measurement, and that distinction is the whole
-point. `weighted_spend`/`billable_spend` discount a cache READ to a tenth of a fresh
-token because that is what it costs — but a cached token still OCCUPIES the window,
-byte for byte. Routing a window check through billing weights would report a 190k
-conversation as 30k and the guardrail would never fire. This confusion has recurred
-three times in this repo's history; token accounting now routes through a shared,
-PURPOSE-NAMED function, and this is that function.
+★ THE PLATFORM DOES NOT DERIVE THIS NUMBER ANY MORE, AND THAT IS THE WHOLE MODULE. The
+provider returns a token count for every turn it serves; this reads that count. It used to
+re-derive one instead — four characters to the token over a structural walk of the message
+tree, with a flat nominal for an image and another for a document — and the re-derivation was
+wrong in the direction that hurts. A 61-page upload really occupied 153,342 tokens and the
+estimate recorded 1,600, or 0.8% of the hard limit. Every constant that made that possible is
+gone, and nothing estimates in its place: the measurement now comes from the only party that
+can take it.
 
-It measures a HEURISTIC, not the model's own count: pydantic-ai's `count_tokens()` is a network
-round trip with unverified Foundry compatibility (the Files API's failure mode). This walks the
-`list[ModelMessage]` `load_history` loads every turn, plus the message about to be sent — four
-characters to the token, the same ratio the retired client-side guardrail used, so browser and
-server describe one thing. TWO flat nominals per `BinaryContent`, the document's far larger than
-the image's: an image is worth roughly a thousand tokens however many megabytes it is, a document
-is worth what its PAGES cost, and charging base64 length would read a 5 MB photo as 1.7 MILLION
-tokens and refuse every conversation that contained one. A structural walk (list → dict →
-dataclass), never a per-part-type table: an unrecognised part shape still counts, since
-under-counting is the direction that hurts — and it over-counts a little too, since
-`ModelResponse`'s model name and provider id never reach the model (tens of characters, the safe
-direction). It does NOT see the per-run system prompt composed after this gate runs
-(`SYSTEM_PROMPT_RESERVE` covers that). It decides one thing: whether a conversation is past the
-boundary an administrator set. Nothing is billed from it.
+★ THIS IS NOT A SPEND MEASUREMENT, AND THE SEPARATE MODULE IS STILL THE POINT. `weighted_spend`
+and `billable_spend` next door deliberately discount a cache READ to a tenth of a fresh token,
+because that is what it costs. A cached token still OCCUPIES the window — it is in the prompt,
+byte for byte, whatever it was billed at. Real conversations here run 97-99% cache-read, so
+routing a window check through the billing weights would report a 190k conversation as a 30k
+one and the guardrail would never fire. `input_tokens` is the provider's raw prompt count and
+is already inclusive of both cache classes, which is exactly the occupancy this asks for.
+
+WHAT IT MEASURES, AND THE ONE PROPERTY THAT FALLS OUT OF IT. The number describes the turn the
+provider has already served, not the message about to be sent — nobody can count the latter
+without asking the provider, and asking is a network round trip on the send path. So the check
+is RETROSPECTIVE: a conversation is refused on the turn after the one that filled it. That is
+the same guarantee the estimate gave in practice and one the estimate could not keep honestly,
+because a wrong estimate refuses conversations that fit and admits conversations that do not.
+
+It is used to decide one thing: whether a conversation has grown past the boundary an
+administrator set. It is not billing, and nothing is charged from it.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import uuid
 from collections.abc import Sequence
-from typing import Any, Final
 
-from pydantic_ai import BinaryContent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.user_limit import UserLimit
-from src.services.usage.limits import SYSTEM_PROMPT_RESERVE, effective_context
-
-CHARS_PER_TOKEN: Final = 4
-"""The estimate's one constant. Four characters to the token, against the same 200k window,
-kept so the browser's warning and the server's refusal are two readings of one scale rather
-than two different scales."""
-
-PDF_MEDIA_TYPE: Final = "application/pdf"
-"""The one media type charged as a document. Spelled out here rather than imported from
-`api/v1/conversations/_shared.py`, which holds the same string: a service does not reach up
-into the API layer for a constant. `_shared.resolve_binaries` admits exactly `image/*` and this,
-so the two arms below are the whole of what can reach the model as a binary."""
-
-NOMINAL_BINARY_TOKENS: Final = 1_600
-"""What one attached IMAGE is charged, regardless of its size.
-
-Vision content costs roughly a thousand tokens per image and does not scale with the file's byte
-length, so a flat charge is the right shape — byte length is the WRONG number by orders of
-magnitude: base64 of a 5 MB photo is ~6.7 M characters, which at four characters to the token
-would read as 1.7 M tokens and refuse the conversation outright.
-
-IT NO LONGER COVERS PDFs, and that split is a correctness fix rather than a tidy-up: charging a
-document this image-sized number under-counted it by orders of magnitude, which is what let a
-conversation past the guard. See `NOMINAL_PDF_TOKENS` for the measurement."""
-
-NOMINAL_PDF_TOKENS: Final = 75_000
-"""What one attached PDF is charged, regardless of its size.
-
-★ THE NUMBER THIS REPLACED WAS 1,600, AND IT WAS THE LARGEST ERROR IN THIS MODULE. A document
-is read page by page, so its cost scales with pages and not with bytes. A measured 61-page
-upload occupied 153,342 tokens — 77% of the 200,000 hard limit — while this module recorded it
-as 1,600, or 0.8%. A citizen attaching documents could therefore carry a conversation
-straight past the wall while the guardrail reported it comfortably inside, which is the opaque
-provider-side failure the guardrail exists to REPLACE, not a conservative estimate.
-
-IT IS FLAT, NOT PER-PAGE, BY DECISION. Per-page charging would need a page count persisted
-on the attachment row, which the platform does not store; more to the point, the owner asked for
-one number. So the number is sized to the LONGEST DOCUMENT THE PLATFORM WILL ADMIT: the upload
-route refuses anything over `attachments/router.MAX_PDF_PAGES` (30) pages, and a page measured
-~2,514 tokens. Under-counting is the only direction that hurts — it is what lets an over-long
-conversation past the guard.
-
-THE ROUNDING, STATED RATHER THAN GLOSSED: 30 × 2,514 is 75,420, and this is 75,000. So a
-worst-case document — thirty pages, every one as dense as the measured average — is under-charged
-by **420 tokens, 0.6%**. Sizing the charge to the cap does NOT make under-counting an admitted
-file impossible — that absolute is false by exactly those 420 tokens. The gap is immaterial
-against the 8,000-token system-prompt reserve and it is deliberate — a round number the owner
-asked for beats 75,420 by enough to be worth 0.6% — but it is a rounding, not an impossibility,
-and the test below permits it EXPLICITLY rather than by accident.
-
-THE TWO NUMBERS ARE ONE DECISION. Raising the page cap without raising this re-opens the hole
-exactly; raising this without raising the cap merely refuses conversations that would have fit.
-`test_context_window.py` pins the relationship so neither can move alone.
-
-WHAT IT COSTS, SAID PLAINLY: with the 8,000-token system-prompt reserve, one document plus a
-real build conversation fits inside the 150,000 soft limit, two documents trip the warning
-honestly, and three cannot fit the 200,000 ceiling at all — which is why the send route refuses
-a third by COUNT rather than letting it arrive as a token-limit refusal that would tell the
-citizen to start a new chat that refuses the identical message."""
+from src.services.usage.limits import effective_context
 
 
 class ContextWindowExceededError(Exception):
@@ -111,79 +54,61 @@ class ContextWindowExceededError(Exception):
         self.hard_limit = hard_limit
 
 
-def _tokens_in(node: Any) -> int:
-    """The estimate over one live object, recursively. See the module docstring for the rules.
-
-    `BinaryContent` is tested BEFORE the generic dataclass arm — it IS a dataclass, and
-    descending would charge its `data` field by byte length, the over-count the flat nominal
-    avoids. THE ARM IS SPLIT BY MEDIA TYPE, read off the content rather than guessed from the
-    bytes: a document costs orders of magnitude more than an image, so the two must not share a
-    number. Anything else falls to the smaller, more common image nominal — nothing today,
-    since `resolve_binaries` admits only these two."""
-    if isinstance(node, BinaryContent):
-        if node.media_type == PDF_MEDIA_TYPE:
-            return NOMINAL_PDF_TOKENS
-        return NOMINAL_BINARY_TOKENS
-    if isinstance(node, str):
-        return -(-len(node) // CHARS_PER_TOKEN)  # ceil, without importing math for one call
-    if isinstance(node, (list, tuple)):  # fmt: skip  # ruff py314 strips parens
-        return sum(_tokens_in(item) for item in node)
-    if isinstance(node, dict):
-        # Values only. Keys are structural — they are a few characters of JSON framing, and
-        # counting them would make the estimate a function of pydantic-ai's field names.
-        return sum(_tokens_in(value) for value in node.values())
-    if dataclasses.is_dataclass(node) and not isinstance(node, type):
-        return sum(
-            _tokens_in(getattr(node, field.name))
-            for field in dataclasses.fields(node)
-            if field.name != "part_kind"  # pydantic-ai's union tag, not content
-        )
-    return 0
-
-
-def _tokens_in_message(message: ModelMessage) -> int:
-    """One message's contribution: its PARTS, and only its parts.
-
-    THE ENVELOPE IS NOT WALKED, deliberately: `ModelResponse`'s bookkeeping fields
-    (`kind`, `state`, `model_name`, ...) never reach the model, and walking them would
-    make the measurement partly pydantic-ai's own field values, moving when the library
-    adds one. Descending into `parts` structurally, rather than a per-part-type table,
-    keeps an unrecognised part shape measured too — under-counting is the direction that
-    hurts, since it's what lets an over-long conversation past the guard."""
-    return _tokens_in(message.parts)
-
-
-def occupied_window(
-    history: Sequence[ModelMessage],
-    prompt: object = None,
-) -> int:
-    """How full the window will be when this turn runs: the stored history, the message about
-    to be sent, and the reserve for the system prompt this cannot see.
-
-    `prompt` is whatever the route is about to hand the agent — a string, a mixed
-    `[str | BinaryContent]` list, or `None` on a regenerate, where the trailing request in
-    `history` IS the prompt and counting it twice would be wrong."""
-    stored = sum(_tokens_in_message(message) for message in history)
-    return stored + _tokens_in(prompt) + SYSTEM_PROMPT_RESERVE
-
-
 async def enforce_context_limit(
     db: AsyncSession,
     user_id: uuid.UUID,
     *,
     history: Sequence[ModelMessage],
-    prompt: object = None,
-) -> None:
-    """Raise `ContextWindowExceededError` when past the owner's hard limit. THE ONE
-    PREFLIGHT, called from BOTH turn-starting routes (`turns.start_turn`,
-    `transition.build_from_plan`) — one function so the second entry point cannot drift.
+) -> int:
+    """Raise `ContextWindowExceededError` when this conversation is past its owner's hard limit,
+    and hand back the occupancy it measured.
 
-    NOT "every route that reaches a model": `POST /v1/build-sessions` sends a raw
-    prompt, not a history, so it isn't a turn here (its spend is capped in
-    `orchestrator/harness.py`). Called AFTER `load_history`, BEFORE `persist_user_turn`
-    — a refused turn leaves no row to roll back."""
+    ONE CALLER NOW — `turns.start_turn`, the route that starts a turn on a conversation that
+    already exists. This used to be a shared preflight with `transition.build_from_plan`, and
+    the deletion of that second call is a decision, not an oversight. A build chat is
+    created EMPTY: the route measured a fresh conversation against a ceiling and could only ever
+    admit, so it was a guard that had already gone inert. The bound that does hold on that door
+    is the plan's own — `engine.plan_from_call` refuses an offer whose plan is past
+    `MAX_MESSAGE_TEXT_CHARS`, with copy that asks for a shorter plan, which is the remedy that
+    works there.
+
+    AND DO NOT "FIX" IT BY POINTING IT AT THE SOURCE PLAN CHAT. That substitution is the obvious
+    repair and it is the harmful one: the build chat inherits none of the plan chat's history, so
+    measuring the plan chat would refuse "Build this plan" for exactly the citizens who planned
+    longest — and send them to start a new chat, which is where the plan they are trying to build
+    lives.
+
+    NOTHING SIZES THE MESSAGE ABOUT TO BE SENT, and there is no argument here for one. Only the
+    provider can count a prompt, and it counts it when the turn completes; an argument this
+    function accepted and did not measure is exactly the shape a later reader mistakes for a
+    check. The reading is RETROSPECTIVE by construction and the module docstring says why.
+
+    IT RETURNS WHAT IT MEASURED, which is what makes the browser's meter and this wall the same
+    number rather than two readings of one scale. `turns.start_turn` puts it on the 202 the send
+    already gets, so the meter is fed by the very computation that admitted the turn — no second
+    request, and nothing sized before a send.
+
+    THE OCCUPANCY IS THE LARGEST REPORTED PROMPT, NOT THE LAST ONE, and the difference is not
+    cosmetic. Not every message in the history is a served turn: the platform writes responses
+    of its own and they carry a `RequestUsage()` whose `input_tokens` is zero. Reading "the last
+    response" would read that zero and hand a full conversation back as an empty one — the
+    under-count that lets an over-long conversation past the guard. A maximum cannot be fooled
+    that way, and a conversation's prompt only grows, so the largest measurement is also the
+    most recent real one.
+
+    NOTHING HERE RE-READS THE CONVERSATION. `history` is the list the route has already loaded
+    and already scoped to its owner (`load_history` filters on `Message.user_id`), so there is
+    no second query to scope and no `WHERE` clause to forget.
+
+    Called AFTER `load_history` and BEFORE `persist_user_turn`, the same slot
+    `enforce_daily_limit` occupies — so a refused turn leaves no row to roll back and no claim
+    to release."""
     override = await db.scalar(select(UserLimit).where(UserLimit.user_id == user_id))
     _soft, hard = effective_context(override)
-    occupied = occupied_window(history, prompt)
+    occupied = max(
+        (message.usage.input_tokens for message in history if isinstance(message, ModelResponse)),
+        default=0,
+    )
     if occupied >= hard:
         raise ContextWindowExceededError(occupied=occupied, hard_limit=hard)
+    return occupied

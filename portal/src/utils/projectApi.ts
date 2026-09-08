@@ -1,6 +1,6 @@
 /**
  * Typed client for the projects domain (`/api/projects*`), mirroring the
- * deps-injection shape of `conversationApi.js`: every call is
+ * deps-injection shape of `conversationApi.ts`: every call is
  * `fn(args, deps = {})` and forwards `deps` to `authFetch` (Bearer + one
  * 401-refresh retry, cookie session). The edge rewrites `/api/*` to `/v1/*`.
  *

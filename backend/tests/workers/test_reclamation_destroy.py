@@ -502,7 +502,7 @@ async def test_the_janitor_destroys_the_container_it_judged_and_gates_it_on_app_
     assert destroyed == 1
     assert seen == [("sbx-doomed", user_id, app_id)], (
         "the janitor must destroy the container it JUDGED and must pass app_id — the reap is "
-        "keyed by user unless told otherwise, and the U14 gate is opt-in"
+        "keyed by user unless told otherwise, and the app_id gate is opt-in"
     )
 
 

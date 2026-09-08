@@ -4,11 +4,11 @@ types an attachment may carry (Express `ALLOWED_MEDIA` / `validateAttachmentByte
 Every path that can put bytes in front of the model applies it, so a block at upload cannot
 slip in through another:
   * `/v1/attachments` (+ office branch) — where bytes first arrive.
-  * `messages/store.py`'s rehydrator — a stored reference read back every turn. Checked
-    AGAIN rather than trusted: upload and serve are two different reads, only one validated.
-  * `build_sessions/attachments.py` — same bytes reaching a build by conversation reference.
+  * `messages/store.py`'s rehydrator — a stored reference read back every turn, which is
+    also how the same bytes reach a build. Checked AGAIN rather than trusted: upload and
+    serve are two different reads, only one validated.
 
-A retired chat relay was a fourth consumer, and re-checking there is why this is shared code.
+A retired chat relay was a third consumer, and re-checking there is why this is shared code.
 """
 
 from __future__ import annotations
@@ -31,10 +31,9 @@ def magic_matches(data: bytes, magic: bytes) -> bool:
 
 def bytes_match_declared(media_type: str, data: bytes) -> bool:
     """True iff `media_type` is allowlisted AND `data` opens with its magic prefix (+ the WebP
-    form-type at offset 8). Its two callers — `messages/store.py`'s rehydrator and
-    `build_sessions/attachments.py` — DROP a block whose declared type is not allowed or whose
-    bytes belie it, so unvalidated content never reaches the model. (This said "the relay uses
-    this"; the relay was retired, and the module docstring above already records that.)"""
+    form-type at offset 8). Its caller — `messages/store.py`'s rehydrator — DROPS a block whose
+    declared type is not allowed or whose bytes belie it, so unvalidated content never reaches
+    the model. The upload route gates on `ALLOWED_MEDIA`/`magic_matches` directly."""
     magic = ALLOWED_MEDIA.get(media_type)
     if magic is None or not magic_matches(data, magic):
         return False

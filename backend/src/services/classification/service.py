@@ -1,7 +1,8 @@
 """The classification review runner: start a review for a version, land exactly one
 result, and turn every way it can fail into a state the rest of the system can act on.
 START is synchronous (cap check, claim, detach); RUN is a detached task that never
-raises and outlives the request, so a crash cannot leave a row stuck RUNNING.
+raises and outlives the request. A restart still strands the row RUNNING — that is what
+`_aged_out` and the `FAIL_ABANDONED` settle exist to recover, not a case that cannot happen.
 
 WHY THIS EXISTS
 `head_sha` is always the CALLER's to resolve — this service fails closed on version

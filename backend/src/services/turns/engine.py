@@ -613,12 +613,12 @@ class _TurnState:
     #: one who never left.
     parts: list[_TurnPart] = field(default_factory=list)
     steps: dict[str, StepItem] = field(default_factory=dict)  # tool_call_id → newest item
-    # The acknowledgement, held OUT of `steps` and beside it. The distinction the original
-    # comment collapsed: `steps` is what gets PERSISTED, so the ack must stay out of it — but the
-    # catch-up SNAPSHOT is the only way a subscriber ever learns about a frame emitted before it
-    # connected, and every client connects after `start_turn` has already run. Keeping the ack out
-    # of both meant it reached nobody. Cleared by the first real step, which is what "replaced by
-    # the first real step" has to mean on a transport where the ring frame is unreachable.
+    # The acknowledgement, held OUT of `steps` and beside it. `steps` is what gets PERSISTED, so
+    # the ack must stay out of it — but the catch-up SNAPSHOT is the only way a subscriber ever
+    # learns about a frame emitted before it connected, and every client connects after
+    # `start_turn` has already run. Keeping the ack out of both meant it reached nobody. Cleared
+    # by the first real step, which is what "replaced by the first real step" has to mean on a
+    # transport where the ring frame is unreachable.
     acknowledgement: StepItem | None = None
     # The "Writing up the plan…" status's call id, tracked for exactly the reason the ack above
     # is: it is a PLATFORM-owned status with no durable counterpart, so the only thing that can
@@ -1634,7 +1634,7 @@ class TurnEngine:
         # strictly AFTER the agent had finished, instead of alongside its first request. Worse
         # for a turn the model only READS in: the mutation guard returns before verify, so the
         # server was never started at all and no preview ever appeared. The legacy harness has
-        # always done this at attach (`harness.py` calls `dev_start` right after it attaches);
+        # always done this at attach (it called `dev_start` right after attaching);
         # this brings unified chat to parity.
         #
         # Best-effort BY DESIGN. This is an optimization, never a gate: `verify`'s dead-child
@@ -2669,12 +2669,9 @@ class TurnEngine:
         return {"kind": PENDING_META_KIND, "toolCallId": deferred.tool_call_id}
 
     # NOTHING SYNTHESIZES A CARD ANY MORE. `_synthesize_options` used to fabricate one — a
-    # hidden `plan_options_pending` system row with `synthesized: True` — when the heuristic
-    # said a plan had been written and neither the run nor the forced retry had called the
-    # tool, so that "the buttons ALWAYS appear". They appeared under plans nobody had agreed
-    # to. `plan_options._scan` still READS the synthesized shape, and must: rows written by
-    # the retired writer are in the database, and revision 0035 resolved their cards rather
-    # than deleting them.
+    # hidden `plan_options_pending` system row with `synthesized: True`. `plan_options._scan`
+    # still READS the synthesized shape, and must: rows written by the retired writer are in
+    # the database, and revision 0035 resolved their cards rather than deleting them.
 
     def _emit_plan_status(self, state: _TurnState, tool_call_id: str) -> None:
         """The "writing up the plan" line, held in `state.steps` so a client that subscribes mid-

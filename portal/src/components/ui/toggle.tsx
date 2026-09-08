@@ -1,9 +1,9 @@
 /**
  * shadcn/ui `toggle`, copied in from the registry — the primitive `toggle-group` composes.
  * RE-ADDED DELIBERATELY: this and `toggle-group.tsx` were removed once as unused (correct
- * then — nothing imported them); Plan F's rail composer is now the importer, so say so here
+ * then — nothing imported them); `RailComposer.tsx` is now the importer, so say so here
  * before "these were deleted once" deletes them again.
- * CLASSES ARE TAILWIND-3 GENERATION (matches `button.tsx`/`badge.tsx`): a v4-era class this
+ * CLASSES ARE TAILWIND-3 GENERATION (matches `button.tsx`): a v4-era class this
  * Tailwind-3 build doesn't produce renders as NOTHING while every DOM assertion still passes
  * — jsdom computes no styles, so no test catches it.
  * THE SELECTED SEGMENT CARRIES NO HUE, DELIBERATELY: the registry's on-state class resolves

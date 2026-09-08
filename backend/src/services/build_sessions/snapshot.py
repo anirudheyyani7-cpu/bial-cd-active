@@ -244,8 +244,8 @@ async def write_recovery_copy(
 
     THE NO-OP SKIP IS DECIDED ON THE BUNDLED SHA, AND THAT ORDERING IS THE WHOLE TRICK.
     `_COMMIT_SCRIPT` commits as step ONE inside the bundle, so a naive "skip when HEAD has not
-    moved" reading the sha BEFORE it would discard every turn's recovery copy: the agent rarely
-    commits mid-turn, so "HEAD unchanged + dirty tree" is the normal shape of a building turn
+    moved" reading the sha BEFORE it would discard every turn's recovery copy: the agent does not
+    commit as it works, so "HEAD unchanged + dirty tree" is the normal shape of a building turn
     (`test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy`). NEVER RAISES FOR A
     REFUSAL — only bundle/upload failure is raised, at the call site that saw it throw."""
     async with _serialized_per_app(app_id):

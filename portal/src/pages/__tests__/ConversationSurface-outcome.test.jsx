@@ -68,7 +68,7 @@ async function send(text) {
   fireEvent.keyDown(composer(), { key: 'Enter' })
 }
 
-/** The consolidating snapshot every subscribe gets FIRST (`backend/.../turns.py` owns that rule),
+/** The consolidating snapshot every subscribe gets FIRST (`backend/src/api/v1/conversations/turns.py` owns that rule),
  *  carrying the `turnId` this page reads into `liveTurnIdRef` AND `sink.turnId` — the fact the
  *  Stop test below depends on (Stop needs `liveTurnIdRef` populated WHILE the turn is still
  *  running, not only at its terminal). */

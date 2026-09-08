@@ -6,8 +6,9 @@
  * dropped silently.
  *
  * LivePreview is stubbed to RECORD ITS PROPS rather than render (behaviour per value is pinned
- * in `components/__tests__/LivePreview.test.jsx`). `ChatKind` collapsed to one build-only kind
- * fixed at creation, so `runBuild` below drives an ordinary composer send as the build turn.
+ * in `components/__tests__/LivePreview.test.jsx`). `ChatKind` is two-valued (plan | build) and
+ * fixed at creation; this page renders only a build chat, so `runBuild` below drives an
+ * ordinary composer send as the build turn.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'

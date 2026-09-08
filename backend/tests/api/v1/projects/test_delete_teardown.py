@@ -1,5 +1,6 @@
-"""Deleting a project destroys its database, its role, and both of its containers — the project's
-own database container and the sandbox container it was running in.
+"""Deleting a project destroys its database, its role, and both of its containers — the per-app
+Blob container and the sandbox container it was running in. The database is a database on the
+shared cluster, dropped with `DROP DATABASE`; it is not one of the containers.
 
 The ordering under test: gather handles → delete rows → COMMIT → `salt_the_earth` → sweep → reap
 the sandbox. Nothing irreversible outside PostgreSQL's own rows happens before the commit that

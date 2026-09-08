@@ -16,7 +16,7 @@ import { uploadAttachment as defaultUpload, deleteAttachment as defaultDelete } 
 import type { MessagePart, TextPart } from './messageTypes'
 
 /** The chip descriptor `attachmentsFromParts` builds — traced from its one real
- * consumer, `AttachmentChips.jsx`'s own doc comment: `{ attachmentId, kind,
+ * consumer, `AttachmentChips.tsx`'s own doc comment: `{ attachmentId, kind,
  * name, mediaType, format?, truncated? }`, plus `truncationNote` (read here,
  * used for the chip's tooltip). */
 export interface AttachmentDescriptor {

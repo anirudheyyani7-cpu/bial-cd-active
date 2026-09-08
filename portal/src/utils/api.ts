@@ -7,7 +7,7 @@
  * without a real network or a React render, and the Authorization branch below is REACHED ONLY BY
  * TESTS: `getToken` defaults to `auth.ts`'s `getAccessToken`, whose body is `return null`.
  *
- * Unsafe methods carry `X-CSRF-Token` from the same `csrf` cookie `auth.js` sends on
+ * Unsafe methods carry `X-CSRF-Token` from the same `csrf` cookie `auth.ts` sends on
  * `/auth/refresh` / `/auth/logout`. Safe GETs carry none; a route that does not verify it ignores it.
  */
 import { getAccessToken, refreshAccessToken, handleSuspendedSession, getCsrfToken } from './auth'

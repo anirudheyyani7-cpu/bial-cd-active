@@ -117,7 +117,8 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * depending on when you looked at it.
  *
  * PLUS ONE ARM THE SERVER TABLE LACKS: `workspace_restored`. It is raised at
- * `backend/src/services/turns/engine.py:1612` — a turn that ends because the citizen's workspace
+ * `engine.py`'s `_WriteEndedError("workspace_restored", …)` — a turn that ends because the
+ * citizen's workspace
  * had to be put back from the last saved copy, which is a SUCCESSFUL restore and not a broken
  * build, once wrongly announced as "The build failed: workspace_restored".
  */
@@ -164,7 +165,7 @@ export function outcomeSummary({
   return 'Build finished.'
 }
 
-/** The persisted/reload `build` part (`conversationApi.js`'s `banner` projection
+/** The persisted/reload `build` part (`conversationApi.ts`'s `banner` projection
  * item) — the builder outcome bubble read back after a page reload. */
 export interface BuildPartPersisted {
   type: 'build'
@@ -191,14 +192,14 @@ export interface BuildPartLive {
 export type BuildPart = BuildPartPersisted | BuildPartLive
 
 /** The Build it / Keep refining card, carried with its STORED resolution state
- * (`conversationApi.js` only — reload path). */
+ * (`conversationApi.ts` only — reload path). */
 export interface PlanOptionsPart {
   type: 'plan_options'
   item: PlanOptionsItem
 }
 
 /** A stored friendly agent step — the reload half of the build narrative
- * (`conversationApi.js` only — reload path; hidden steps are filtered before
+ * (`conversationApi.ts` only — reload path; hidden steps are filtered before
  * this part is ever constructed). */
 export interface StepPart {
   type: 'step'
@@ -218,7 +219,7 @@ export interface ReasoningPart {
 }
 
 /** A build began and no outcome closed it yet — the durable anchor
- * (`conversationApi.js` only — reload path). */
+ * (`conversationApi.ts` only — reload path). */
 export interface BuildInProgressPart {
   type: 'build_in_progress'
   sessionId: string

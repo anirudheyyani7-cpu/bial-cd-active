@@ -9,10 +9,13 @@ same-user racing acquire. The lock fails CLOSED: any Redis error on acquire deni
 
 REDIS-ERROR POLICY: only `acquire_lock` catches `RedisError` (to retype it as
 `LockUnavailableError`); every other primitive lets it propagate, deliberately. Answer-bearing
-primitives (`lock_is_held`, `read_registry`, `renew_lock`, `mark_registry_ending`) must never
-swallow — that would fabricate a certain answer from an ambiguous store. `release_lock_as_holder`
-and `write_heartbeat` look like they want a guard; they don't — callers that need one already have
-it, and inside `_holding_user_lock`'s protected region the raise IS what triggers compensation.
+primitives (`lock_is_held`, `read_registry`, `renew_lock`) must never swallow — that would
+fabricate a certain answer from an ambiguous store. `mark_registry_ending` returns nothing to
+fabricate; it is an ordering guard, and its failure must abort the reaper sequence rather than
+let it delete a container a racing `attach_existing` still believes is ready.
+`release_lock_as_holder` and `write_heartbeat` look like they want a guard; they don't —
+callers that need one already have it, and inside `_holding_user_lock`'s protected region
+the raise IS what triggers compensation.
 
 WHY THIS EXISTS
 ---------------
@@ -388,9 +391,6 @@ class DeadlineWriter(enum.StrEnum):
 
 #: How long each writer's evidence is worth. Traffic buys less than a deliberate action because it
 #: is weaker evidence of intent — a background poll from a left-open app tab is still traffic.
-#: `TURN_ENDED_UNCHANGED` buys the least of all four: enough to read the reply and ask a follow-up
-#: without paying a cold restore on the very next message, far short of the stay a write or a
-#: deliberate action earns.
 DEADLINE_WRITER_TTL_SECONDS: Final[Mapping[DeadlineWriter, int]] = {
     DeadlineWriter.TURN_IN_FLIGHT: RELAUNCH_PREVIEW_STAY_SECONDS,
     DeadlineWriter.APP_SERVED_TRAFFIC: SERVED_TRAFFIC_STAY_SECONDS,
@@ -523,7 +523,7 @@ async def _adopt_a_pre_cutover_record(
     if not raw:
         return None
 
-    # SINGLE-KEY COMMANDS ONLY (module docstring, "IT IS SHARDED"): the tempting `COPY legacy
+    # SINGLE-KEY COMMANDS ONLY (module docstring): the tempting `COPY legacy
     # current` is cross-slot and is rejected outright in production. Getting it wrong fails on
     # the path built to RESCUE the fleet — `read_registry` is deliberately unguarded, so every
     # pre-cutover user's attach would 500 and no legacy record would ever migrate.

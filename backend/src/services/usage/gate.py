@@ -9,7 +9,7 @@ The single source of truth the SPA cannot bypass. Three responsibilities:
   window is open by design (Redis token-bucket hardening deferred).
 * `usage_today` — the read behind `GET /v1/usage/today`.
 
-IST day math (`Asia/Kolkata`, fixed +05:30, no DST) mirrors `server/usage-repo.js`: the day
+IST day math (`Asia/Kolkata`, fixed +05:30, no DST) mirrors Express `server/usage-repo.js`: the day
 key is the IST calendar date, reset is the next IST midnight as a UTC ISO string. `used`
 counts `build` rows ONLY — the pre-publish classification review is metered under `review`
 for attribution, never against the citizen's cap.

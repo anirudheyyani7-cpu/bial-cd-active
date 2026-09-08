@@ -700,8 +700,9 @@ async def _the_drift_check() -> None:
     generated = await render_tool_surface(ChatKind.BUILD)
     assert WRITE_TOOL_SURFACE == generated, (
         "the TOOL SURFACE block in `core/prompt_blocks.py` no longer matches the tools the Write "
-        "arm registers. Regenerate it with the one-liner in `services/agent/toolsets.py`'s U20 "
-        f"comment and paste the result over `WRITE_TOOL_SURFACE`.\n\ngenerated:\n{generated}"
+        "arm registers. Regenerate it with the one-liner under `Regenerate the snapshot with:` "
+        "in `services/agent/toolsets.py` and paste the result over `WRITE_TOOL_SURFACE`."
+        f"\n\ngenerated:\n{generated}"
     )
 
 

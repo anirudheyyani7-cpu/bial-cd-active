@@ -2,7 +2,7 @@
 
 `GET /v1/usage/today` returns the caller's used/limit/remaining and the next reset instant,
 byte-matching the Express `GET /api/usage/today` contract (`server.js`) the SPA's
-`fetchUsageToday` (`src/utils/usage.js`) consumes: exactly `used`, `limit`, `remaining`,
+`fetchUsageToday` (`portal/src/utils/usage.ts`) consumes: exactly `used`, `limit`, `remaining`,
 `resetsAt`. Authentication only (`current_user`) — usage is a per-user read, not gated.
 The daily-limit enforcement gate lives on the chat path, not here.
 """

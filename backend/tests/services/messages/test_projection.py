@@ -1,7 +1,7 @@
 """The one history→display derivation (`services/messages/projection.py`).
 
 Rows are written through the REAL producers/store (`append_batch`, `write_build_outcome`) in the
-exact shapes pinned (`test_transcript_steps.py` / `test_producers.py`), so these tests break
+exact shapes pinned by `test_producers.py`, so these tests break
 when the producer contract drifts — which is the point. The golden build test doubles as the
 parity fixture: the live stream must render THIS list for THIS transcript.
 

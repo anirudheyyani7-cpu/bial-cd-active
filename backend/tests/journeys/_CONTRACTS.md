@@ -40,7 +40,7 @@ renders the `—` fallback and no admin can tell whose app it is.
 
 | # | Assertion the test must make | Status | Evidence |
 |---|------------------------------|--------|----------|
-| 2.1 | `GET /v1/admin/apps?status=pending` → each `apps[]` carries a human owner identifier the SPA reads as `ownerUsername` (owner's email/display name), non-null for a real owner. | **BROKEN-captures-bug** — `AdminAppOut` projects `owner_id` only (`ownerId`); no `ownerUsername`/`ownerEmail`. | SPA read: `portal/src/components/admin/AppRegistryPanel.jsx:296`, `:54`; back schema: `backend/src/api/v1/admin/router.py:55-73`, projection `:141-159` |
+| 2.1 | `GET /v1/admin/apps?status=pending` → each `apps[]` carries a human owner identifier the SPA reads as `ownerUsername` (owner's email/display name), non-null for a real owner. | **BROKEN-captures-bug** — `AdminAppOut` projects `owner_id` only (`ownerId`); no `ownerUsername`/`ownerEmail`. | SPA read: `portal/src/components/admin/AppRegistryPanel.tsx:296`, `:54`; back schema: `backend/src/api/v1/admin/router.py:55-73`, projection `:141-159` |
 | 2.2 | The list is admin-gated: a non-superadmin caller → **403** (RBAC at the API). | OK — keep as the gate guard. | back: `admin/router.py:187-189` (`CurrentSuperadmin`) |
 
 ---
@@ -54,17 +54,17 @@ Every audit row therefore renders with an undefined React key, a `—` time, and
 
 | # | Assertion the test must make | Status | Evidence |
 |---|------------------------------|--------|----------|
-| 3.1 | `GET /v1/admin/apps/{C}/audit` → each `events[]` has an `_id` the SPA keys on (not only `id`). | **BROKEN-captures-bug** — schema field is `id`; SPA reads `ev._id`. | SPA: `AppRegistryPanel.jsx:173`; back: `admin/router.py:124-132`, emit `:445-457` |
-| 3.2 | Each event carries a timestamp the SPA reads as `ev.at` (renderable by `fmtWhen`). | **BROKEN-captures-bug** — schema field is `createdAt`; `fmtWhen(ev.at)` → `—`. | SPA: `AppRegistryPanel.jsx:176`, `:22-25`; back: `admin/router.py:131` |
-| 3.3 | Each event carries a human actor as `ev.username` (resolved from the actor, not a raw uuid). | **BROKEN-captures-bug** — schema exposes `actorId` (uuid) only; SPA falls back to `anonymous`. | SPA: `AppRegistryPanel.jsx:179`; back: `admin/router.py:126` |
-| 3.4 | A record/count-bearing event (e.g. `clear-data`, `config:loginRequired`) surfaces `ev.recordId` and/or `ev.count` where the SPA reads them (top-level), for at least the count. | **BROKEN-captures-bug** — count lives in `detail.count`, no `recordId`; SPA reads `ev.recordId`/`ev.count` top-level. | SPA: `AppRegistryPanel.jsx:179`; back detail nesting: `admin/router.py:128`, `:277-279`, `:367-374` |
+| 3.1 | `GET /v1/admin/apps/{C}/audit` → each `events[]` has an `_id` the SPA keys on (not only `id`). | **BROKEN-captures-bug** — schema field is `id`; SPA reads `ev._id`. | SPA: `AppRegistryPanel.tsx:173`; back: `admin/router.py:124-132`, emit `:445-457` |
+| 3.2 | Each event carries a timestamp the SPA reads as `ev.at` (renderable by `fmtWhen`). | **BROKEN-captures-bug** — schema field is `createdAt`; `fmtWhen(ev.at)` → `—`. | SPA: `AppRegistryPanel.tsx:176`, `:22-25`; back: `admin/router.py:131` |
+| 3.3 | Each event carries a human actor as `ev.username` (resolved from the actor, not a raw uuid). | **BROKEN-captures-bug** — schema exposes `actorId` (uuid) only; SPA falls back to `anonymous`. | SPA: `AppRegistryPanel.tsx:179`; back: `admin/router.py:126` |
+| 3.4 | A record/count-bearing event (e.g. `clear-data`, `config:loginRequired`) surfaces `ev.recordId` and/or `ev.count` where the SPA reads them (top-level), for at least the count. | **BROKEN-captures-bug** — count lives in `detail.count`, no `recordId`; SPA reads `ev.recordId`/`ev.count` top-level. | SPA: `AppRegistryPanel.tsx:179`; back detail nesting: `admin/router.py:128`, `:277-279`, `:367-374` |
 | 3.5 | Audit is admin-gated: non-superadmin → **403**. | OK — keep as the gate guard. | back: `admin/router.py:427-429` (`CurrentSuperadmin`) |
 
 ---
 
 ## Journey 4 — Conversation / build persistence (chat + builder history)
 
-The SPA writes turns and reads them back through `conversationApi.js`, normalizing the server's
+The SPA writes turns and reads them back through `conversationApi.ts`, normalizing the server's
 `_id`→`id` and expecting `{_id, role, parts, seq, createdAt}` messages and a
 `{_id, kind, title, createdAt, updatedAt, context, code}` header. The builder additionally patches
 `code` and re-reads it at `header.code.current.source`. FastAPI already ports these shapes verbatim,

@@ -4,8 +4,9 @@ import * as PopoverPrimitive from "@radix-ui/react-popover"
 import { cn } from "@/lib/utils"
 
 /**
- * WHY THIS EXISTS: hand-authored shadcn `new-york` popover, matching `dropdown-menu.tsx` in
- * this folder rather than the current registry. Four things before editing:
+ * WHY THIS EXISTS: hand-authored shadcn `new-york` popover, matching the other primitives in
+ * this folder (`select.tsx`, `tooltip.tsx`) rather than the current registry. Four things
+ * before editing:
  *
  * 1. CLASSES ARE THE OLDER (Tailwind-3) REGISTRY GENERATION — this portal is on Tailwind
  *    3.4.17, and a class the build does not produce renders as nothing while jsdom's DOM

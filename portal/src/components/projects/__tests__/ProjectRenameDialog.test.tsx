@@ -201,7 +201,7 @@ describe('renaming a project', () => {
   })
 })
 
-describe('cancelling a rename that is already in flight (R44a, #187)', () => {
+describe('cancelling a rename that is already in flight', () => {
   it('leaves the project with its ORIGINAL name — asserted on the name, not on the dialog closing', async () => {
     // ★ THE DEFECT: Cancel called `onClose` unconditionally. Pressing Save fires the request; the
     // dialog closing does nothing to a request already away, so the citizen was told the rename

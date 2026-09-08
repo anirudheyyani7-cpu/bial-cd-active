@@ -8,9 +8,9 @@
  *
  * CSRF: `relaunchPreview` / `stop` (and the project-scoped save / release / stop-active
  * calls below) are mutating POSTs and carry the signed double-submit token (`X-CSRF-Token`,
- * reusing `auth.js` `getCsrfToken()`); `getStatus` GET and the SSE GET (a separate transport,
+ * reusing `auth.ts` `getCsrfToken()`); `getStatus` GET and the SSE GET (a separate transport,
  * `buildSessionEvents.ts`) are safe methods and carry NO token. This is net-new: no prior
- * business route in the portal enforces CSRF (`api.js` names itself "the seam to add it to").
+ * business route in the portal enforces CSRF.
  */
 import { ApiError, extractApiCode, extractApiMessage, isRecord, readApiError } from './apiError'
 import { authFetch } from './api'
@@ -142,7 +142,7 @@ function toStopBuildResponse(value: unknown): StopBuildResponse {
 
 // ─── request plumbing ────────────────────────────────────────────────────────
 
-/** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.js`). */
+/** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.ts`). */
 function csrfHeaders(): Record<string, string> {
   const csrf = getCsrfToken()
   return csrf ? { 'X-CSRF-Token': csrf } : {}

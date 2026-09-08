@@ -322,9 +322,7 @@ and renders. You have the full tool surface: the read tools, a real shell throug
 `run_command`, and the write tools below."""
 """Write's purpose/identity opener (pattern 3) — the paragraph the standalone `BUILD_SYSTEM_PROMPT`
 used to type out for itself, factored here when the two Write prompts were made to share one
-source. Only one prompt is left now, but the block stays where a leaf module can hold it: having
-`orchestrator/prompt.py` import from `services/agent/` to get it would add exactly the
-cross-package edge this module exists to avoid."""
+source. One prompt is left; the block stays where a leaf module can hold it."""
 
 # The working-rules blocks are factored so the mode prompts (`services/agent/
 # mode_prompts.py`) compose Write mode from the SAME text — single source, no drift.

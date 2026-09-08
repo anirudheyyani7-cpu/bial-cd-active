@@ -690,8 +690,8 @@ async def test_may_never_be_green_is_true_for_exactly_one_state() -> None:
 class _AnswersOnTheSecondLook(FakeSandbox):
     """A container whose root route is unreachable on the first ask and answers on the second.
 
-    A SUBCLASS rather than a reassigned bound method — assigning over one is a type error under
-    `ty` (see `_WarmOrderSandbox` in test_harness.py), so the fakes here are subclassed anyway."""
+    A SUBCLASS rather than a reassigned bound method — assigning over one is a type error
+    under `ty`, so the fakes here are subclassed anyway."""
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         if self.serving_calls >= 1:

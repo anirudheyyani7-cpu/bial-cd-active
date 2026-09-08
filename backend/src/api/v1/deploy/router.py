@@ -117,12 +117,9 @@ router = APIRouter(prefix="/projects", tags=["deploy"])
 # afterwards is a breaking change. The portal's admin client is built entirely on
 # `/api/admin/apps/*` (portal/src/utils/appRegistryApi.ts) and the edge rewrites `/api/X` ->
 # `/v1/X` blindly, so this prefix is what a follow-up admin button already expects.
-# TWO ROUTERS IN ONE FILE, AND TWO NAMESPACES. `router` above is the citizen-facing pair;
-# this one carries the superadmin-only `unpublish` lever — mirroring `admin/router.py`'s own
-# two-router shape. Which FILE the code lives in and which URL it answers on are independent
-# decisions here: the lever sits under `/v1/admin/*` with every other superadmin route
-# regardless of the module it was convenient to write it in. Both are registered separately
-# in `api/v1/router.py`.
+# This file therefore defines TWO routers — `router` above is the citizen-facing pair, this one
+# carries the superadmin-only `unpublish` lever — and `api/v1/router.py` registers them
+# separately. Which file the code lives in and which URL it answers on are independent here.
 admin_router = APIRouter(prefix="/admin/apps", tags=["admin"])
 
 _UNAVAILABLE = "Deploying is not switched on for this environment. Please tell an administrator."
@@ -855,9 +852,6 @@ class _SavedVersion:
 # answer" are claims about the platform's reach; "there is no bundle" is a claim about
 # their work, and collapsing the three made the rail tell a citizen who had never saved
 # that their save could not be found.
-#
-# Three named values rather than three coincidentally-identical literals — and now they
-# are visibly NOT the same answer, which is the whole change.
 _NEVER_SAVED = _SavedVersion(head=None, saved_at=None, state=SavedState.NEVER_SAVED)
 _NO_STORE = _SavedVersion(head=None, saved_at=None, state=SavedState.STORE_UNCONFIGURED)
 _STORE_REFUSED = _SavedVersion(head=None, saved_at=None, state=SavedState.STORAGE_ERROR)

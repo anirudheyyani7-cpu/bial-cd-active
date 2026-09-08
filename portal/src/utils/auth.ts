@@ -163,7 +163,7 @@ export function isAuthenticated(): boolean {
 // Exported so the first business-route client that enforces double-submit CSRF —
 // the build-session control API (`buildSessionApi.ts`) — reuses this exact
 // cookie read instead of re-implementing it.
-// Additive: `auth.js`'s own `doRefresh`/`logout` still call it unchanged.
+// Additive: this module's own `doRefresh`/`logout` still call it unchanged.
 export function getCsrfToken(): string | null {
   try {
     const match = document.cookie.match(/(?:^|;\s*)(?:__Host-)?csrf=([^;]+)/)

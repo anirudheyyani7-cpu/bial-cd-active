@@ -1203,7 +1203,9 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
 # silent: the preview simply stops loading and Relaunch restores the older SAVED bundle, so the
 # app comes back looking healthy at an earlier state.
 #
-# These invert the four probes below — they assert the container SURVIVES.
+# The two `spares_the_attached_container` tests below invert the earlier teardown probes —
+# they assert the container SURVIVES. The third checks that a container THIS request created
+# is still torn down, so the sparing is scoped to the attach arm rather than blanket.
 
 
 class _RecordingClient(FakeSandboxClient):

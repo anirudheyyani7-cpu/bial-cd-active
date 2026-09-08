@@ -960,7 +960,8 @@ async def test_an_unknown_handle_returns_the_plain_instruction_not_an_exception(
 
 async def test_a_handle_from_a_previous_run_is_no_longer_held(sink: CollectingSink) -> None:
     """★ THE STATED LIFETIME, exercised rather than asserted about. The turn engine builds a
-    fresh `SandboxSession` per turn (`turns/engine.py:1727`), so the buffer dies with the turn —
+    fresh `SandboxSession` per turn (`turns/engine.py`, at `state.sandbox = SandboxSession(`), so
+    the buffer dies with the turn —
     nothing here is persisted to the database or to blob."""
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout=_long_output(), stderr="", exit=0))

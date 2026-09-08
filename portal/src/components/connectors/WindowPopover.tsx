@@ -149,10 +149,27 @@ export default function WindowPopover({
       data-testid="window-popover"
       onEscapeKeyDown={onCancel}
       onInteractOutside={onCancel}
+      // Keep the popover clear of the window edge when Radix has to shift or flip it.
+      collisionPadding={12}
       // `p-0 w-[302px]`: the board's own width, and each band owns its padding because the
       // divider above the grid and the amber note are inset differently from the footer.
-      className="w-[302px] rounded-[13px] border-bial-border p-0 shadow-[0_18px_44px_rgba(16,24,40,.18)]"
+      //
+      // THE HEIGHT CAP IS NOT COSMETIC — it is what keeps `Apply` reachable. This popover is a
+      // fixed ~520px tall, and the chip that opens it sits high in the rail, so on a 900px
+      // window the footer landed 75px BELOW the fold (rendered, focusable, and impossible to
+      // click), while on an 800px window Radix flipped it upward and the title and presets went
+      // off the TOP at y=-105. Both were found in a real browser; jsdom computes no layout, so
+      // no unit test could have seen either. Capping at Radix's own available-height variable and
+      // scrolling the body — with the footer pinned outside the scroller — means the window can
+      // be any height and the two controls that commit or abandon the choice are always on screen.
+      //
+      // Tailwind 3 spells this `max-h-[var(--x)]`; the current shadcn registry's `max-h-(--x)`
+      // is v4-only syntax this build cannot parse, exactly as `dropdown-menu.tsx` records.
+      className="flex max-h-[var(--radix-popover-content-available-height)] w-[302px] flex-col overflow-hidden rounded-[13px] border-bial-border p-0 shadow-[0_18px_44px_rgba(16,24,40,.18)]"
     >
+      {/* The scrolling body. `min-h-0` is what lets a flex child actually shrink below its
+          content height — without it the cap above would be ignored and nothing would scroll. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="px-[15px] pt-[13px]">
         <p className="m-0 text-xs font-extrabold text-primary-900">{TITLE}</p>
         <p className="m-0 mt-[5px] text-[10.5px] leading-[1.5] text-neutral">{SUBTITLE}</p>
@@ -238,7 +255,10 @@ export default function WindowPopover({
         </div>
       )}
 
-      <div className="flex items-center gap-2 px-[15px] pb-3.5 pt-3">
+      </div>
+
+      {/* Pinned: the footer never scrolls out of reach. */}
+      <div className="flex flex-shrink-0 items-center gap-2 border-t border-bial-border/60 px-[15px] pb-3.5 pt-3">
         <span className="text-[10.5px] text-neutral">{summary}</span>
         <span className="ml-auto inline-flex gap-2">
           <Button

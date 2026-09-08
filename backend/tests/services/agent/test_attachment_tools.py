@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic_ai import ModelRetry
@@ -19,6 +19,7 @@ from src.services.agent.attachment_tools import (
     AttachmentReader,
     attachment_toolset,
 )
+from src.services.orchestrator.deps import SandboxSession
 
 
 @dataclass
@@ -79,7 +80,12 @@ async def test_the_command_is_the_shipped_reader_and_nothing_else() -> None:
             calls.append(argv)
             return type("R", (), {"stdout": '{"ok": true}', "stderr": "", "exit": 0})()
 
-    session = type("S", (), {"sandbox_client": _Client(), "handle": object()})()
+    # A DOUBLE RATHER THAN A `SandboxSession`, and cast because it is one deliberately: the
+    # reader touches exactly two attributes, and building a whole session here would hide which
+    # two by supplying twenty. The cast is the claim the double makes, written down.
+    session = cast(
+        SandboxSession, type("S", (), {"sandbox_client": _Client(), "handle": object()})()
+    )
     await AttachmentReader(session=session).read(".attachments/roster.xlsx")
 
     assert calls == [["python3", READER_PATH, ".attachments/roster.xlsx"]]

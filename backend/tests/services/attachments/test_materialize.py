@@ -32,6 +32,7 @@ from src.services.media.lanes import (
     TSV_MEDIA_TYPE,
     WORD_MEDIA_TYPE,
 )
+from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import SandboxError
 from src.services.sandbox.base import ExecResult
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
@@ -61,11 +62,10 @@ def _file(
     )
 
 
-def _session(sandbox: FakeSandbox):
-    from src.services.orchestrator.deps import SandboxSession
-
+def _session(sandbox: FakeSandbox) -> SandboxSession:
+    # `handle` is a METHOD on the fake, not a property — the same call every other suite makes.
     return SandboxSession(
-        sandbox_client=sandbox, handle=sandbox.handle, app_id=uuid.uuid4(), emitter=None
+        sandbox_client=sandbox, handle=sandbox.handle(), app_id=uuid.uuid4(), emitter=None
     )
 
 

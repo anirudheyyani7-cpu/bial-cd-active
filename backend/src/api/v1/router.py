@@ -17,6 +17,7 @@ catalog — argues for itself in its own module header."""
 
 from fastapi import APIRouter
 
+from src.api.v1.admin.connectors import router as admin_connectors_router
 from src.api.v1.admin.router import router as admin_router
 from src.api.v1.admin.router import users_router as admin_users_router
 from src.api.v1.apps.router import router as apps_router
@@ -70,4 +71,5 @@ v1_router.include_router(apps_router)
 v1_router.include_router(build_sessions_router)
 v1_router.include_router(admin_router)
 v1_router.include_router(admin_users_router)
+v1_router.include_router(admin_connectors_router)
 v1_router.include_router(deploy_admin_router)

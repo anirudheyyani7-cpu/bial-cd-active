@@ -17,7 +17,7 @@
  * by exactly that.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   listProjectConnectors: vi.fn(),
@@ -31,6 +31,7 @@ vi.mock('../../../utils/connectorApi', async (importOriginal) => ({
 
 import DataSection, { onCountLabel } from '../DataSection'
 import { ApiError } from '../../../utils/apiError'
+import { notifyConnectorsChanged } from '../../../utils/connectorApi'
 import type { ConnectorWindow, ProjectConnectorEntry } from '../../../utils/connectorApi'
 
 const september: ConnectorWindow = {
@@ -346,23 +347,19 @@ describe('the read, before it lands and when it fails', () => {
     expect(screen.queryByTestId('data-section-error')).toBeNull()
   })
 
-  it('re-reads through the handle the rail holds, which is how the dialog\'s close is felt', async () => {
-    // The wiring itself is proved end to end in `DataSection.integration.test.tsx`; what this
-    // pins is that the handle exists and re-reads when it is called.
-    const handle = { current: null as { reload: () => void } | null }
+  it('re-reads when any connector write is announced, which is how BOTH dialog doors are felt', async () => {
+    // The section used to expose an imperative `reload()` that only the rail's own door called,
+    // so opening Integrations from the profile menu — on this very screen — changed connector
+    // state the rail never re-read. The handle is gone; the section subscribes instead, so the
+    // door that fired the write no longer has to know this component exists.
     h.listProjectConnectors.mockResolvedValue([off])
-    render(
-      <DataSection
-        ref={handle}
-        projectId="p1"
-        label={<h2>DATA</h2>}
-        onOpenIntegrations={openIntegrations}
-      />,
-    )
+    render(<DataSection projectId="p1" label={<h2>DATA</h2>} onOpenIntegrations={openIntegrations} />)
     await screen.findByText('Switch it on when a chat needs flight data')
 
     h.listProjectConnectors.mockResolvedValue([on])
-    handle.current?.reload()
+    act(() => {
+      notifyConnectorsChanged()
+    })
 
     expect(await screen.findByText('Reading 30 days of flight data')).toBeTruthy()
   })

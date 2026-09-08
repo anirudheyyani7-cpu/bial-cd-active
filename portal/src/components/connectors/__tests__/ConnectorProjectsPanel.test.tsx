@@ -398,6 +398,62 @@ describe('ConnectorProjectsPanel', () => {
     expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('false')
   })
 
+  it('rolls a failed toggle back to what the SERVER settled, not to what the list loaded with', async () => {
+    // THE REGRESSION THIS PINS. The row's failure path restores its props, which is only correct
+    // while the props ARE the last settled answer. This panel used to leave them at whatever
+    // `load()` fetched, so the second write below rolled the switch back to OFF — the position
+    // the citizen had just asked for — while the server held ON. A red banner over a switch that
+    // agrees with the failed request is the worst of both: it reads as "your change did not
+    // happen" while the change that DID happen is the opposite one.
+    //
+    // The existing failure test cannot see this: it fails on the FIRST toggle, where the loaded
+    // props and the server agree, so rolling back to either gives the same answer.
+    h.setProjectConnector.mockResolvedValueOnce(settled(true, lastSeven))
+    mount()
+    await screen.findByText('Turnaround Times')
+    expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(switchFor('Turnaround Times'))
+    await waitFor(() =>
+      expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('true'),
+    )
+
+    h.setProjectConnector.mockRejectedValueOnce(new Error('The network went away.'))
+    fireEvent.click(switchFor('Turnaround Times'))
+
+    const alert = await screen.findByTestId('connector-projects-toast')
+    expect(alert.textContent).toContain('The network went away.')
+    // ON, because that is what the server actually holds — not OFF, the state it loaded with.
+    expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps a settled switch through a search that filters its row out and back', async () => {
+    // A filtered-out row is REMOVED from the tree, so its local override dies with it. When the
+    // query clears it remounts from these props — which is why the panel has to record what the
+    // server settled. Without that, typing and clearing a search silently resurrected every
+    // toggled row's pre-write position, and the citizen would believe connectors were off that
+    // the server holds on.
+    h.setProjectConnector.mockResolvedValueOnce(settled(true, lastSeven))
+    mount()
+    await screen.findByText('Turnaround Times')
+
+    fireEvent.click(switchFor('Turnaround Times'))
+    await waitFor(() =>
+      expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('true'),
+    )
+
+    const search = screen.getByPlaceholderText('Search projects…')
+    fireEvent.change(search, { target: { value: 'Terminal' } })
+    await waitFor(() => expect(screen.queryByText('Turnaround Times')).toBeNull())
+    // Paired positive: the list is filtered, not blank — an absence assertion over a crashed
+    // render would otherwise pass here.
+    expect(screen.getByText('Terminal 2 Departures')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: '' } })
+    await screen.findByText('Turnaround Times')
+    expect(switchFor('Turnaround Times').getAttribute('aria-checked')).toBe('true')
+  })
+
   it('surfaces the server’s own refusal when access is not approved, and stays off', async () => {
     h.setProjectConnector.mockRejectedValue(
       new ApiError(

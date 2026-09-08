@@ -23,12 +23,11 @@
  * invalidate. So `onClose` closes it AND reloads, and dropping that reload is a silent regression
  * a component test cannot see (`DataSection.integration.test.tsx` is where it goes red).
  */
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import ProjectDescriptionEditor from '../projects/ProjectDescriptionEditor'
 import RailComposer from './RailComposer'
 import AppStatusPanel from './AppStatusPanel'
 import DataSection from './DataSection'
-import type { DataSectionHandle } from './DataSection'
 import IntegrationsDialog from '../connectors/IntegrationsDialog'
 import type { Project } from '../../utils/projectApi'
 import type { SaveState } from '../../utils/buildSessionApi'
@@ -51,7 +50,6 @@ function SectionLabel({ children, className = 'text-neutral' }: { children: stri
 
 export default function WorkspaceRail({ project, save, onProjectUpdate }: WorkspaceRailProps) {
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
-  const dataSection = useRef<DataSectionHandle | null>(null)
 
   return (
     // `min-h-0` is what actually lets this flex child scroll: without it the child's min-content
@@ -69,7 +67,6 @@ export default function WorkspaceRail({ project, save, onProjectUpdate }: Worksp
           same 15px band, and the composer's is the one that differs. */}
       <section data-testid="rail-data" className="px-[18px] py-[15px]">
         <DataSection
-          ref={dataSection}
           projectId={project.id}
           label={<SectionLabel>DATA</SectionLabel>}
           onOpenIntegrations={() => setIntegrationsOpen(true)}
@@ -116,15 +113,13 @@ export default function WorkspaceRail({ project, save, onProjectUpdate }: Worksp
       </section>
 
       {/* The SAME dialog the profile menu opens (R5) — one component, two doors, no new route.
-          Its close re-reads the section it opened over: see this file's docblock. */}
-      {integrationsOpen && (
-        <IntegrationsDialog
-          onClose={() => {
-            setIntegrationsOpen(false)
-            dataSection.current?.reload()
-          }}
-        />
-      )}
+          THE RE-READ IS NOT WIRED HERE ANY MORE, deliberately: this door used to call
+          `dataSection.reload()` on close and the profile-menu door called nothing, so entering
+          from the avatar menu — which is on this very screen — left the section describing a
+          project the drill-down had just changed. `IntegrationsDialog` now announces the write
+          itself and `DataSection` subscribes, which covers both doors and any added later. Do
+          not re-add a reload here: it would fire a second, redundant read on this door only. */}
+      {integrationsOpen && <IntegrationsDialog onClose={() => setIntegrationsOpen(false)} />}
     </main>
   )
 }

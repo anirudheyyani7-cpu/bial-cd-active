@@ -42,6 +42,7 @@ import { DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { ConnectorGlyph, dayMonth } from './ConnectorRow'
 import ProjectConnectorRow from './ProjectConnectorRow'
+import type { ProjectConnectorState } from './ProjectConnectorRow'
 
 /** The one id `DialogContent` describes itself with, whichever body is rendering it. */
 const SUBTITLE_ID = 'integrations-dialog-subtitle'
@@ -111,6 +112,37 @@ export default function ConnectorProjectsPanel({
       setProjectConnector(projectId, entry.key, update),
     [entry.key],
   )
+
+  /**
+   * KEEP THE LIST IN STEP WITH WHAT THE SERVER SETTLED, exactly as the rail's DATA section does.
+   *
+   * This does NOT re-read the list — one switch press must not reorder or reload the other rows.
+   * It patches the single row the write answered for, and it is load-bearing twice over, because
+   * `ProjectConnectorRow` treats its props as "the last settled answer":
+   *
+   * 1. ITS FAILURE ROLLBACK GOES BACK TO THE PROPS. Without this patch the props are whatever
+   *    `load()` fetched, so a successful toggle followed by a FAILED one rolled the switch back
+   *    to the state the dialog was opened with — leaving the citizen looking at a switch in the
+   *    position they asked for while the server held the opposite, with a red banner above it.
+   * 2. THE SEARCH UNMOUNTS ROWS. `shown` is a filtered array, so a row that stops matching is
+   *    destroyed and its local override dies with it; when it matches again it remounts from
+   *    these props. Without the patch, typing a query and clearing it resurrected the
+   *    pre-toggle switch position for every row that had been toggled.
+   *
+   * Both were invisible to the suite because its failure test toggles only once, from a state
+   * where the props and the server happen to agree.
+   */
+  const recordSettled = useCallback((projectId: string, settled: ProjectConnectorState): void => {
+    setProjects((rows) =>
+      rows === null
+        ? rows
+        : rows.map((row) =>
+            row.projectId === projectId
+              ? { ...row, enabled: settled.enabled, window: settled.window }
+              : row,
+          ),
+    )
+  }, [])
 
   const needle = query.trim().toLowerCase()
   const shown =
@@ -259,6 +291,7 @@ export default function ConnectorProjectsPanel({
                 enabled={project.enabled}
                 window={project.window}
                 onSet={(update) => write(project.projectId, update)}
+                onSettled={(settled) => recordSettled(project.projectId, settled)}
                 onError={setFailure}
               />
             ))}

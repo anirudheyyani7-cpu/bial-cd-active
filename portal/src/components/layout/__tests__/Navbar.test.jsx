@@ -36,7 +36,13 @@ vi.mock('../../../utils/appRegistryApi', () => ({ fetchAppStatusCounts: h.fetchA
 // The Integrations dialog the profile menu opens is REAL here, not stubbed — the point of the
 // suite below is that the menu entry opens the actual dialog on whatever screen the navbar is
 // mounted on. Only its network boundary is mocked.
-vi.mock('../../../utils/connectorApi', () => ({
+// SPREAD THE ORIGINAL. A bare factory silently drops every export it does not name, and the
+// dialog's close path calls `notifyConnectorsChanged` — so listing only the three fetchers made
+// closing throw, and the failure read as "the dialog would not close" rather than "the mock is
+// incomplete". The signal itself is a real window event with no network behind it; there is
+// nothing to stub.
+vi.mock('../../../utils/connectorApi', async (importOriginal) => ({
+  ...(await importOriginal()),
   listConnectors: h.listConnectors,
   requestConnectorAccess: vi.fn(),
   cancelConnectorRequest: vi.fn(),

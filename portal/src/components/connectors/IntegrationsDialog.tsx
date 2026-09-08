@@ -22,7 +22,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
-import {
+import { notifyConnectorsChanged,
   cancelConnectorRequest,
   listConnectors,
   requestConnectorAccess,
@@ -139,14 +139,36 @@ export default function IntegrationsDialog({
     [load],
   )
 
+  /**
+   * THE ONE WAY OUT OF THIS DIALOG, and it does two things every exit needs.
+   *
+   * IT HONOURS THE IN-FLIGHT HOLD. The corner X used to call `onClose` directly while
+   * `onOpenChange` held Escape and the overlay press — so the comment below claiming "the
+   * header's X all arrive here" was false, and the one control a citizen is most likely to reach
+   * for was the one that could close the dialog mid-ask. The request lands either way; a dialog
+   * that vanished would leave them with no idea whether they had asked.
+   *
+   * IT ANNOUNCES THAT CONNECTOR STATE MAY HAVE MOVED. This dialog has two doors — the profile
+   * menu, present on every authed screen, and `Manage integrations →` in the workspace rail — and
+   * the drill-down inside it can switch the connector for the very project the rail is
+   * describing. Only the rail's door knew to re-read on close, so entering from the avatar menu
+   * left the rail asserting `Reading 30 days of flight data` about a project just switched off.
+   * Signalling from HERE fixes both doors and any door added later, because the fact that a write
+   * happened is the dialog's knowledge, not its opener's.
+   */
+  const close = useCallback((): void => {
+    if (busyKey !== null) return
+    notifyConnectorsChanged()
+    onClose()
+  }, [busyKey, onClose])
+
   return (
     <Dialog
       open
       onOpenChange={(next) => {
-        // Escape, the overlay press and the header's X all arrive here. A write in flight holds
-        // it open: the request lands either way, and a dialog that vanished mid-ask would leave
-        // the citizen with no idea whether they had asked.
-        if (!next && busyKey === null) onClose()
+        // Escape and the overlay press arrive here; the header's X calls `close` itself. Both
+        // routes go through the same hold — see `close` above.
+        if (!next) close()
       }}
     >
       <DialogContent
@@ -164,14 +186,14 @@ export default function IntegrationsDialog({
           <ConnectorProjectsPanel
             entry={body.entry}
             onBack={backFromProjects}
-            onClose={onClose}
+            onClose={close}
           />
         ) : body.view === 'ask' ? (
           <AskAccessPanel
             entry={body.entry}
             busy={busyKey === body.entry.key}
             onBack={() => setBody({ view: 'list' })}
-            onClose={onClose}
+            onClose={close}
             onSubmit={(remarks) => submitAsk(body.entry, remarks)}
           />
         ) : (
@@ -187,7 +209,7 @@ export default function IntegrationsDialog({
               </div>
               <button
                 type="button"
-                onClick={onClose}
+                onClick={close}
                 aria-label="Close"
                 className="flex-shrink-0 p-0.5 text-neutral transition hover:text-primary-900"
               >

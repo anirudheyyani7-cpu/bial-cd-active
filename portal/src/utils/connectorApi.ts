@@ -91,8 +91,46 @@ export interface ConnectorEntry {
   decisionRemarks: string | null
 }
 
-/** A required wire field. Missing means the server broke its own contract, not "absent value". */
-/** This module's binding of the shared required-string reader — the noun is fixed here, once. */
+const CONNECTORS_CHANGED = 'bial:connectors-changed'
+
+/**
+ * SAY THAT A CONNECTOR WRITE HAPPENED, so every surface showing that fact can look again.
+ *
+ * WHY A SIGNAL AND NOT A PROP. `IntegrationsDialog` has TWO doors — the profile menu, which is on
+ * every authed screen, and `Manage integrations →` in the workspace rail — and the drill-down
+ * inside it can switch the connector on or off for the very project the rail is describing. Only
+ * the rail's own door knew to re-read when it closed, so opening the same dialog from the avatar
+ * menu left the rail asserting `Reading 30 days of flight data` about a project that had just
+ * been switched off, until the citizen navigated away and back.
+ *
+ * Wiring the second door to the first door's callback would fix that one pair and leave the next
+ * mount site to rediscover it. The invalidation belongs to whoever knows a write occurred, which
+ * is the dialog — not to whichever component happened to open it.
+ *
+ * This is the `notifyUsageChanged` / `onUsageChanged` idiom already shipping in `utils/usage.ts`,
+ * for the same reason: a bare signal, no payload, best-effort. Listeners re-read from the server
+ * rather than trusting anything carried on the event, so a missed signal degrades to stale data
+ * that the next navigation corrects, never to a wrong write.
+ */
+export function notifyConnectorsChanged(): void {
+  try {
+    window.dispatchEvent(new CustomEvent(CONNECTORS_CHANGED))
+  } catch {
+    // window/CustomEvent unavailable (SSR/tests) — best-effort only, exactly as usage.ts is.
+  }
+}
+
+/** Subscribe to connector-changed signals. Returns an unsubscribe function. */
+export function onConnectorsChanged(handler: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener(CONNECTORS_CHANGED, handler)
+  return () => window.removeEventListener(CONNECTORS_CHANGED, handler)
+}
+
+/**
+ * This module's binding of the shared required-string reader — the noun is fixed here, once.
+ * A missing required field means the server broke its own contract, not an absent value.
+ */
 const readString = (value: unknown, field: string): string =>
   requiredString(value, 'connector', field)
 
@@ -108,22 +146,17 @@ function readState(value: unknown): ConnectorState {
 }
 
 /**
- * The consent lines, or a throw — the module's strict half, not the catalog's forgiving one.
- *
- * AN EMPTY ARRAY IS A BREAK TOO. This is the copy that tells somebody what they are consenting
- * to before they ask for it; a connector that promises nothing is not a thinner panel, it is a
- * consent box with a heading and no consent under it. Dropping a malformed LINE would be worse
- * still — the citizen would read two of three promises with nothing on screen admitting the
- * third went missing. Both cases land in the dialog's error-and-retry state, which is honest.
- */
-/**
- * A consent panel off the wire, or a throw. Shared with the admin client, which reads the
+ * A consent panel off the wire, or a throw — the strict half, not the catalog's forgiving one. Shared with the admin client, which reads the
  * APPROVER set off its own queue rows — one parser, because the citizen's panel and the
  * administrator's are the same shape carrying different promises, and a shape check that can
  * disagree between the two surfaces is worse than no check at all.
  *
- * An empty list is a contract break, not an absent value: a lowercase key standing in for a
- * display name is legible, a consent box with no consent under it is not.
+ * AN EMPTY LIST IS A BREAK TOO, not an absent value. This is the copy that tells somebody what
+ * they are consenting to before they ask for it: a lowercase key standing in for a display name
+ * is still legible, but a connector that promises nothing is not a thinner panel — it is a
+ * consent box with a heading and no consent under it. Dropping a malformed LINE would be worse
+ * still, leaving two of three promises on screen with nothing admitting the third went missing.
+ * Both land in the dialog's error-and-retry state, which is honest.
  */
 export function readConsentLines(
   value: unknown,

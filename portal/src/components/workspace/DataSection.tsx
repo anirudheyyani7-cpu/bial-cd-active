@@ -43,16 +43,14 @@
  * shift the rail, which is the thing the skeleton exists to prevent.
  */
 import {
-  forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { ArrowRight, X } from 'lucide-react'
-import { listProjectConnectors, setProjectConnector } from '../../utils/connectorApi'
+import { listProjectConnectors, onConnectorsChanged, setProjectConnector } from '../../utils/connectorApi'
 import type { ProjectConnectorEntry, WindowChoice } from '../../utils/connectorApi'
 import { ConnectorGlyph, dayMonth } from '../connectors/ConnectorRow'
 import ProjectConnectorRow from '../connectors/ProjectConnectorRow'
@@ -136,14 +134,6 @@ export function onCountLabel(on: number, total: number): string {
   return `${on} of ${total} on`
 }
 
-export interface DataSectionHandle {
-  /**
-   * Re-read this project's connectors. The rail calls it when the Integrations dialog closes,
-   * because the dialog can change every fact on this section and reports none of them back.
-   */
-  reload: () => void
-}
-
 export interface DataSectionProps {
   projectId: string
   /**
@@ -167,10 +157,11 @@ function message(caught: unknown): string {
   return caught instanceof Error ? caught.message : String(caught)
 }
 
-const DataSection = forwardRef<DataSectionHandle, DataSectionProps>(function DataSection(
-  { projectId, label, onOpenIntegrations },
-  ref,
-): React.JSX.Element {
+function DataSection({
+  projectId,
+  label,
+  onOpenIntegrations,
+}: DataSectionProps): React.JSX.Element {
   const [entries, setEntries] = useState<ProjectConnectorEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -199,7 +190,15 @@ const DataSection = forwardRef<DataSectionHandle, DataSectionProps>(function Dat
     void load()
   }, [load])
 
-  useImperativeHandle(ref, () => ({ reload: () => void load() }), [load])
+  /**
+   * RE-READ WHEN ANY CONNECTOR WRITE HAPPENS ANYWHERE, not only when the door this rail owns
+   * closes. `IntegrationsDialog` opens from the profile menu too — it is on this very screen —
+   * and its drill-down can switch THIS project's connector. The rail's own `onClose` covers only
+   * its own door, so the avatar-menu route left this section asserting a window and a switch
+   * position the server had already changed. Subscribing puts the re-read where the fact is,
+   * which also covers whatever mounts that dialog next.
+   */
+  useEffect(() => onConnectorsChanged(() => void load()), [load])
 
   /**
    * One row's write, and the settled answer kept BOTH places it is needed.
@@ -360,6 +359,6 @@ const DataSection = forwardRef<DataSectionHandle, DataSectionProps>(function Dat
       </button>
     </>
   )
-})
+}
 
 export default DataSection

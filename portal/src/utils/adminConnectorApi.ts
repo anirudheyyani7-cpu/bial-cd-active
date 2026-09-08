@@ -127,26 +127,20 @@ function readStatus(value: unknown): ConnectorRequestStatus {
 }
 
 /**
- * `USING IT IN`, preserving the difference between "none" and "not asked".
+ * One queue row off the wire.
  *
- * `0` SURVIVES AS `0`. It is a real answer — somebody approved who has not switched the
- * connector on in any project yet — and folding it to `null` would draw the declined row's em
- * dash over an approval.
- */
-/**
- * `WHAT APPROVING GIVES THEM`, or a throw — the same strict reader the citizen module applies to
- * its own consent list, and strict for the same reason.
+ * `usingItIn` keeps the difference between "none" and "not asked": `0` survives as `0`, because
+ * an approved person who has switched the connector on nowhere is a real answer, and folding it
+ * to `null` would draw the declined row's em dash over an approval. That rule lives in
+ * `optionalCount`.
  *
- * AN EMPTY ARRAY IS A BREAK TOO, and this is the one field where degrading gracefully would be
- * worse than failing. `connectorDisplayName` falls back to the stored key on the server for a
- * connector the registry no longer offers, because a lowercase key on screen is still legible;
- * a consent box with a heading and no consent under it asks an administrator to hand somebody
- * access to BIAL data without saying what the access is. Dropping a malformed LINE would be
- * worse still — two of three promises on screen with nothing admitting the third went missing.
- * Both land in the queue's error-and-retry state, which is honest.
+ * `consentLinesApprover` is read strictly, and this is the one field where degrading gracefully
+ * would be worse than failing: `connectorDisplayName` falls back to the stored key on the server
+ * for a connector the registry no longer offers, because a lowercase key on screen is still
+ * legible — but a consent box with a heading and nothing under it asks an administrator to hand
+ * somebody access to BIAL data without saying what the access is. It lands in the queue's
+ * error-and-retry state instead, which is honest.
  */
-
-
 function toRow(value: unknown): ConnectorRequestRow {
   const row = isRecord(value) ? value : {}
   return {

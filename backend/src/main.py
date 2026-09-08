@@ -129,9 +129,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # (a crash-loop can run this before ARM has settled), so the scheduled pass repeats it.
     await _reconcile_interrupted_deploys()
     yield
-    # Shutdown: close the coordination pool, the sandbox client, the object-store
-    # client(s) + Azure credential, and the app-database maintenance engine so no aiohttp
-    # session / connection pool leaks. Each is a no-op when its resource was never opened.
+    # Shutdown: close every client so no aiohttp session / connection pool leaks. Each is
+    # a no-op when its resource was never opened.
     from src.services.appdb import aclose_maintenance_engine
     from src.services.deploy.aca_publish import aclose_published_apps
     from src.services.deploy.images import aclose_image_builder
@@ -326,8 +325,6 @@ def _mount_spa(app: FastAPI) -> None:
         responses=error_responses((404, DetailBody, "Not Found")),
     )
     async def spa_history_fallback(full_path: str) -> FileResponse:
-        # Never shadow the API: its routes match first, but a genuinely unmatched
-        # /v1|/api path must 404 as JSON, not return HTML.
         if full_path.split("/", 1)[0] in _RESERVED_ROOTS:
             raise HTTPException(status_code=404)
         # A real static file at the web root (favicon, logo) wins; otherwise return

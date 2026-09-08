@@ -113,7 +113,7 @@ def build_broker() -> AsyncBroker:
     )
 
 
-# The singleton. Task modules do `from src.broker import broker` and decorate against it.
+# The singleton.
 #
 # Lifecycle handlers, if any are ever added, are registered HERE at module scope on this object —
 # never as a side effect of `build_broker()`. Registering inside the factory yields duplicate

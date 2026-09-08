@@ -225,10 +225,8 @@ const Composer: FC<ComposerProps> = ({
               </p>
             )}
 
-            {/* The context guardrail's SOFT half: advisory and non-blocking. Send still works
-                past this line; what stops a turn is the server, and it says so itself.
-                `role="status"` so it is announced once when it appears rather than
-                interrupting. */}
+            {/* The context guardrail's SOFT half: advisory, not a gate. `role="status"` so it
+                is announced once when it appears rather than interrupting. */}
             {contextWarning && (
               <p
                 role="status"

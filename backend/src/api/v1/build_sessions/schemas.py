@@ -83,8 +83,7 @@ RELAUNCH_PREVIEW_STAY_SECONDS = 1800  # 30 min
 # the reconciliation sweep reads it. It exists because NOTHING else here is legible to a
 # process that is not running the build: the heartbeat above is seeded once per turn, so
 # ~90 s in the only remaining shield is `sweep_all`'s in-process `live_users` set — empty
-# everywhere else. Plain module constants like their frozen neighbours above: a frozen
-# protocol constant, not deployment config.
+# everywhere else.
 #
 # The TTL is MANDATORY, not a default. The registry hash's own missing TTL is exactly the
 # mistake a lease must not repeat: one that never expires is a container that can never be

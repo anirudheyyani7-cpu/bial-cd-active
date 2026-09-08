@@ -68,13 +68,7 @@ def _import_task_modules() -> None:
 
 
 async def _run_receiver_forever() -> None:
-    """Run the receiver, restarting it with backoff if it ever returns or raises.
-
-    Two library behaviours make this wrapper load-bearing rather than defensive. The receiver's
-    internal loop catches broad exceptions with no backoff, so a broken Redis spins hot; and a
-    bare `create_task` failure is silent, which would leave a worker that consumes nothing
-    forever while its container reports healthy.
-    """
+    """Run the receiver, restarting it with backoff if it ever returns or raises."""
     while True:
         try:
             await run_receiver_task(
@@ -128,12 +122,7 @@ def _on_task_done(task: asyncio.Task[None]) -> None:
 async def startup() -> None:
     """Register task modules and bring the broker up — EXACTLY ONE `broker.startup()` call.
 
-    Extracted from `main()` so a test can assert the once-only property directly. That property
-    is the whole reason this entrypoint exists rather than the taskiq CLI: `broker.startup()`
-    fires the worker-startup event, and any design where a startup handler re-enters it (a
-    `WORKER_STARTUP` hook that calls `run_scheduler`, or `scheduler.startup()`) recurses without
-    bound.
-    """
+    Extracted from `main()` so a test can assert the once-only property directly."""
     _import_task_modules()
 
     # Mark this process as a worker BEFORE starting the broker: `AsyncBroker.startup()` branches

@@ -236,8 +236,8 @@ def _public_app_url(app_name: str) -> str:
     """Where a BIAL employee's browser reaches this app.
 
     NOT `https://{fqdn}/`. The Container Apps environment is internal and publishes no public
-    DNS, so its own domain does not resolve from a BIAL desk — which is the defect this whole
-    change exists to fix. Lazy settings import for the same cycle reason as `_apps_hostname`.
+    DNS, so its own domain does not resolve from a BIAL desk. Lazy settings import for the
+    same cycle reason as `_apps_hostname`.
     """
     from src.config import settings  # lazy: avoid an import cycle via src.config
 
@@ -994,8 +994,7 @@ class AcaSandboxClient(SandboxClient):
             #
             # The registry drop used to be unconditional. `_safe_teardown` swallows an
             # `AcaError`, so a refused delete still dropped the record — orphaning a container
-            # that was probably still running. `teardown()` three methods below has always had
-            # this right: "Keep the registry so the reaper retries this teardown; don't orphan."
+            # that was probably still running. `teardown()` below has always had this right.
             torn_down = await self._safe_teardown(app_name)
             if torn_down:
                 await self._delete_registry(user_uuid)

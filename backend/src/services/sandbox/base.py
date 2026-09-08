@@ -668,9 +668,7 @@ class SandboxClient(abc.ABC):
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         """The app's public root, status plus a bounded head of what it answered.
 
-        DELIBERATELY NOT ABSTRACT, same reason as `someone_has_to_go_first` below: it mirrors
-        no supervisor endpoint (the pinned-contract test would break) — an ordinary GET at the
-        app's own root through the citizen's own Caddy.
+        DELIBERATELY NOT ABSTRACT, same reason as `someone_has_to_go_first` below.
         NOT `someone_has_to_go_first`: that method is non-load-bearing and stops at headers; a
         health verdict IS a gating decision and needs the body too.
         Default: `None` (no root to ask) — read as `INDETERMINATE`, never broken."""

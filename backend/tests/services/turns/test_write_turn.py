@@ -1838,7 +1838,7 @@ async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
 
     ASSERTED ON THE REQUEST COUNT, not on elapsed behaviour: a model that WAS asked and returned
     nothing also says nothing afterwards. `counts["requests"]` must be one for the write, one for
-    `declare_done`, and no third; delete the `break` in `_run_write_once` and a third fires."""
+    `declare_done`, and no third."""
     # Mutation check: delete the `break` in `_run_write_once` and the third request fires, the
     # closing paragraph lands in the transcript, and both halves of this go red.
     engine = _fresh_engine

@@ -34,9 +34,7 @@ emitters call, for the same reason `PLAN_OPTIONS_TOOL` is: the live emitter and 
 agree on the spelling or a spoken line renders on one side and not the other."""
 
 PROPOSE_SLICE_TOOL: Final = "propose_first_slice"
-"""The scope-negotiation tool's wire name. Named here for the same reason the
-other two are: the live emitter and this one must agree on the spelling, and the stored call is
-the record both of them read."""
+"""The scope-negotiation tool's wire name. Named here for the same reason the other two are."""
 
 PLATFORM_TEXT_KIND: Final = "platform_text"
 """`meta.kind` of a row whose sentence is the PLATFORM's, not the model's.
@@ -692,10 +690,7 @@ def update_from_args(args: Any) -> str | None:
     have been worse than leaving it: the model would be taught it may write at length while the
     renderer went on deleting it.
 
-    Both stored shapes go through `_args_dict`: pydantic-ai persists a tool call's `args` as a
-    JSON string or as an object depending on the provider. A malformed argument is the same
-    answer as a missing one, and a projection that raised would take a whole transcript down
-    over one row."""
+    Both `args` shapes go through `_args_dict`; a malformed one reads as missing."""
     parsed = _args_dict(args)
     update = parsed.get("update")
     if not isinstance(update, str):
@@ -942,10 +937,7 @@ def _project_response_parts(
                 continue
             if tool_name == TELL_THE_USER_TOOL:
                 # THE WORDS, AT THE POSITION THE CALL OCCUPIES — the `present_plan_options`
-                # shape, and the reason live order and reload order are the same order. The
-                # live stream pushes this same string from this same call at
-                # `FunctionToolCallEvent`, so a reloaded transcript reads as the citizen
-                # watched it arrive.
+                # shape, and the reason live order and reload order are the same order.
                 #
                 # AND IT IS NOT A STEP. Handled above `_step_label`, exactly as the offer is,
                 # so the transcript shows what was said and never a row announcing that the

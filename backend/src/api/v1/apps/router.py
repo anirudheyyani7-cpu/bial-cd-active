@@ -35,7 +35,6 @@ router = APIRouter(prefix="/apps", tags=["apps"])
 
 
 async def _owned_app_or_404(db: DbSession, app_id: uuid.UUID, user_id: uuid.UUID) -> AppRegistry:
-    """Load an app scoped to its owner, or 404."""
     app = await db.get(AppRegistry, app_id)
     if app is None or app.user_id != user_id:
         raise AppApiError(status.HTTP_404_NOT_FOUND, "App not found.")

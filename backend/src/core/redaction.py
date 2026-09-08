@@ -7,9 +7,8 @@ as the answer when the model is unavailable, so its precision burden is absolute
 pattern must stay LINEAR — app-controlled text reaches them on the event loop — and a
 synchronous caller caps input length before scanning.
 
-`scrub_untrusted` is cap, THEN strip-escapes, THEN redact — the cap runs first because it
-bounds the work an adversarial, app-controlled blob can make a synchronous, event-loop-bound
-scan do; strip and redact then run over an already-bounded string."""
+`scrub_untrusted` is the entry point for sandbox-authored text: cap, THEN strip-escapes,
+THEN redact."""
 
 from __future__ import annotations
 

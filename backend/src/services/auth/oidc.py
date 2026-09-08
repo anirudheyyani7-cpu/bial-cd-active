@@ -97,7 +97,6 @@ def validate_entra_token(token: Mapping[str, Any]) -> EntraIdentity:
     Raises `AuthError` on missing `userinfo` (unvalidated token), missing
     `oid`/`sub`, a foreign `tid`, or a missing email+UPN. Never returns on doubt."""
     userinfo = token.get("userinfo")
-    # `userinfo` present AND a mapping == Authlib fully validated the id_token.
     if not isinstance(userinfo, Mapping) or not userinfo:
         raise AuthError(
             "callback token carries no validated userinfo", reason=REASON_INVALID_CALLBACK

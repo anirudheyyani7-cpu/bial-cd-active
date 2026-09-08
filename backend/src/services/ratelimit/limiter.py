@@ -141,8 +141,7 @@ async def rate_limit_exception_handler(request: Request, exc: Exception) -> JSON
 
 def install_rate_limiting(app: FastAPI) -> None:
     """Register the 429 handler and log the single-replica assumption at startup.
-    Called once from the app factory; the in-process store is per-worker, so a
-    multi-replica deployment needs a shared store (Redis, deferred)."""
+    Called once from the app factory."""
     app.add_exception_handler(RateLimitExceededError, rate_limit_exception_handler)
     logger.info(
         "rate_limit_store_in_process",

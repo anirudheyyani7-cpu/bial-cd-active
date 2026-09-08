@@ -479,9 +479,8 @@ export default function ProjectsPage(): React.JSX.Element {
     return Array.from({ length: span }, (_, i) => first + i)
   }, [page, totalPages])
 
-  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. A failed page leaves
-  // the rows already on screen intact — which it does — but the footer then
-  // narrated the page that FAILED over the rows that succeeded: 12 projects, page 2 refused,
+  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. The footer used to
+  // narrate the page that FAILED over the rows that succeeded: 12 projects, page 2 refused,
   // and the caption read `Showing 9–16 of 12`, a range past its own total, above rows 1-8.
   const firstOnPage = useMemo(
     () => (appliedPage - 1) * appliedPageSize + 1,
@@ -837,9 +836,8 @@ export default function ProjectsPage(): React.JSX.Element {
                     landing page and got worse with six. */}
                 <Pagination className="mx-0 w-auto" aria-label="Projects pagination">
                   <PaginationContent className="flex-wrap justify-end">
-                    {/* The control set is spelled literally — « ‹ 1 2 › » — with four icon
-                        buttons around the numbers. Jump-to-first/last were missing; at six
-                        pages the difference is four clicks or one. */}
+                    {/* Jump-to-first/last were missing; at six pages the difference is four
+                        clicks or one. */}
                     <PaginationItem>
                       <PaginationLink
                         aria-label="First page"

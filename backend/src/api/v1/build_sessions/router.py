@@ -162,7 +162,7 @@ def _conflict_response(exc: BuildSessionConflictError) -> JSONResponse:
         "code": "build_session_already_active",
     }
     if exc.session_id is not None:
-        error["sessionId"] = str(exc.session_id)  # carry the existing session
+        error["sessionId"] = str(exc.session_id)
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"error": error})
 
 
@@ -481,12 +481,9 @@ async def build_events(
 # What holds a turn open now is the wall-clock lease the SERVER renews, legible to a sweep
 # in another process, which a browser timer never was.
 #
-# `force-end` was the last one standing and it has now gone the same way. It was described
-# here as "the one lock op still reachable from the UI (fed by relaunch's 409)"; that stopped
-# being true when the block banner's Force-end button was removed, and `buildSessionApi.ts`
-# and `useBuildSession.ts` both recorded in their own comments that nothing called it. Its
-# client exports went with it in the same change. The kill switch a citizen actually reaches
-# is `projects/{project_id}/stop-active-build` (the take-back dialog), which is project-scoped
+# `force-end` was the last one standing and it has now gone the same way, its client exports
+# with it. The kill switch a citizen actually reaches is
+# `projects/{project_id}/stop-active-build` (the take-back dialog), which is project-scoped
 # and needs no session id.
 
 
@@ -540,9 +537,9 @@ class StopActiveBuildResponse(CamelModel):
     licenses: `stopped` and `nothing_was_running` are both permission to continue,
     `still_running` is not."""
 
-    # The SAME shape from both routes on purpose. The ask reports the state at the instant the
-    # stop began; the status read reports it now. A client that had to decode two shapes would
-    # be one refactor away from reading one of them with the other's rules.
+    # The ask reports the state at the instant the stop began; the status read reports it now. A
+    # client that had to decode two shapes would be one refactor away from reading one of them
+    # with the other's rules.
     state: StopOutcome
 
 
@@ -987,7 +984,6 @@ async def report_client_error(
         )
     ).scalar_one_or_none()
     if app_id is None:
-        # Same non-leaking answer as an unowned project: "nothing here to report against".
         raise AppApiError(status.HTTP_404_NOT_FOUND, "Project not found.")
     # `app_name_for` is the same forward mapping the sandbox is NAMED by, so the key written here
     # is exactly the `SandboxHandle.app_name` the verify reads back. It is deliberately not

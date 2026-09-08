@@ -144,7 +144,6 @@ const GONE_TITLE: Record<GoneState, string> = {
   never_built: 'Nothing has been built here yet',
 }
 
-/** What the citizen should do about it, and what it costs them (nothing). */
 /**
  * Copy for the three not-alive states. `restorable` is honoured, not decorative — this used
  * to promise "nothing is lost" unconditionally, but `restorable === false` is a reachable
@@ -430,9 +429,6 @@ export default function LivePreview({
   // says the URL is genuinely live. Otherwise a live `previewUrl` frames the app; else we are still
   // provisioning/building (loading) or idle (empty).
   const showTerminal = isTerminal && !keepFramed
-  // The three states that mean "no container is serving this project". `unknown` is POINTEDLY
-  // not one of them: the server could not ask, so the pane changes nothing — which is the
-  // entire behavioural difference between this and the boolean it replaced.
   // Narrowed ONCE, here, so every render site below reads the union off this value instead of
   // asserting it with a cast. `notServing` keeps its exact previous meaning — none of the three
   // state strings is falsy, so `goneState !== null` is the same boolean it always was.
@@ -841,9 +837,6 @@ export default function LivePreview({
                         ? 'The preview server stopped and didn’t come back. Your saved app is still there.'
                         : 'The preview server stopped and didn’t come back. Start a new build to bring the live preview back.'}
                 </p>
-                {/* The button is a SHORTCUT, never the only way back: a prompt restores the
-                    workspace too, behind the labelled wait. Offered on the same confirmed-true
-                    gate as everywhere else on this pane. */}
               </div>
             </div>
           )}

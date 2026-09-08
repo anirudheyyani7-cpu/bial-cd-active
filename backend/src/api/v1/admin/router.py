@@ -1282,9 +1282,6 @@ async def hard_delete(
         # still on the cluster after an administrator destroyed their app.
         if not await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name):
             survivors.append(("app_database", handles.db_name))
-    # WHAT SURVIVED IS ON THE RECORD, the citizen's own delete's discipline applied to
-    # the harsher lever. This path used to discard every sweep's answer, so the one delete that
-    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy.
     # The project survives an app hard-delete, so its id is the handle the row hangs off.
     await record_what_survived(
         db, actor_id=admin.id, project_id=project_id, survivors=survivors, app_id=app_id

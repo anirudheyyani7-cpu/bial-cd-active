@@ -139,8 +139,7 @@ def legacy_registry_key(user_id: uuid.UUID) -> str:
 
     Every write goes to `registry_key`. This exists so the dual-read window can still reach a
     fleet registered before the environment segment did, and so `delete_registry` can clear the
-    key a migration may have left behind. It goes once the fleet inventory reports zero
-    legacy-prefix records."""
+    key a migration may have left behind."""
     if not isinstance(user_id, uuid.UUID):
         raise TypeError(
             f"a sandbox key is built from a uuid.UUID, never a {type(user_id).__name__}"
@@ -179,10 +178,9 @@ REGISTRY_FIELD_PREVIEW_STAY_UNTIL: Final = "preview_stay_until"
 # attributable author is the state this field exists to remove.
 REGISTRY_FIELD_STAY_WRITER: Final = "stay_writer"
 
-# THIS PROCESS ADOPTED THIS RECORD FROM THE LEGACY PREFIX during the dual-read window that lets a
-# process still reach fleets registered under the un-scoped legacy prefix. Written only by
-# `_adopt_a_pre_cutover_record`, read only by `delete_registry`, and it goes with the rest of
-# the legacy arm once the fleet inventory reports zero legacy-prefix records.
+# THIS PROCESS ADOPTED THIS RECORD FROM THE LEGACY PREFIX during the dual-read window. Written
+# only by `_adopt_a_pre_cutover_record`, read only by `delete_registry`, and it goes with the
+# rest of the legacy arm.
 #
 # It exists because the legacy prefix is the one namespace with NO environment segment, so
 # `bial:sandbox:registry:{user}` means different containers in different deployments that share a

@@ -607,9 +607,6 @@ async def _live_session_stepped(
 ) -> tuple[User, BuildSession]:
     """A live session with one envelope already buffered, ready to be stopped.
 
-    Two doors, both the ones production uses. `ensure_sandbox` allocates — the same skeleton
-    the deleted `start` ran — and `on_progress` is the sink every envelope always went
-    through, so pushing a step straight into it is what a running agent did, minus the agent.
     THE BUFFERED SEQ IS LOAD-BEARING: the synthetic terminal is `last_seq + 1`, and a session
     with an empty buffer could not tell a gap-free terminal from a hardcoded 1."""
     user, project_id = await _mk(db_session, email)
@@ -1408,8 +1405,8 @@ async def test_attach_does_no_storage_work_and_forwards_no_env(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The corrected assertion: attach reuses the live container's SAS — provision_app_storage
-    # is NEVER called on the attach arm (no container/SAS work), and attach_existing takes no env.
+    # Attach reuses the live container's SAS: provision_app_storage is NEVER called on the
+    # attach arm (no container/SAS work), and attach_existing takes no env.
     calls: list[uuid.UUID] = []
     _patch_provision(monkeypatch, calls)
     user, project_id = await _mk(db_session, "m24@rvaiglobal.com")
@@ -2327,7 +2324,7 @@ async def test_relaunch_never_attaches_to_a_container_that_is_already_ending(
 
     name = app_name_for(app_id)
     assert client.torn_down == [name]  # the dying container was reaped...
-    assert client.restored == [name]  # ...and a fresh one restored, exactly as before
+    assert client.restored == [name]  # ...and a fresh one restored
 
 
 async def test_a_post_attach_readiness_failure_spares_the_attached_container(
@@ -2350,9 +2347,7 @@ async def test_a_post_attach_readiness_failure_spares_the_attached_container(
     app_id, _ = await _seed_app_with_bundle(db_session, user, project_id, fake_storage)
     await _the_container_is_already_up(client, fake_redis, user.id, app_id)
 
-    # No longer raises: the attach arm fails open. The hazard this test names is
-    # unchanged and is asserted below — a post-attach failure must never destroy a container
-    # this request did not create.
+    # No longer raises: the attach arm fails open.
     relaunched = await manager.relaunch_preview(db_session, user, project_id, client)
 
     assert relaunched.ready is False, "an app that never served must not be reported as ready"

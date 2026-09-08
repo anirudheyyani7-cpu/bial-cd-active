@@ -92,5 +92,5 @@ class _SettingsProxy:
         return f"<settings proxy: {state}>"
 
 
-# The one type assertion this design costs. See TYPING above.
+# The one type assertion this design costs.
 settings = cast(ApiSettings, _SettingsProxy())

@@ -1187,11 +1187,6 @@ class SessionManager:
           failure — leaves no marker behind before its TTL would have.
         """
         if not await _the_live_sandbox_is_already_the_one_we_want(redis, user_id, spare_app):
-            # `certified_dead=True`: every caller here holds the per-user start lock and has
-            # already verified `user_id not in _active_by_user`, and the deploy contract is
-            # single-replica — so a lock/heartbeat still present in Redis is a dead session's
-            # residue, not liveness, and reconcile reaps THROUGH it instead of leaving the
-            # acquire below to 409 on a ghost.
             await reconcile_user(
                 redis, user_id, sandbox_client, has_live_session=False, certified_dead=True
             )
@@ -1239,11 +1234,8 @@ class SessionManager:
                     "starting marker clear failed on clean exit; its TTL will expire it",
                     user_id=str(user_id),
                 )
-            # A clean exit releases the lock UNLESS the body adopted it (start's session owns
-            # the token; `_do_finalize` releases). The release sits inside the protected
-            # region: if it fails, compensation still tears the container down rather than
-            # leaving a live preview behind a lock nobody can release. Two tests in
-            # `test_manager.py` pin exactly that — `test_relaunch_spares_the_container_when_
+            # Two tests in `test_manager.py` pin the release-inside-the-protected-region rule
+            # the docstring states — `test_relaunch_spares_the_container_when_
             # the_lock_release_hits_a_redis_error` and its `..._heartbeat_seed_...` twin.
             if not scope.adopted:
                 await release_lock_as_holder(redis, user_id, token)
@@ -2340,14 +2332,6 @@ class SessionManager:
                 relaunch_source = await self.newest_restore_source(app_id)
                 if relaunch_source is None and not await self._snapshot_exists_or_bust(app_id):
                     raise NoSnapshotToRelaunchError(app_id)
-                # Diverges from `_start_locked` in two deliberate ways: no finalize-grace wait
-                # on a terminal-committed session, since the snapshot relaunch would restore is
-                # written only by that session's finalize, so 409ing until it settles is
-                # correct here — never unify this with start's `_FINALIZE_GRACE_SECONDS` arm;
-                # and it must NOT reuse `_restore_or_provision`, whose
-                # confirmed-absent arm provisions a BLANK template — the wrong answer for
-                # relaunch, where an empty app is not a preview of the user's work. Instead it
-                # checks the snapshot directly and restores it below.
                 # The "last saved version" signal: when the newest recorded outcome FAILED,
                 # the snapshot being restored is the last SAVED state, not that build's intent.
                 # Read here because it must share the request transaction with the gate above;
@@ -2713,10 +2697,6 @@ class SessionManager:
             async with self._holding_user_lock(
                 redis, user_id, sandbox_client, project_id, spare_app=spare_app
             ) as scope:
-                # Mints a fresh project's app row here, on purpose — the reason this takes
-                # `db` at all: `turns.py`'s liveness pre-check reads the app id WITHOUT
-                # minting, so the row is created only once a Write turn actually commits to
-                # running.
                 app_id = await resolve_app_for_project(db, user_id, project_id)
                 await db.commit()
                 # The DSN merge follows the commit for the reason the deleted `_start_locked`
@@ -2732,11 +2712,6 @@ class SessionManager:
                 # reuses the running container, so without the spare a `write_heartbeat` blip
                 # or a Stop pressed in the wrong millisecond deleted the app the user was
                 # looking at, with every unsaved change in it.
-                # `_resolve_sandbox` keeps all three of its arms here, `SnapshotUnavailableError`
-                # included — refusing to substitute a blank template for a snapshot it cannot
-                # read matters even more on a Write turn than a build, since the agent would
-                # happily start editing the empty template and commit the result over the
-                # user's real app.
                 resolved = await self._resolve_sandbox(
                     sandbox_client, user_id, app_id, env, announce=announce
                 )
@@ -3429,10 +3404,7 @@ class SessionManager:
         # is no longer a dead end the thread has to be rescued from), and the snapshot itself.
         redis = get_redis()
 
-        # STILL NO SAVE HERE. The SAVED bundle is pushed only by `save_project_snapshot`, on
-        # the user's click. See the docstring: an auto-save on every mutating turn silently
-        # made each message a new saved version, so there was no such thing as trying
-        # something and walking away from it.
+        # STILL NO SAVE HERE.
         #
         # 1b. The generation-time overpromise detector, while the container is still up. A
         #     structlog signal only — never a gate — and it swallows its own failures. Gated

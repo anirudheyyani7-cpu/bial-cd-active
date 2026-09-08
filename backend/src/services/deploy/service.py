@@ -7,10 +7,8 @@ and a detached PIPELINE that runs for minutes — extract, pack, build, provisio
 the revision, record the result — opening its own short database sessions rather than
 borrowing the request's, exactly as the turn engine does.
 
-The pipeline pins the commit it ships to the one the gate decided about (`snapshot_moved`,
-failed closed, if a save lands in between), and on the drift path re-checks the version
-actually leaving and stands in for the approval ladder's rules 4-7 before publishing —
-see `VersionRecheck` and `_recheck`.
+The pipeline pins the commit it ships to the one the gate decided about, and on the drift
+path stands in for the approval ladder's rules 4-7 — see `VersionRecheck` and `_recheck`.
 
 WHY THIS EXISTS: THE PIPELINE NEVER TOUCHES A SANDBOX — not the lock, the registry,
 `provision_new`, or `restore_from_snapshot`. `restore` tears a container down BEFORE

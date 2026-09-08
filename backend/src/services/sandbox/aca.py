@@ -227,8 +227,7 @@ def _env_value_of(app: aca_models.ContainerApp, key: str) -> str | None:
 
 
 class AcaControlPlane:
-    """Async facade over the sync ACA management client. One instance per configured
-    sandbox; holds the managed-identity credential + the mgmt client for its lifetime."""
+    """Async facade over the sync ACA management client; one instance per configured sandbox."""
 
     def __init__(self, config: SandboxConfig) -> None:
         self._config = config

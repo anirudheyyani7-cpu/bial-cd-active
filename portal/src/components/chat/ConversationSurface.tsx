@@ -97,12 +97,9 @@ import type { ChatMessage, MessagePart, BuildPartLive } from '../../utils/messag
 // chrome, not a turn, and replaying it as history would have the model answering its own hello).
 //
 // The background poll's cadence and its terminal answers live in
-// `components/workspace/workspaceState.ts`, imported above, rather than duplicated here: two
-// surfaces polling the same endpoint on two private copies of "how often" and "when to stop" is a
-// drift risk whose symptom is silent — a poll that stops on one surface and not the other, with
-// nothing red anywhere. The cadence is deliberately slow because focus and visibilitychange carry
-// the real flow, and `unknown` is deliberately not terminal because it is the one answer that
-// decided nothing.
+// `components/workspace/workspaceState.ts`, imported above. The cadence is deliberately slow
+// because focus and visibilitychange carry the real flow, and `unknown` is deliberately not
+// terminal because it is the one answer that decided nothing.
 
 const WELCOME_TEXT = "Hello! I'm Citizen Developer AI. Tell me what you'd like to build for BIAL operations."
 const welcomeMessage = (): ChatMessage => ({ id: 'welcome', ephemeral: true, role: 'assistant', parts: [{ type: 'text', text: WELCOME_TEXT }], createdAt: new Date().toISOString() })
@@ -132,8 +129,7 @@ const welcomeMessage = (): ChatMessage => ({ id: 'welcome', ephemeral: true, rol
 /**
  * Replaces `BuilderPage.tsx` (2,665 lines) and `ChatPage.tsx` (1,026), both deleted — moved here
  * via `git mv` so the stream consumers, gate chain, send discipline, save-state model and
- * preview/app-pane wiring are auditable as a diff, not retyped. See the module doc above for the
- * routing rule and the three identities; this block documents just the props below.
+ * preview/app-pane wiring are auditable as a diff, not retyped.
  */
 export interface ConversationSurfaceProps {
   chatId?: string

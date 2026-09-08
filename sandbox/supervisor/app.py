@@ -16,12 +16,6 @@ marker, which prints once listening, before the first route compiles — believi
 blank page got announced as finished. `ready` now means an HTTP probe ACTUALLY SUCCEEDED; the
 marker only lets a cached affirmative skip that probe, never gates it, since a dev server can
 exist without `/dev/start` (the agent has replaced the supervisor's child before).
-
-The same marker also makes a SECOND dev server look healthy: past 13.4, Next falls back to a
-free port when 3000 is taken and mints a child Caddy never routes to. The spawn guard asks
-whether the port is OCCUPIED (a completed connect), never whether it ANSWERS — a mid-recompile
-incumbent still occupies it, and reading that as absent spawns the duplicate the guard exists
-to prevent (two bundlers in a capped container is how `exit_code 137` happens).
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ from pydantic import AfterValidator, AnyUrl, Field, UrlConstraints, field_valida
 
 from src.db.models.app_registry import MAX_DEPLOYED_URL, ApprovalRoute, AppStatus
 from src.db.models.worker_pass import PassOutcome
-from src.schemas import CamelModel, clean_deletion_reason
+from src.schemas import CamelModel, clean_stated_reason
 
 
 def _fits_the_column(url: AnyUrl) -> AnyUrl:
@@ -260,8 +260,9 @@ RejectionNote = Annotated[
 
 
 def _clean_app_delete_reason(value: str) -> str:
-    """The admin app-delete's binding of the shared 5-50 word deletion rule."""
-    return clean_deletion_reason(value, subject="app")
+    """The admin app-delete's binding of the shared 5-50 word stated-reason rule. The sentence
+    is byte-identical to the one that rule used to build from `subject="app"`."""
+    return clean_stated_reason(value, say_why="Say why you are deleting this app.")
 
 
 class RejectRequest(CamelModel):

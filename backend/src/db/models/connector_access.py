@@ -122,7 +122,7 @@ class ConnectorAccessRequest(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampM
     )
 
     # WHY THE PERSON SAYS THEY NEED IT. NOT NULL and required at the API (5-50 words, the same
-    # `clean_deletion_reason` rule the project-deletion reason uses) because it is the whole of
+    # `clean_stated_reason` rule the project-deletion reason uses) because it is the whole of
     # what the administrator has to decide on — the decide dialog leads with it. `Text`, not a
     # bounded `String`: the schema layer owns the length rule, and a column cap would turn a
     # rejected paste into a 500 instead of a 422.

@@ -93,24 +93,40 @@ export function BusyGlyph({
   size = 15,
   className = '',
   testId,
+  icon: Icon = Loader2,
+  durationMs,
 }: {
   size?: number
   className?: string
   /** Forwarded as `data-testid`. Carried through BOTH registers on purpose: a suite that could
    *  only find the glyph while it span would go green on the very bug this module closes. */
   testId?: string
+  /**
+   * The glyph to spin, when the caller's own carries meaning the default does not — the preview's
+   * RotateCcw says "reconnecting", not merely "waiting". Ignored under the preference, where the
+   * whole point is that nothing circular sits still.
+   */
+  icon?: typeof Loader2
+  /**
+   * A slower revolution, in milliseconds, for a wait the surface wants to read as unhurried. The
+   * preview's stall card used 1.8s deliberately — "this is taking longer than usual" — and a
+   * mechanical sweep dropped it once already.
+   */
+  durationMs?: number
 }): React.ReactElement {
   const reduced = usePrefersReducedMotion()
-  // NOT a `Loader2` without its animation — that is precisely the frozen arrow this module exists
-  // to stop rendering. A clock face is static BY NATURE, so nothing about it is waiting to move.
+  // NOT the caller's icon without its animation — that is precisely the frozen arrow this module
+  // exists to stop rendering, and RotateCcw frozen reads exactly as badly as Loader2 frozen. A
+  // clock face is static BY NATURE, so nothing about it is waiting to move.
   if (reduced)
     return <Clock size={size} aria-hidden="true" data-testid={testId} className={`flex-shrink-0 ${className}`} />
   return (
-    <Loader2
+    <Icon
       size={size}
       aria-hidden="true"
       data-testid={testId}
       className={`flex-shrink-0 animate-spin ${className}`}
+      {...(durationMs ? { style: { animationDuration: `${durationMs}ms` } } : {})}
     />
   )
 }
@@ -145,7 +161,15 @@ export function WaitingLine({
       <BusyGlyph size={14} className="text-primary" />
       <span>{label}</span>
       {show && (
-        <span data-testid="waiting-elapsed" className="tabular-nums text-neutral/70">
+        // `aria-hidden`, and this is not an oversight. Callers place this line inside a polite live
+        // region so the WAIT is announced; a number that changes every second inside that region is
+        // announced every second, which turns a 76-second hand-over into 76 interruptions. The
+        // sentence beside it already carries the meaning for a reader who cannot see the count.
+        <span
+          data-testid="waiting-elapsed"
+          aria-hidden="true"
+          className="tabular-nums text-neutral/70"
+        >
           {seconds}s
         </span>
       )}

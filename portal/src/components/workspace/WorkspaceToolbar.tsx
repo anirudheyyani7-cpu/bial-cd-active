@@ -339,9 +339,11 @@ export default function WorkspaceToolbar({
  * canvas — a loud filled control gets ignored. `dirty === null` means "could not tell" and renders
  * nothing, never "Saved": the git check costs two executions, so a stopped project has no answer.
  * With no action published it is a real `<span>`, not a button, so nothing invites a no-op press.
- * While it works it now SHOWS that too, with `animate-spin` — one of the three utilities
- * `index.css`'s reduced-motion block suppresses — asserted by class name because jsdom cannot
- * evaluate a media query and a label-only assertion would pass whether or not anything moved.
+ * While it works it now SHOWS that too — through `BusyGlyph`, which owns both motion registers:
+ * a spinning glyph where motion is allowed, and NO spinner at all where it is not, because a
+ * stationary loading spinner reads as a hang rather than as an accommodation. Past five seconds a
+ * live elapsed count appears beside it, which is the only signal that proves liveness without
+ * moving; a production save was measured at forty seconds.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save
@@ -377,7 +379,14 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
         {/* THE NUMBER, once the wait has earned it. A save measured at forty seconds in production
             spent all of them showing one unchanging word; under `prefers-reduced-motion` the glyph
             beside it did not turn either, and the control was reported as dead. */}
-        {saving && showElapsed ? <span className="tabular-nums">{elapsed}s</span> : null}
+        {/* `aria-hidden` for the reason `WaitingLine`'s count is: this span sits INSIDE the
+            polite region above, and a number changing once a second is announced once a second.
+            "Saving…" is what a reader needs; the count is for the eye. */}
+        {saving && showElapsed ? (
+          <span aria-hidden="true" className="tabular-nums">
+            {elapsed}s
+          </span>
+        ) : null}
       </span>
       {!saving && (dirty ? 'Save' : 'Saved')}
       {dirty && !saving && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" aria-hidden="true" />}

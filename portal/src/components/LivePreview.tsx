@@ -791,7 +791,11 @@ export default function LivePreview({
               it twice. `aria-busy` stays — it is a property, not a speech. */}
           {showReconnecting && (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center" aria-busy="true">
-              <RotateCcw size={26} className="text-warning animate-spin" style={{ animationDuration: '1.4s' }} />
+              {/* Missed by the first sweep, which matched `<Loader2` and nothing else — so the
+                  one wait a citizen sees when their connection drops was still freezing under
+                  `prefers-reduced-motion`. The icon carries meaning here (reconnecting, not merely
+                  waiting), so it travels as `icon`; the cadence travels with it. */}
+              <BusyGlyph size={26} icon={RotateCcw} durationMs={1400} className="text-warning" />
               <p className="text-sm font-semibold text-neutral">Reconnecting to your preview…</p>
               <p className="text-xs text-neutral/60 max-w-xs leading-relaxed">
                 The preview server restarted. This usually reconnects on its own in a moment.
@@ -979,7 +983,7 @@ export default function LivePreview({
                   already saying the load is slow, so a motionless glyph beside that sentence reads
                   as confirmation the thing died. Under `prefers-reduced-motion` this renders no
                   spinner at all — see `ui/Waiting.tsx`. */}
-              <BusyGlyph size={26} className="text-warning" />
+              <BusyGlyph size={26} durationMs={1800} className="text-warning" />
             </div>
             <p className="text-sm font-semibold text-neutral mb-1">{SLOW_TEXT}</p>
             {/* THE COPY NAMES NO CONTROL THIS CARD DOES NOT HAVE. The one start control lives in

@@ -227,7 +227,11 @@ function UnsavedWorkDialog({
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? <BusyGlyph size={15} /> : null} Save and leave
-              {showElapsed && <span className="tabular-nums opacity-80">{elapsed}s</span>}
+              {showElapsed && (
+                <span aria-hidden="true" className="tabular-nums opacity-80">
+                  {elapsed}s
+                </span>
+              )}
             </button>
           )}
           <button

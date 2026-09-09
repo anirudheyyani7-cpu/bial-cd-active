@@ -256,7 +256,12 @@ export default function ReclaimWorkspaceDialog({
                 the only thing that changed was a sentence, every thirty. Under
                 `prefers-reduced-motion` — the default on the Windows VMs this was reported from —
                 nothing changed at all, and the dialog was read as hung. */}
-            <WaitingLine label={STEP_SAYS[step]} active />
+            {/* `active` KEYED TO THE STEP, not hardcoded true. `useElapsedSeconds` restarts on
+                the false->true transition, so a constant `true` across stop -> save -> release ->
+                start reports the age of the DIALOG rather than of the step being narrated — the
+                exact thing that hook's docblock says it avoids. Remounting per step via `key` is
+                what actually delivers it. */}
+            <WaitingLine key={step} label={STEP_SAYS[step]} active />
           </p>
         )}
 

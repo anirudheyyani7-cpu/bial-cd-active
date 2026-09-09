@@ -7,7 +7,6 @@ import uuid
 
 import pytest
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.result import EmbeddingResult
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from structlog.testing import capture_logs
 
@@ -20,6 +19,17 @@ def _project(**overrides) -> Project:
     data = {"id": uuid.uuid4(), "user_id": uuid.uuid4(), "name": "Gate Pass Log"}
     data.update(overrides)
     return Project(**data)
+
+
+class _BoomModel(TestEmbeddingModel):
+    """A REAL `EmbeddingModel` that always raises, wrapped in a real `Embedder` at each
+    call site — not a duck-typed stand-in for `Embedder` itself. `Embedder` is a concrete
+    class, so a bare object exposing only `embed_documents` satisfies mypy's structural
+    leniency but not `ty`'s nominal check against `Embedder | None`; the four-gate policy
+    needs every fake to be the real thing underneath, same shape as `_Recording` below."""
+
+    async def embed(self, inputs, *, input_type, settings=None):
+        raise RuntimeError("simulated Foundry timeout")
 
 
 async def test_noop_when_embedder_is_none() -> None:
@@ -50,7 +60,7 @@ async def test_embeds_as_a_document_not_a_query() -> None:
     captured: dict[str, object] = {}
 
     class _Recording(TestEmbeddingModel):
-        async def embed(self, inputs, *, input_type, settings=None):  # type: ignore[override]
+        async def embed(self, inputs, *, input_type, settings=None):
             captured["input_type"] = input_type
             return await super().embed(inputs, input_type=input_type, settings=settings)
 
@@ -61,24 +71,16 @@ async def test_embeds_as_a_document_not_a_query() -> None:
 
 
 async def test_a_failed_embed_call_never_raises_and_leaves_the_column_untouched() -> None:
-    class _Boom:
-        async def embed_documents(self, *_a, **_k) -> EmbeddingResult:
-            raise RuntimeError("simulated Foundry timeout")
-
     project = _project(description="a description")
     project.description_embedding = None
-    await write_description_embedding(project, _Boom())  # type: ignore[arg-type]
+    await write_description_embedding(project, Embedder(_BoomModel()))
     assert project.description_embedding is None
 
 
 async def test_a_failed_embed_call_logs_its_own_distinct_event() -> None:
-    class _Boom:
-        async def embed_documents(self, *_a, **_k) -> EmbeddingResult:
-            raise RuntimeError("simulated Foundry timeout")
-
     project = _project(description="a description")
     with capture_logs() as logs:
-        await write_description_embedding(project, _Boom())  # type: ignore[arg-type]
+        await write_description_embedding(project, Embedder(_BoomModel()))
     failures = [entry for entry in logs if entry["event"] == EMBEDDING_WRITE_FAILED_EVENT]
     assert len(failures) == 1
     assert failures[0]["project_id"] == str(project.id)
@@ -90,11 +92,7 @@ async def test_a_failed_embed_call_never_clobbers_an_existing_embedding(existing
     # A refresh attempt that fails must leave a STALE embedding in place rather than wipe
     # it — a stale-but-present embedding still degrades to "close enough", while wiping it
     # would silently drop the row out of semantic search entirely on a transient failure.
-    class _Boom:
-        async def embed_documents(self, *_a, **_k) -> EmbeddingResult:
-            raise RuntimeError("simulated Foundry timeout")
-
     project = _project(description="a description")
     project.description_embedding = existing
-    await write_description_embedding(project, _Boom())  # type: ignore[arg-type]
+    await write_description_embedding(project, Embedder(_BoomModel()))
     assert project.description_embedding == existing

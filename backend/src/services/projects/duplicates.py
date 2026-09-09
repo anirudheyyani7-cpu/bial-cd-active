@@ -195,21 +195,26 @@ def _candidate_query(description: str, query_embedding: list[float] | None) -> s
     )
 
 
-def _select_confident_matches(rows: Sequence[sa.Row[Any]]) -> list[sa.Row[Any]]:
+def _select_confident_matches(rows: Sequence[Any]) -> list[Any]:
     """Apply R34's confidence bar to the candidate rows and cap at `MAX_MATCHES` — the pure,
     DB-free half of the duplicate check, so its branching is unit-testable directly against
     hand-built rows rather than only through a live query.
 
     Each `row` is expected to expose `kw_rank`, `kw_score`, `vec_rank`, `vec_score` (any may
     be `None` — a row absent from an arm never populated it) as its first four positional
-    values, matching `_candidate_query`'s column order.
+    values, matching `_candidate_query`'s column order. Typed `Any` rather than `sa.Row[Any]`
+    DELIBERATELY: the real caller passes an actual `Row`, but this function only ever reads
+    named attributes off it, so `tests/services/projects/test_duplicates.py` pins the
+    branching against a plain `namedtuple` stand-in instead — narrowing the parameter to
+    `sa.Row` would make that a `ty`/pyright nominal-typing violation for a substitution the
+    function itself never required.
     """
     keyword_arm_is_empty = not any(row.kw_rank is not None for row in rows)
     vector_solo_bar = (
         _VECTOR_ONLY_FALLBACK_SIMILARITY if keyword_arm_is_empty else _VECTOR_SOLO_SIMILARITY
     )
 
-    accepted: list[tuple[int, sa.Row[Any]]] = []
+    accepted: list[tuple[int, Any]] = []
     for row in rows:
         both_in_agreement = (
             row.kw_rank is not None

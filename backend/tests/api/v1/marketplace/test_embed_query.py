@@ -4,11 +4,21 @@ slice 3)."""
 from __future__ import annotations
 
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.result import EmbeddingResult
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from structlog.testing import capture_logs
 
 from src.api.v1.marketplace.router import _embed_query_or_none
+
+
+class _BoomModel(TestEmbeddingModel):
+    """A REAL `EmbeddingModel` that always raises, wrapped in a real `Embedder` at each call
+    site — not a duck-typed stand-in for `Embedder` itself. `Embedder` is a concrete class,
+    so a bare object exposing only `embed_query` satisfies mypy's structural leniency but not
+    `ty`'s nominal check against `Embedder | None`; the four-gate policy needs every fake to
+    be the real thing underneath, same shape as `_Recording` below."""
+
+    async def embed(self, inputs, *, input_type, settings=None):
+        raise RuntimeError("simulated Foundry timeout")
 
 
 async def test_returns_none_when_embedder_is_none() -> None:
@@ -28,7 +38,7 @@ async def test_embeds_as_a_query_not_a_document() -> None:
     captured: dict[str, object] = {}
 
     class _Recording(TestEmbeddingModel):
-        async def embed(self, inputs, *, input_type, settings=None):  # type: ignore[override]
+        async def embed(self, inputs, *, input_type, settings=None):
             captured["input_type"] = input_type
             return await super().embed(inputs, input_type=input_type, settings=settings)
 
@@ -38,19 +48,13 @@ async def test_embeds_as_a_query_not_a_document() -> None:
 
 
 async def test_a_failed_embed_call_returns_none_rather_than_raising() -> None:
-    class _Boom:
-        async def embed_query(self, *_a, **_k) -> EmbeddingResult:
-            raise RuntimeError("simulated Foundry timeout")
-
-    result = await _embed_query_or_none(_Boom(), "leave tracker")  # type: ignore[arg-type]
+    embedder = Embedder(_BoomModel())
+    result = await _embed_query_or_none(embedder, "leave tracker")
     assert result is None
 
 
 async def test_a_failed_embed_call_is_logged() -> None:
-    class _Boom:
-        async def embed_query(self, *_a, **_k) -> EmbeddingResult:
-            raise RuntimeError("simulated Foundry timeout")
-
+    embedder = Embedder(_BoomModel())
     with capture_logs() as logs:
-        await _embed_query_or_none(_Boom(), "leave tracker")  # type: ignore[arg-type]
+        await _embed_query_or_none(embedder, "leave tracker")
     assert any(entry["event"] == "marketplace_search_embedding_unavailable" for entry in logs)

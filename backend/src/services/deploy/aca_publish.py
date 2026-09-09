@@ -145,8 +145,8 @@ def _did_it_bind(port: int) -> list[aca_models.ContainerAppProbe]:
     ]
 
 
-def _user_assigned(resource_id: str | None) -> aca_models.ManagedServiceIdentity | None:
-    """The ARM `identity` block for one user-assigned identity, or `None` for no identity at all.
+def _user_assigned(resource_id: str | None) -> aca_models.ManagedServiceIdentity:
+    """The ARM `identity` block for one user-assigned identity, or the EXPLICIT no-identity block.
 
     A DELIBERATE DUPLICATE of `services/sandbox/aca.py`'s function of the same name, and the two
     modules stay separate: this one's docblock already says why (a published app and a build
@@ -154,10 +154,18 @@ def _user_assigned(resource_id: str | None) -> aca_models.ManagedServiceIdentity
     builders is how a probe or an ingress setting crosses between them). Four lines is a cheaper
     coupling than a shared module that would have to be imported by both.
 
-    `None` rather than `ManagedServiceIdentity(type="None")`, so a spec for an app that was
-    granted nothing is byte-identical to what this platform sent before connectors existed."""
+    `type="None"` RATHER THAN OMITTING THE BLOCK, and this is the one place the duplicate
+    deliberately DIVERGES from the sandbox's copy. The sandbox deletes its container app and
+    creates a fresh one, so an absent `identity` is an absent identity. Publish does not: it is a
+    full `PUT` over a resource that is already live, and ARM's documented way to DETACH a
+    user-assigned identity is to send `type: "None"` — omitting the property is the ambiguous
+    case, and the reading that "a redeploy revokes a withdrawn app's access" depends entirely on
+    which way ARM resolves it. Sending the explicit block is what makes the revocation a written
+    instruction instead of a hope. See the pre-flight in `ops/ONE-CLICK-DEPLOY-PROD.md` §4: ARM
+    writes are blocked on the development subscription, so this has NOT been observed end to end
+    and the runbook asks for it to be confirmed once against a real app."""
     if resource_id is None:
-        return None
+        return aca_models.ManagedServiceIdentity(type=aca_models.ManagedServiceIdentityType.NONE)
     return aca_models.ManagedServiceIdentity(
         type=aca_models.ManagedServiceIdentityType.USER_ASSIGNED,
         user_assigned_identities={resource_id: aca_models.UserAssignedIdentity()},
@@ -297,10 +305,13 @@ class AcaPublishedApps:
             # same way the sandbox derives it, so "has the coordinates" and "has the credential"
             # are one fact rather than two that must be kept in step.
             #
-            # THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, which cuts both ways here: an app
-            # whose owner's access has been withdrawn does NOT lose its identity on the next
-            # redeploy unless the gate below says so — it does, because `env` is rebuilt from
-            # the same gate every time. And an app that never had it never gains it.
+            # THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, which is what a withdrawn app's
+            # revocation rests on: `env` is rebuilt from the same gate every time, so a
+            # withdrawn owner produces no coordinates, which produces an explicit `type: "None"`
+            # identity block, which is ARM's documented detach. An app that never had one never
+            # gains one. NOT YET OBSERVED END TO END — ARM writes are blocked on the development
+            # subscription — so `ops/ONE-CLICK-DEPLOY-PROD.md` §4 carries it as a pre-flight to
+            # confirm once, rather than this comment asserting it as settled fact.
             identity=_user_assigned(identity_resource_id_for_env(env)),
             # ARM identity tags. THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, so a tag missing
             # from this envelope is not merely un-written — it is STRIPPED from a resource that

@@ -31,6 +31,25 @@ from src.core.connectors import CONNECTORS
 # platform put there from what their own app added.
 _PREFIX: Final = "BIAL_"
 
+# ONE LAKE, ONE CONNECTOR — AND THE SECOND ONE MUST NOT SILENTLY INHERIT THE FIRST'S.
+# `settings.connector_lake` is a SINGLE global block. `lake_env_for` uses the connector key only
+# to NAME the two variables and hands back the same URL and client id whatever key it is asked
+# for; `identity_resource_id_for_env` attaches that one identity if ANY connector's URL is
+# present. With one registry entry that is exact. With two it would hand connector B's container
+# connector A's flight data — and connector A's managed identity — under an approval the citizen
+# gave for a different system, while this module, `copy.py` and the registry all promise that a
+# second connector is "just a registry entry".
+#
+# So the promise is made structural instead of remembered. This fails at IMPORT, in every
+# environment, the moment a second entry is added — not at the first read in production, and not
+# as a wrong answer nobody notices. Whoever adds the entry has to key the lake configuration by
+# connector key first, which was always the change the second connector actually required.
+if len(CONNECTORS) > 1:  # pragma: no cover - one registry entry today; this is the guard for two
+    raise RuntimeError(
+        "connector_lake is a single global configuration block and cannot serve more than one "
+        "connector: key the lake settings by connector key before adding a second registry entry"
+    )
+
 
 def connector_env_names(connector_key: str) -> tuple[str, str]:
     """`(url_name, client_id_name)` for one connector key — the ONE place either is spelled.
@@ -53,7 +72,12 @@ def lake_env_for(connector_key: str) -> dict[str, str]:
     more allowlist rows, two more documentation rows and an assertion for a value with no reader.
     The window's only job in this pass is deciding which files transfer.
     """
-    from src.config import settings  # lazy: avoid an import cycle via src.config
+    # LOCAL, AND NOT FOR AN IMPORT CYCLE — hoisting this to module scope has been tried and the
+    # process boots. It stays local because this package is where two import directions meet:
+    # `src/settings/api.py` reaches `lake/config.py` from the settings side while this module is
+    # reached from the ORM side, and none of the four static gates executes an import, so the day
+    # that stops being safe would be found in production rather than in CI.
+    from src.config import settings
 
     lake = settings.connector_lake
     if lake is None:
@@ -77,7 +101,12 @@ def identity_resource_id_for_env(app_env: dict[str, str]) -> str | None:
     a deployment with no lake, every project with the connector off, and every project whose owner
     is pending, declined or has never asked.
     """
-    from src.config import settings  # lazy: avoid an import cycle via src.config
+    # LOCAL, AND NOT FOR AN IMPORT CYCLE — hoisting this to module scope has been tried and the
+    # process boots. It stays local because this package is where two import directions meet:
+    # `src/settings/api.py` reaches `lake/config.py` from the settings side while this module is
+    # reached from the ORM side, and none of the four static gates executes an import, so the day
+    # that stops being safe would be found in production rather than in CI.
+    from src.config import settings
 
     lake = settings.connector_lake
     if lake is None:

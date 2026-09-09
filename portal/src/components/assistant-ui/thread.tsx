@@ -156,6 +156,18 @@ const MessageError: FC = () => (
 
 const AssistantMessage: FC = () => {
   const { TextPart, ToolGroup, ReasoningGroup, ToolPart } = useThreadComponents()
+  // A MESSAGE WITH NOTHING IN IT RENDERS NOTHING — the message-level twin of the empty-text-part
+  // rule in `AssistantText` below, and reachable for the same reason it was: the seam drops
+  // `build` / `build_in_progress` / `plan_options` outright, so "a message whose parts all drop
+  // still exists, empty, unrendered" (`convertMessage`'s own words).
+  //
+  // That case used to be unreachable on the live path because every finished build ALSO carried
+  // the outcome sentence. Withholding the neutral "Build finished." made it reachable, and what it
+  // produced was worse than the sentence it removed: an empty bubble with a copy button beside it,
+  // which copies an empty string. The `build` part still has to travel — it is what tells the
+  // preview pane an app was built here and carries its URL — so the part stays and the CHROME goes.
+  const isEmpty = useAuiState((s) => s.message.content.length === 0)
+  if (isEmpty) return null
 
   return (
     <MessagePrimitive.Root

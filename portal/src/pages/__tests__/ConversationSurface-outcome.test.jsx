@@ -190,11 +190,15 @@ describe('showing the outcome', () => {
     await runBuild(turn)
 
     await turn.frame(T_PREVIEW()) // the url the record will carry
-    await turn.frame(T_BUILD_END({ turnId: 't1' }))
+    // A STOPPED ending, not a completed one, and that is now load-bearing: a build that simply
+    // finished no longer draws a card at all (the assistant's own closing paragraph already said
+    // what it built). The guarantee here is about the CARD — that it never surfaces a preview URL
+    // whose sandbox is gone — so it has to be driven by an ending that still produces one.
+    await turn.frame(T_BUILD_END({ turnId: 't1', status: 'stopped' }))
     await turn.end()
 
     const card = await findOutcome()
-    expect(card.textContent).toMatch(/build finished/i)
+    expect(card.textContent).toContain(NEUTRAL_STOPPED)
     // The per-build preview URL died with its sandbox the moment the build ended, so the
     // permanent record must never surface it as a working link. The guarantee is structural,
     // not conditional: no renderer for this link exists on the card any more.
@@ -207,7 +211,9 @@ describe('showing the outcome', () => {
     renderThread()
     await runBuild(turn)
 
-    await turn.frame(T_PREVIEW(), T_BUILD_END({ turnId: 't1' }))
+    // Stopped rather than completed, purely so there is a card to wait on — see the note in the
+    // dead-preview-link test above. What is asserted below is about the WIRE, not the card.
+    await turn.frame(T_PREVIEW(), T_BUILD_END({ turnId: 't1', status: 'stopped' }))
     await turn.end()
     await findOutcome()
 
@@ -276,7 +282,11 @@ describe('showing the outcome', () => {
     renderThread()
     await runBuild(turn)
 
-    await turn.frame(T_BUILD_END({ turnId: 't1' })) // completed, and silent about the snapshot
+    // Stopped, and silent about the snapshot. It has to be an ending that draws a card, because
+    // the card IS the liveness anchor for the absence below — and a completed build no longer
+    // draws one. The property under test is unchanged: a terminal that said nothing about the save
+    // must not be rendered as one that threw the code away.
+    await turn.frame(T_BUILD_END({ turnId: 't1', status: 'stopped' }))
     await turn.end()
     // LIVENESS FIRST: the outcome has to actually be on screen for the absence below to mean
     // anything — `queryByText(...).toBeNull()` also passes on a surface that rendered nothing.
@@ -518,9 +528,13 @@ describe('dedupe on the build TURN', () => {
     await runBuild(turn)
 
     // A resubscribe (resume-once on a dropped socket) re-delivers the terminal it already saw.
-    await turn.frame(T_BUILD_END({ turnId: 't1' }), T_BUILD_END({ turnId: 't1' }))
+    await turn.frame(
+      T_BUILD_END({ turnId: 't1', status: 'stopped' }),
+      T_BUILD_END({ turnId: 't1', status: 'stopped' }),
+    )
     await turn.end()
 
+    // Counted in CARDS, so the ending must be one that draws them.
     await findOutcome()
     await waitFor(() => expect(outcomeCards()).toHaveLength(1))
   })
@@ -566,12 +580,36 @@ describe('dedupe on the build TURN', () => {
     expect(outcomeCards()).toHaveLength(1)
   })
 
+  it('a build that simply FINISHED draws no card — the assistant already said what it built', async () => {
+    // ★★ THE NEW CONTRACT, and the reason five tests above now drive a stopped ending.
+    //
+    // Every turn in a Build chat writes a terminal, so the neutral "Build finished." landed after
+    // every single exchange — under an assistant message that had just described the same build in
+    // its own words, and carrying a second copy button of its own. The reload path in
+    // `conversationApi.ts` had always withheld it and said so at length; the live path did not, so
+    // the same build read one way as it happened and another way after a refresh.
+    //
+    // LIVENESS FIRST: the build genuinely ran and genuinely ended. Without that, the absence below
+    // would pass on a turn that never started — the false-green this file guards against elsewhere.
+    const turn = scriptTurn('t1')
+    h.readTurnStream.mockImplementation(turn.impl)
+    renderThread()
+    await runBuild(turn)
+    await turn.frame(T_PREVIEW(), T_BUILD_END({ turnId: 't1' }))
+    await turn.end()
+
+    await waitFor(() => expect(wireSends().length).toBeGreaterThan(0))
+    // …and nothing anywhere on the surface says it finished.
+    await waitFor(() => expect(outcomeCards()).toHaveLength(0))
+    expect(screen.queryByText(FINISHED)).toBeNull()
+  })
+
   it('shows a SECOND build separately — dedupe is per build turn, not per thread', async () => {
     const first = scriptTurn('t1')
     h.readTurnStream.mockImplementation(first.impl)
     renderThread()
     await runBuild(first)
-    await first.frame(T_BUILD_END({ turnId: 't1' }))
+    await first.frame(T_BUILD_END({ turnId: 't1', status: 'stopped' }))
     await first.end()
     await findOutcome()
 
@@ -580,7 +618,7 @@ describe('dedupe on the build TURN', () => {
     const second = scriptTurn('t2')
     h.readTurnStream.mockImplementation(second.impl)
     await runBuild(second, 'add a chart')
-    await second.frame(T_BUILD_END({ turnId: 't2' }))
+    await second.frame(T_BUILD_END({ turnId: 't2', status: 'stopped' }))
     await second.end()
 
     await waitFor(() => expect(outcomeCards()).toHaveLength(2))

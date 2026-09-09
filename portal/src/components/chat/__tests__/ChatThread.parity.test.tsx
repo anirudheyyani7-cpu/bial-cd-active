@@ -101,11 +101,26 @@ describe('ChatThread — what the new host must still guarantee', () => {
   it('renders NO element for an assistant message whose text part is empty', () => {
     // This surface shipped an empty grey bubble once and fixed it; the renderer changed
     // underneath, so the guarantee is re-established rather than assumed.
-    const { container } = mount([{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: '' }], seq: 1 }])
+    //
+    // IT NOW HOLDS ONE LEVEL HIGHER THAN IT USED TO, which is what this test's own title always
+    // asked for. The bubble SHELL used to survive — empty, but present, and carrying an action bar
+    // whose copy button would put an empty string on the clipboard. The library drops a blank text
+    // part outright (`fromThreadMessageLike`), so such a message reaches the renderer with no
+    // content at all, and `AssistantMessage` now draws nothing for it.
+    const { container } = mount([
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: '' }], seq: 1 },
+      // LIVENESS. Without a real message beside it, "no bubble" would pass on a harness that threw
+      // before rendering anything — the false-green shape this repo has shipped before.
+      { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'still here' }], seq: 2 },
+    ])
 
-    const message = screen.getByTestId('assistant-message')
-    expect(within(message).queryByText(/\S/)).toBeNull()
-    expect(container.querySelectorAll('p')).toHaveLength(0)
+    expect(screen.getByText('still here')).toBeTruthy()
+    expect(screen.getAllByTestId('assistant-message')).toHaveLength(1)
+    // Exactly one paragraph, and it belongs to the LIVE message — so the empty one contributed no
+    // prose element of its own. Asserting zero would now be asserting against the liveness message.
+    const paragraphs = container.querySelectorAll('p')
+    expect(paragraphs).toHaveLength(1)
+    expect(paragraphs[0]?.textContent).toBe('still here')
   })
 
   it('the same reply renders identically in a Plan chat and a Build chat', () => {

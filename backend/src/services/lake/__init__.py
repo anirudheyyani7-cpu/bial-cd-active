@@ -19,6 +19,16 @@ same shape `src/core/connectors.py` already documents for the models package, me
 side. A data plane is a peer of `storage/`, `sandbox/` and `deploy/` anyway; this is the reason
 it had to be.
 
+`copy.py` IS DELIBERATELY NOT RE-EXPORTED HERE, and that is a hard structural constraint rather
+than an oversight. `src/settings/api.py` imports `LakeConfig` to declare its settings field, and
+Python runs THIS `__init__` before any submodule of it — so anything reachable from these lines
+runs during settings construction. `copy.py` reads `src/core/connectors.py`, which reaches
+`src/db/models/`, which reaches `src/db/base.py`, which imports `src.config` at module scope:
+adding it to the list below closes the cycle and the process cannot boot at all. Import it by
+module (`from src.services.lake.copy import schedule_window_copy`) — and keep every line below
+free of anything that reaches the ORM. `tests/services/lake/test_import_graph.py` fails loudly if
+that ever stops being true, because none of the four static gates executes an import.
+
 NOTHING HERE NAMES A CONNECTOR (R11). The vocabulary is `lake`, `config`, `window`, `transfer`;
 which connector this is a lake FOR arrives as a `connector_key` value from the registry in
 `src/core/connectors.py`.

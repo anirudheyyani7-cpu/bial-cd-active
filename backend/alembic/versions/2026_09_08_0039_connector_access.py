@@ -35,8 +35,13 @@ table does not drop its type, and a migration that imports today's model breaks 
 changes (ADR-0008). `connector_request_status` deliberately has NO `withdrawn` label: nothing in
 this pass could set it, and an unreachable label would cost an `ALTER TYPE` to remove.
 
-NO BACKFILL AND NOTHING TO UNDO: both tables are new, so `downgrade` drops them and their types.
-Hand-finalized.
+NO BACKFILL, AND NOTHING TO UNDO *BEFORE GO-LIVE*: both tables are new, so `downgrade` drops them
+and their types. After go-live that same `downgrade` is destructive and there is no way back —
+`connector_access_requests` is the only record of who was granted or refused this data and by
+whom, and the `connector:approve` / `connector:decline` audit rows written beside it carry request
+ids, so dropping the table leaves those rows pointing at nothing. Treat a downgrade past this
+revision on a live database as a data-loss operation that needs a dump first, not a routine
+rollback step. Hand-finalized.
 """
 
 from __future__ import annotations

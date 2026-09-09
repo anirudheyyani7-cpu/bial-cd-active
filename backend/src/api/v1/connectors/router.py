@@ -8,7 +8,7 @@ as separate state machines and says why: an administrator answers once, about a 
 that a project only ever answers "switched on here?" and "how far back?".
 
 THE OWNERSHIP CHECK A REVIEWER SHOULD BE ABLE TO MAKE BY READING TOP TO BOTTOM. There is no
-cross-user read among these five routes. Every statement that touches `connector_access_requests`
+cross-user read among these six routes. Every statement that touches `connector_access_requests`
 carries `user_id == user.id` in its WHERE clause, and every statement that touches
 `project_connectors` reaches it through a join on `projects` whose `user_id` predicate is in the
 same clause (that table deliberately carries no `user_id` of its own — `projects` is its

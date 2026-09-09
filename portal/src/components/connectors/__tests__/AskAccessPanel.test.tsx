@@ -203,12 +203,28 @@ describe('the form agrees with the server about what is required', () => {
   })
 
   it('says so with `aria-disabled` and never the native `disabled`, so focus is not yanked mid-request', () => {
+    // THE REASON IS TYPED FIRST, AND THAT IS THE WHOLE POINT OF THIS TEST. `canSubmit` is
+    // `remarksValid && !busy`; with the box empty the word rule alone already disables the
+    // button, so this test read `true` even with the `&& !busy` arm deleted — it named the
+    // in-flight guard and proved the word rule instead. With a valid reason on the form, `busy`
+    // is the only thing left that can disable it, so deleting that arm turns this red.
     // `dialog.tsx`'s own docblock: a disabled control throws focus to `<body>`, which is the
     // strand its focus backstop exists to catch. The attribute says so; the handler does so.
-    mount({ busy: true })
+    const onSubmit = vi.fn(() => Promise.resolve())
+    mount({ busy: true, onSubmit })
+    fireEvent.change(screen.getByLabelText('Why you need access to ORBIT'), {
+      target: { value: A_GOOD_REASON },
+    })
+
     const ask = screen.getByRole('button', { name: 'Ask an administrator' })
     expect(ask.getAttribute('aria-disabled')).toBe('true')
     expect(ask.hasAttribute('disabled')).toBe(false)
+
+    // And the handler does so, rather than merely looking so: `submit` returns on `!canSubmit`
+    // before it awaits anything, so a click that reaches it is refused synchronously. The test
+    // above is this one's positive control — the same reason, `busy: false`, and the click lands.
+    fireEvent.click(ask)
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 
   it('shows the failure the submit rejected with, in its own words', async () => {

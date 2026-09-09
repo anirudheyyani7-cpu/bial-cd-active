@@ -64,3 +64,17 @@ def test_each_arm_is_bounded_by_the_candidate_window() -> None:
 def test_membership_reuses_live_app_ids_not_a_second_predicate() -> None:
     sql = _compiled("leave request tracker", [0.1] * 1536)
     assert sql.count("rejection_standing IS false") >= 1
+
+
+def test_the_keyword_arm_is_or_joined_not_websearch_to_tsquery() -> None:
+    # R31 vs the marketplace's own search box (review of #191, agc129 — blocker #6):
+    # `websearch_to_tsquery` ANDs every term, which only matches a near-verbatim copy of the
+    # citizen's 15-120 word description — the keyword arm was PERMANENTLY EMPTY for any real
+    # second author describing the same app differently. `plainto_tsquery`'s AND-joined
+    # output, text-substituted from `&` to `|`, is what actually lets a partial-vocabulary
+    # match through; `websearch_to_tsquery` must not appear in this query at all.
+    sql = _compiled("leave request tracker", [0.1] * 1536)
+    assert "websearch_to_tsquery" not in sql
+    assert "plainto_tsquery" in sql
+    assert "to_tsquery" in sql
+    assert "replace(" in sql

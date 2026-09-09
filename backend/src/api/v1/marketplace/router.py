@@ -332,7 +332,18 @@ async def list_marketplace(
     order = clean_sort(sort)
 
     if search is not None:
-        query_embedding = await _embed_query_or_none(embedder, search)
+        # THE CHEAP QUESTION FIRST (review of #191, agc129 — the same fix as the duplicate
+        # check's blocker #7). An empty catalog is the normal day-one state, not an edge
+        # case, and embedding a search box query before asking "is there anything published
+        # at all" spends a Foundry round trip — and its own outage mode — ranking nothing.
+        # Same `live_app_ids()` predicate both arms already scope to, so this can never
+        # drift from the corpus the search itself answers over.
+        catalog_has_any_app = await db.scalar(
+            sa.select(sa.exists().where(AppRegistry.id.in_(live_app_ids())))
+        )
+        query_embedding = (
+            await _embed_query_or_none(embedder, search) if catalog_has_any_app else None
+        )
         catalog, deployment = _hybrid_catalog(search, query_embedding)
         # The fused pool IS the bounded universe a page walks while searching — see the
         # docstring above on why this is not a second, corpus-wide COUNT (R28).

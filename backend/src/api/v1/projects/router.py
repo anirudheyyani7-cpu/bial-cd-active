@@ -192,16 +192,26 @@ async def create_project(
     """
     project = Project(user_id=user.id, name=body.name, description=body.description)
     db.add(project)
+    # NO PRE-COMMIT REFRESH: `flush()` already issues `INSERT ... RETURNING`, which populates
+    # every server-generated default — `id`, `created_at`, `updated_at` — onto the mapped
+    # object directly. A `db.refresh(project)` here would only re-run the same SELECT a
+    # second time for values already in hand (review of #191, agc129, round 2).
     await db.flush()
-    await db.refresh(project)  # load server defaults (id, timestamps) before projecting
     await write_description_embedding(project, embedder)
     project_id = project.id  # a plain scalar for the post-commit work (no expired-attribute I/O)
     await db.commit()
-    # THE SECOND REFRESH IS NOT REDUNDANT WITH THE ONE ABOVE. `commit()` expires every
-    # attribute by default (`expire_on_commit`), so the pre-commit refresh's values are gone
-    # by the time `_to_response` reads them below — accessing an expired attribute outside
-    # an awaited context is `MissingGreenlet`, a 500 on every create. Mirrors `patch_project`'s
-    # identical commit-then-refresh order (review of #191, agc129).
+    # THE REFRESH BELOW IS NOT ABOUT `expire_on_commit` — this codebase sets that `False`
+    # (`db/base.py`), so most attributes genuinely do survive the commit untouched, and a
+    # comment claiming otherwise here would read as false the moment anyone checked (review
+    # of #191, agc129, round 2). `updated_at` is the one exception: it carries a server-side
+    # `onupdate=sa.func.now()` (`db/mixins.py::TimestampMixin`), which makes it a POSTFETCH
+    # column — SQLAlchemy expires postfetch columns after every flush that touches the row,
+    # REGARDLESS of `expire_on_commit`, because only the database knows what `onupdate` just
+    # wrote. `write_description_embedding` above dirties the row when it succeeds, so this
+    # commit emits an UPDATE and that expiry fires; `_to_response` reading the now-expired
+    # `updated_at` outside an awaited context below would otherwise be `MissingGreenlet` — a
+    # 500 on every create where an embedder happens to be configured. Mirrors `patch_project`'s
+    # identical commit-then-refresh order.
     await db.refresh(project)
     # A project one statement old owns no app, so nothing of its can be serving. Passed
     # explicitly rather than defaulted: this is an answer, not an omission.

@@ -56,6 +56,12 @@ async def test_create_writes_the_embedding_when_an_embedder_is_configured(
 
     row = await db_session.get(Project, uuid.UUID(resp.json()["id"]))
     assert row is not None
+    # EXPLICITLY UNDEFERRED, awaited, before the plain attribute read below —
+    # `description_embedding` is `deferred=True` (`db/models/project.py`), and a bare
+    # `row.description_embedding` on an async session's already-loaded object triggers a
+    # synchronous lazy load with no event loop to await it: `MissingGreenlet`, one layer
+    # out from the exact bug this file exists to catch (review of #191, agc129, round 2).
+    await db_session.refresh(row, ["description_embedding"])
     assert row.description_embedding is not None
 
 
@@ -72,6 +78,7 @@ async def test_create_leaves_the_embedding_absent_when_none_is_configured(
 
     row = await db_session.get(Project, uuid.UUID(resp.json()["id"]))
     assert row is not None
+    await db_session.refresh(row, ["description_embedding"])  # see the previous test
     assert row.description_embedding is None
 
 
@@ -89,6 +96,7 @@ async def test_patch_refreshes_the_embedding_when_the_description_actually_chang
 
     row = await db_session.get(Project, project.id)
     assert row is not None
+    await db_session.refresh(row, ["description_embedding"])  # see the first test in this file
     assert row.description_embedding is not None
 
 
@@ -159,6 +167,7 @@ async def test_a_failed_embed_call_still_lets_the_create_succeed(client, db_sess
         row = await db_session.get(Project, uuid.UUID(resp.json()["id"]))
         assert row is not None
         assert row.description is not None  # the write itself landed
+        await db_session.refresh(row, ["description_embedding"])  # see the first test above
         assert row.description_embedding is None  # the embedding simply did not
     finally:
         app.dependency_overrides.pop(embedder_dependency, None)

@@ -85,7 +85,31 @@ class DuplicateCheckResult:
 
 
 def _tsquery(search: str) -> sa.Function[Any]:
-    return sa.func.websearch_to_tsquery(DESCRIPTION_TSV_REGCONFIG, search)
+    """OR-joined lexeme tsquery for description-AGAINST-description matching (R31) — NOT
+    `websearch_to_tsquery`, the marketplace search box's own helper (`marketplace/router.py`),
+    which ANDs every significant term. That is correct for a short search-box query; it is
+    the wrong shape here, where the input is the citizen's own 15-120 WORD description: an
+    AND-query only matches a stored description containing every one of those stemmed terms
+    — near-verbatim copy-paste — so any real second author describing the same app in their
+    own words left the keyword arm permanently EMPTY (review of #191, agc129 — measured: a
+    genuine duplicate scored 0.84 cosine similarity, matched nothing on the keyword arm, and
+    was rejected by the stricter vector-only fallback bar `keyword_arm_is_empty` forces
+    `_select_confident_matches` into, leaving three of its four confidence rules dead code
+    in practice).
+
+    BUILT FROM `plainto_tsquery`'s OWN AND-JOINED OUTPUT, converted to OR by a plain text
+    substitution — not a second, per-lexeme round trip. `plainto_tsquery` GUARANTEES its
+    `::text` form is always exactly `'lex1' & 'lex2' & ... & 'lexN'` (single lexemes only —
+    no phrase operators, no other punctuation): that guarantee is specifically what
+    `websearch_to_tsquery`'s richer output does NOT make (`<->` phrase operators from quoted
+    input would survive a blind `&`->`|` swap as nonsense), so this substitution is safe only
+    starting from `plainto_tsquery`. The description was already sanitized INTO the tsquery
+    by `plainto_tsquery` before this ever touches it as text, so there is no injection surface
+    — this rewrites Postgres's own output, never the citizen's raw input.
+    """
+    plain = sa.func.plainto_tsquery(DESCRIPTION_TSV_REGCONFIG, search)
+    or_joined = sa.func.replace(sa.cast(plain, sa.Text), " & ", " | ")
+    return sa.func.to_tsquery(DESCRIPTION_TSV_REGCONFIG, or_joined)
 
 
 async def find_possible_duplicates(
@@ -160,9 +184,10 @@ def _candidate_query(description: str, query_embedding: list[float] | None) -> s
             .cte("candidates")
         )
     else:
-        # No embedder configured, or the embed call already raised (caught by the public
-        # wrapper) — either way this is only ever called with a real embedding or none at
-        # all, never a partial one.
+        # No embedder configured, or the embed call already failed (caught in
+        # `_find_possible_duplicates`, which degrades to `None` rather than raising) — either
+        # way this is only ever called with a real embedding or none at all, never a partial
+        # one.
         candidates = (
             sa.select(
                 kw_arm.c.app_id.label("app_id"),
@@ -249,12 +274,32 @@ def _select_confident_matches(rows: Sequence[Any]) -> list[Any]:
 async def _find_possible_duplicates(
     db: AsyncSession, description: str, embedder: Embedder | None
 ) -> DuplicateCheckResult:
+    # THE CHEAP QUESTION FIRST (review of #191, agc129 — blocker #7). An empty marketplace
+    # is not an edge case: it is the NORMAL state of production on day one and for as long as
+    # nothing has been published, and unconditionally embedding before asking "is there
+    # anything at all to search" spent a full Foundry round trip — plus its own outage mode —
+    # on a query guaranteed to return nothing (measured: ~1.1s per create). An indexed EXISTS
+    # against the SAME `live_app_ids()` predicate every arm already scopes to, so this can
+    # never drift from the corpus definition it is answering for.
+    if not await db.scalar(sa.select(sa.exists().where(AppRegistry.id.in_(live_app_ids())))):
+        return DuplicateCheckResult(matches=[])
+
     query_embedding: list[float] | None = None
     if embedder is not None:
         # R21: "document" on BOTH sides of the duplicate check — this is description-
         # against-description, never a search-box "query" embedding.
-        result = await embedder.embed_documents(description)
-        query_embedding = list(result.embeddings[0])
+        #
+        # ONLY THE EMBED CALL IS GUARDED HERE, mirroring `marketplace/router.py
+        # ::_embed_query_or_none` (review of #191, agc129 — a real production defect this
+        # closes): the OUTER `except` in `find_possible_duplicates` above used to be the
+        # only guard, which caught this call TOGETHER WITH the query below — so a Foundry
+        # failure abandoned the keyword arm as well as the vector one, answering "no
+        # duplicates found" instead of R26's documented "falls back to keyword-only".
+        try:
+            result = await embedder.embed_documents(description)
+            query_embedding = list(result.embeddings[0])
+        except Exception:  # noqa: BLE001 — degrade to keyword-only, never fail the check
+            logger.warning("duplicate_check_embedding_unavailable")
 
     rows = (await db.execute(_candidate_query(description, query_embedding))).all()
     top = _select_confident_matches(rows)

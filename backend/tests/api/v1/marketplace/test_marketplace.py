@@ -24,6 +24,7 @@ from src.db.models.app_registry import AppStatus
 from src.db.models.deployment import Deployment, DeploymentStatus
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.deploy.liveness import live_app_ids
+from src.services.embeddings import embedder_dependency
 from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
 
 _TTL = settings.auth.access_ttl_seconds
@@ -547,6 +548,28 @@ async def test_search_ranks_the_best_description_match_first(app, client, db_ses
     # Both match; the denser one wins. Asserting the full order, not just the head, so the
     # test also fails if the weaker match stops being returned at all.
     assert items == ["Baggage Belt Faults", "Manifest Reconciliation"]
+
+
+async def test_searching_an_empty_catalog_never_calls_the_embedder(
+    app, client, db_session
+) -> None:
+    # Blocker #7 (review of #191, agc129, round 2), the same fix as the duplicate check's:
+    # `list_marketplace` used to embed the query unconditionally whenever `q` was set, before
+    # ever asking whether there was anything published to search — a Foundry round trip spent
+    # ranking nothing on a day-one, empty marketplace. Proven the same "must not be called"
+    # way `test_project_duplicate_check.py`'s equivalent test is.
+    class _MustNotBeCalled:
+        async def embed_query(self, *_a, **_k):  # pragma: no cover - the point is it isn't
+            raise AssertionError("the embedder must not be called against an empty catalog")
+
+    app.dependency_overrides[embedder_dependency] = lambda: _MustNotBeCalled()
+    try:
+        headers = await _signed_in(db_session, "viewer@rvaiglobal.com")
+        resp = await client.get(_MARKETPLACE, headers=headers, params={"q": "leave tracker"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+    finally:
+        app.dependency_overrides.pop(embedder_dependency, None)
 
 
 async def test_an_app_without_a_description_is_unsearchable_but_still_listed(

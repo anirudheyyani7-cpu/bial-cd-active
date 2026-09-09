@@ -104,6 +104,58 @@ async def test_a_keyword_matching_live_app_is_returned(client, db_session) -> No
     assert match["url"] == "https://pub-example.azurecontainerapps.io/"
 
 
+async def test_a_differently_worded_near_duplicate_is_found_by_the_keyword_arm_alone(
+    client, db_session
+) -> None:
+    # R31 vs blocker #6 (review of #191, agc129, round 2): `_tsquery` used to AND every term
+    # in the citizen's own 15-120 word description, so it only matched a stored description
+    # containing EVERY one of those stemmed words — near-verbatim copy-paste. This app shares
+    # SOME but not all of `_VALID_DESCRIPTION`'s vocabulary (VIP, movement, terminal,
+    # supervisor, approve/approves) and is otherwise worded differently — exactly the "real
+    # second author, different words" case the AND-query left permanently invisible. No
+    # `fake_embedder`: this isolates the keyword arm, so a regression back to
+    # `websearch_to_tsquery` fails this test even though the vector arm is absent entirely.
+    await _live_app(
+        db_session,
+        owner_email="builder@example.com",
+        name="Terminal VIP Log",
+        description=(
+            "Whenever a VIP movement is planned at any terminal, ground staff record it here "
+            "so the duty supervisor can approve it before the visit and everyone downstream "
+            "knows who is coming through and when."
+        ),
+    )
+    await db_session.commit()
+
+    headers, _ = await _auth(db_session)
+    resp = await client.post(_CHECK, headers=headers, json={"description": _VALID_DESCRIPTION})
+    assert resp.status_code == 200
+    assert len(resp.json()["matches"]) == 1
+
+
+async def test_both_arms_agree_on_a_genuine_duplicate_with_an_embedder_configured(
+    client, db_session, fake_embedder
+) -> None:
+    # The `fake_embedder` fixture existed but was never requested by any test in this file
+    # (review of #191, agc129, round 2) — wiring it in proves the vector arm and the fixed
+    # keyword arm actually combine end to end, not just each in isolation.
+    await _live_app(
+        db_session,
+        owner_email="builder@example.com",
+        name="Terminal VIP Log",
+        description=(
+            "Whenever a VIP movement is planned at any terminal, ground staff record it here "
+            "so the duty supervisor can approve it before the visit."
+        ),
+    )
+    await db_session.commit()
+
+    headers, _ = await _auth(db_session)
+    resp = await client.post(_CHECK, headers=headers, json={"description": _VALID_DESCRIPTION})
+    assert resp.status_code == 200
+    assert len(resp.json()["matches"]) == 1
+
+
 async def test_an_unrelated_live_app_is_not_returned(client, db_session) -> None:
     await _live_app(
         db_session,
@@ -163,6 +215,27 @@ async def test_a_failed_embed_call_still_returns_200_with_whatever_keyword_finds
         # The keyword arm alone still finds the strong lexical match — the embed failure only
         # took the vector arm down with it, not the whole check.
         assert len(resp.json()["matches"]) == 1
+    finally:
+        app.dependency_overrides.pop(embedder_dependency, None)
+
+
+async def test_an_empty_catalog_never_calls_the_embedder(client, db_session, app) -> None:
+    # Blocker #7 (review of #191, agc129, round 2): day-one production has no published apps
+    # at all, and the check used to embed unconditionally before ever asking whether there
+    # was anything to search — a Foundry round trip (and its own outage mode) spent ranking
+    # nothing. Proven the same way `test_patch_does_not_re_embed_when_the_description_is_
+    # unchanged` proves its own "must not be called" claim: an embedder that raises if it is
+    # EVER invoked, against a catalog that is genuinely empty.
+    class _MustNotBeCalled:
+        async def embed_documents(self, *_a, **_k):  # pragma: no cover - the point is it isn't
+            raise AssertionError("the embedder must not be called against an empty catalog")
+
+    app.dependency_overrides[embedder_dependency] = lambda: _MustNotBeCalled()
+    try:
+        headers, _ = await _auth(db_session)
+        resp = await client.post(_CHECK, headers=headers, json={"description": _VALID_DESCRIPTION})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["matches"] == []
     finally:
         app.dependency_overrides.pop(embedder_dependency, None)
 

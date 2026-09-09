@@ -143,6 +143,58 @@ az role assignment create \
   --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<account>/blobServices/default/containers/<container>"
 ```
 
+### The identity must also be attached to the BACKEND App Service — easy to miss, silent when missed
+
+The table above covers the two grants. There is a third thing, and it is not a role assignment at
+all: **the user-assigned identity has to be attached to the backend App Service itself.**
+
+The control plane copies each project's window into Redis with
+`ManagedIdentityCredential(client_id=<the lake identity>)`, running inside the backend App
+Service. Azure's identity endpoint will only mint a token for an identity that is **assigned to
+the resource asking** — a role grant is not enough, and neither is the fact that the same identity
+is attached to every container app. Without the attachment the credential fails on every attempt,
+and because the copy is a detached task whose failures are deliberately logged-and-swallowed,
+**nothing user-facing ever changes**: builds succeed, the rail says the connector is on, and the
+copy simply never happens. The evidence is a `lake_window_copy_failed` line and nothing else.
+
+```sh
+az webapp identity assign -n low-code-no-code-platform -g <rg> \
+  --identities "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<name>"
+```
+
+**Then check what that did to `DefaultAzureCredential`.** Three call sites build a credential with
+no client id — `services/storage/azure_backend.py`, `services/sandbox/aca.py`,
+`services/deploy/aca_publish.py` — and on App Service the identity endpoint resolves a bare
+request to the **system-assigned** identity. If the App Service has a system-assigned identity
+today, adding a user-assigned one alongside it changes nothing for those three. If it does not,
+and they are resolving a lone user-assigned identity implicitly, adding a second makes the request
+ambiguous and **blob storage, sandbox creation and publish all start failing at once**. Confirm
+which posture is live before attaching:
+
+```sh
+az webapp identity show -n low-code-no-code-platform -g <rg> \
+  --query "{system: principalId, user: userAssignedIdentities}"
+```
+
+A non-null `principalId` means a system-assigned identity exists and the attachment is safe.
+
+### Pre-flight: confirm that a redeploy really does revoke
+
+The platform's revocation story for a published app is "redeploy it after the owner's access is
+withdrawn, and the identity comes off". The code now sends ARM's explicit detach
+(`identity: {type: "None"}`) rather than omitting the property, which is the documented way to do
+it — but **it has never been observed**, because ARM writes are blocked on the development
+subscription. Confirm it once, against a throwaway app, before relying on it in an incident:
+
+```sh
+# attach, then redeploy with the gate closed, then read it back
+az containerapp show -n <app> -g <rg> --query "identity"
+```
+
+Expect `{"type": "None"}` and an empty `userAssignedIdentities`. If the identity survives, the
+revocation path is not the redeploy and the runbook needs a manual
+`az containerapp identity remove` step instead.
+
 ### The three app settings
 
 ```
@@ -222,6 +274,39 @@ it runs agent-authored code with outbound network access. Whether sandbox egress
 **unestablished**, and it decides whether "read-only, one container, behind a login" is still an
 adequate description once a build holds the credential. Establish it, and tell BIAL the answer
 alongside the revocation gap — do not inherit a note written about a different surface.
+
+**The Redis copy budget can fail to converge once enough projects are active.** The 300 MB
+family is shared and evicted oldest-first, which is recorded and accepted — but the second-order
+effect is not obvious: a project whose files were evicted re-copies them on its next container
+birth and evicts somebody else's, so past roughly four concurrent 75 MB windows the platform can
+sit in a steady state of re-downloading the same windows from Azure forever. It costs egress and
+Redis writes, not correctness, and nothing reads the copy yet. The `evicted` and `copied` fields
+on the `lake_window_copied` log line are the signal; a copy that evicts as much as it copies, on
+every birth, is this condition. Two candidate remedies when it matters: cap a single window at a
+share of the budget, or hold a short-TTL "attempted" marker keyed by the file-set digest so a
+birth does not re-copy a set it just lost.
+
+**Switching a connector on takes effect at the next container birth, not immediately.** The
+session lock refuses the change while a turn is in flight, but between turns the change is
+accepted and the container is not rebuilt — a container gets its environment exactly once, at
+birth. So the rail can honestly say "Reading 30 days of flight data" while the running container
+holds neither the coordinates nor the identity. Today nothing reads the copy, so the gap is
+invisible; before anything does, either the refusal widens to "a container exists" or the rail has
+to say "takes effect when this app next starts".
+
+**Approval is per-person; the marketplace is org-wide.** A citizen's approval is granted to them,
+and the consent copy says so. But a published app is listed automatically while it has a live
+deployment, and it carries the identity regardless of who opens it — so one person's approval
+becomes an org-wide read path the moment they publish. This is an owner decision, not a code
+defect: say it in the approver's panel, keep connector-reading apps out of the automatic listing,
+or check the viewer at the app's front door. Settle it before the first production approval.
+
+**A build sandbox can read its own bearer token out of its environment.** `IDENTITY_HEADER` is
+injected into the supervisor and redacted from `/exec`, `/dev/logs` and `/files` output as a
+literal. Agent-authored code running in the sandbox can still read the variable and re-encode it,
+which no literal redaction can catch — so the honest statement is that a build sandbox holds the
+connector credential and anything running inside it can use it, for as long as the token lives.
+This is the same surface as the sandbox-public-ingress note above and should be answered with it.
 
 Also deferred: blue/green traffic splitting, custom domains, ACR image retention, and
 rollback beyond ACA keeping the previous revision serving when a new one fails to activate.

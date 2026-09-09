@@ -520,15 +520,34 @@ def test_an_app_whose_owner_was_never_granted_it_has_no_identity(lake_configured
     """★ THE GATE. The lake is CONFIGURED here — the platform could attach an identity — and this
     app still gets none, because its environment carries no coordinates. Attaching whenever a
     lake is merely configured platform-wide would hand every published app on the platform a
-    credential to BIAL's flight data."""
-    assert _envelope().identity is None
+    credential to BIAL's flight data.
+
+    ASSERTED AS ARM'S EXPLICIT `None`, NOT AS AN ABSENT BLOCK. This call is a full `PUT` over a
+    resource that is already live, and the platform's ONLY revocation story is "redeploy the app
+    after its owner's access is withdrawn". Omitting the property leaves whether that detaches up
+    to ARM; `type: "None"` is ARM's documented detach and says it outright. The withdrawn app and
+    the never-granted app are the same envelope here, so the explicit form has to be the one both
+    of them get."""
+    identity = _envelope().identity
+    assert identity is not None, "an absent block leaves the revocation up to ARM to interpret"
+    assert identity.type == "None"
+    assert not identity.user_assigned_identities
 
 
-def test_a_spec_with_no_identity_is_byte_identical_to_one_built_with_no_lake(
+def test_a_spec_with_no_identity_is_still_byte_identical_to_one_built_with_no_lake(
     lake_configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ Deploying an app with the connector off produces exactly today's spec — asserted as an
-    equality rather than as a list of fields that happen to match."""
+    """★ Deploying an app with the connector off produces the same spec whether or not a lake is
+    configured platform-wide — asserted as an equality rather than as a list of fields that happen
+    to match. What a lake existing somewhere must never do is change the shape of a deploy for an
+    app that has nothing to do with it.
+
+    This spec is NO LONGER byte-identical to what the platform sent before connectors existed:
+    every published app now carries an explicit `identity: {type: "None"}`. That is a deliberate
+    trade and the test above has the reason. It is a semantic no-op for an app that never had an
+    identity, and the same full-`PUT` ownership this module already asserts over `tags` — where a
+    value missing from the envelope is STRIPPED rather than merely un-written — so an identity
+    attached to a published app out of band is removed on its next deploy, by the same rule."""
     from src.config import settings
 
     with_lake = _envelope().as_dict()
@@ -536,7 +555,7 @@ def test_a_spec_with_no_identity_is_byte_identical_to_one_built_with_no_lake(
     without_lake = _envelope().as_dict()
 
     assert with_lake == without_lake
-    assert "identity" not in with_lake
+    assert with_lake["identity"] == {"type": "None"}
 
 
 def test_the_coordinates_ride_as_plain_values_not_as_secret_references(

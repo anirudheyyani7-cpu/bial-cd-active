@@ -59,7 +59,7 @@ from src.db.models.message import Message, MessageEntryKind
 from src.db.models.token_usage import TokenUsage
 from src.services.agent.mode_prompts import PromptContext, workspace_note
 from src.services.build_sessions.alarms import HMR_PROTOCOL_DRIFT_EVENT
-from src.services.build_sessions.manager import SessionManager
+from src.services.build_sessions.manager import RecoveryNews, SessionManager
 from src.services.messages.projection import _LBL_FALLBACK, long_operation_line
 from src.services.orchestrator.deps import SandboxSession
 from src.services.orchestrator.errors import from_client, from_tsc
@@ -2624,3 +2624,119 @@ async def test_the_spend_bound_names_what_was_agreed_and_not_built(
     assert state.error_message.index("A visitor list") < state.error_message.index(
         "A sign-out button"
     )
+
+
+async def test_a_workspace_that_came_back_wrong_still_frees_the_slot(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★★ THE LOCKOUT. A turn whose workspace was RESTORED ends without running the agent — and
+    used to end without giving the build slot back.
+
+    `ensure_sandbox` registers the session in `_active_by_user` and adopts the user's lock before
+    it returns. The engine assigned `state.write_session` BELOW the two integrity holds, and the
+    `finally` that releases everything is guarded on that field being set — so this arm left a
+    registered session with `ended_at` never set and no renewer. `_active_by_user` never evicts an
+    unended session, so for the rest of the process's life that user got 409
+    `already_building_here` on every turn in every conversation, 409 on relaunch, and
+    `still_running` for ever from
+    `stop-active-build`, which had no running turn to cancel. In a citizen's words: they could no
+    longer create an application, and nothing they pressed helped.
+
+    Reached exactly when a workspace came back wrong, so it punished the person already having the
+    worst time.
+
+    Mutation check: move `state.write_session = session` back below the two `raise
+    _WriteEndedError` holds in `_attach_sandbox` and this goes red on the final assertion —
+    the slot still held by a turn that is long over."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-restored@rvaiglobal.com")
+    manager, client = SessionManager(), FakeSandboxClient()
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    # The real allocation happens — container, registry, lock, and the `_active_by_user` entry
+    # whose leak is the subject — and only then is the turn told its workspace was rebuilt.
+    real_ensure = manager.ensure_sandbox
+
+    async def restored_ensure(*args, **kwargs):
+        session = await real_ensure(*args, **kwargs)
+        session.restored = True  # the held-message arm
+        return session
+
+    monkeypatch.setattr(manager, "ensure_sandbox", restored_ensure)
+
+    await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    # LIVENESS FIRST. The arm actually fired — without this the assertion below would pass just
+    # as well on a turn that never took a workspace at all, which is the false-green shape this
+    # repo has shipped before.
+    assert client.provisioned != [] or client.restored != [], (
+        "no workspace was taken, so the leak this test is about could not have happened"
+    )
+    # THE GUARANTEE: the next message can start.
+    assert manager.active_session_for(user.id) is None
+
+
+async def test_an_unrecoverable_workspace_also_frees_the_slot(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE OTHER HOLD, and the reason it needs its own test rather than trusting the first.
+
+    `_attach_sandbox` has TWO arms that end the turn before the agent runs — `workspace_restored`
+    and `RecoveryNews.UNRECOVERABLE` — and both used to leak the build slot for the same reason.
+    A test covering only one of them leaves the other free to regress on any edit that moves the
+    assignment back between them, which is a narrower window than it sounds: the two raises are
+    adjacent, and "below the first, above the second" is exactly the shape a careless fix takes.
+
+    UNRECOVERABLE is the worse of the pair to leak on: nothing was put back, the container is
+    showing a bare template, and the citizen is already being told their workspace could not be
+    restored when the platform locks them out on top of it."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-unrecoverable@rvaiglobal.com")
+    manager, client = SessionManager(), FakeSandboxClient()
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    real_ensure = manager.ensure_sandbox
+
+    async def unrecoverable_ensure(*args, **kwargs):
+        session = await real_ensure(*args, **kwargs)
+        session.news = RecoveryNews.UNRECOVERABLE
+        return session
+
+    monkeypatch.setattr(manager, "ensure_sandbox", unrecoverable_ensure)
+
+    await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    assert client.provisioned != [] or client.restored != [], (
+        "no workspace was taken, so the leak this test is about could not have happened"
+    )
+    assert manager.active_session_for(user.id) is None

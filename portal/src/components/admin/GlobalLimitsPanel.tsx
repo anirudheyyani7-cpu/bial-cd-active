@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Loader2, Search } from 'lucide-react'
+import { AlertCircle, Search } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { fetchUsers, bulkUpdateUserLimits } from '../../utils/admin'
 import type { UserLimitsOut } from '../../utils/admin'
 import { useKeysetList } from '../../hooks/useKeysetList'
@@ -367,7 +368,7 @@ export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
 
           {users.length === 0 && (!error || isAbortError) && (loading || appliedQuery === null || isAbortError) ? (
             <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm">
-              <Loader2 size={16} className="animate-spin" /> Loading users…
+              <BusyGlyph size={16} /> Loading users…
             </div>
           ) : error && !isAbortError && users.length === 0 ? (
             <div className="text-center py-16">
@@ -434,7 +435,7 @@ export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
 
           {hasMore && !error && !isCapped && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-neutral">
-              <Loader2 size={12} className="animate-spin" /> Loading more users…
+              <BusyGlyph size={12} /> Loading more users…
             </p>
           )}
         </>
@@ -482,7 +483,7 @@ export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
                 onClick={apply}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-xs bg-primary text-white hover:bg-primary/90 disabled:opacity-50 transition"
               >
-                {applying && <Loader2 size={13} className="animate-spin" />}
+                {applying && <BusyGlyph size={13} />}
                 Yes, apply
               </button>
               <button

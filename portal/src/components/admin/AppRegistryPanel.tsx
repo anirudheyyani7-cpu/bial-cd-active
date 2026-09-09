@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Loader2, AlertCircle, RefreshCw, Box, CheckCircle, XCircle, X,
+  AlertCircle, RefreshCw, Box, CheckCircle, XCircle, X,
   ShieldCheck, ShieldOff, Power, Trash2, ScrollText, Rocket, ShieldAlert,
 } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import {
   listApps, approveApp, rejectApp, patchApp, disableApp, enableApp,
   markDeployed, deleteApp, fetchAudit, fetchAppStatusCounts,
@@ -347,7 +348,7 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
                 {mode !== 'reject' ? (
                   <>
                     <button data-testid="approve-btn" disabled={busy} onClick={() => run(onApprove)} className="flex-1 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
-                      {busy ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />} Approve
+                      {busy ? <BusyGlyph size={15} /> : <CheckCircle size={15} />} Approve
                     </button>
                     <button data-testid="reject-btn" onClick={() => setMode('reject')} className="flex-1 flex items-center justify-center gap-2 border border-bial-border hover:border-red-300 hover:text-red-600 text-tertiary font-semibold py-2.5 rounded-xl transition text-sm">
                       <XCircle size={15} /> Reject
@@ -391,7 +392,7 @@ function AuditDrawer({ app, onClose }: AuditDrawerProps) {
           <button onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          {!events && !err && <p className="text-sm text-neutral flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>}
+          {!events && !err && <p className="text-sm text-neutral flex items-center gap-2"><BusyGlyph size={14} /> Loading…</p>}
           {err && <p className="text-sm text-red-600">{err}</p>}
           {events && events.length === 0 && <p className="text-sm text-neutral">No events yet.</p>}
           {events && events.length > 0 && (
@@ -603,7 +604,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const isQueue = tab === 'pending'
 
   if (loading) {
-    return <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm"><Loader2 size={16} className="animate-spin" /> Loading apps…</div>
+    return <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm"><BusyGlyph size={16} /> Loading apps…</div>
   }
   if (error) {
     return (
@@ -861,7 +862,7 @@ function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
               !valid || busy ? 'opacity-50 cursor-not-allowed' : ''
             }`}
           >
-            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Delete app
+            {busy ? <BusyGlyph size={15} /> : null} Delete app
           </button>
         </div>
       </DialogContent>

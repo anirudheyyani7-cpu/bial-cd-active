@@ -25,10 +25,10 @@
  * Build chat. Asserted by a test; closing it needs storage, a decision nobody has taken.
  */
 import { useCallback, useRef, useState, type FC } from 'react'
-import { Loader2, Wand2 } from 'lucide-react'
+import { Wand2 } from 'lucide-react'
 
 import { uuidv7 } from '../../utils/conversationApi'
-import { usePrefersReducedMotion } from './ToolActivityLine'
+import { BusyGlyph } from '../ui/Waiting'
 
 /** What the press sends. No plan text: the server reads it from the offering tool call. */
 export interface BuildHandoff {
@@ -87,7 +87,6 @@ const OfferStrip: FC<OfferStripProps> = ({
   onFailed,
 }) => {
   const [busy, setBusy] = useState<'build' | 'refine' | null>(null)
-  const reducedMotion = usePrefersReducedMotion()
 
   // Minted once per PRESS-SESSION and held in a ref, so a double press and a retry carry the
   // same id. `ProjectBuilder` mints through the same shared `uuidv7` but does it INLINE inside
@@ -126,7 +125,6 @@ const OfferStrip: FC<OfferStripProps> = ({
   // rendered at all and the composer is left unblocked — never a dead button.
   if (!toolCallId) return null
 
-  const spin = reducedMotion ? undefined : 'animate-spin'
 
   return (
     // A BAND ACROSS THE TOP OF THE BOX, edge to edge — the negative margins undo the composer's own
@@ -154,7 +152,7 @@ const OfferStrip: FC<OfferStripProps> = ({
         data-testid="offer-keep-planning"
         className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-slate-300 bg-white px-3.5 py-2.5 text-[12.5px] font-semibold text-slate-600 transition hover:border-primary hover:text-primary"
       >
-        {busy === 'refine' && <Loader2 size={13} className={spin} />}
+        {busy === 'refine' && <BusyGlyph size={13} />}
         {KEEP_PLANNING_LABEL}
       </button>
       <button
@@ -164,7 +162,7 @@ const OfferStrip: FC<OfferStripProps> = ({
         data-testid="offer-build"
         className="inline-flex items-center gap-[7px] whitespace-nowrap rounded-[10px] bg-primary px-[15px] py-2.5 text-[12.5px] font-bold text-white transition hover:bg-primary-600"
       >
-        {busy === 'build' ? <Loader2 size={13} className={spin} /> : <Wand2 size={13} aria-hidden />}
+        {busy === 'build' ? <BusyGlyph size={13} /> : <Wand2 size={13} aria-hidden />}
         {BUILD_LABEL}
       </button>
     </div>

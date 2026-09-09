@@ -11,7 +11,8 @@
  * this only collects confirmation and calls `onConfirm`.
  */
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { CONVERSATION_LIST_CAP, listProjectConversations } from '../../utils/conversationApi'
 import type { Project } from '../../utils/projectApi'
 import { getStoredUser } from '../../utils/auth'
@@ -213,7 +214,7 @@ export default function ProjectDeleteDialog({
             onClick={() => void confirm()}
             className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Delete project
+            {busy ? <BusyGlyph size={15} /> : null} Delete project
           </button>
           <button
             type="button"

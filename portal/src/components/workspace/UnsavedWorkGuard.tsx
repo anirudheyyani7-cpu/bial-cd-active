@@ -21,7 +21,8 @@
  * served by an exit function the shell's chrome consults instead.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
+import { BusyGlyph, useElapsedSeconds, ELAPSED_AFTER_MS } from '../ui/Waiting'
 import { saveProject } from '../../utils/buildSessionApi'
 
 export interface UnsavedWorkGuardHandle {
@@ -166,6 +167,11 @@ function UnsavedWorkDialog({
 }: DialogProps) {
   const subject = projectName ? `“${projectName}”` : 'This app'
   const subjectLower = projectName ? `“${projectName}”` : 'this app'
+  // A save here is the same 40-second write the hand-over dialog performs, against the same
+  // container — so it needs the same honest wait. See `ui/Waiting.tsx` for why a spinner alone
+  // is not one, and why this number appears under motion as well as without it.
+  const elapsed = useElapsedSeconds(saving)
+  const showElapsed = elapsed * 1000 >= ELAPSED_AFTER_MS
   const stayRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     stayRef.current?.focus()
@@ -220,7 +226,12 @@ function UnsavedWorkDialog({
               onClick={onSaveAndLeave}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {saving ? <Loader2 size={15} className="animate-spin" /> : null} Save and leave
+              {saving ? <BusyGlyph size={15} /> : null} Save and leave
+              {showElapsed && (
+                <span aria-hidden="true" className="tabular-nums opacity-80">
+                  {elapsed}s
+                </span>
+              )}
             </button>
           )}
           <button

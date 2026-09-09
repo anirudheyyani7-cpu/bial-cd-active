@@ -26,7 +26,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -34,6 +33,7 @@ import {
   Save,
 } from 'lucide-react'
 import PublishStatusChip from '../PublishStatusChip'
+import { BusyGlyph, useElapsedSeconds, ELAPSED_AFTER_MS } from '../ui/Waiting'
 import { chatKindFor } from '../../utils/chatKind'
 import { useRailSlot, useWorkspaceActions, useWorkspaceAddress, useWorkspaceHeading, useWorkspacePaneVisible, useWorkspaceSave } from './workspaceChannel'
 import type { SaveSlot, WorkspaceActions } from './workspaceChannel'
@@ -339,12 +339,18 @@ export default function WorkspaceToolbar({
  * canvas — a loud filled control gets ignored. `dirty === null` means "could not tell" and renders
  * nothing, never "Saved": the git check costs two executions, so a stopped project has no answer.
  * With no action published it is a real `<span>`, not a button, so nothing invites a no-op press.
- * While it works it now SHOWS that too, with `animate-spin` — one of the three utilities
- * `index.css`'s reduced-motion block suppresses — asserted by class name because jsdom cannot
- * evaluate a media query and a label-only assertion would pass whether or not anything moved.
+ * While it works it now SHOWS that too — through `BusyGlyph`, which owns both motion registers:
+ * a spinning glyph where motion is allowed, and NO spinner at all where it is not, because a
+ * stationary loading spinner reads as a hang rather than as an accommodation. Past five seconds a
+ * live elapsed count appears beside it, which is the only signal that proves liveness without
+ * moving; a production save was measured at forty seconds.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save
+  // Before the early return: hooks may not sit behind a conditional, and `dirty === null` is a
+  // real render path here rather than an edge case.
+  const elapsed = useElapsedSeconds(saving)
+  const showElapsed = elapsed * 1000 >= ELAPSED_AFTER_MS
   if (dirty === null) return null
 
   const look = dirty
@@ -368,8 +374,19 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
           and `dirty` flips on its own while a turn edits files — announcing every flip would be
           noise in the same region the wait needs to cut through. */}
       <span role="status" aria-live="polite" className="inline-flex items-center gap-[7px]">
-        {saving ? <Loader2 data-testid="save-spinner" size={14} className="animate-spin" /> : <Save size={14} />}
+        {saving ? <BusyGlyph size={14} testId="save-spinner" /> : <Save size={14} />}
         {saving ? 'Saving…' : null}
+        {/* THE NUMBER, once the wait has earned it. A save measured at forty seconds in production
+            spent all of them showing one unchanging word; under `prefers-reduced-motion` the glyph
+            beside it did not turn either, and the control was reported as dead. */}
+        {/* `aria-hidden` for the reason `WaitingLine`'s count is: this span sits INSIDE the
+            polite region above, and a number changing once a second is announced once a second.
+            "Saving…" is what a reader needs; the count is for the eye. */}
+        {saving && showElapsed ? (
+          <span aria-hidden="true" className="tabular-nums">
+            {elapsed}s
+          </span>
+        ) : null}
       </span>
       {!saving && (dirty ? 'Save' : 'Saved')}
       {dirty && !saving && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" aria-hidden="true" />}

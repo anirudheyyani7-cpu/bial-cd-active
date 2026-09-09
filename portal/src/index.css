@@ -92,10 +92,15 @@ body {
    *    `.animate-spin` (every spinner in the product), `.animate-pulse` (the skeletons) and
    *    `.animate-bounce`. Suppressing the UTILITY is what reaches all of them without editing
    *    three dozen components.
-   * 2. `usePrefersReducedMotion()` in `src/components/chat/ToolActivityLine.tsx` — a subscribed
-   *    `matchMedia` boolean with exactly three consumers: `ToolActivityLine`, `OfferStrip` and
-   *    `StopTurnControl`. It exists because those three swap the ELEMENT rather than the motion
-   *    (a spinner becomes a static glyph), which CSS alone cannot do.
+   * 2. `usePrefersReducedMotion()` in `src/components/ui/Waiting.tsx` — a subscribed `matchMedia`
+   *    boolean with exactly ONE consumer, the `Waiting` module itself. It exists because a wait
+   *    has to swap the ELEMENT rather than the motion, which CSS alone cannot do: killing the
+   *    animation on a `Loader2` leaves a stationary circular arrow, and a stationary loading
+   *    spinner does not read as "motion was reduced", it reads as "this hung". That is the exact
+   *    report this file's own accommodation produced from two Windows VMs with animations off.
+   *    The branch used to be copied into `ToolActivityLine`, `OfferStrip` and `StopTurnControl`,
+   *    and all three copies had that same defect; it is written once now, and every wait in the
+   *    portal renders through `BusyGlyph` / `WaitingLine`.
    *
    * THERE IS NO THIRD MECHANISM. No motion library owns any of this and nothing reads the
    * preference at any other layer. This file and `tailwind.config.js` once both claimed coverage

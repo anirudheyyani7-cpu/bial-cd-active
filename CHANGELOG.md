@@ -10,6 +10,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
+## [Unreleased]
+
+Five defects reported from production on 2026-09-09, traced from the backend log and the citizens'
+own screenshots. No version is claimed here — the number is chosen at merge.
+
+### Fixed
+
+- **Opening an app no longer says you have unsaved changes.** The dev server rewrites two of its own
+  files on every boot, and the save indicator counted them as work. Merely opening a project you had
+  not touched since August announced unsaved changes, offered to save them from the switch dialog,
+  and demanded a save on the way out — one hand-over spent forty seconds storing two files a
+  framework had rewritten by itself. The filter that knows about those files already existed; the
+  save indicator was the one caller that never asked it.
+- **A workspace that came back wrong no longer locks you out of the platform.** When a turn ended
+  because its workspace could not be restored, the one-app-at-a-time slot was never handed back — so
+  every later message answered "already building", Launch answered the same, and Stop reported a
+  build still running with nothing running, until the server was restarted. It was reached only when
+  someone's workspace had already come back wrong, so it punished the person having the worst day.
+- **Waits look like waits again when the machine has animations switched off.** A stopped spinner is
+  still a spinner: the icon that means "loading" simply stood still, so a save and an app hand-over
+  that genuinely take half a minute read as a frozen application. Every wait in the product now
+  drops the spinner in that mode and counts the seconds instead, which needs no animation to prove
+  something is happening — and the count now appears in the long waits either way.
+- **The preview pane no longer loads the whole portal inside itself.** When an app was not running,
+  the pane framed the page meant for someone who had followed a stale link, and its "Go to the BIAL
+  app portal" button opened the entire portal in the small rectangle. That page now recognises when
+  it is being drawn inside another page and offers no button at all; opened in a browser tab, where
+  the button is the only way back, it is unchanged.
+- **Copy appears when the assistant has finished, not while it is still writing.** A copy button
+  under a half-written reply is how every chat product signals the reply is done, so it read as the
+  assistant having stopped. Earlier messages keep theirs throughout.
+- **"Build finished." no longer follows every exchange.** The assistant had just described what it
+  built; a second bubble repeating that it finished added nothing and carried a second copy button
+  under the first. Endings a person cannot otherwise explain — a failure, a stop, a daily limit — are
+  still announced.
+
 ## [1.7.0-beta.10] - 2026-09-08
 
 The rest of the end-to-end campaign: what the platform says while it waits, what it remembers

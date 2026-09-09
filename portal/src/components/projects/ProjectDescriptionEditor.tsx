@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChangeEvent, KeyboardEvent } from 'react'
-import { Sparkles, Loader2, Pencil, X } from 'lucide-react'
+import { Sparkles, Pencil, X } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { patchProject, generateDescription } from '../../utils/projectApi'
 import type { Project } from '../../utils/projectApi'
 import { ApiError } from '../../utils/apiError'
@@ -284,7 +285,7 @@ export default function ProjectDescriptionEditor({
 
             {mode === 'generating' && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-neutral" role="status">
-                <Loader2 size={13} className="animate-spin text-primary" />
+                <BusyGlyph size={13} className="text-primary" />
                 Generating description… this runs a model call and can take a few seconds.
               </p>
             )}

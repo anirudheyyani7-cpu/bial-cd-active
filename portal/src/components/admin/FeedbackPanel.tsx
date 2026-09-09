@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { AlertCircle, Loader2, RefreshCw, MessageSquare } from 'lucide-react'
+import { AlertCircle, RefreshCw, MessageSquare } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { fetchFeedback } from '../../utils/admin'
 import type { FeedbackItem } from '../../utils/admin'
 
@@ -43,7 +44,7 @@ export default function FeedbackPanel() {
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm">
-        <Loader2 size={16} className="animate-spin" /> Loading feedback…
+        <BusyGlyph size={16} /> Loading feedback…
       </div>
     )
   }

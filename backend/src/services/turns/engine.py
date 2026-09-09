@@ -1585,6 +1585,28 @@ class TurnEngine:
             # takes is a separate concern.
             state.started_a_container = True
             await count(HarnessCounter.APP_START_ATTEMPTED, app_id=session.app_id)
+        # PUBLISHED BEFORE THE TWO INTEGRITY HOLDS, and the ordering is the whole point.
+        #
+        # `ensure_sandbox` has already REGISTERED this session in `_active_by_user` and ADOPTED
+        # the user's build lock. The `finally` that hands both back is guarded on
+        # `state.write_session is not None` — so while this assignment sat BELOW the two raises,
+        # either of them left a registered session with `ended_at` never set, no renewer, and
+        # nothing that could ever release it. `_active_by_user` never evicts an unended session,
+        # so for the remaining life of the process that user was answered:
+        #   • 409 `already_building_here` on every turn, in every conversation
+        #   • 409 on relaunch
+        #   • `still_running`, for ever, from `stop-active-build` — with no running turn to cancel
+        # which is "I cannot create an application any more, and nothing I press helps".
+        #
+        # Both arms are reached precisely when a workspace came back wrong, so the citizen most
+        # likely to hit this is the one already having a bad day.
+        #
+        # NOTHING IS BUNDLED BY MOVING IT. The `finally` passes `touched` from `state.sandbox`,
+        # which is still `None` on both arms (it is assigned below), so the release skips the
+        # snapshot exactly as it should — an UNRECOVERABLE turn must never make a template
+        # permanent, which is what the first hold exists to prevent in the first place.
+        state.write_session = session
+
         if session.news is RecoveryNews.UNRECOVERABLE:
             # Nothing was put back, and the container is showing a template. The one thing
             # that must not happen is the agent building on it and the turn-end copy making that
@@ -1596,8 +1618,6 @@ class TurnEngine:
             # when it was typed and false when it ran. The citizen re-sends when they have looked
             # at what came back.
             raise _WriteEndedError("workspace_restored", RECOVERED_TEXT)
-
-        state.write_session = session
         state.sandbox = SandboxSession(
             sandbox_client=sandbox_client,
             handle=session.handle,

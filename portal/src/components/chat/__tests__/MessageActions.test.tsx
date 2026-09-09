@@ -9,7 +9,9 @@
  * each gated by a capability pinned FALSE below. Counting the buttons is what catches one arriving.
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react'
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { FC } from 'react'
 
@@ -27,11 +29,11 @@ const ReasoningGroup: ThreadComponents['ReasoningGroup'] = () => null
 
 const components: ThreadComponents = { TextPart, ToolGroup, ToolPart, ReasoningGroup }
 
-const reply = (id: string, text: string): ChatMessage => ({
+const reply = (id: string, text: string, seq = 1): ChatMessage => ({
   id,
   role: 'assistant',
   parts: [{ type: 'text', text }],
-  seq: 1,
+  seq,
   createdAt: '2026-09-01T00:00:00.000Z',
 })
 
@@ -72,10 +74,40 @@ describe('the action bar carries Copy, and only Copy', () => {
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeTruthy()
   })
 
-  it('stays through a running turn — `hideWhenRunning` is NOT set', () => {
-    // The one that matters. A citizen watching a build has to be able to copy the plan they are
-    // reading; hiding the bar for the whole of every turn is what setting that prop would do.
-    render(<Harness messages={[reply('a1', 'Here is the plan.')]} isRunning />)
+  it('`hideWhenRunning` is STILL not set — history is never hidden wholesale', () => {
+    // Asserted against the SOURCE, because the DOM cannot show it. The library prop reads the
+    // THREAD's running state and applies it to EVERY message, so setting it would strip copy off
+    // the whole transcript for the duration of a turn — a citizen watching a build could not copy
+    // the plan they are reading. The gate this file's other tests exercise is narrower on purpose:
+    // the thread is running AND this is the last message.
+    //
+    // Older replies are hover-revealed by `autohide="not-last"` (its own describe block below), so
+    // at rest during a running turn there is no bar in the DOM for EITHER message — which is why
+    // "the earlier one keeps its button" is not a jsdom-observable claim and is not asserted as one.
+    const source = readFileSync(path.resolve(process.cwd(), 'src/components/assistant-ui/thread.tsx'), 'utf8')
+    const actionBar = source.slice(source.indexOf('const AssistantActionBar'))
+    expect(actionBar).toContain('autohide="not-last"')
+    expect(actionBar.slice(0, actionBar.indexOf('</ActionBarPrimitive.Root>'))).not.toContain('hideWhenRunning')
+  })
+
+  it('is withheld from the message being WRITTEN, because copy is how a reply says it is done', () => {
+    // The complement, and a real report: a copy button under a half-written reply is the signal
+    // every chat product uses to mean "this reply is finished", so it read as the assistant having
+    // stopped when it had not. The predicate is both facts together — the thread is running AND
+    // this is the last message — which is precisely what `hideWhenRunning` cannot express.
+    render(
+      <Harness messages={[reply('a1', 'Here is the plan.'), reply('a2', 'Building it now…', 2)]} isRunning />,
+    )
+    const bubbles = screen.getAllByTestId('assistant-message')
+    const streaming = bubbles[bubbles.length - 1]!
+    expect(within(streaming).queryByRole('button', { name: 'Copy message' })).toBeNull()
+    // Liveness: that message really is on screen, so the absence above is an absence and not a
+    // thread that failed to render its last entry.
+    expect(streaming.textContent).toContain('Building it now')
+  })
+
+  it('comes back on the last message once the turn ends', () => {
+    render(<Harness messages={[reply('a1', 'Here is the plan.')]} />)
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeTruthy()
   })
 })

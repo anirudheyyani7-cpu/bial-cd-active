@@ -73,6 +73,7 @@ from src.services.build_sessions.integrity import (
     WorkspaceState,
     clean_but_for_churn,
     container_state,
+    only_regenerated_files_changed,
     workspace_integrity,
 )
 from src.services.build_sessions.liveness import flag_liveness_overpromise
@@ -1514,7 +1515,23 @@ class SessionManager:
         # `saved_head` is still reported alongside it: the answer is "there is unsaved work on top
         # of the version you saved", not "nothing here is saved", and a client that lost the
         # saved version would be describing a bigger loss than the one that happened.
-        if state.uncommitted:
+        #
+        # ...BUT FRAMEWORK CHURN IS NOT WORK, and this arm is where that was forgotten. `next dev`
+        # rewrites `next-env.d.ts` and normalises `tsconfig.json` on every boot, so merely OPENING
+        # a project — never touching it — made the porcelain non-empty and every reader of this
+        # flag act on it: the rail announced "You have changes that are not saved yet", the reclaim
+        # dialog offered to save them, and the exit guard demanded a save before leaving. On one
+        # observed hand-over that cost a citizen forty seconds of a modal spinner to store two
+        # files a framework had rewritten by itself.
+        #
+        # THE PREDICATE IS THE SAVE INDICATOR'S OWN, NOT THE REAPER'S, and the difference is not
+        # tidiness. `clean_but_for_churn` also forgives `tsconfig.json`, which the model is
+        # explicitly invited to edit — `prompt_blocks.py` lists it under "editable". Forgiving it
+        # HERE would report "Everything is saved" over an agent's own change — the one
+        # wrong answer this indicator must never give. `only_regenerated_files_changed` forgives
+        # only what the framework rewrites and the agent may not touch, and fails CLOSED on a
+        # truncated porcelain, so routing through it cannot turn a genuinely dirty tree clean.
+        if state.uncommitted and not only_regenerated_files_changed(state):
             return SaveState(
                 app_id=app_id,
                 dirty=True,

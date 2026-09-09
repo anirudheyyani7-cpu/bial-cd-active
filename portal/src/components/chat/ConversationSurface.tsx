@@ -90,7 +90,7 @@ import { validateConversationAttachmentCap, validatePdfPerMessageCap } from '../
 import { announceDeploymentChanged } from '../../hooks/usePublishState'
 
 import { loadBuilds, getBuild, deriveTitle } from '../../utils/builderHistory'
-import { outcomeSummary } from '../../utils/messageTypes'
+import { outcomeSummary, outcomeWorthAnnouncing } from '../../utils/messageTypes'
 import type { ChatMessage, MessagePart, BuildPartLive } from '../../utils/messageTypes'
 
 // The from-scratch greeting (ephemeral — never persisted, and never sent to the model: it is
@@ -1626,7 +1626,22 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
 
     // The summary text part mirrors what the server writes, so the local render and the reloaded
     // row read identically (`outcome.py::_summary` is the other half of this pair).
-    const parts: MessagePart[] = [{ type: 'text', text: outcomeSummary(outcome) }, { type: 'build', ...outcome }]
+    //
+    // …AND THAT MIRROR IS WHY THE NEUTRAL ENDING IS WITHHELD HERE TOO. `conversationApi.ts`'s
+    // reload path has always drawn a sentence only for the endings a citizen cannot otherwise
+    // explain — failed, stopped, quota — and said so at length; this emitter did not, so a build
+    // that simply finished got "Build finished." live and nothing at all after a refresh. Every
+    // turn in a Build chat writes a terminal, so the live bubble landed after every exchange,
+    // under an assistant message that had just described the same thing in its own words, with a
+    // second copy button of its own.
+    //
+    // THE `build` PART STAYS EITHER WAY. It draws no element; it claims "an app was built in this
+    // chat" to the preview pane (`transcriptHasBuildOutcome`) and carries the preview URL, so
+    // dropping it with the sentence would take the app pane down with the noise.
+    const parts: MessagePart[] = [
+      ...(outcomeWorthAnnouncing(outcome) ? [{ type: 'text' as const, text: outcomeSummary(outcome) }] : []),
+      { type: 'build', ...outcome },
+    ]
     setMessages((prev) => [...prev, { id: `local_${Date.now()}_b`, role: 'assistant', parts, seq: seqRef.current, createdAt: new Date().toISOString() }])
     refreshBuilds()
   }, [refreshBuilds])

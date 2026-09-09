@@ -9,6 +9,7 @@ import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
 import WorkspaceShell from './components/workspace/WorkspaceShell'
 import { isAuthenticated, bootstrapSession } from './utils/auth'
+import { BusyGlyph } from './components/ui/Waiting'
 
 /**
  * The boot / silent-refresh wait — WORDS, not only a spinner.
@@ -20,6 +21,11 @@ import { isAuthenticated, bootstrapSession } from './utils/auth'
  * rather than `aria-label="Loading"`, because a named spinner next to a sentence saying the same
  * thing is the wait announced twice.
  *
+ * THE GLYPH GOES THROUGH `BusyGlyph` LIKE EVERY OTHER WAIT. A hand-rolled `<svg className=
+ * "animate-spin">` is invisible to a sweep that matches icon components, which is exactly how this
+ * one survived the first pass — and a stationary circle beside "Getting things ready…" still reads
+ * as a boot that died, sentence or no sentence.
+ *
  * `aria-busy` sits on the box and announces nothing; the words are the announcement, read out of
  * the permanent region in `RequireAuth` below.
  */
@@ -27,10 +33,7 @@ function AuthLoading() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-white" aria-busy="true">
       <div className="flex flex-col items-center gap-3">
-        <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-        </svg>
+        <BusyGlyph size={28} className="text-primary" />
         <p className="text-sm font-medium text-neutral">Getting things ready…</p>
       </div>
     </div>

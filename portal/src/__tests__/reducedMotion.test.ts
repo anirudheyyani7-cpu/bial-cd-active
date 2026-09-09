@@ -48,9 +48,15 @@ const REQUIRED_SELECTORS = [
 ] as const
 
 /** The other mechanism: a subscribed `matchMedia` boolean, for the places that swap the ELEMENT
- *  rather than the motion. Both docblocks name these three, and `the tree agrees` below is what
- *  keeps that naming honest when a fourth appears. */
-const HOOK_CONSUMERS = ['OfferStrip', 'StopTurnControl', 'ToolActivityLine'] as const
+ *  rather than the motion. `the tree agrees` below is what keeps that naming honest.
+ *
+ *  IT IS ONE FILE NOW, AND THAT IS THE FIX. It used to be three — `OfferStrip`,
+ *  `StopTurnControl`, `ToolActivityLine` — each carrying its own copy of the branch, and all
+ *  three carrying the SAME defect: they dropped `animate-spin` and kept the `Loader2`, so under
+ *  the preference the product rendered a motionless spinner, which reads as a hang rather than as
+ *  an accommodation. Three copies of a branch is how three copies of one bug happen. The branch
+ *  now lives once, in `ui/Waiting.tsx`, and every wait in the portal goes through it. */
+const HOOK_CONSUMERS = ['Waiting'] as const
 
 // ------------------------------------------------------------------------------------------
 // A very small CSS reader. Comments are stripped first: this stylesheet's prose quotes the very
@@ -222,21 +228,25 @@ describe('both docblocks name the mechanisms that exist', () => {
   it.each([
     [CSS_FILE, CSS],
     [CONFIG_FILE, CONFIG],
-  ])('%s names both mechanisms, all three consumers, and no third', (_file, text) => {
+  ])('%s names both mechanisms, every consumer, and no third', (_file, text) => {
     expect(unnamedInDocblock(motionDocblock(text))).toEqual([])
   })
 
-  it('the tree agrees: exactly the three consumers the docblocks name', () => {
-    // This is what keeps the prose true rather than merely well-written. A fourth consumer, or a
-    // renamed one, goes red here and the docblocks get corrected with it.
+  it('the tree agrees: exactly the consumers the docblocks name', () => {
+    // This is what keeps the prose true rather than merely well-written. A second consumer, or a
+    // renamed one, goes red here and the docblocks get corrected with it — and a SECOND consumer
+    // is now itself the smell, since the whole point of `ui/Waiting.tsx` is that the branch is
+    // written once.
     expect(hookConsumersInTree()).toEqual([...HOOK_CONSUMERS])
   })
 
   it('MUTANT — a docblock that drops a consumer, or the "no third" statement, is caught', () => {
     const real = motionDocblock(CSS)
-    expect(unnamedInDocblock(real.replace('StopTurnControl', 'SomeOtherThing'))).toEqual([
-      'StopTurnControl',
-    ])
+    // `replaceAll`, not `replace`: the docblock names the module more than once (the path, the
+    // primitive, `WaitingLine`), so mutating only the first occurrence leaves the name still
+    // present and the mutant passes for the wrong reason — a mutant that does not mutate proves
+    // nothing about the assertion it is meant to be testing.
+    expect(unnamedInDocblock(real.replaceAll('Waiting', 'SomeOtherThing'))).toEqual(['Waiting'])
     expect(unnamedInDocblock(real.replace(/THERE IS NO THIRD/i, 'THERE IS ONE MORE'))).toEqual([
       'the "no third mechanism" statement',
     ])

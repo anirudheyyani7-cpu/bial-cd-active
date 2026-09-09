@@ -2807,3 +2807,121 @@ async def test_save_still_succeeds_while_the_app_is_switched_off(
     # THE WORK REACHED DURABLE STORAGE. Not "no exception was raised" — a refusal that
     # returned quietly would pass that, and the citizen's work would still be gone.
     assert snapshot_key(app_id) in fake_storage.objects
+
+
+# --- the connector coordinates reach BOTH birth arms ------------------------------------------
+#
+# A container gets its environment exactly once, at birth, and there are TWO births — the
+# relaunch arm and the turn-start arm. `manager.py`'s own docblock says a variable added to only
+# one of them is a silent half-fix, so each arm is asserted SEPARATELY: a single test through one
+# path is exactly the half-fix that warning describes. The attach arm forwards no environment at
+# all and is not a birth, which is why there is no third case here.
+
+
+async def _approved_connector_project(db: AsyncSession, email: str) -> tuple[User, uuid.UUID]:
+    """A citizen an administrator has approved, with the connector switched on for one project."""
+    from src.db.models.connector_access import ConnectorRequestStatus
+    from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
+    from tests.api.v1.connectors.conftest import KEY, seed_decision
+
+    user, project_id = await _mk(db, email)
+    await seed_decision(db, user.id, ConnectorRequestStatus.APPROVED, None)
+    db.add(
+        ProjectConnector(
+            project_id=project_id,
+            connector_key=KEY,
+            enabled=True,
+            window_kind=ConnectorWindowKind.RELATIVE,
+            window_days=7,
+        )
+    )
+    await db.flush()
+    return user, project_id
+
+
+@pytest.fixture
+def _lake_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.services.lake.config import LakeConfig
+
+    monkeypatch.setattr(
+        settings,
+        "connector_lake",
+        LakeConfig(
+            url=_LAKE_URL,
+            identity_client_id=_LAKE_CLIENT_ID,
+            identity_resource_id="/subscriptions/s/resourcegroups/r/providers/p/id/an-identity",
+        ),
+    )
+
+
+_LAKE_URL = "https://alakeaccount.blob.core.windows.net/acontainer/AOS/reports/"
+_LAKE_CLIENT_ID = "52b74947-0621-46e2-a523-a6b466f47c33"
+
+
+def _connector_names() -> tuple[str, str]:
+    from src.services.lake.env import connector_env_names
+    from tests.api.v1.connectors.conftest import KEY
+
+    return connector_env_names(KEY)
+
+
+async def test_the_turn_start_birth_arm_carries_the_connector_coordinates(
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _lake_configured: None,
+) -> None:
+    user, project_id = await _approved_connector_project(db_session, "cx1@rvaiglobal.com")
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
+    )
+
+    url_name, client_id_name = _connector_names()
+    assert client.provision_env is not None, "the turn-start arm never provisioned"
+    assert client.provision_env[url_name] == _LAKE_URL
+    assert client.provision_env[client_id_name] == _LAKE_CLIENT_ID
+
+
+async def test_the_relaunch_birth_arm_carries_them_too(
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _lake_configured: None,
+) -> None:
+    user, project_id = await _approved_connector_project(db_session, "cx2@rvaiglobal.com")
+    manager = SessionManager()
+    client = _RelaunchRecorder()
+    await _seed_app_with_bundle(db_session, user, project_id, fake_storage)
+
+    await manager.relaunch_preview(db_session, user, project_id, client)
+
+    url_name, client_id_name = _connector_names()
+    assert client.restore_env is not None, "the relaunch arm never restored"
+    assert client.restore_env[url_name] == _LAKE_URL
+    assert client.restore_env[client_id_name] == _LAKE_CLIENT_ID
+
+
+async def test_an_unapproved_project_is_born_with_nothing_extra(
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _lake_configured: None,
+) -> None:
+    """The lake is CONFIGURED and the container still gets nothing, because this citizen was
+    never approved. Asserted on the birth env rather than on the envelope so the two halves of
+    the gate — coordinates and identity — each have their own failing test."""
+    user, project_id = await _mk(db_session, "cx3@rvaiglobal.com")
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
+    )
+
+    url_name, client_id_name = _connector_names()
+    assert client.provision_env is not None
+    assert url_name not in client.provision_env
+    assert client_id_name not in client.provision_env

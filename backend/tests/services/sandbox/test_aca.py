@@ -65,9 +65,19 @@ class FakeAca(AcaControlPlane):
         self.transient_before_success = 0
         self.get_returns_none = False
         self.fqdn = "app-xyz.westeurope.azurecontainerapps.io"
+        # Which connector identity, if any, each container was born with.
+        self.identities: dict[str, str | None] = {}
 
-    async def create_app(self, *, name: str, env: dict[str, str], tags: dict[str, str]) -> str:
+    async def create_app(
+        self,
+        *,
+        name: str,
+        env: dict[str, str],
+        tags: dict[str, str],
+        identity_resource_id: str | None = None,
+    ) -> str:
         self.create_calls += 1
+        self.identities[name] = identity_resource_id
         if self.transient_before_success > 0:
             self.transient_before_success -= 1
             raise AcaTransientError("simulated transient ACA error")
@@ -507,7 +517,7 @@ def test_the_container_probes_knock_on_the_supervisor_and_never_on_the_app() -> 
     at `/` gets a Caddy 502 forever and the revision never goes healthy), and there MUST be no
     Liveness probe (its restart would hit a sandbox holding the citizen's un-snapshotted work).
     """
-    envelope = _bare_control_plane()._envelope(_app_env(), {})  # noqa: SLF001
+    envelope = _bare_control_plane()._envelope(_app_env(), {}, identity_resource_id=None)  # noqa: SLF001
     container = envelope.template.containers[0]
     probes = container.probes
 

@@ -34,6 +34,13 @@ import sqlalchemy as sa
 from src.core.connectors import CONNECTORS
 from src.db.models.connector_access import ConnectorRequestStatus
 from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
+from src.services.build_sessions.locks import (
+    acquire_lock,
+    release_lock_as_holder,
+    renew_liveness_lease,
+    write_starting_marker,
+)
+from src.services.redis.keys import REGISTRY_STATE_READY, registry_key
 from src.services.usage import ist_today
 from tests.api.v1.connectors.conftest import (
     DECLINE_REMARKS,
@@ -597,3 +604,126 @@ async def test_approving_a_person_switches_their_rows_on_without_writing_to_them
     assert approved["effectivelyOn"] is True
     assert approved["window"]["days"] == 7
     assert await _tuple_version() == before_ctid
+
+
+# --- R11a: the settings are locked while a session is live -------------------------------------
+#
+# A CONTAINER RECEIVES ITS ENVIRONMENT EXACTLY ONCE, AT BIRTH. The attach arm — which is the
+# steady state for every message after the first — forwards none, so a connector switched on
+# mid-build would leave the rail saying "on" over a container that cannot reach anything. Rather
+# than reconciling that state, it is prevented: the write is refused while a turn is in flight.
+#
+# ASSERTED AT THE API, not in the portal. A control that is only greyed out in the browser is not
+# a guard — the route is reachable with a cookie and a CSRF token, which is exactly what a
+# citizen's own second tab has.
+
+
+async def test_the_switch_is_refused_while_a_build_or_chat_is_running(
+    client, db_session, fake_redis
+) -> None:
+    """★ Refused server-side, with a message that names what the citizen can actually do."""
+    user, project = await _approved(db_session)
+    await acquire_lock(fake_redis, user.id)
+
+    resp = await _put(client, user, project.id, {"enabled": True})
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()["error"]
+    assert body["code"] == "session_is_live"
+    assert _CONNECTOR.display_name in body["message"]
+    # NOTHING WAS WRITTEN — a refusal that had already upserted the row would be worse than no
+    # refusal at all, because the rail would then show the new setting over the old container.
+    assert await _stored_rows(db_session, project.id) == []
+
+
+async def test_the_window_is_refused_while_a_session_is_live_too(
+    client, db_session, fake_redis
+) -> None:
+    """The switch and the days are locked together: both ride the same container environment,
+    and a window changed mid-build is the same broken promise as a switch flipped mid-build."""
+    user, project = await _approved(db_session)
+    await _put(client, user, project.id, {"enabled": True})
+    await acquire_lock(fake_redis, user.id)
+
+    resp = await _put(
+        client, user, project.id, {"enabled": True, "window": {"kind": "relative", "days": 7}}
+    )
+
+    assert resp.status_code == 409
+    assert (await _entry(client, user, project.id))["window"]["stored"]["days"] == (
+        _CONNECTOR.max_window_days
+    ), "the stored window is exactly as it was before the refused write"
+
+
+@pytest.mark.parametrize(
+    "signal", ["lease", "starting"], ids=["liveness-lease", "start-in-flight"]
+)
+async def test_the_other_two_live_signals_refuse_as_well(
+    client, db_session, fake_redis, signal: str
+) -> None:
+    """★ THREE SIGNALS, NOT ONE, and each covers a window the others do not.
+
+    The lock is held for a turn. The LEASE is the one signal readable from another process and
+    outlives a lock a crashed builder left standing. The STARTING marker covers the gap between
+    "a start was asked for" and "the lock was taken" — which is precisely the window in which the
+    container's environment is being assembled, and therefore the worst possible moment to accept
+    a change."""
+    user, project = await _approved(db_session)
+    if signal == "lease":
+        # A lease is only written against a container that exists — `renew_liveness_lease`
+        # refuses otherwise, and logs that the build is unprotected. So the registry hash comes
+        # first, which is also the order production creates them in.
+        await fake_redis.hset(
+            registry_key(user.id),
+            mapping={"app_name": "sbx-abc", "state": REGISTRY_STATE_READY},
+        )
+        assert await renew_liveness_lease(fake_redis, user.id) is True
+    else:
+        await write_starting_marker(fake_redis, user.id, project.id)
+
+    resp = await _put(client, user, project.id, {"enabled": True})
+
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "session_is_live"
+
+
+async def test_once_the_session_ends_the_switch_is_settable_again(
+    client, db_session, fake_redis
+) -> None:
+    """The lock is a PAUSE, not a permanent refusal. The next container born carries the change,
+    which is the whole point of preventing the half-configured state rather than reconciling it."""
+    user, project = await _approved(db_session)
+    token = await acquire_lock(fake_redis, user.id)
+    assert token is not None
+    assert (await _put(client, user, project.id, {"enabled": True})).status_code == 409
+
+    await release_lock_as_holder(fake_redis, user.id, token)
+
+    assert (await _put(client, user, project.id, {"enabled": True})).status_code == 200
+
+
+async def test_an_unapproved_citizen_still_gets_the_403_not_the_lock_message(
+    client, db_session, fake_redis
+) -> None:
+    """★ ORDERING. The approval check runs FIRST, so somebody who was never allowed to change
+    this setting is told that — rather than being told to stop a build for a control they could
+    not have used anyway."""
+    user = await UserFactory.create(db_session, email="pending@rvaiglobal.com")
+    project = await ProjectFactory.create(db_session, user_id=user.id)
+    await seed_request(db_session, user.id, ConnectorRequestStatus.PENDING)
+    await db_session.flush()
+    await acquire_lock(fake_redis, user.id)
+
+    resp = await _put(client, user, project.id, {"enabled": True})
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "access_not_approved"
+
+
+async def test_with_no_redis_at_all_there_is_no_session_to_protect(client, db_session) -> None:
+    """No Redis means no sandbox coordination, which means no live session — a supported dev/test
+    posture, and the answer is simply "not live". Binds no `fake_redis` fixture on purpose: with
+    one bound this branch is unreachable by construction."""
+    user, project = await _approved(db_session)
+
+    assert (await _put(client, user, project.id, {"enabled": True})).status_code == 200

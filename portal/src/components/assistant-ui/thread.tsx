@@ -220,14 +220,25 @@ const AssistantText: FC<{ Component: ThreadComponents['TextPart'] }> = ({ Compon
 }
 
 /**
- * Every assistant message carries ONLY a copy action, deliberately. `hideWhenRunning` is
- * NOT set: it reads the THREAD's running state, not the message's, so setting it would hide
- * copy on every assistant message for a whole turn — undercutting why copy exists here
- * (rebuilding a plan later, with no storage). `autohide="not-last"` IS set (non-default):
- * persistent on the latest turn, hover-revealed on history, tested not just commented. No
- * Reload, Edit, feedback, More menu, or branch picker.
+ * Every assistant message carries ONLY a copy action, deliberately. No Reload, Edit, feedback,
+ * More menu, or branch picker. `autohide="not-last"` IS set (non-default): persistent on the
+ * latest turn, hover-revealed on history, tested not just commented.
+ *
+ * COPY ARRIVES WHEN THE TURN IS OVER, NOT WHILE IT RUNS. A copy button under a half-written
+ * message is the same signal every chat product uses to mean "this reply is finished" — so
+ * showing it mid-turn told citizens the assistant had stopped when it had not, and offered them
+ * a copy of a partial answer while the rest was still arriving. Reported against a build whose
+ * transcript was still growing under the button.
+ *
+ * WHY NOT `hideWhenRunning`. The library's own prop reads the THREAD's running state and applies
+ * it to EVERY message, so it would strip copy off the entire history for the whole turn — which
+ * is why it was deliberately left unset, and why "just set the prop" is not the fix. The honest
+ * predicate is BOTH facts together: the thread is running AND this is the message being written.
+ * Every earlier message in the transcript is finished no matter what the thread is doing, and
+ * keeps its copy button throughout — which is the property `hideWhenRunning` cannot express.
  */
 const AssistantActionBar: FC = () => (
+  <AuiIf condition={(s) => !(s.thread.isRunning && s.message.isLast)}>
   <ActionBarPrimitive.Root
     autohide="not-last"
     data-testid="assistant-action-bar"
@@ -251,6 +262,7 @@ const AssistantActionBar: FC = () => (
       </Button>
     </ActionBarPrimitive.Copy>
   </ActionBarPrimitive.Root>
+  </AuiIf>
 )
 
 /**

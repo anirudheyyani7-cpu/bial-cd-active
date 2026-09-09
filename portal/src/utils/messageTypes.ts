@@ -162,7 +162,36 @@ export function outcomeSummary({
   if (named) return named
   if (status === 'failed') return 'The build failed.'
   if (status === 'stopped') return 'This build was stopped before it finished.'
-  return 'Build finished.'
+  return NEUTRAL_BUILD_SUMMARY
+}
+
+/**
+ * The sentence for an ending that needs no sentence — a build that simply finished.
+ *
+ * EXPORTED SO THE TWO EMITTERS CAN AGREE. It is not copy anybody should read: the assistant has
+ * just written its own account of what it built, and stamping a second bubble underneath saying
+ * "Build finished." adds nothing, arrives after EVERY turn in a Build chat (every turn writes a
+ * terminal, including one that changed a label), and — because it is its own message — carries a
+ * second copy button directly under the first.
+ */
+export const NEUTRAL_BUILD_SUMMARY = 'Build finished.'
+
+/**
+ * Is this ending worth a sentence of its own?
+ *
+ * DERIVED FROM `outcomeSummary` RATHER THAN RE-DECIDED, and that is the whole design. The reload
+ * path in `conversationApi.ts` already withheld the neutral ending — its docblock spells out why,
+ * at length — while the LIVE path in `ConversationSurface.tsx` emitted it unconditionally. So the
+ * same build read one way as it happened and another way after a refresh, and the bubble a citizen
+ * reported was the live one. Two authors for one rule is a documented failure of this codebase;
+ * asking the copy function itself means a new named reason becomes announceable in both places at
+ * once, with nothing to keep in step.
+ */
+export function outcomeWorthAnnouncing(outcome: {
+  status: BuildOutcomeStatus
+  reason: string | null
+}): boolean {
+  return outcomeSummary(outcome) !== NEUTRAL_BUILD_SUMMARY
 }
 
 /** The persisted/reload `build` part (`conversationApi.ts`'s `banner` projection

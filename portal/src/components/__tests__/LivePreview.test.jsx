@@ -149,6 +149,92 @@ describe('LivePreview — reload semantics (no HMR-socket leak)', () => {
     expect(second).toBe(first)
     expect(second.getAttribute('src')).toBe(SANDBOX_URL)
   })
+
+  it('★ the app starting to answer re-requests the document, even though the URL never changed', () => {
+    // THE FOUR-RELOADS BUG. The address the poll publishes while the container is merely CREATED
+    // and the address published once the app is actually serving are the SAME STRING. So across
+    // the moment the app comes up, nothing about the frame changes: React keeps the DOM node and
+    // the browser never asks again. During a first build the document that loaded first is the
+    // router's 502 page — the app was not listening yet — and the citizen keeps looking at "This
+    // app isn't running right now" over an app that is now running perfectly. Reported from
+    // production as needing four reloads.
+    //
+    // `iterating` cannot cover this: it fires when a turn ends OVER a live preview, and a first
+    // build has no live preview to have been iterating over.
+    //
+    // Mutation check: delete the `status === 'ready'` nonce effect in LivePreview and this goes
+    // red with `second` being the same node — the stale document survives the app coming up.
+    const { container, rerender } = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="building" />,
+    )
+    const first = container.querySelector('iframe')
+    rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
+    const second = container.querySelector('iframe')
+    expect(second).not.toBe(first)
+    // The liveness half: it re-requested the SAME address, which is the whole point — a different
+    // address would have remounted anyway and proved nothing about this fix.
+    expect(second.getAttribute('src')).toBe(SANDBOX_URL)
+  })
+
+  it('a pane that mounts straight into ready does NOT reload the document it just asked for', () => {
+    // The guard on the effect above. Without the "there was a previous status" term, the first
+    // render of an already-healthy app bumps the nonce and throws away a document the browser had
+    // only just fetched — a wasted round trip, and a torn-down HMR socket, on every open of a
+    // working app.
+    //
+    // ASSERTED ON THE KEY, NOT ON NODE IDENTITY, and that distinction is the whole test. The first
+    // version compared `container.querySelector('iframe')` before and after an unrelated
+    // re-render, and it could not fail: `render()` flushes effects before returning, so a wrongful
+    // mount-time bump is already baked into the node you capture, and the second re-render changes
+    // neither `status` nor `previewUrl`, so the effect does not even run. It passed with its guard
+    // deleted. The nonce is what is being guarded, so the nonce is what to read.
+    //
+    // Mutation check: widen the effect's condition back to `wasStatus.current !== 'ready'` and
+    // this goes red with a `#1.0` key — the bump that should never have happened, now visible.
+    const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
+    expect(container.querySelector('iframe').getAttribute('data-frame-key')).toBe(
+      `${SANDBOX_URL}#0.0`,
+    )
+  })
+
+  it('★ switching to another app mid-build fetches its document ONCE, not twice', () => {
+    // This pane has no `key` on purpose, so it outlives a navigation — which means it can go from
+    // one app still building straight to a DIFFERENT app already serving, in one update. Watching
+    // the status alone, that reads as "the build finished" and bumps the nonce, so the new app's
+    // document is requested once for the address and again for a build that was never its own:
+    // two round trips and a visible flash for a single switch.
+    //
+    // Mutation check: drop `prev.url === previewUrl` from the effect's condition and this goes red
+    // with a `#1.0` key — the second, unearned request made visible.
+    const OTHER = 'https://app-abc.example.azurecontainerapps.io/'
+    const { container, rerender } = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="building" />,
+    )
+    rerender(<LivePreview previewUrl={OTHER} status="ready" />)
+    expect(container.querySelector('iframe').getAttribute('data-frame-key')).toBe(`${OTHER}#0.0`)
+  })
+
+  it('★ SENDING A MESSAGE does not tear the running app down and re-fetch it', () => {
+    // THE REGRESSION THIS EFFECT NEARLY SHIPPED. On a warm container the transcript's `ended`
+    // status is replaced by the live turn's own the moment a send starts, so every follow-up
+    // message produces an `ended` → `ready` edge. Written as "the status became ready" the effect
+    // fired on it, remounting the iframe: the citizen's running app re-fetched, its scroll
+    // position and any form state discarded and its HMR socket cycled, on every message they sent
+    // — to re-request a document that was never stale. Only provisioning/building → ready means
+    // "the app was not answering and now is".
+    //
+    // Mutation check: widen the condition to `wasStatus.current !== 'ready'` and this goes red
+    // with a `#1.0` key.
+    const { container, rerender } = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving />,
+    )
+    const before = container.querySelector('iframe').getAttribute('data-frame-key')
+    rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" serving />)
+    expect(container.querySelector('iframe').getAttribute('data-frame-key')).toBe(before)
+    // LIVENESS: the frame is genuinely still mounted, so the assertion above is about a document
+    // that stayed rather than one that was never there.
+    expect(container.querySelector('iframe')).toBeTruthy()
+  })
 })
 
 describe('LivePreview — status-driven visuals, all five statuses', () => {

@@ -158,6 +158,44 @@ def test_the_404_page_has_a_body_and_a_way_back(router: Router) -> None:
 
 
 @pytest.mark.parametrize("dest", ["iframe", "frame", "embed", "object"])
+def test_the_framed_404_never_follows_the_readers_dark_scheme(router: Router, dest: str) -> None:
+    """A BLACK RECTANGLE INSIDE A LIGHT PANE reads as a crash, not as a colour scheme.
+
+    Production report, with a screenshot: "the black screen is coming". The framed body carried a
+    `prefers-color-scheme: dark` block, so a citizen whose OS is set to dark got this page drawn
+    near-black inside the workspace's permanently light preview rectangle — and a black rectangle
+    where an app should be is indistinguishable from the app having died.
+
+    The pane it is drawn into does not follow the OS, so neither may this. `color-scheme: light`
+    says so to the browser as well, which is what stops form controls and scrollbars being
+    auto-darkened underneath a light page.
+
+    THE TOP-LEVEL PAGE IS DELIBERATELY THE OPPOSITE — see the test below. It owns a whole tab, so
+    following the reader there is correct. Two pages, two answers, and the difference is exactly
+    whether something else already decided the background.
+    """
+    _, _, body = router.request(f"/a/{GHOST_KEY}/", headers={"Sec-Fetch-Dest": dest})
+    assert "color-scheme:light" in body.replace(" ", "")
+    assert "prefers-color-scheme" not in body
+    # Liveness: this is the real framed body and not an empty response, which is what an
+    # absence assertion on its own would happily accept.
+    assert "isn" in body and "running" in body.lower()
+
+
+def test_the_top_level_404_DOES_follow_the_readers_dark_scheme(router: Router) -> None:
+    """The other half, asserted so the two pages cannot be "fixed" into agreeing.
+
+    This one is a whole tab with nothing else deciding its background, so honouring the reader's
+    setting is right. It declares `color-scheme: dark light` so the browser darkens its own
+    furniture to match, and keeps the media block that does the darkening.
+    """
+    _, _, body = router.request(f"/a/{GHOST_KEY}/")
+    assert "color-scheme:darklight" in body.replace(" ", "")
+    assert "prefers-color-scheme:dark" in body.replace(" ", "")
+    assert "not available" in body.lower()
+
+
+@pytest.mark.parametrize("dest", ["iframe", "frame", "embed", "object"])
 def test_the_framed_404_offers_no_link_out_of_the_frame(router: Router, dest: str) -> None:
     """THE PREVIEW PANE IS NOT A TAB, and the page it gets must not pretend otherwise.
 

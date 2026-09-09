@@ -280,7 +280,7 @@ export interface LivePreviewProps {
   serving?: boolean
   hasSavedBuild?: boolean | null
   reconnecting?: boolean
-  // The server's verdict on THIS project's container, in five values rather than the one
+  // The server's verdict on THIS project's container, in six values rather than the one
   // boolean (`previewReclaimed`) it replaces. That boolean could only ever say "not
   // serving", so a Redis blip, a sleeping workspace, a slot taken by a
   // sibling project and a project nobody ever built all arrived here identically and got the
@@ -429,7 +429,12 @@ export default function LivePreview({
   // still around (post-ready teardown must NOT keep displaying a now-dead URL) — UNLESS the pardon
   // says the URL is genuinely live. Otherwise a live `previewUrl` frames the app; else we are still
   // provisioning/building (loading) or idle (empty).
-  const showTerminal = isTerminal && !keepFramed
+  // `starting` (below) pre-empts this for the same reason a confirmed `asleep` pre-empts the
+  // pardon: it is NEWER NEWS. A relaunch of a session that already ended holds `ended` the whole
+  // time it is coming back up, so without this the pane would draw "no longer running" over a
+  // container the platform is at that moment starting — and, once `starting` earns its wait,
+  // draw both sentences at once.
+  const showTerminal = isTerminal && !keepFramed && previewState !== 'starting'
   // Narrowed ONCE, here, so every render site below reads the union off this value instead of
   // asserting it with a cast. `notServing` keeps its exact previous meaning — none of the three
   // state strings is falsy, so `goneState !== null` is the same boolean it always was.
@@ -462,7 +467,13 @@ export default function LivePreview({
   // unavailable". `isTerminal` is what "no loop is left" actually is; `keepFramed` keeps the cap
   // scoped to the frame it degrades, which is the only state `reconnectExpired` is read in.
   const [reconnectExpired, setReconnectExpired] = useState(false)
-  const capReconnect = reconnecting && isTerminal && keepFramed
+  // NOT WHILE A START IS IN FLIGHT. The cap exists because a finished build has no loop left to
+  // re-frame a dead dev server — but a start IS that loop, arriving. Left armed, a timer set
+  // before the start began would fire twenty seconds later and flip the pane to "preview
+  // unavailable" over a container the platform is at that moment bringing up: the same false
+  // negative this branch exists to remove, re-entering through the one arm not re-derived with
+  // the others.
+  const capReconnect = reconnecting && isTerminal && keepFramed && previewState !== 'starting'
   useEffect(() => {
     if (!capReconnect) {
       setReconnectExpired(false)
@@ -471,9 +482,32 @@ export default function LivePreview({
     const t = setTimeout(() => setReconnectExpired(true), RECONNECT_CAP_MS)
     return () => clearTimeout(t)
   }, [capReconnect])
-  const showReconnecting = frameContext && reconnecting && !notServing && !reconnectExpired
-  const showUnavailable = frameContext && (notServing || (reconnecting && reconnectExpired))
-  const showFrame = frameContext && !reconnecting && !notServing
+  // STARTING IS A WAIT, NOT A FAULT, and it must not be framed either.
+  //
+  // A container the platform is still bringing up answers 502 at its own edge, and the apps
+  // router turns a 502 into the "This app isn't running right now" page. Framed, that page is
+  // shown to a citizen whose app is being started — the opposite of the truth, told at the one
+  // moment they are watching. It is a backstop for a document the portal did not expect, never a
+  // state a person should reach.
+  //
+  // NOT FOLDED INTO `goneState`: that set drives `showUnavailable`, which draws a terminal "not
+  // running" placeholder, and a start in flight is precisely not terminal.
+  //
+  // TAKING THE FRAME AWAY IS ONLY HALF A STATE, and the first version of this shipped only that
+  // half: with the frame withheld and nothing put in its place, a start with a `previewUrl` in
+  // hand drew an EMPTY RECTANGLE — no iframe, no wait, no card, the sentence reaching the live
+  // region and nobody else. A blank pane is the same "is it broken?" the 502 page caused, told
+  // more quietly. So `starting` is carried into `showLoading` below and outranks `showTerminal`,
+  // and those three uses are the whole state: not framed, visibly waiting, said out loud.
+  const starting = previewState === 'starting'
+  const notFramable = notServing || starting
+  const showReconnecting = frameContext && reconnecting && !notFramable && !reconnectExpired
+  // `!notFramable` on the expiry arm rather than `!notServing`: `notServing` is already inside the
+  // first disjunct, so the only thing this adds is `starting` — and it is what makes all five of
+  // these booleans answer the same way about a start in flight. One of them disagreeing is how a
+  // terminal card ends up mounted under the wait that contradicts it.
+  const showUnavailable = frameContext && (notServing || (reconnecting && reconnectExpired && !notFramable))
+  const showFrame = frameContext && !reconnecting && !notFramable
 
   // The reveal is gated on the framed document's own `load`, never on a timer. A timer can
   // only prove that time passed; `load` is the only signal the browser gives us that something
@@ -510,6 +544,49 @@ export default function LivePreview({
     if (wasIterating.current && !iterating && previewUrl) setAutoReloadNonce((n) => n + 1)
     wasIterating.current = iterating
   }, [iterating, previewUrl])
+  // AND THE FIRST TIME THE APP ACTUALLY STARTS ANSWERING, which is the one this pane was missing
+  // and the reason a citizen had to reload four times to see their first build.
+  //
+  // The URL the poll publishes while the container is merely CREATED and the URL published once
+  // the app is serving are the same string — both are `settings.app_url(app_name)`. So `frameKey`
+  // is byte-identical across the moment the app comes up: React keeps the DOM node and the browser
+  // never re-requests. Whatever loaded first is what the citizen keeps looking at, and during a
+  // first build what loaded first is the router's 502 page, because the app was not listening yet.
+  // Nothing on this side notices, because nothing about the address changed.
+  //
+  // `iterating` above cannot cover it: it fires when a turn ends OVER a live preview, and a first
+  // build has no live preview to have been iterating over. This is the other edge — not-serving to
+  // serving — and it is the only moment at which the document that failed becomes worth asking for
+  // again. Guarded on a previous status existing so a pane that mounts straight into `ready` does
+  // not reload a document it just asked for.
+  //
+  // THE EDGE IS "A BUILD FINISHED", NOT "THE STATUS BECAME READY", and the difference is a
+  // regression this nearly shipped. Written as `!== 'ready'` it also fired on `ended`→`ready`,
+  // which is the transition EVERY follow-up message produces on a warm container: the turn's own
+  // status takes over from the transcript's `ended` the moment a send starts. The citizen would
+  // have had their running app torn down and re-fetched — scroll position, form state and the HMR
+  // socket with it — on every message they sent, to fix a document that was never stale. Only the
+  // provisioning/building→ready edge means "the app was not answering and now is", which is the
+  // one case the stale 502 document survives.
+  // AND THE EDGE HAS TO BELONG TO THE SAME APP, which is why the ref carries the address and not
+  // just the status. This pane deliberately has no `key` (see `AppPaneHost`) so it survives a
+  // navigation — meaning it can go from one app mid-build straight to a DIFFERENT app already
+  // serving, in a single update. Watching the status alone, that reads as "the build finished"
+  // and bumps the nonce, so the new app's document is fetched once for the address change and
+  // again for a build that was never its own: two round trips and a visible flash for one switch.
+  // The cover below already guards its own state this way (`sameApp`); this is the same hazard.
+  const wasStatus = useRef<{ status: BuildSessionStatus | null; url: string | null }>({
+    status: null,
+    url: null,
+  })
+  useEffect(() => {
+    const prev = wasStatus.current
+    const wasMidBuild = prev.status === 'provisioning' || prev.status === 'building'
+    if (wasMidBuild && prev.url === previewUrl && status === 'ready' && previewUrl) {
+      setAutoReloadNonce((n) => n + 1)
+    }
+    wasStatus.current = { status, url: previewUrl }
+  }, [status, previewUrl])
   // TWO INDEPENDENT REASONS TO RE-REQUEST THE DOCUMENT, COMBINED RATHER THAN COLLAPSED. The one
   // above is the platform's — a turn ended over a live preview, so the served bundle may be stale.
   // The other is the citizen's, from the toolbar row's Reload control, for the staleness the
@@ -700,8 +777,19 @@ export default function LivePreview({
     }
   }, [revealed, workspaceLost, frameKey, onRevealed])
   const framePending = showFrame && !frameLoaded && !frameStalled
+  // `starting` joins the wait WITHOUT a `status` term, deliberately. The other two arms both key
+  // on the build lifecycle, and a relaunch has no build lifecycle at all — it carries the status
+  // of the turn that ended, so any `provisioning`/`building` test would exclude the one case that
+  // most needs the wait. The server said a start is in flight; that is the whole condition.
   const showLoading =
-    framePending || (!isTerminal && !previewUrl && (status === 'provisioning' || status === 'building'))
+    framePending ||
+    starting ||
+    (!isTerminal && !previewUrl && (status === 'provisioning' || status === 'building'))
+  // ONE sentence for the wait, chosen once and read by both the card and the live region, so the
+  // two can never drift into naming the same situation differently. `starting` borrows the frame's
+  // own cold-start line rather than earning a fourth: to the citizen it is the same fact.
+  const loadingText =
+    framePending || starting ? FRAMING_TEXT : ((status && LOADING_TEXT[status]) ?? 'Building your app…')
 
   // ONE announcement for the whole pane, read out of a region that is ALWAYS mounted (below).
   // `aria-busy` announces exactly nothing, so it is no substitute. Mounting a live region
@@ -718,27 +806,23 @@ export default function LivePreview({
         : frameStalled
           ? SLOW_TEXT
           : showLoading
-            ? framePending
-              ? FRAMING_TEXT
-              : ((status && LOADING_TEXT[status]) ?? 'Building your app…')
+            ? // Covers `starting` too, and is the reason no arm for it appears further down this
+              // chain: it is drawn on screen now, so it is announced from the state that draws it.
+              loadingText
             : showUnavailable
               ? goneState
                 ? GONE_TITLE[goneState]
                 : 'Preview unavailable'
               : showTerminal
                 ? 'The preview is no longer running'
-                : previewState === 'starting'
-                  ? // A start is CONFIRMED in flight (a build, a relaunch, or another tab's
-                    // turn), unlike `unknown` below which confirms nothing. Reuses the same
-                    // sentence the frame's own cold-start wait uses — one truthful "starting" word
-                    // for the citizen, not a second name for the same fact. Announcement-only, like
-                    // `unknown`.
-                    FRAMING_TEXT
-                  : previewState === 'unknown'
-                    ? // The honest sentence for a check that did not happen. It deliberately does
-                      // NOT disturb the frame — nothing was learned, so nothing changes on screen.
-                      'We could not check on your preview just now — it may still be running'
-                    : // THE LIVE CLAIM IS EARNED NOW, NOT ASSUMED.
+                : previewState === 'unknown'
+                  ? // The honest sentence for a check that did not happen. It deliberately does
+                    // NOT disturb the frame — nothing was learned, so nothing changes on screen.
+                    // Still announcement-only, and now the ONLY arm here that is: `unknown` learned
+                    // nothing, so it changes nothing on screen; `starting` learned something, so it
+                    // draws. That asymmetry is the point, and it used to be missing.
+                    'We could not check on your preview just now — it may still be running'
+                  : // THE LIVE CLAIM IS EARNED NOW, NOT ASSUMED.
                       //
                       // This arm used to read `revealed ? 'Your app preview is live' : ''`, and
                       // that was false. `revealed` is `frameLoaded && !covered`, and `frameLoaded`
@@ -919,6 +1003,17 @@ export default function LivePreview({
                    container, repaired app. A plain re-render still keeps the same DOM node,
                    so the framed app's HMR websocket is not leaked on every status tick. */
                 key={frameKey}
+                /* THE SAME VALUE, WRITTEN WHERE IT CAN BE SEEN. A React `key` reaches no DOM
+                   attribute, so every reason this frame remounts was invisible from outside —
+                   including to a test. A guard that only suppresses a remount AT MOUNT is then
+                   unprovable by construction: `render()` flushes the effect before it returns, so
+                   a wrongful first bump is already folded into the node you get back, and the test
+                   asserting it (a node-identity compare across a later re-render) passed happily
+                   with its guard deleted. This attribute is the seam that makes the nonce a fact
+                   about the document rather than a fact about React's internals — and it answers
+                   "why did my preview just reload?" in devtools, which was previously unanswerable
+                   without a debugger. */
+                data-frame-key={frameKey}
                 /* The identity the inbound message gate compares `e.source` against.
                    React attaches and detaches this alongside `key`, so a remount or an unmounted
                    pane nulls it on its own — which is the fail-closed state, not a gap. */
@@ -962,11 +1057,7 @@ export default function LivePreview({
           </BouncingWait>
         )}
 
-        {showLoading && !showCover && (
-          <BouncingWait>
-            {framePending ? FRAMING_TEXT : ((status && LOADING_TEXT[status]) ?? 'Building your app…')}
-          </BouncingWait>
-        )}
+        {showLoading && !showCover && <BouncingWait>{loadingText}</BouncingWait>}
 
         {/* The bounded degradation: the frame never loaded, so say so and offer a way out,
             while leaving it MOUNTED underneath. Unmounting it would make the timeout permanent by

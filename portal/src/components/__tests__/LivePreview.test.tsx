@@ -26,6 +26,16 @@ async function asTheBrowserSeesIt(body: unknown): Promise<PreviewState> {
   return await fetchPreviewState('proj-1', { fetchImpl: async () => res })
 }
 
+/**
+ * Matches of `re` that a SIGHTED citizen can see — i.e. everything outside the permanent sr-only
+ * live region. That region speaks in every state, so an unfiltered `getByText` here would be
+ * satisfied by the announcement alone and prove nothing about the screen.
+ */
+function seenNotJustSaid(re: RegExp) {
+  const spoken = screen.getByRole('status')
+  return screen.getAllByText(re).filter((el) => !spoken.contains(el))
+}
+
 /** The pane, wired from a parsed server verdict exactly as BuilderPage wires it. */
 function paneFor(state: PreviewState, extra: Record<string, unknown> = {}) {
   return render(
@@ -193,10 +203,50 @@ describe('LivePreview — the four states a workspace can be in', () => {
     // Not routed through the "gone" card: a start in flight is the opposite of gone, and
     // `GONE_TITLE`/`goneBody` would tell a citizen to "send a prompt" over a container the
     // platform is already bringing up.
-    expect(container.querySelector('iframe')).toBeTruthy()
     expect(container.textContent).not.toMatch(/asleep|nothing has been built here yet|another project has your workspace/i)
-    fireEvent.load(container.querySelector('iframe') as HTMLIFrameElement)
     expect(screen.getByRole('status').textContent).not.toMatch(/could not check on your preview/i)
+    // AND NOT FRAMED EITHER, which is the half this test used to get wrong by asserting the
+    // opposite. A container that is still starting answers 502 at its own edge, and the apps
+    // router turns a 502 into the "This app isn't running right now" page — so framing the URL
+    // here puts that page in front of a citizen whose app is being started for them. Reported
+    // from production as a black panel over a running build. `starting` belongs to the labelled
+    // wait, which is neither the gone card (this test's original subject) nor the frame.
+    //
+    // Mutation check: drop `previewState === 'starting'` from `notFramable` in LivePreview and
+    // this goes red with an iframe present.
+    expect(container.querySelector('iframe')).toBeNull()
+    // THE LIVENESS HALF, AND IT HAS TO BE THE VISIBLE ONE. This line used to read
+    // `getByRole('status')` — the sr-only live region — which is mounted PERMANENTLY and speaks in
+    // every state, so it was true over a pane drawing literally nothing. And it was: withholding
+    // the frame without putting a wait in its place left an EMPTY RECTANGLE, the sentence reaching
+    // screen-reader users and nobody else, while this assertion stayed green. An absence assertion
+    // paired with a liveness check that cannot fail is an absence assertion on its own.
+    //
+    // Mutation check: drop `starting` from `showLoading` in LivePreview and this goes red.
+    expect(seenNotJustSaid(/starting your app/i)).toHaveLength(1)
+    expect(screen.getByRole('status').textContent).toMatch(/starting your app/i)
+  })
+
+  it('a start in flight OUTRANKS the terminal placeholder — never both sentences at once', async () => {
+    // A relaunch of a session that already ended keeps `status="ended"` for the whole time the
+    // container is coming back up, and with `serving={false}` there is no pardon to keep it framed
+    // — so `showTerminal` is true at the same moment the server says a start is under way. Without
+    // the precedence term the pane tells a citizen their preview "is no longer running" over a
+    // container the platform is at that moment starting for them, directly beside the wait saying
+    // the opposite.
+    //
+    // Mutation check: drop `&& previewState !== 'starting'` from `showTerminal` and this goes red
+    // with both sentences mounted.
+    const verdict = await asTheBrowserSeesIt({
+      state: 'starting',
+      alive: false,
+      previewUrl: null,
+      restorable: null,
+    })
+    const { container } = paneFor(verdict, { serving: false })
+
+    expect(container.textContent).not.toMatch(/no longer running/i)
+    expect(seenNotJustSaid(/starting your app/i)).toHaveLength(1)
   })
 })
 

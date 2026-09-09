@@ -48,6 +48,16 @@ from tests.factories import ProjectFactory, UserFactory
 _CONNECTOR = CONNECTORS[KEY]
 
 
+def _ceiling() -> date:
+    """The newest day this connector holds, right now — today minus its own freshness lag.
+
+    Computed rather than written down because these tests run on whatever day they run on. The
+    ARITHMETIC is pinned by literals in `tests/core/test_connector_window.py`; what this file
+    proves is that whatever the resolver decided reaches the wire, and that it is never today —
+    which is asserted against `ist_today()` directly, without going through this helper."""
+    return ist_today() - timedelta(days=_CONNECTOR.freshness_lag_days)
+
+
 def _rail(project_id: uuid.UUID) -> str:
     return f"/v1/projects/{project_id}/connectors"
 
@@ -131,11 +141,13 @@ async def test_switching_on_with_no_window_reads_the_widest_range_offered(
     assert body["enabled"] is True
     assert body["effectivelyOn"] is True
 
-    today = ist_today()
     window = body["window"]
     assert window["kind"] == "relative"
     assert window["days"] == _CONNECTOR.max_window_days
-    assert window["end"] == today.isoformat()
+    # THE DEFAULT PRESET ENDS AT THE CONNECTOR'S CEILING, NOT TODAY. DICE extracts overnight, so
+    # the newest day it holds is yesterday — and the preset path is where every citizen meets
+    # that rule, because it is what switching on with no window gives them.
+    assert window["end"] == _ceiling().isoformat()
     assert window["clamped"] is False
     # The default is the WIDEST range the connector offers, and it is stored as the preset the
     # citizen would have picked — not as a date pair frozen on the day they switched it on.
@@ -321,11 +333,17 @@ async def test_the_read_carries_both_bounds(client, db_session) -> None:
 
     window = (await _entry(client, user, project.id))["window"]
 
-    today = ist_today()
-    assert window["latestDate"] == today.isoformat()
+    # THE ONE ASSERTION THAT DOES NOT RECOMPUTE THE SERVER'S OWN EXPRESSION. Everything else in
+    # this test mirrors `resolve_window`, so a matching off-by-one on both sides would stay
+    # green; this compares the wire against the reading day itself. R3 is a claim about what
+    # reaches the browser, and the browser is where the calendar greys its dates.
+    assert window["latestDate"] < ist_today().isoformat(), (
+        "the picker must never be offered today: the lake is a day behind"
+    )
+    assert window["latestDate"] == _ceiling().isoformat()
     assert (
         window["earliestDate"]
-        == (today - timedelta(days=_CONNECTOR.max_window_days - 1)).isoformat()
+        == (_ceiling() - timedelta(days=_CONNECTOR.max_window_days - 1)).isoformat()
     )
 
 
@@ -354,7 +372,7 @@ async def test_an_aged_out_range_reads_clamped_and_the_row_is_not_rewritten(
     window = (await _entry(client, user, project.id))["window"]
 
     assert window["clamped"] is True
-    assert window["end"] == ist_today().isoformat()
+    assert window["end"] == _ceiling().isoformat()
     # The pick slides forward at the SAME LENGTH rather than widening to the cap.
     assert window["days"] == (long_ago_end - long_ago_start).days + 1
     assert window["stored"] == {

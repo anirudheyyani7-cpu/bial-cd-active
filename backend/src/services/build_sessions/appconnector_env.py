@@ -46,19 +46,15 @@ async def build_connector_env(
     must not arrive at the caller looking the same. There is no Azure call on this path: it reads
     settings and one row, so a configured lake has nothing else to fail at.
     """
-    rows = {
-        row.connector_key: row
-        for row in (
-            await db.scalars(
-                sa.select(ProjectConnector)
-                .join(Project, Project.id == ProjectConnector.project_id)
-                .where(
-                    ProjectConnector.project_id == project_id,
-                    Project.user_id == user_id,
-                )
-            )
-        ).all()
-    }
+    stored_rows = await db.scalars(
+        sa.select(ProjectConnector)
+        .join(Project, Project.id == ProjectConnector.project_id)
+        .where(
+            ProjectConnector.project_id == project_id,
+            Project.user_id == user_id,
+        )
+    )
+    rows = {row.connector_key: row for row in stored_rows}
 
     env: dict[str, str] = {}
     for connector_key, connector in CONNECTORS.items():

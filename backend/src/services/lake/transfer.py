@@ -41,7 +41,7 @@ from redis.exceptions import RedisError
 from src.services.lake.client import LakeClient
 from src.services.lake.errors import LakeError
 from src.services.lake.window import SelectedFile, WindowSelection
-from src.services.redis.keys import lake_file_key, lake_index_key
+from src.services.redis.keys import IS_SHA256_HEX, lake_file_key, lake_index_key
 
 _log = structlog.get_logger()
 
@@ -128,12 +128,13 @@ def _split_member(member: str) -> tuple[int, str] | None:
     size, separator, digest = member.partition(_MEMBER_SEPARATOR)
     if not separator or not size.isdigit():
         return None
-    # The digest half is validated to the SAME shape `lake_file_key` demands, so this function is
-    # the single gate and the key builder's own `ValueError` is unreachable from here. Without the
-    # hex check a 64-character member that is not a digest would pass, and the raise would abort
-    # the whole transfer from inside a detached task — recoverable (the member has already been
-    # removed by then) but noisy for something this can simply decline to parse.
-    if len(digest) != 64 or not all(character in "0123456789abcdef" for character in digest):
+    # The digest half is validated against `lake_file_key`'s OWN predicate — the same compiled
+    # object, not a second spelling of it — so this function is the single gate and the key
+    # builder's `ValueError` is unreachable from here. Without the hex check a 64-character member
+    # that is not a digest would pass, and the raise would abort the whole transfer from inside a
+    # detached task — recoverable (the member has already been removed by then) but noisy for
+    # something this can simply decline to parse.
+    if not IS_SHA256_HEX.fullmatch(digest):
         return None
     return int(size), digest
 

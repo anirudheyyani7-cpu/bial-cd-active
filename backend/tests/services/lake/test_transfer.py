@@ -547,6 +547,28 @@ async def test_every_evict_call_makes_progress(redis_pair) -> None:
     assert seen == [3, 2, 1, 0], f"the trim stalled on a member it could not remove: {seen}"
 
 
+async def test_a_sixty_four_character_member_that_is_not_hex_is_declined(redis_pair) -> None:
+    """★ THE CASE THE HEX CHECK EXISTS FOR, WHICH NOTHING WAS REACHING. Every other foreign member
+    in this file is either valid hex or fails the `isdigit()` gate on the size half first — so the
+    digest predicate itself had never been exercised by a single test.
+
+    It is the one that matters, because a 64-character non-hex digest is the ONLY input that gets
+    past the size gate and reaches `lake_file_key`, whose own guard would then raise `ValueError`
+    from inside a detached task. `_split_member` declining it is what makes that raise unreachable,
+    which is the claim its comment makes and commit 42e47bdf made in its message.
+
+    Asserted through the trim rather than by calling the private helper, so it pins the CONSEQUENCE
+    — the member is removed and the loop advances — rather than the implementation."""
+    _text, binary = redis_pair
+    not_hex = f"4000:{'g' * 64}"
+    await binary.zadd(lake_index_key(), {not_hex: 1.0})
+
+    freed = await _evict_oldest(binary)
+
+    assert freed == 0, "a member this code did not write frees no accounted bytes"
+    assert await binary.zcard(lake_index_key()) == 0, "and it is gone, so the trim can advance"
+
+
 async def test_a_member_that_cannot_round_trip_cannot_stall_the_trim_either(redis_pair) -> None:
     """★ THE SAME PROPERTY, AGAINST THE MEMBER THAT ACTUALLY BREAKS IT. The test above seeds an
     ASCII member, which decodes to itself — so `ZREM` matches it and the ordinary arm clears it.

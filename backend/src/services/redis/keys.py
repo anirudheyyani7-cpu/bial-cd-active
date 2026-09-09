@@ -39,7 +39,7 @@ import uuid
 from typing import Final
 
 # What a lake file key's discriminator must look like: exactly a sha256 hex digest.
-_IS_SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
+IS_SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
 
 # The reserved product root, shared with the taskiq families in `src/broker.py`.
 KEY_ROOT: Final = "bial:"
@@ -191,7 +191,7 @@ def lake_file_key(digest: str) -> str:
 
     THE VALUE IS BYTES, written through `get_redis_bytes()`. The ordinary client decodes, and
     decoding a parquet file is silent corruption of the one thing this feature copies verbatim."""
-    if not _IS_SHA256_HEX.fullmatch(digest):
+    if not IS_SHA256_HEX.fullmatch(digest):
         raise ValueError(
             "a lake file key is built from a sha256 hex digest of the blob name, never from the "
             "name itself: a blob name can carry ':' and forge a different key family"

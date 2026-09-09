@@ -44,7 +44,7 @@ _PREFIX: Final = "BIAL_"
 # environment, the moment a second entry is added — not at the first read in production, and not
 # as a wrong answer nobody notices. Whoever adds the entry has to key the lake configuration by
 # connector key first, which was always the change the second connector actually required.
-if len(CONNECTORS) > 1:  # pragma: no cover - one registry entry today; this is the guard for two
+if len(CONNECTORS) > 1:  # one registry entry today; this is the guard for the day there are two
     raise RuntimeError(
         "connector_lake is a single global configuration block and cannot serve more than one "
         "connector: key the lake settings by connector key before adding a second registry entry"

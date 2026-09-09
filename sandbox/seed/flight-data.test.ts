@@ -148,6 +148,25 @@ describe('classify', () => {
     const listed = classify(objectName('20260831', 'SEPTEMBER'), 900_000)
     expect(listed.kind).toBe('file')
   })
+
+  it.each([
+    'flight/fact/2026/SEPTEMBER/old_tb_flight_fact_report_20260901.parquet',
+    'flight/fact/2026/SEPTEMBER/backup_tb_flight_fact_report_20260901.parquet',
+    'flight/fact/2026/SEPTEMBER/copy-of-tb_flight_fact_report_20260901.parquet',
+  ])('rejects a PREFIXED name that would otherwise match as a suffix: %s', (name) => {
+    // The regex is anchored on a path-segment boundary. Without the left anchor these all match,
+    // an archived or hand-copied file joins the window, and every flight in it is counted twice —
+    // silently, because the file parses perfectly well. Found in review; the platform's own
+    // selector in backend/src/services/lake/window.py anchors the same way.
+    expect(classify(name, 900_000)).toEqual({ kind: 'not-a-flight-file' })
+  })
+
+  it('still accepts a bare file name with no folder in front of it', () => {
+    // The left anchor is `(?:^|/)`, not `/` — a name at the container root must still match, or
+    // the anchor would fix one bug by introducing another.
+    const listed = classify('tb_flight_fact_report_20260901.parquet', 900_000)
+    expect(listed.kind).toBe('file')
+  })
 })
 
 // ── The newest day you can actually read ─────────────────────────────────────────────────────

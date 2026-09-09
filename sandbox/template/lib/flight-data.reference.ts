@@ -111,7 +111,12 @@
 //   | { kind: 'not-a-flight-file' }
 //   | { kind: 'empty-stub'; name: string }
 //
-// const FILENAME = /tb_flight_fact_report_(\d{4})(\d{2})(\d{2})\.parquet$/
+// // ANCHORED AT BOTH ENDS OF THE FILE NAME, and the left anchor is the load-bearing half.
+// // Without `(?:^|\/)` this also matches `old_tb_flight_fact_report_20260901.parquet` and
+// // `backup_..._20260901.parquet` as SUFFIXES — so an archived or hand-copied file silently joins
+// // your window, and the numbers it carries are counted twice. The platform's own selector
+// // (`backend/src/services/lake/window.py`) anchors the same way; if you change one, change both.
+// const FILENAME = /(?:^|\/)tb_flight_fact_report_(\d{4})(\d{2})(\d{2})\.parquet$/
 //
 // /**
 //  * Decide what a listed blob is, from its name and its length.

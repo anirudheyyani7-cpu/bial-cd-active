@@ -157,6 +157,45 @@ def test_the_404_page_has_a_body_and_a_way_back(router: Router) -> None:
     assert "not available" in body.lower()
 
 
+@pytest.mark.parametrize("dest", ["iframe", "frame", "embed", "object"])
+def test_the_framed_404_offers_no_link_out_of_the_frame(router: Router, dest: str) -> None:
+    """THE PREVIEW PANE IS NOT A TAB, and the page it gets must not pretend otherwise.
+
+    Production report: the workspace's preview pane framed this page, its "Go to the BIAL app
+    portal" button was a plain `<a href>` with no target, and pressing it loaded the ENTIRE portal
+    inside the preview rectangle. The obvious fix — `target="_top"` — is unavailable: the pane
+    frames apps with a sandbox that deliberately withholds `allow-top-navigation`, because the
+    framed app is unreviewed agent-generated code and granting top-nav would let any generated app
+    redirect the citizen's whole browser tab. So the page drops the link when it is framed.
+
+    Asserted as the ABSENCE OF A LINK plus the PRESENCE OF A BODY: the absence alone would pass on
+    an empty response, which is the false-green this repo has shipped before."""
+    status, headers, body = router.request(
+        f"/a/{GHOST_KEY}/", headers={"Sec-Fetch-Dest": dest}
+    )
+    assert status == 404
+    assert headers["content-type"].startswith("text/html")
+    # Liveness: there IS a page, and it speaks to the citizen who built the app.
+    assert "isn" in body and "running" in body.lower()
+    # The guarantee: nothing to press, and no portal address to press it towards.
+    assert "<a " not in body.lower()
+    assert PORTAL_ORIGIN not in body
+    # …and none of the tab-reader's advice, which is nonsense addressed to the app's own author.
+    assert "shared the link" not in body.lower()
+
+
+@pytest.mark.parametrize("dest", ["document", None])
+def test_a_top_level_reader_still_gets_the_way_back(router: Router, dest: str | None) -> None:
+    """The other half of the pair, and the reason the map defaults to the full page: a real tab —
+    and any browser too old to send `Sec-Fetch-Dest` at all — still gets the button, because for
+    that reader it is the only way back."""
+    headers = {"Sec-Fetch-Dest": dest} if dest else {}
+    status, _, body = router.request(f"/a/{GHOST_KEY}/", headers=headers)
+    assert status == 404
+    assert PORTAL_ORIGIN in body
+    assert "not available" in body.lower()
+
+
 @pytest.mark.parametrize("target", ["/_sup/health", "/_sup", f"/a/{SBX_KEY}/_sup/health"])
 def test_supervisor_surface_is_refused_at_the_router(router: Router, target: str) -> None:
     """The supervisor is bearer-guarded downstream, but this router claims as an invariant that

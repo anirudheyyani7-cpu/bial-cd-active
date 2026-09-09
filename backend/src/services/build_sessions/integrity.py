@@ -291,6 +291,27 @@ PORCELAIN_CAP_BYTES: Final = 200
 # or the agent would edit.
 FRAMEWORK_CHURN: Final = frozenset({"next-env.d.ts", "tsconfig.json"})
 
+# THE SAME QUESTION, ASKED WHERE THE WRONG ANSWER COSTS SOMEBODY THEIR WORK.
+#
+# `FRAMEWORK_CHURN` above answers "may this container be reclaimed without asking", where a false
+# negative merely means we ask. The SAVE INDICATOR asks the opposite-facing question — "is there
+# anything here to lose" — and there a false negative is the platform reporting "Everything is
+# saved" over work nobody saved.
+#
+# `tsconfig.json` CANNOT BE TREATED AS CHURN ON THAT SIDE, because the model is explicitly invited
+# to edit it: `prompt_blocks.py` lists "package.json, tsconfig.json, postcss.config.mjs,
+# components.json  -- editable". An agent adding a path alias is doing exactly what it was told it
+# may do, and folding that into "the framework rewrote it" makes the citizen's own change invisible
+# to the one indicator that exists to tell them about it.
+#
+# `next-env.d.ts` stays: Next regenerates it on boot, the file carries its own do-not-edit banner,
+# and it appears nowhere in the prompt's editable list -- so nothing the agent is permitted to do
+# produces a change to it.
+#
+# THE ASYMMETRY IS THE POINT. A wrongly-dirty tree costs a save nobody needed. A wrongly-clean one
+# costs the build. Where the two cannot both be served, this side fails DIRTY.
+REGENERATED_ONLY: Final = frozenset({"next-env.d.ts"})
+
 # A commit sha, and nothing else, may be interpolated into the script below.
 #
 # THE REFERENCE SHA IS NOT OURS. It is read back from a stored bundle's blob metadata, which is
@@ -688,6 +709,24 @@ def clean_but_for_churn(container: ContainerState) -> bool:
     if container.porcelain_truncated:
         return False  # too much changed to enumerate, which is itself evidence of real work
     return all(path in FRAMEWORK_CHURN for path in container.changed_paths)
+
+
+def only_regenerated_files_changed(container: ContainerState) -> bool:
+    """Is every change in this tree a file the FRAMEWORK rewrites and the agent may not touch?
+
+    The save indicator's question, and deliberately stricter than `clean_but_for_churn` -- see
+    `REGENERATED_ONLY` for why the two sets differ and which way each one fails.
+
+    Fails closed on a truncated porcelain for the same reason its sibling does: output that hit the
+    cap is unambiguous evidence of real work, and `changed_paths` is empty there, which a bare
+    `all(...)` would otherwise read as "nothing but churn". An EMPTY change set answers False too:
+    this is only ever asked of a tree git already called dirty, so "no paths" there means the
+    porcelain could not be parsed, not that the tree is clean."""
+    if container.porcelain_truncated:
+        return False
+    return bool(container.changed_paths) and all(
+        path in REGENERATED_ONLY for path in container.changed_paths
+    )
 
 
 async def workspace_integrity(

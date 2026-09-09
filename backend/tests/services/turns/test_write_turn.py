@@ -59,7 +59,7 @@ from src.db.models.message import Message, MessageEntryKind
 from src.db.models.token_usage import TokenUsage
 from src.services.agent.mode_prompts import PromptContext, workspace_note
 from src.services.build_sessions.alarms import HMR_PROTOCOL_DRIFT_EVENT
-from src.services.build_sessions.manager import SessionManager
+from src.services.build_sessions.manager import RecoveryNews, SessionManager
 from src.services.messages.projection import _LBL_FALLBACK, long_operation_line
 from src.services.orchestrator.deps import SandboxSession
 from src.services.orchestrator.errors import from_client, from_tsc
@@ -2688,4 +2688,55 @@ async def test_a_workspace_that_came_back_wrong_still_frees_the_slot(
         "no workspace was taken, so the leak this test is about could not have happened"
     )
     # THE GUARANTEE: the next message can start.
+    assert manager.active_session_for(user.id) is None
+
+
+async def test_an_unrecoverable_workspace_also_frees_the_slot(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE OTHER HOLD, and the reason it needs its own test rather than trusting the first.
+
+    `_attach_sandbox` has TWO arms that end the turn before the agent runs — `workspace_restored`
+    and `RecoveryNews.UNRECOVERABLE` — and both used to leak the build slot for the same reason.
+    A test covering only one of them leaves the other free to regress on any edit that moves the
+    assignment back between them, which is a narrower window than it sounds: the two raises are
+    adjacent, and "below the first, above the second" is exactly the shape a careless fix takes.
+
+    UNRECOVERABLE is the worse of the pair to leak on: nothing was put back, the container is
+    showing a bare template, and the citizen is already being told their workspace could not be
+    restored when the platform locks them out on top of it."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-unrecoverable@rvaiglobal.com")
+    manager, client = SessionManager(), FakeSandboxClient()
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    real_ensure = manager.ensure_sandbox
+
+    async def unrecoverable_ensure(*args, **kwargs):
+        session = await real_ensure(*args, **kwargs)
+        session.news = RecoveryNews.UNRECOVERABLE
+        return session
+
+    monkeypatch.setattr(manager, "ensure_sandbox", unrecoverable_ensure)
+
+    await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    assert client.provisioned != [] or client.restored != [], (
+        "no workspace was taken, so the leak this test is about could not have happened"
+    )
     assert manager.active_session_for(user.id) is None

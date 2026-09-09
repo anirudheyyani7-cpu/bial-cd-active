@@ -73,6 +73,7 @@ from src.services.build_sessions.integrity import (
     WorkspaceState,
     clean_but_for_churn,
     container_state,
+    only_regenerated_files_changed,
     workspace_integrity,
 )
 from src.services.build_sessions.liveness import flag_liveness_overpromise
@@ -1523,12 +1524,14 @@ class SessionManager:
         # observed hand-over that cost a citizen forty seconds of a modal spinner to store two
         # files a framework had rewritten by itself.
         #
-        # THE FILTER ALREADY EXISTED. `clean_but_for_churn` is the tree half of `_nothing_to_lose`,
-        # written for exactly this question, and this was the one caller that did not consult it —
-        # two spellings of "is this dirty" that were free to disagree, and did. It fails CLOSED on
-        # a truncated porcelain (too much changed to enumerate is itself evidence of real work), so
-        # routing through it cannot turn a genuinely dirty tree clean.
-        if state.uncommitted and not clean_but_for_churn(state):
+        # THE PREDICATE IS THE SAVE INDICATOR'S OWN, NOT THE REAPER'S, and the difference is not
+        # tidiness. `clean_but_for_churn` also forgives `tsconfig.json`, which the model is
+        # explicitly invited to edit — `prompt_blocks.py` lists it under "editable". Forgiving it
+        # HERE would report "Everything is saved" over an agent's own change — the one
+        # wrong answer this indicator must never give. `only_regenerated_files_changed` forgives
+        # only what the framework rewrites and the agent may not touch, and fails CLOSED on a
+        # truncated porcelain, so routing through it cannot turn a genuinely dirty tree clean.
+        if state.uncommitted and not only_regenerated_files_changed(state):
             return SaveState(
                 app_id=app_id,
                 dirty=True,

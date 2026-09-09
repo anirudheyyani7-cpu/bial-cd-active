@@ -94,7 +94,14 @@ def _split_member(member: str) -> tuple[int, str] | None:
     Total rather than raising: the index is shared state in a store other deployments also use,
     and one unreadable member must not stop the trim from freeing the ones it can read."""
     size, separator, digest = member.partition(_MEMBER_SEPARATOR)
-    if not separator or not size.isdigit() or len(digest) != 64:
+    if not separator or not size.isdigit():
+        return None
+    # The digest half is validated to the SAME shape `lake_file_key` demands, so this function is
+    # the single gate and the key builder's own `ValueError` is unreachable from here. Without the
+    # hex check a 64-character member that is not a digest would pass, and the raise would abort
+    # the whole transfer from inside a detached task — recoverable (the member has already been
+    # removed by then) but noisy for something this can simply decline to parse.
+    if len(digest) != 64 or not all(character in "0123456789abcdef" for character in digest):
         return None
     return int(size), digest
 

@@ -66,6 +66,21 @@ export interface WorkspaceReading {
   preview: PreviewState | null
   /** The save model — non-null only while the workspace is `alive`. See the cost note above. */
   save: SaveState | null
+  /**
+   * HOW MANY TIMES THE POLL HAS ANSWERED — a heartbeat, not a value.
+   *
+   * It exists because `setPreview` deliberately keeps the OLD object when the reading has not
+   * changed (`samePreviewState`), so a caller that wants to act once per tick has nothing to
+   * depend on: every field it could watch is reference-identical between two identical answers.
+   * That is correct for anything rendering the reading, and useless for anything that needs to
+   * re-ask a QUESTION OF ITS OWN on the same cadence.
+   *
+   * The project surface reads the compile verdict, which the poll does not carry and which can
+   * go stale while every field here stays put — a route compiles, the pane covers itself, and the
+   * cover never lifts because nothing asked again. Depending on this counter gives that read the
+   * poll's cadence without a second timer and without this hook learning about compile state.
+   */
+  readTick: number
   /** Record how the most recent start attempt ended. `null` clears it (a start that worked). */
   reportStartOutcome: (outcome: StartOutcome | null) => void
   /** A press has begun, or finished. Drives the map's in-flight arm. */
@@ -96,6 +111,9 @@ export function useWorkspaceState({
   // invalidation spelled as "something changed" is one a fast enough server erases. A counter
   // cannot be batched away: the value the effect sees is always different from the one before.
   const [epoch, setEpoch] = useState(0)
+  // See `WorkspaceReading.readTick`. Counted rather than flagged for the same reason `epoch` is:
+  // a boolean that means "a read landed" can be batched away between two commits, a number cannot.
+  const [readTick, setReadTick] = useState(0)
 
   const refresh = useCallback(() => setEpoch((n) => n + 1), [])
   const reportStartOutcome = useCallback((outcome: StartOutcome | null) => {
@@ -178,6 +196,20 @@ export function useWorkspaceState({
           return samePreviewState(prev, next) ? prev : next
         })
 
+        // ONE TICK PER ANSWER, and deliberately not per CHANGE — a caller re-asking its own
+        // question needs to hear that the world was looked at, and an answer identical to the last
+        // one is exactly when a stale verdict elsewhere goes uncorrected.
+        //
+        // RIGHT HERE, BESIDE THE ANSWER IT REPORTS. This used to sit at the bottom of the try,
+        // below an unbounded `fetchSaveState` await and below that await's supersession `return`.
+        // Both could swallow it: a container slow to answer a save read would hold the tick for as
+        // long as it took, and the consumer waiting on it — the compile cover's re-check, the whole
+        // of defect E2 — would sit on a stale verdict for exactly the situation it exists to
+        // correct. The tick is a fact about THIS read completing, so nothing another endpoint does
+        // afterwards may delay or cancel it. Still inside the `try`, so a read that THREW is still
+        // no tick — a network blip must not masquerade as a fresh look at the world.
+        setReadTick((n) => n + 1)
+
         if (next.state === 'alive') {
           // THE ONLY CONTAINER CALL THIS HOOK MAKES, and it is gated on a live container for the
           // reason in the docblock. Its failure is silent on purpose: a save state we could not
@@ -251,6 +283,7 @@ export function useWorkspaceState({
     state: resolveWorkspaceState({ preview, projectHasSavedBuild, startOutcome, startInFlight }),
     preview,
     save,
+    readTick,
     reportStartOutcome,
     reportStartPending,
     refresh,

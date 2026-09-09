@@ -12,7 +12,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Five defects reported from production on 2026-09-09, traced from the backend log and the citizens'
+Nine defects reported from production on 2026-09-09, traced from the backend log and the citizens'
 own screenshots. No version is claimed here — the number is chosen at merge.
 
 ### Fixed
@@ -45,6 +45,26 @@ own screenshots. No version is claimed here — the number is chosen at merge.
   built; a second bubble repeating that it finished added nothing and carried a second copy button
   under the first. Endings a person cannot otherwise explain — a failure, a stop, a daily limit — are
   still announced.
+- **A finished app appears on its own, without four reloads.** The address of a preview is the same
+  string before and after the container starts answering, so the browser never asked for it a second
+  time and the "this app isn't running" page it fetched first stayed on screen over an app that was
+  by then running perfectly. Watching a first build meant reloading the page until it cleared. The
+  pane now asks again at the moment a build finishes.
+- **The preview no longer goes black while an app is starting.** That same "isn't running" page
+  followed the reader's machine into dark mode, and drawn inside a permanently light pane a black
+  rectangle where an app should be is indistinguishable from the app having died. Opened in a tab of
+  its own it still follows the reader, which is right there and wrong inside the pane.
+- **The chat says when the agent is thinking.** Between the last tool finishing and the first word
+  of the reply, the transcript showed the last completed step and nothing else, which is what a hung
+  application looks like. That gap now carries a moving indicator and a count of the seconds, and
+  says only that — what the agent is thinking is not shown, and is not sent to the browser.
+- **The transcript follows a reply as it arrives.** It stayed where it was while the answer grew
+  past the bottom of the screen, then offered a "jump to it" control the reader had done nothing to
+  deserve. It now follows the reply, and still stops following the moment you scroll up to read
+  something earlier — returning to the bottom starts it again.
+- **A build that fails to compile is reported while you are watching it.** The check ran once when a
+  workspace came up and never again, so "Getting your app ready…" could sit over a build that had
+  already finished or already failed until you left the screen and came back.
 
 ## [1.7.0-beta.10] - 2026-09-08
 

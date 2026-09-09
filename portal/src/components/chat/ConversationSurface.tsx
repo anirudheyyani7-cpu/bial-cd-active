@@ -170,7 +170,12 @@ interface TurnSink {
    * alongside for a different question (pane phase, today's budget).
    */
   parts: SinkPart[]
-  /** Is the model REASONING right now (the server's `working` flag)?
+  /** Does the model HAVE THE FLOOR right now (the server's `working` flag)?
+   *
+   *  NOT "is it reasoning", which is what this said while the server narrowed it to that. The
+   *  server raises it whenever the model is being ASKED and nothing readable has arrived — which
+   *  now includes the gap after the last tool returns, the window a hung-looking transcript was
+   *  actually sitting in. Reading it as a reasoning signal here would under-render it.
    *
    *  IT IS NOT A PART, because the server never sends one and never will: reasoning text is
    *  stored for the provider's next turn and is never framed. The flag is turned INTO a

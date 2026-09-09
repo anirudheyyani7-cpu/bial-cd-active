@@ -70,8 +70,30 @@ def _digest(blob_name: str) -> str:
     return sha256(blob_name.encode()).hexdigest()
 
 
-def _member(file: SelectedFile) -> str:
-    return f"{file.size}{_MEMBER_SEPARATOR}{_digest(file.name)}"
+# ZADD then EXPIRE, as ONE step. A Redis Lua script runs single-threaded, so nothing interleaves
+# and nothing can die in between — which as two round trips it could, leaving the index with no
+# expiry until some later write happened to refresh it. That is the ONE key in this feature able
+# to outlive the seven-day promise `C5-redis-key-namespace.md` makes about every key here, and a
+# promise with a hole in it is worth three lines to close. `locks.py` sets the precedent for
+# reaching for `eval` in this tree.
+#
+# ONE KEY, which is what keeps it legal on production's sharded EnterpriseCluster: the file's own
+# `SET` stays a separate command below precisely because it lives on a different key and a
+# multi-key script would be rejected cross-slot.
+_INDEX_AND_EXPIRE_LUA: Final = (
+    "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1]) return redis.call('EXPIRE', KEYS[1], ARGV[3])"
+)
+
+
+def _member(file: SelectedFile, stored_bytes: int) -> str:
+    """One index member: the bytes ACTUALLY STORED, then the name's digest.
+
+    `stored_bytes` RATHER THAN `file.size` — the two are not the same number and the difference
+    is the budget's honesty. `file.size` comes from the listing; the payload comes from a later
+    download, and a blob re-uploaded in between makes the index describe bytes Redis is not
+    holding. Indexing the listing size once let a file listed at 1 MB and downloaded at 250 MB
+    sit in the store as 1 MB of accounted space, with the remainder unaccounted until its TTL."""
+    return f"{stored_bytes}{_MEMBER_SEPARATOR}{_digest(file.name)}"
 
 
 def _as_text(raw: object) -> str | None:
@@ -82,9 +104,19 @@ def _as_text(raw: object) -> str | None:
     so a member arrives as `bytes`. Both facts are narrowed here rather than at each call site.
 
     Members are `{digits}:{hex}` — pure ASCII by construction — so the encode/decode round trip is
-    exact, which is what lets a decoded member be handed straight back to `ZREM`."""
+    exact, which is what lets a decoded member be handed straight back to `ZREM`.
+
+    STRICT, NOT `errors="ignore"`. A lossy decode returns a `str` for ANY bytes, so a foreign
+    member carrying one non-ASCII byte would come back as a DIFFERENT string, `ZREM` would match
+    nothing, the member would survive, and the eviction loop would re-read the same oldest member
+    forever — inside a detached task whose failures are swallowed. `None` is the answer that keeps
+    the by-rank fallback reachable, and the by-rank fallback is the only arm that always
+    advances."""
     if isinstance(raw, bytes):
-        return raw.decode("ascii", errors="ignore")
+        try:
+            return raw.decode("ascii")
+        except UnicodeDecodeError:
+            return None
     return raw if isinstance(raw, str) else None
 
 
@@ -120,6 +152,10 @@ class TransferReport:
     skipped_stubs: int
     evicted: int
     too_large_to_hold: int
+    #: Files the window selected that the lake refused or could not serve on this attempt.
+    #: Distinct from `skipped_stubs`, which is an upstream load that wrote a zero-byte file:
+    #: that one is the lake's answer, this one is the lake declining to answer.
+    unreadable: int = 0
 
 
 async def _indexed_total(redis: aioredis.Redis) -> int:
@@ -132,7 +168,14 @@ async def _indexed_total(redis: aioredis.Redis) -> int:
     its index member survives to the index's own (refreshed) expiry, so a total may include bytes
     Redis has already reclaimed. The consequence is that the trim frees slightly more than it had
     to. The opposite error — under-counting, and so exceeding the budget — is impossible, because
-    a member is only ever removed by the trim that also deletes its file."""
+    a member is only ever removed by the trim that also deletes its file.
+
+    TWO WAYS THE TOTAL CAN STILL LAG REALITY, both named rather than papered over. Concurrent
+    births each read this total before their own download and write after it, so N transfers can
+    pass the same check and the store can transiently hold more than the budget by up to the sum
+    of their in-flight payloads. And the check itself is made against the LISTING size while the
+    member is written from the stored bytes. The ceiling is therefore a strong tendency, not an
+    instantaneous invariant; the TTL is what bounds the excess."""
     total = 0
     for raw in await redis.zrange(lake_index_key(), 0, -1):
         member = _as_text(raw)
@@ -187,8 +230,14 @@ async def _hold(redis: aioredis.Redis, file: SelectedFile, payload: bytes) -> No
     what it points at is the ADR-0029 defect in miniature. A re-copy of the same file re-scores
     the same member rather than adding a second — the member is derived from the size and the
     name, so it is stable."""
-    await redis.zadd(lake_index_key(), {_member(file): time.time()})
-    await redis.expire(lake_index_key(), LAKE_COPY_TTL_SECONDS)
+    await redis.eval(
+        _INDEX_AND_EXPIRE_LUA,
+        1,
+        lake_index_key(),
+        _member(file, len(payload)),
+        str(time.time()),
+        str(LAKE_COPY_TTL_SECONDS),
+    )
     await redis.set(lake_file_key(_digest(file.name)), payload, ex=LAKE_COPY_TTL_SECONDS)
 
 
@@ -231,6 +280,8 @@ async def transfer_window(
     bytes_copied = 0
     evicted = 0
     too_large = 0
+    unreadable = 0
+    last_failure: LakeError | None = None
     for file in missing:
         if file.size > LAKE_COPY_BUDGET_BYTES:
             # Refused BEFORE any eviction. Emptying the whole family to make room for something
@@ -251,16 +302,36 @@ async def transfer_window(
                 # above, and it is here so the loop cannot spin.
                 break
             evicted += 1
-        payload = await lake.download(file.name)
+        try:
+            payload = await lake.download(file.name)
+        except LakeError as exc:
+            # ONE BAD BLOB MUST NOT COST THE REST OF THE WINDOW. A file can be deleted, or have
+            # its ACL changed, between the listing above and this download. Without this clause
+            # the raise travels out to `transfer_window_or_log`, which abandons every remaining
+            # (older) file — and does so again on the next birth, and the one after, because the
+            # listing keeps offering the same file. Counted, not swallowed: a window quietly
+            # missing days must not read in the log like a window that got everything.
+            _log.warning("lake_copy_file_unreadable", name=file.name, exc_info=True)
+            unreadable += 1
+            last_failure = exc
+            continue
         await _hold(redis, file, payload)
         copied += 1
         bytes_copied += len(payload)
 
+    if copied == 0 and last_failure is not None:
+        # EVERY FILE FAILED, WHICH IS NOT "ONE BAD BLOB". A window where nothing at all could be
+        # read is the lake being unreachable, the identity being refused, or the container being
+        # gone — one condition, not N — and the clause above would otherwise turn it into thirty
+        # warnings and a report claiming an orderly zero. Re-raised so the guarded entry point
+        # logs it ONCE, as the coordinates-carrying `LakeError` it is.
+        raise last_failure
     return TransferReport(
         copied=copied,
         bytes_copied=bytes_copied,
         already_held=False,
         skipped_stubs=selection.skipped,
+        unreadable=unreadable,
         evicted=evicted,
         too_large_to_hold=too_large,
     )

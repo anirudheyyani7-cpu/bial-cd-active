@@ -38,6 +38,7 @@ from src.services.lake.transfer import (
     LAKE_COPY_BUDGET_BYTES,
     LAKE_COPY_TTL_SECONDS,
     _digest,
+    _evict_oldest,
     transfer_window,
     transfer_window_or_log,
 )
@@ -90,10 +91,16 @@ class _FakeLake:
         self.raises = raises
         self.downloaded: list[str] = []
         self.payloads: dict[str, bytes] = {}
+        # Names that fail while the rest of the lake answers normally — a blob deleted or
+        # re-ACL'd between the listing and the download, which is a different condition from
+        # `raises` (the whole lake refusing) and has to be scriptable separately.
+        self.unreadable: set[str] = set()
 
     async def download(self, name: str) -> bytes:
         if self.raises is not None:
             raise self.raises
+        if name in self.unreadable:
+            raise LakeError(f"the lake would not serve {name}")
         self.downloaded.append(name)
         return self.payloads.get(name, name.encode() * 4)
 
@@ -401,6 +408,50 @@ async def test_a_download_failure_part_way_leaves_no_claimable_window(redis_pair
     assert report.copied == 3
 
 
+async def test_one_unreadable_file_does_not_cost_the_rest_of_the_window(redis_pair) -> None:
+    """★ ONE BAD BLOB MUST NOT TRUNCATE THE COPY. A file can be deleted, or have its ACL changed,
+    between the listing and the download. Without a per-file clause that single failure abandons
+    every remaining file in the window — and does so again on the next birth, and the one after,
+    because the listing keeps offering the same file. The window would be permanently short by
+    everything older than the bad day, with nothing saying so.
+
+    The count is asserted, not just the survival: a window quietly missing days must not read in
+    the log like a window that got everything."""
+    _text, binary = redis_pair
+    files = [_selected(day, 4_000) for day in (1, 2, 3)]
+    lake = _FakeLake()
+    lake.unreadable = {files[1].name}
+
+    report = await transfer_window(_lake(lake), binary, _selection(*files))
+
+    assert report.copied == 2
+    assert report.unreadable == 1
+    # Newest first, with the bad day stepped over rather than ending the loop.
+    assert lake.downloaded == [files[2].name, files[0].name]
+    # The bad day is genuinely absent, which is what makes a later birth retry it instead of
+    # finding a whole window present and claiming `already_held`.
+    assert not await binary.exists(lake_file_key(_digest(files[1].name)))
+    assert await binary.exists(lake_file_key(_digest(files[0].name)))
+
+
+async def test_a_lake_that_serves_nothing_at_all_still_raises_rather_than_reporting_a_tidy_zero(
+    redis_pair,
+) -> None:
+    """★ THE OTHER SIDE OF THE SAME CLAUSE, and the reason it is not just `continue`. A window
+    where every file failed is one condition — the lake unreachable, the identity refused, the
+    container gone — not thirty. Swallowing each one individually would turn a total outage into
+    thirty warnings and a report saying `copied=0`, which reads exactly like an empty window.
+
+    Re-raising hands it to `transfer_window_or_log`, which logs it once with the coordinates."""
+    _text, binary = redis_pair
+    files = [_selected(day, 4_000) for day in (1, 2, 3)]
+    lake = _FakeLake()
+    lake.unreadable = {file.name for file in files}
+
+    with pytest.raises(LakeError):
+        await transfer_window(_lake(lake), binary, _selection(*files))
+
+
 async def test_a_lake_failure_is_swallowed_and_logged_by_the_guarded_entry_point(
     redis_pair,
 ) -> None:
@@ -448,7 +499,13 @@ async def test_a_member_this_code_did_not_write_cannot_stall_the_trim(redis_pair
     member the trim could not remove would spin that loop forever, inside a detached task nothing
     is watching, on a code path whose failures are deliberately swallowed.
 
-    Asserted with a timeout rather than by inspection, because "it terminates" is the property."""
+    Asserted with a timeout rather than by inspection, because "it terminates" is the property.
+
+    A CAVEAT WORTH KNOWING BEFORE YOU DEBUG A WEDGED SUITE: `fakeredis` answers in-process, so a
+    spinning loop here never yields to the event loop and `asyncio.timeout` cannot deliver its
+    cancellation. Against real Redis this fails in ten seconds; against the fake it HANGS. The
+    timeout is kept because it is free and correct where it can fire, and
+    `test_every_evict_call_makes_progress` below is the one that fails fast and says why."""
     _text, binary = redis_pair
     lake = _FakeLake()
     half = LAKE_COPY_BUDGET_BYTES // 2 + 1
@@ -463,3 +520,56 @@ async def test_a_member_this_code_did_not_write_cannot_stall_the_trim(redis_pair
     assert report.copied == 1
     members = {m.decode() for m in await binary.zrange(lake_index_key(), 0, -1)}
     assert "not-a-member-this-code-wrote" not in members
+
+
+async def test_every_evict_call_makes_progress(redis_pair) -> None:
+    """★ THE TERMINATION PROPERTY, STATED DIRECTLY AND FAILING FAST. The caller's loop is
+    `while total + size > budget: _evict_oldest(...)`, which terminates if and only if every call
+    removes something. The two tests around this one drive that loop and are the honest end-to-end
+    check — but a regression there manifests as a HANG (see the caveat above), and a hang tells a
+    reader nothing about which member the trim could not shift.
+
+    So the invariant is asserted one level down, against the three member shapes the index can
+    actually contain: one this code wrote, one another deployment wrote in ASCII, and one that is
+    not text at all. The cardinality must strictly decrease on every call, whatever the shape.
+
+    Reverting `_as_text` to `errors="ignore"` fails this in under a second."""
+    _text, binary = redis_pair
+    await binary.zadd(lake_index_key(), {b"\xff\xfe not ascii": 1.0})
+    await binary.zadd(lake_index_key(), {"some-other-app:whatever": 2.0})
+    await binary.zadd(lake_index_key(), {f"{4000}:{'a' * 64}": 3.0})
+
+    seen = [await binary.zcard(lake_index_key())]
+    for _ in range(3):
+        await _evict_oldest(binary)
+        seen.append(await binary.zcard(lake_index_key()))
+
+    assert seen == [3, 2, 1, 0], f"the trim stalled on a member it could not remove: {seen}"
+
+
+async def test_a_member_that_cannot_round_trip_cannot_stall_the_trim_either(redis_pair) -> None:
+    """★ THE SAME PROPERTY, AGAINST THE MEMBER THAT ACTUALLY BREAKS IT. The test above seeds an
+    ASCII member, which decodes to itself — so `ZREM` matches it and the ordinary arm clears it.
+    That never exercises the `_as_text is None` arm at all.
+
+    A member with a NON-ASCII byte is the one that does. Decoded leniently it comes back as a
+    DIFFERENT string, `ZREM` matches nothing, the member survives, and the loop re-reads the same
+    oldest member forever — inside a detached task whose failures are swallowed. `_as_text`
+    therefore decodes strictly and returns `None`, which routes the member to the by-rank
+    fallback, and by-rank always advances because it names a POSITION rather than a value.
+
+    Seeded through the binary client so the bytes reach Redis unmangled."""
+    _text, binary = redis_pair
+    lake = _FakeLake()
+    half = LAKE_COPY_BUDGET_BYTES // 2 + 1
+    undecodable = b"\xff\xfe not ascii"
+    await binary.zadd(lake_index_key(), {undecodable: 1.0})
+    await binary.zadd(lake_index_key(), {f"{half}:{'a' * 64}": 2.0})
+    incoming = _selected(9, half)
+    lake.payloads[incoming.name] = b"x" * half
+
+    async with asyncio.timeout(10):
+        report = await transfer_window(_lake(lake), binary, _selection(incoming))
+
+    assert report.copied == 1
+    assert undecodable not in set(await binary.zrange(lake_index_key(), 0, -1))

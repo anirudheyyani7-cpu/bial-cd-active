@@ -36,7 +36,15 @@ export function countWords(value: string): number {
  *  `backend/src/db/models/project.py`. */
 export const MAX_PROJECT_NAME_WORDS = 8
 
-/** The delete-reason bounds. */
+/** The project description bounds (#191) — mirrors `MIN_PROJECT_DESCRIPTION_WORDS` /
+ *  `MAX_PROJECT_DESCRIPTION_WORDS` in `backend/src/db/models/project.py`. Unlike the title,
+ *  description has a MINIMUM: a one-line description embeds into a single vector for
+ *  semantic search (slice 3), so one too short to say anything embeds to nothing worth
+ *  matching. */
+export const MIN_PROJECT_DESCRIPTION_WORDS = 15
+export const MAX_PROJECT_DESCRIPTION_WORDS = 120
+
+/** The delete-reason bounds (#158 §13.2). */
 export const MIN_DELETE_REASON_WORDS = 5
 export const MAX_DELETE_REASON_WORDS = 50
 

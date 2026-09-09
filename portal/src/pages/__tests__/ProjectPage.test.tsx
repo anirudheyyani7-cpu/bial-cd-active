@@ -24,7 +24,6 @@ const h = vi.hoisted(() => ({
   authFetch: vi.fn(),
   getProject: vi.fn(),
   patchProject: vi.fn(),
-  generateDescription: vi.fn(),
   listProjectConversations: vi.fn(),
   // THE PROJECTS INDEX'S OWN READS. This is a two-page behaviour — a bounce OUT of this page and
   // a sentence ON that one — so the arrival cases below mount the REAL `ProjectsPage` behind the
@@ -53,7 +52,6 @@ vi.mock('../../utils/projectApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/projectApi')>()),
   getProject: h.getProject,
   patchProject: h.patchProject,
-  generateDescription: h.generateDescription,
   listProjects: h.listProjects,
   listProjectCounts: h.listProjectCounts,
 }))
@@ -291,7 +289,7 @@ describe('ProjectPage — the description rail (pop-up editor)', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('clicking Edit opens a pop-up exposing Save and Generate', async () => {
+  it('clicking Edit opens a pop-up exposing Save and Cancel', async () => {
     h.getProject.mockResolvedValue(makeProject())
     renderProjectPage()
 
@@ -301,7 +299,6 @@ describe('ProjectPage — the description rail (pop-up editor)', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('button', { name: /^save$/i })).toBeTruthy()
-    expect(within(dialog).getByRole('button', { name: /^generate$/i })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeTruthy()
   })
 })

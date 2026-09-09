@@ -65,6 +65,23 @@ class FoundryConfig(BaseModel):
     # (a defined, valid deployment choice).
     max_retries: NonNegativeInt = 2
 
+    # The embedding model's OWN deployment name on this same resource (#191 slice 3, hybrid
+    # search). NOT `deployment` above — that names the Claude deployment, and pointing the
+    # embedder at it returns `404 api_not_supported` (measured against the live resource). A
+    # separate field rather than a code constant because the name is chosen at Foundry-resource
+    # create time and production runs a different resource with its own name.
+    #
+    # NULLABLE, DEFAULTING TO NONE — not required, unlike `resource`/`deployment` above. `foundry`
+    # itself is `FoundryConfig | None` (`src/settings/api.py`), and dev/test drive the harness on
+    # `TestModel` with no live call at all, so a required field here would fail every existing
+    # environment at startup the moment this merged. `None` carries a defined meaning the code
+    # branches on: semantic search is off and the marketplace/duplicate-check fall back to
+    # keyword-only (R26's documented optional-knob exception, not a placeholder default).
+    #
+    # `resource` and `api_key` are reused AS-IS for the embedding client — no second key, no
+    # second endpoint, no new secret to rotate. Only this one new setting is needed.
+    embedding_deployment: str | None = None
+
     @model_validator(mode="after")
     def _api_key_required_in_key_mode(self) -> Self:
         # STATIC message only — never echo the secret (pydantic reflects validator messages into

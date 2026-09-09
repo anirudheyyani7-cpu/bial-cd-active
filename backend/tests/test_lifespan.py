@@ -259,3 +259,72 @@ async def test_startup_probe_is_skipped_when_redis_is_unconfigured(
         for entry in logs
         if entry["event"] in (REDIS_PROBE_OK_EVENT, REDIS_PROBE_FAILED_EVENT)
     ]
+
+
+# --- the embedding client's startup guard (#191 slice 3, R23) ------------------
+
+
+async def test_lifespan_boots_when_foundry_has_no_embedding_deployment() -> None:
+    # The suite's own baseline: settings.foundry is None. A no-op, not a skip that could
+    # hide a real check never running — pinned as "boots at all" rather than by mocking.
+    assert settings.foundry is None
+    app = create_app()
+    async with lifespan(app):
+        pass  # reached the yield — the guard did not block boot
+
+
+async def test_lifespan_passes_the_guard_for_a_correctly_wired_embedding_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.settings.foundry import FoundryConfig
+
+    monkeypatch.setattr(
+        settings,
+        "foundry",
+        FoundryConfig(
+            resource="myfoundry",
+            deployment="claude-opus",
+            api_key=SecretStr("k"),
+            embedding_deployment="text-embedding-3-small",
+        ),
+    )
+    app = create_app()
+    async with lifespan(app):
+        pass  # reached the yield — a correctly-wired Foundry resource never blocks boot
+
+
+async def test_lifespan_fails_boot_when_the_embedding_guard_rejects_the_wiring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R23's whole point: a mis-wired resource must fail the DEPLOY, not degrade silently
+    # into EMBEDDING_WRITE_FAILED_EVENT on the first citizen's save. Forcing the guard
+    # itself to raise (rather than trying to construct an actually-bad resource name,
+    # which the real Azure SDK might accept syntactically) proves the lifespan propagates
+    # it rather than swallowing it the way the Redis probe deliberately does.
+    from src.services.embeddings.client import EmbeddingFoundryOnlyError
+    from src.settings.foundry import FoundryConfig
+
+    monkeypatch.setattr(
+        settings,
+        "foundry",
+        FoundryConfig(
+            resource="myfoundry",
+            deployment="claude-opus",
+            api_key=SecretStr("k"),
+            embedding_deployment="text-embedding-3-small",
+        ),
+    )
+
+    def _boom(config: object) -> None:
+        raise EmbeddingFoundryOnlyError("bad wire")
+
+    # `main.py`'s `from src.services.embeddings import assert_embedding_guard_at_startup`
+    # is a LOCAL import inside `lifespan()`, re-executed on every call — it resolves the
+    # name from the PACKAGE's re-export namespace each time, so that is what must be
+    # patched (patching `.client.assert_embedding_guard_at_startup` would miss it: the
+    # package's `__init__.py` re-export already bound the original function object).
+    monkeypatch.setattr("src.services.embeddings.assert_embedding_guard_at_startup", _boom)
+    app = create_app()
+    with pytest.raises(EmbeddingFoundryOnlyError):
+        async with lifespan(app):
+            pass  # pragma: no cover - never reached; the guard raises before the yield

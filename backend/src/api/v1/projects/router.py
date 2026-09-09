@@ -18,14 +18,12 @@ from typing import Annotated
 import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, status
-from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.v1.attachments.router import storage_dependency
 from src.api.v1.build_sessions.deps import OptionalSandbox, SessionManagerDep
-from src.api.v1.conversations._shared import ModelDep
 from src.api.v1.live_build import refuse_while_build_session_live
 from src.api.v1.offset_pagination import PageQuery, clean_page
 from src.api.v1.pagination import (
@@ -44,12 +42,14 @@ from src.db.models.deleted_project import DeletedProject
 from src.db.models.project import Project
 from src.schemas import (
     AUTH_401,
-    DailyTokenLimitBody,
     ErrorEnvelope,
     OkResponse,
     ProjectCountsResponse,
     ProjectCreate,
     ProjectDeleteRequest,
+    ProjectDuplicateCheckRequest,
+    ProjectDuplicateCheckResponse,
+    ProjectDuplicateResolution,
     ProjectListResponse,
     ProjectPatch,
     ProjectResponse,
@@ -64,14 +64,15 @@ from src.services.build_sessions.manager import restorable_presence
 from src.services.deploy.liveness import live_app_ids
 from src.services.deploy.registry_delete import sweep_app_repositories
 from src.services.deploy.teardown import sweep_published_apps
+from src.services.embeddings import EmbedderDep, write_description_embedding
 from src.services.projects import (
     delete_project_cascade,
-    extract_source,
-    generate_project_description,
+    find_possible_duplicates,
+    log_matches_shown,
+    log_resolution,
     owned_project_or_404,
     resweep_submission_prefixes,
 )
-from src.services.ratelimit import InProcessRateLimiter, RateLimitExceededError
 from src.services.redis import get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 from src.services.sandbox import SandboxClient
@@ -82,7 +83,6 @@ from src.services.storage import (
     sweep_app_containers,
     sweep_blobs,
 )
-from src.services.usage.gate import DailyTokenLimitExceededError, enforce_daily_limit
 
 logger = structlog.get_logger()
 
@@ -164,24 +164,37 @@ async def _serving_now(db: DbSession, app_id: uuid.UUID | None) -> bool:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, responses=error_responses(AUTH_401))
-async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) -> ProjectResponse:
-    """Create a project owned by the caller, then provision its own database.
+async def create_project(
+    body: ProjectCreate, user: CurrentUser, db: DbSession, embedder: EmbedderDep
+) -> ProjectResponse:
+    """Create a project owned by the caller, then provision its own database (ADR-0028).
 
-    `name` is stripped/bounded and an empty/whitespace `description` is normalized to NULL at
-    the schema boundary. The database provision is best-effort: a substrate hiccup still
-    answers a normal 201, and the project is usable."""
-    # The app row is NOT minted here — it stays lazily created at first build, so a fresh
-    # project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
-    #
-    # The provision runs AFTER the commit and is BEST-EFFORT, both deliberately. After,
-    # because `ensure_project_database` commits its own claim and its own terminal marker —
-    # running it first would commit this request's half-built transaction. Best-effort,
-    # because a substrate hiccup must never strand or 500 a project the user already owns:
-    # the next build's lazy ensure (`provision_app_database`) re-runs the idempotent sequence.
+    `name` and `description` are both stripped/bounded at the schema boundary (KD-8);
+    `description` is REQUIRED and word-bounded as of #191 (`ProjectCreate`/`_clean_description`
+    in `src/schemas/projects.py`) — a blank one is refused here rather than normalized to NULL.
+
+    The DESCRIPTION EMBEDDING (#191 slice 3, R25) is written IN THIS COMMIT, not post-commit
+    like provisioning below — it is just another column on the row already being persisted,
+    not a second external claim with its own terminal marker. A description is always present
+    on create (it is required), so this always attempts to embed one; a failed embed call
+    never fails the create (R26 — `write_description_embedding` catches and logs its own
+    alarm, leaving the column absent, which the hybrid search query treats as keyword-only).
+
+    The provision runs AFTER the commit and is BEST-EFFORT, both deliberately.
+    After, because `ensure_project_database` commits its own claim and its own terminal
+    marker — running it first would commit this request's half-built transaction.
+    Best-effort, because a substrate hiccup must never strand or 500 a project the user
+    already owns: the response is a normal 201 and the next build's lazy ensure
+    (`provision_app_database`) re-runs the idempotent sequence.
+
+    The app row is NOT minted here — it stays lazily created at first build, so a fresh
+    project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
+    """
     project = Project(user_id=user.id, name=body.name, description=body.description)
     db.add(project)
     await db.flush()
     await db.refresh(project)  # load server defaults (id, timestamps) before projecting
+    await write_description_embedding(project, embedder)
     project_id = project.id  # a plain scalar for the post-commit work (no expired-attribute I/O)
     await db.commit()
     # A project one statement old owns no app, so nothing of its can be serving. Passed
@@ -209,6 +222,47 @@ async def _provision_database_or_shrug(db: DbSession, project_id: uuid.UUID) -> 
             error_type=type(exc).__name__,
             hint="the next build start re-runs the idempotent provision",
         )
+
+
+@router.post(":check-duplicates", responses=error_responses(AUTH_401))
+async def check_duplicate_projects(
+    body: ProjectDuplicateCheckRequest, user: CurrentUser, db: DbSession, embedder: EmbedderDep
+) -> ProjectDuplicateCheckResponse:
+    """Search the LIVE marketplace for apps that look like `description`, BEFORE a project
+    exists (#191 slice 4, R31). Called from the create form, not from `create_project` itself
+    — the citizen decides whether to open a match or create anyway (R35/R36), so this is a
+    separate round trip the form makes first, not a side effect of the create call.
+
+    `user` IS REQUIRED (every route here is caller-scoped, ADR-0004) even though the search
+    itself is not owner-filtered — R32 scopes it to the marketplace's live set, which is every
+    citizen's published work, not just the caller's own. What `user` buys here is simply that
+    an unauthenticated caller cannot probe the catalog through this endpoint either.
+
+    NEVER 500s on a search failure (R37) — `find_possible_duplicates` catches everything
+    internally and answers an empty result, so this handler has nothing extra to guard.
+    """
+    result = await find_possible_duplicates(db, body.description, embedder)
+    # R39's first event, fired on EVERY call including a zero-match one — see
+    # `log_matches_shown`'s docstring for why zero is itself worth counting.
+    log_matches_shown(project_id_hint=None, match_count=len(result.matches))
+    return ProjectDuplicateCheckResponse(matches=result.matches)
+
+
+@router.post(
+    ":duplicate-check-resolved", response_model=OkResponse, responses=error_responses(AUTH_401)
+)
+async def resolve_duplicate_check(
+    body: ProjectDuplicateResolution, user: CurrentUser
+) -> OkResponse:
+    """R39's second event: what the citizen did once the duplicate screen showed them
+    possible matches — opened one of them, or created anyway. `user` is required for the
+    same reason as `check_duplicate_projects` (every route here is caller-scoped) but is not
+    otherwise used: this writes nothing to the database, only a log line, mirroring
+    `observations/router.py::record_observation`'s "no `DbSession`" posture for the same
+    reason — a count must not disappear because a surrounding transaction did, and there is
+    no surrounding transaction here to begin with."""
+    log_resolution(resolution=body.resolution)
+    return OkResponse(ok=True)
 
 
 @router.get(
@@ -392,16 +446,27 @@ async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -
 @router.patch(
     "/{project_id}",
     responses=error_responses(
-        (400, ErrorEnvelope, "name cannot be cleared"),
+        (400, ErrorEnvelope, "name or description cannot be cleared"),
         AUTH_401,
         (404, ErrorEnvelope, "Project not found"),
     ),
 )
 async def patch_project(
-    project_id: uuid.UUID, body: ProjectPatch, user: CurrentUser, db: DbSession
+    project_id: uuid.UUID,
+    body: ProjectPatch,
+    user: CurrentUser,
+    db: DbSession,
+    embedder: EmbedderDep,
 ) -> ProjectResponse:
-    """Apply only the fields present in the body (absent ≠ null). `description` may be
-    cleared to NULL; `name` (NOT NULL) may not."""
+    """Apply only the fields present in the body (absent ≠ null). Neither `name` nor
+    `description` may be cleared this way as of #191 — the rule is enforced here at the
+    write boundary, same as `name`'s; the `description` COLUMN stays nullable (R13), so a
+    project that already had no description before #191 is unaffected.
+
+    The DESCRIPTION EMBEDDING is refreshed ONLY WHEN THE DESCRIPTION ACTUALLY CHANGES (R25)
+    — not on every patch that happens to include the field with its own current value, and
+    not on a patch that only touches `name`. A failed embed call never fails the patch
+    (R26); see `create_project` for the fuller reasoning, identical here."""
     project = await owned_project_or_404(db, user.id, project_id)
     fields = body.model_fields_set
     if "name" in fields:
@@ -409,7 +474,12 @@ async def patch_project(
             raise AppApiError(status.HTTP_400_BAD_REQUEST, "name cannot be cleared.")
         project.name = body.name
     if "description" in fields:
+        if body.description is None:
+            raise AppApiError(status.HTTP_400_BAD_REQUEST, "description cannot be cleared.")
+        description_changed = project.description != body.description
         project.description = body.description
+        if description_changed:
+            await write_description_embedding(project, embedder)
     try:
         await db.commit()
     except StaleDataError:
@@ -953,124 +1023,3 @@ async def delete_project(
         survivors.append(("sandbox_container", standing))
     await record_what_survived(db, actor_id=user.id, project_id=project_id, survivors=survivors)
     return OkResponse(ok=True)
-
-
-# THE DESCRIPTION GENERATOR'S ONLY PER-USER SPEND BOUND, and the reason it needs one:
-# what this route spends is deliberately recorded under `review` and never counted back
-# into the citizen's daily budget — the platform's reasoning about their code is
-# not theirs to pay for. That exemption travelled here from the classification review;
-# the BOUND that made it safe there did not. Without one, `enforce_daily_limit` admits
-# call N for every N, and each call ships up to 600,000 characters of app source to the
-# premium deployment — from a citizen who may have already exhausted their build budget.
-#
-# Six in a quarter of an hour is far more than revising a description ever needs (the
-# revise loop is a person reading a paragraph and pressing again), and the refusal costs
-# nothing that cannot be retried: the description that exists stays, and the button works
-# again shortly.
-DESCRIPTION_RATE_LIMIT = 6
-DESCRIPTION_RATE_WINDOW_SECONDS = 15 * 60
-
-
-# THE BUCKET IS CHARGED AT THE POINT OF SPEND, not at the door, which is why this is a plain
-# limiter object rather than the `rate_limit(...)` dependency its siblings use. A dependency
-# runs before the route body, so it would count every refusal too — and this route's commonest
-# refusal is a 409 for a project with nothing built yet, which spends nothing at all. Six of
-# those and a citizen who then builds their app finds the button locked for a quarter of an
-# hour over requests that never reached the model. The route hits this AFTER the 409/503/429
-# guards, so what is bounded is generations, which is what the bound is for.
-_description_limiter = InProcessRateLimiter(
-    limit=DESCRIPTION_RATE_LIMIT, window_seconds=DESCRIPTION_RATE_WINDOW_SECONDS
-)
-
-_DESCRIPTION_RATE_MESSAGE = (
-    "Too many description generations in a short time. Please wait a few minutes and try again."
-)
-
-
-@router.post(
-    "/{project_id}/description:generate",
-    response_model=ProjectResponse,
-    responses={
-        # TWO DIFFERENT 429 BODIES REACH THIS ROUTE and `error_responses` refuses a
-        # duplicated code, so this one is written out: the daily gate answers its 5-key
-        # body, the limiter above answers the plain `{"error": {"message"}}` envelope.
-        # Documented as the union rather than as whichever one was written first — a
-        # client that parses the schema would break on the other.
-        429: {
-            "model": DailyTokenLimitBody | ErrorEnvelope,
-            "description": (
-                "Daily token limit exceeded (5-key body), or too many generations "
-                "started in a short time (error envelope)"
-            ),
-        },
-        **error_responses(
-            AUTH_401,
-            (404, ErrorEnvelope, "Project not found"),
-            (409, ErrorEnvelope, "Nothing to generate from yet (no app / no code)"),
-            (500, ErrorEnvelope, "The description generation failed"),
-            (503, ErrorEnvelope, "Claude client not configured"),
-        ),
-    },
-)
-async def generate_description(
-    project_id: uuid.UUID, user: CurrentUser, db: DbSession, model: ModelDep
-) -> ProjectResponse | JSONResponse:
-    """Generate (or revise) the project description from its app's code. Reads the
-    project's ONE app's `current_code`; a fresh project (no app / NULL code) is a
-    409 "nothing to generate from yet". A citizen already at their daily limit is refused
-    here, but what this generates does not itself come out of that limit; if a
-    description already exists it is fed in so generation revises it. The result is
-    length-capped and stored on the project."""
-    project = await owned_project_or_404(db, user.id, project_id)
-    if model is None:
-        raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
-
-    app = await db.scalar(
-        sa.select(AppRegistry).where(
-            AppRegistry.project_id == project.id, AppRegistry.user_id == user.id
-        )
-    )
-    source = extract_source(app.current_code) if app is not None else ""
-    if app is None or not source:
-        raise AppApiError(
-            status.HTTP_409_CONFLICT, "Nothing to generate from yet — build the app first."
-        )
-
-    # GATED LIKE A NORMAL TURN, BILLED UNLIKE ONE. The check runs BEFORE the model call and
-    # answers with the 5-key 429 body, so someone out of budget is told the same thing here as
-    # anywhere else. What this turn then spends is recorded under `review` and never counted
-    # back into that budget (see `services/projects/describe.py`) — the platform's reasoning
-    # about the citizen's code is not the citizen's to pay for.
-    try:
-        await enforce_daily_limit(db, user.id)
-    except DailyTokenLimitExceededError as exc:
-        return exc.as_response()
-
-    # LAST GUARD BEFORE THE MODEL, deliberately. Everything above can refuse without spending
-    # anything — no app, no code, no client, or a citizen already out of daily budget — and a
-    # bound charged for those would take the button away over requests that cost nothing. From
-    # here on, a request that passes is a request that generates. Per-user bucket; the key is
-    # built from the validated session, never from anything the caller sends.
-    if not _description_limiter.hit(f"project-description:{user.id}"):
-        raise RateLimitExceededError(_DESCRIPTION_RATE_MESSAGE)
-
-    try:
-        project.description = await generate_project_description(
-            db, model, user.id, source=source, current_description=project.description
-        )
-    except Exception as exc:
-        # A Foundry/model failure is this route's own explicit 500 envelope, never the
-        # generic `{detail}` handler.
-        logger.exception("project_description_generation_failed")
-        raise AppApiError(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, "The description generation failed."
-        ) from exc
-    try:
-        await db.commit()
-    except StaleDataError:
-        # The project was deleted mid-generate. The usage row rides this commit, so the
-        # 404 rolls the metering back too — an accepted, bounded loss on this rare race
-        # (not worth rewiring the usage write into its own transaction).
-        raise AppApiError(status.HTTP_404_NOT_FOUND, "Project not found.") from None
-    await db.refresh(project)
-    return _to_response(project, app.id, app.status, is_serving=await _serving_now(db, app.id))

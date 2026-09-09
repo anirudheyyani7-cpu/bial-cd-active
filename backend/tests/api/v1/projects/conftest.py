@@ -1,8 +1,5 @@
 """Project-test fixtures: swap the object store for an in-memory fake (cascade-delete blob
-sweep), inject a chat model, and bind the billing drain to the test session, so the
-description/code-seed tests — which now reach the model through
-`POST /{project_id}/description:generate`, not the retired `/v1/claude` relay — roll back
-cleanly."""
+sweep) and bind the billing drain to the test session."""
 
 from __future__ import annotations
 
@@ -21,6 +18,20 @@ from tests.fakes import FakeStorage
 # The validation cases deliberately do NOT use this: `test_delete_remark.py` builds its own
 # bodies, because a constant that always satisfies the rules cannot test them.
 DELETE_BODY = {"remark": "No longer needed by the ground operations team"}
+
+# A DESCRIPTION THAT CLEARS THE BAR, in one place, for the same reason DELETE_BODY is: #191
+# made description required and 15-120 words, and most tests in this directory that create a
+# project via the live endpoint don't care what the description says — they care about
+# something else and just need a valid one to get past create. The issue's own worked example
+# (#191 R16) doubles as this constant, so it is also exercised as ordinary product copy rather
+# than test-only text. 26 words — comfortably inside the bound.
+#
+# The validation cases deliberately do NOT use this: `test_project_description_words.py` builds
+# its own bodies, because a constant that always satisfies the rules cannot test them.
+_VALID_DESCRIPTION = (
+    "Ground staff log VIP movement requests for each terminal. A duty supervisor approves or "
+    "rejects them, and the day's approved movements appear on a shared dashboard."
+)
 
 
 @pytest.fixture
@@ -44,16 +55,3 @@ def _override_storage(app, fake_storage) -> None:
     from src.api.v1.attachments.router import storage_dependency
 
     app.dependency_overrides[storage_dependency] = lambda: fake_storage
-
-
-@pytest.fixture
-def set_chat_model(app):
-    """Inject a Pydantic AI model (a TestModel/FunctionModel) for description generation —
-    the describe endpoint resolves the same `chat_model` dependency as the chat relay."""
-
-    def _set(model) -> None:
-        from src.api.v1.conversations._shared import chat_model
-
-        app.dependency_overrides[chat_model] = lambda: model
-
-    return _set

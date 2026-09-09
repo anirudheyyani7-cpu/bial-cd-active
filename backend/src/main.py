@@ -3,8 +3,10 @@
 Configures structlog at import, then `create_app()` wires the middleware
 (security headers + credentialed CORS), the boundary exception handlers, and the
 v1 router. The lifespan opens AND PROBES the Redis coordination pool when configured
-(the sandbox lock/heartbeat/registry) and, on shutdown, closes the Redis pool +
-the sandbox client + the object-store client(s) so no aiohttp session / connection leaks.
+(the sandbox lock/heartbeat/registry), runs the embedding client's Foundry-only guard once
+(#191 slice 3, R23 — a mis-wired resource fails the deploy rather than a citizen's first
+save), and, on shutdown, closes the Redis pool + the sandbox client + the object-store
+client(s) so no aiohttp session / connection pool leaks.
 
 Nothing recurring runs here: a sweep here would run in every API replica beside the copy
 the worker already schedules; the one boot-path item, `_reconcile_interrupted_deploys`,
@@ -123,6 +125,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # client is provisioned on demand by SESSION-API, not opened here.
     if settings.redis is not None:
         await _probe_redis()
+    # The embedding client's Foundry-only guard (#191 slice 3, R23), run once here rather
+    # than left to the first request that needs it — a mis-wired FOUNDRY__RESOURCE /
+    # FOUNDRY__EMBEDDING_DEPLOYMENT fails the deploy instead of degrading silently into
+    # EMBEDDING_WRITE_FAILED_EVENT on the first citizen's save. A no-op when Foundry or the
+    # embedding deployment isn't configured (dev/test, or semantic search deliberately off).
+    from src.services.embeddings import assert_embedding_guard_at_startup
+
+    assert_embedding_guard_at_startup(settings.foundry)
     # Settle any deploy the LAST process died in the middle of, before serving. A pipeline
     # runs for minutes and every platform deploy kills it, so a deploy straddling a restart
     # is the expected case during a rollout — not an edge case. Startup alone is not enough

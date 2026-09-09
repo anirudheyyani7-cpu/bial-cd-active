@@ -199,7 +199,7 @@ class Deployment(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base):
     # while a synthesised all-False set would read as "declared to handle nothing", which
     # is a claim nobody made.
     #
-    # JSONB rather than six columns for the same reason `app_registry.current_code` is
+    # JSONB rather than six columns for the same reason `app_registry.declaration` is
     # JSONB: the questionnaire is expected to be reworded and reweighted, and a shape that
     # needs a migration per question would make that a schema conversation every time. The
     # keys are pinned to `CLASSIFICATION_KEYS`, so this is a stable shape, not a free-form

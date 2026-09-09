@@ -12,6 +12,7 @@
  */
 import { ApiError, isRecord, readApiError } from './apiError'
 import { authFetch } from './api'
+import { toEntry, type MarketplaceEntry } from './marketplaceApi'
 
 /** The lifecycle of a project's one app, as surfaced by `AppRegistryPanel` on the admin
  *  side. The citizen side no longer reads it: publishing is one chip reading one
@@ -238,6 +239,56 @@ export async function createProject(args: CreateProjectArgs, deps: AuthFetchDeps
   return toProject(await res.json())
 }
 
+/** What the citizen did once shown possible duplicates (#191 R39) — a closed set the
+ *  server also validates (`ProjectDuplicateResolution`), so a typo here 422s rather than
+ *  silently logging an event nothing downstream recognises. */
+export type DuplicateCheckResolution = 'opened_existing' | 'created_anyway'
+
+/**
+ * Search the live marketplace for apps that look like `description`, BEFORE a project is
+ * created (#191 R31) — called from `ProjectCreateModal`'s submit path, ahead of
+ * `createProject` itself. At most three matches, already confidence-gated server-side
+ * (R34); an empty array is the ordinary, day-one case, not a signal anything went wrong.
+ */
+export async function checkDuplicateProjects(
+  description: string,
+  deps: AuthFetchDeps = {},
+): Promise<MarketplaceEntry[]> {
+  const res = await authFetch(
+    '/api/projects:check-duplicates',
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ description }) },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to check for duplicate apps')
+  const body: unknown = await res.json()
+  const doc = isRecord(body) ? body : {}
+  // Same drop-unparseable-rows tolerance as `marketplaceApi.ts::toPage` — reusing its own
+  // `toEntry` rather than a second, possibly-drifting parser for the identical wire shape.
+  return Array.isArray(doc.matches)
+    ? doc.matches.flatMap((row) => {
+        const entry = toEntry(row)
+        return entry === null ? [] : [entry]
+      })
+    : []
+}
+
+/**
+ * Record what the citizen did once shown possible duplicates (#191 R39). The caller treats
+ * this as fire-and-forget: a failure here is a lost analytics event, never a reason to
+ * interrupt someone who is opening an existing app or creating their own anyway.
+ */
+export async function reportDuplicateCheckResolution(
+  resolution: DuplicateCheckResolution,
+  deps: AuthFetchDeps = {},
+): Promise<void> {
+  const res = await authFetch(
+    '/api/projects:duplicate-check-resolved',
+    { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ resolution }) },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'Failed to record duplicate-check resolution')
+}
+
 /**
  * Patch a project. Serializes ONLY the keys the caller actually passed (via `in`,
  * not truthiness) so `description: null` (clear) and `description: ''` (server maps
@@ -277,19 +328,4 @@ export async function deleteProject(
   if (!res.ok) throw await readApiError(res, 'Failed to delete project')
   const data: unknown = await res.json().catch(() => null)
   return { ok: isRecord(data) && data.ok === true }
-}
-
-/**
- * Regenerate the project's stored description from its app code (empty body).
- * Distinct failures the caller branches on: 409 (no code yet), 429 (daily limit,
- * `code === 'daily_token_limit_exceeded'`), 500 (generation failed), 503 (not configured).
- */
-export async function generateDescription(id: string, deps: AuthFetchDeps = {}): Promise<Project> {
-  const res = await authFetch(
-    `/api/projects/${encodeURIComponent(id)}/description:generate`,
-    { method: 'POST' },
-    deps,
-  )
-  if (!res.ok) throw await readApiError(res, 'Failed to generate description')
-  return toProject(await res.json())
 }

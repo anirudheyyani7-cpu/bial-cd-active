@@ -1,15 +1,19 @@
 """Request/response schemas for the projects domain (post schema-separation refactor).
 
 All models subclass the shared `CamelModel` (snake_case in Python, camelCase on the wire),
-live here in `src/schemas/`, and are re-exported from `src/schemas/__init__.py`. The
-name/description write rules (strip, empty→NULL, length cap) are enforced HERE at the
-Pydantic boundary, not the DB column: a `ValueError` in a validator becomes the API's 422.
+live here in `src/schemas/`, and are re-exported from `src/schemas/__init__.py`. The name and
+description write rules (strip, required, length/word cap — KD-8, #191) are enforced HERE at
+the Pydantic boundary, not the DB column: a `ValueError` in a validator becomes the API's 422.
+Neither field may be blanked to empty/whitespace any more — that was description's old
+behaviour (normalize to NULL) before #191 made it required; the column itself stays nullable
+regardless, so a project written before #191 with no description is untouched.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import field_validator
 
@@ -21,10 +25,13 @@ from src.db.models.deleted_project import (
 )
 from src.db.models.project import (
     MAX_PROJECT_DESCRIPTION,
+    MAX_PROJECT_DESCRIPTION_WORDS,
     MAX_PROJECT_NAME,
     MAX_PROJECT_NAME_WORDS,
+    MIN_PROJECT_DESCRIPTION_WORDS,
 )
 from src.schemas.base import CamelModel
+from src.schemas.marketplace import MarketplaceEntry
 
 
 def _clean_name(value: str) -> str:
@@ -48,30 +55,84 @@ def _clean_name(value: str) -> str:
     return value
 
 
-def _clean_description(value: str | None) -> str | None:
-    # Normalize empty/whitespace to NULL so "present" and "non-null" have no
-    # undefined empty-string third state; cap the stored value's length.
-    if value is None:
-        return None
+def _clean_description(value: str) -> str:
+    """The ONE description rule (#191), shared by `ProjectCreate` and `ProjectPatch` the same
+    way `_clean_name` is — one change covers create and edit both.
+
+    A description is required and WORD-bounded — 15 to 120 (#191 R12) — following
+    `clean_deletion_reason`'s shape (char-cap backstop first, then the word-count checks
+    each with their own message), NOT `_clean_name`'s (which only ever checks a maximum).
+    The minimum exists because a one-line description embeds into a single vector for
+    semantic search (slice 3) and a description too short to say anything embeds to nothing
+    worth matching; the maximum exists because a long multi-topic description embeds to a
+    vector that matches everything weakly, and `ts_rank_cd` has no document-length
+    normalisation to protect a precise description from being out-ranked by a rambling one.
+
+    Blank-to-NULL normalization is GONE (KD-8's old behaviour): a description can no longer
+    be written as empty, because it is no longer optional. The column itself stays nullable
+    (R13) — a project created before #191 with no description is untouched and keeps
+    working (R14); this validator only governs what a NEW write may contain.
+    """
     value = value.strip()
     if not value:
-        return None
+        raise ValueError("What should this app do?")
+    # The character bound stays: the column has no width limit of its own, but the field is
+    # injected into every project chat turn (KD-8), so this remains the paste backstop. The
+    # WORD rule is the one a person is told about; this one they should never meet.
     if len(value) > MAX_PROJECT_DESCRIPTION:
-        raise ValueError(f"description must be at most {MAX_PROJECT_DESCRIPTION} characters")
+        raise ValueError(
+            f"That description is too long. Keep it under {MAX_PROJECT_DESCRIPTION} characters."
+        )
+    words = count_words(value)
+    if words < MIN_PROJECT_DESCRIPTION_WORDS:
+        raise ValueError(f"Say a bit more — at least {MIN_PROJECT_DESCRIPTION_WORDS} words.")
+    if words > MAX_PROJECT_DESCRIPTION_WORDS:
+        raise ValueError(f"Keep it under {MAX_PROJECT_DESCRIPTION_WORDS} words.")
     return value
 
 
 class ProjectCreate(CamelModel):
     name: str
-    description: str | None = None
+    description: str
 
     _v_name = field_validator("name")(_clean_name)
     _v_description = field_validator("description")(_clean_description)
 
 
+class ProjectDuplicateCheckRequest(CamelModel):
+    """The body `POST /v1/projects:check-duplicates` takes (#191 slice 4, R31) — searched
+    against the live marketplace BEFORE a project exists, so there is no project id to hang
+    this off yet. Validated by the SAME rule `ProjectCreate.description` uses: the create
+    form only reaches this check after its own description already clears the word bound,
+    so a request that fails validation here is not a citizen typing, it is a caller
+    bypassing the form."""
+
+    description: str
+
+    _v_description = field_validator("description")(_clean_description)
+
+
+class ProjectDuplicateCheckResponse(CamelModel):
+    """At most `services.projects.duplicates.MAX_MATCHES` entries (R34's confidence bar
+    already applied), each the SAME four-field shape the marketplace itself shows (R33) —
+    reusing `MarketplaceEntry` rather than a parallel type keeps the exposure boundary that
+    schema documents in one place."""
+
+    matches: list[MarketplaceEntry]
+
+
+class ProjectDuplicateResolution(CamelModel):
+    """The body `POST /v1/projects:duplicate-check-resolved` takes (#191 R39) — what the
+    citizen did once shown possible duplicates. A closed set: FastAPI 422s a typo instead of
+    silently logging an event nothing downstream recognises."""
+
+    resolution: Literal["opened_existing", "created_anyway"]
+
+
 class ProjectPatch(CamelModel):
     """Partial update — apply only fields present in `model_fields_set` (absent ≠ null).
-    `description` may be cleared to NULL; `name` (NOT NULL) may not (enforced in the route)."""
+    Neither `name` nor `description` may be cleared to NULL (enforced in the route) —
+    #191 widened the rename path's existing rule to cover description too."""
 
     name: str | None = None
     description: str | None = None
@@ -82,7 +143,12 @@ class ProjectPatch(CamelModel):
         # A provided name is cleaned; an explicit null is left for the route to reject.
         return None if value is None else _clean_name(value)
 
-    _v_description = field_validator("description")(_clean_description)
+    @field_validator("description")
+    @classmethod
+    def _v_description(cls, value: str | None) -> str | None:
+        # Same shape as `_v_name` above: a provided description is cleaned; an explicit
+        # null is left for the route to reject (R11 — description cannot be cleared either).
+        return None if value is None else _clean_description(value)
 
 
 def clean_deletion_reason(value: str, *, subject: str) -> str:

@@ -522,8 +522,11 @@ async def test_search_ranks_the_best_description_match_first(app, client, db_ses
     ordering fails here instead of passing by luck (seeding the only match last, as an
     earlier version did, passes under both orderings and pins nothing).
 
-    Mutation receipt: replace `order_by(rank.desc(), Deployment.id.desc())` with
-    `order_by(Deployment.id.desc())` and this goes red on the first item."""
+    Mutation receipt (#191 slice 3): replace `_hybrid_catalog`'s
+    `order_by(fused.c.rrf_score.desc(), deployment.id.desc())` with
+    `order_by(deployment.id.desc())` and this goes red on the first item. The RRF score is
+    a monotonic transform of `ts_rank_cd`'s own rank with no vector arm configured in this
+    test environment, so a stronger keyword match still wins — same guarantee, new shape."""
     headers = await _signed_in(db_session, "viewer@rvaiglobal.com")
     await _published_app(
         db_session,
@@ -618,8 +621,9 @@ async def test_the_total_counts_the_filter_not_the_catalog(app, client, db_sessi
     """`total` must describe the CURRENT filter. A total that ignored `q` would render page
     numbers the user can click and find empty, and only at a page boundary.
 
-    Mutation receipt: build the COUNT off `_live_catalog(None)` instead of
-    `_live_catalog(search)` and this goes red — total 3, totalPages 2, for one match."""
+    Mutation receipt (#191 slice 3): build the COUNT off `_live_catalog()`'s unfiltered
+    membership instead of the fused search pool `_hybrid_catalog` produces, and this goes
+    red — total 3, totalPages 2, for one match."""
     headers = await _signed_in(db_session, "viewer@rvaiglobal.com")
     await _published_app(
         db_session, owner_email="a@rvaiglobal.com", name="Belt", description="baggage belt."
@@ -786,15 +790,24 @@ async def test_an_over_long_q_is_a_422(app, client, db_session) -> None:
 
 
 async def test_the_success_collapse_predicate_renders_a_literal(app, client, db_session) -> None:
-    """The `status` predicate must compile to `= 'succeeded'`, never a bound parameter — a
-    performance regression that returns the RIGHT ANSWER, so no functional assertion sees it.
-    `status == SUCCEEDED` renders `status = $1`, and from the 6th execution on a pooled
-    connection Postgres switches to a generic plan, which cannot prove `status = $1` implies
-    `ix_deployments_success_collapse`'s `status = 'succeeded'` predicate — silently dropping
-    the index the 0034 migration exists to provide. Measured at 5.2k apps / 52k rows: 13-15ms
-    for executions 1-5, then 27-30ms. Asserting on the COMPILED SQL rather than on a plan keeps
-    this a unit test: the flip needs a seeded table and six executions on one connection."""
-    query, _ = _live_catalog(search=None)
+    """The `status` predicate must compile to `= 'succeeded'`, never to a bound parameter.
+
+    THE BUG THIS PINS is a performance regression that returns the RIGHT ANSWER, which is why
+    it needs a test at all — no functional assertion anywhere can see it, and a single EXPLAIN
+    looks perfect because the first five executions get a custom plan.
+
+    `Deployment.status == DeploymentStatus.SUCCEEDED` renders `status = $1`. asyncpg prepares
+    server-side and the pool is long-lived, so from the 6th execution on a connection Postgres
+    switches to a generic plan, which cannot prove `status = $1` implies
+    `ix_deployments_success_collapse`'s `status = 'succeeded'` predicate — and silently stops
+    using the index the 0034 migration exists to provide. Measured at 5.2k apps / 52k rows:
+    13-15ms for executions 1-5, then 27-30ms (#147 round 3).
+
+    Asserting on the COMPILED SQL rather than on a plan keeps this a unit test: reproducing the
+    plan flip needs a seeded table and either `plan_cache_mode` forced or six executions on one
+    connection, none of which belongs in the suite.
+    """
+    query, _ = _live_catalog()
     # `render_postcompile=True` is the whole point: a `literal_execute` bindparam is expanded
     # at the POSTCOMPILE stage, which is the string the driver actually prepares. Compiling
     # without it shows the pre-expansion placeholder and would make this test pass either way.
@@ -854,7 +867,7 @@ async def test_the_catalog_lists_exactly_the_apps_liveness_calls_live(db_session
     )
     await db_session.flush()
 
-    catalog, deployment = _live_catalog(None)
+    catalog, deployment = _live_catalog()
     in_catalog = {
         row.app_id
         for row in (await db_session.execute(catalog.with_only_columns(deployment.app_id))).all()

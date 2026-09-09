@@ -1,8 +1,10 @@
 """Projects CRUD + rollback-safe cascade delete.
 
-Covers create/list/get/patch/delete owner-scoping, description normalization and length
-cap, paging, and the cascade: children swept through the blob-aware core, blobs deleted
-only post-commit.
+Covers create/list/get/patch/delete owner-scoping, KD-8/#191 description requirement +
+length cap, KD-1 keyset stability under concurrent insert (AE3), the R7 page cap, and the
+KD-3 cascade: children swept through the blob-aware core, blobs deleted only post-commit.
+The description's WORD bound gets its own boundary-pinning file,
+`test_project_description_words.py`, mirroring `test_project_name_words.py`.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from src.services.build_sessions.appdata import resolve_app_for_project
 from src.services.extract.office import PPTX_MEDIA_TYPE
 from src.services.projects import delete_project_cascade
 from src.services.storage import AppContainerStore, recovery_key, snapshot_key
-from tests.api.v1.projects.conftest import DELETE_BODY
+from tests.api.v1.projects.conftest import _VALID_DESCRIPTION, DELETE_BODY
 from tests.factories import (
     AppRegistryFactory,
     ConversationFactory,
@@ -78,21 +80,39 @@ async def _auth(db_session):
 async def test_create_owned_and_listed_only_for_owner(client, db_session) -> None:
     headers, user = await _auth(db_session)
     resp = await client.post(
-        "/v1/projects", headers=headers, json={"name": "VIP Movement", "description": "  "}
+        "/v1/projects",
+        headers=headers,
+        json={"name": "VIP Movement", "description": _VALID_DESCRIPTION},
     )
     assert resp.status_code == 201
     body = resp.json()
     assert body["name"] == "VIP Movement"
-    assert body["description"] is None
+    assert body["description"] == _VALID_DESCRIPTION
     assert "createdAt" in body and "updatedAt" in body
 
     row = await db_session.get(Project, uuid.UUID(body["id"]))
     assert row is not None and row.user_id == user.id
-    assert row.description is None
+    assert row.description == _VALID_DESCRIPTION
 
     other_headers, _ = await _auth(db_session)
     other_list = await client.get("/v1/projects", headers=other_headers)
     assert other_list.json()["items"] == []
+
+
+async def test_create_blank_description_422(client, db_session) -> None:
+    # #191: description is now required — whitespace-only no longer normalizes to NULL,
+    # it is refused, the same as a missing one would be.
+    headers, _ = await _auth(db_session)
+    resp = await client.post(
+        "/v1/projects", headers=headers, json={"name": "VIP Movement", "description": "  "}
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_missing_description_422(client, db_session) -> None:
+    headers, _ = await _auth(db_session)
+    resp = await client.post("/v1/projects", headers=headers, json={"name": "VIP Movement"})
+    assert resp.status_code == 422
 
 
 async def test_create_over_length_description_422(client, db_session) -> None:
@@ -105,19 +125,21 @@ async def test_create_over_length_description_422(client, db_session) -> None:
 
 async def test_create_blank_name_422(client, db_session) -> None:
     headers, _ = await _auth(db_session)
-    resp = await client.post("/v1/projects", headers=headers, json={"name": "   "})
+    resp = await client.post(
+        "/v1/projects", headers=headers, json={"name": "   ", "description": _VALID_DESCRIPTION}
+    )
     assert resp.status_code == 422
 
 
 async def test_create_requires_auth_401(client) -> None:
-    resp = await client.post("/v1/projects", json={"name": "X"})
+    resp = await client.post("/v1/projects", json={"name": "X", "description": _VALID_DESCRIPTION})
     assert resp.status_code == 401
 
 
 # --- patch --------------------------------------------------------------------
 
 
-async def test_patch_updates_name_and_clears_description(client, db_session) -> None:
+async def test_patch_updates_name_and_description_together(client, db_session) -> None:
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id, description="original")
     await db_session.commit()
@@ -125,12 +147,56 @@ async def test_patch_updates_name_and_clears_description(client, db_session) -> 
     resp = await client.patch(
         f"/v1/projects/{project.id}",
         headers=headers,
-        json={"name": "Renamed", "description": None},
+        json={"name": "Renamed", "description": _VALID_DESCRIPTION},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["name"] == "Renamed"
-    assert body["description"] is None
+    assert body["description"] == _VALID_DESCRIPTION
+
+
+async def test_patch_description_cannot_be_cleared_400(client, db_session) -> None:
+    # #191 widened the rename path's existing "cannot be cleared" rule (R11) to cover
+    # description too — mirrors test_patch_name_cannot_be_cleared_400 below exactly.
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id, description="original")
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"/v1/projects/{project.id}", headers=headers, json={"description": None}
+    )
+    assert resp.status_code == 400
+
+    # ...and the stored description is untouched by the refusal.
+    unchanged = await db_session.get(Project, project.id)
+    assert unchanged is not None and unchanged.description == "original"
+
+
+async def test_patch_blank_description_422(client, db_session) -> None:
+    # Whitespace-only is a WRITE, not a clear-to-null request — it goes through the same
+    # required/word-bounded validator a create would, and fails it the same way.
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id, description="original")
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"/v1/projects/{project.id}", headers=headers, json={"description": "   "}
+    )
+    assert resp.status_code == 422
+
+
+async def test_patch_a_project_with_no_prior_description_can_add_one(client, db_session) -> None:
+    # R14: a project that predates #191 (or was never given one) keeps working untouched —
+    # editing it is exactly how it stops being absent from search.
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id, description=None)
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"/v1/projects/{project.id}", headers=headers, json={"description": _VALID_DESCRIPTION}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == _VALID_DESCRIPTION
 
 
 async def test_patch_over_length_description_422(client, db_session) -> None:
@@ -288,7 +354,13 @@ async def test_q_filters_case_insensitive(client, db_session) -> None:
 
 async def test_app_discovery_null_for_fresh_project_then_populated(client, db_session) -> None:
     headers, user = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Disco"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Disco", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
     assert created["appId"] is None and created["appStatus"] is None
 
     fetched = (await client.get(f"/v1/projects/{created['id']}", headers=headers)).json()

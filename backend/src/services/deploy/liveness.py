@@ -27,6 +27,7 @@ import uuid
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.orm import aliased
 
 from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.deployment import Deployment, DeploymentStatus
@@ -107,3 +108,29 @@ def live_app_ids(*, owner_user_id: uuid.UUID | None = None) -> sa.Select[Any]:
             AppRegistry.rejection_standing.is_(False),
         )
     )
+
+
+def last_success_deployment() -> type[Deployment]:
+    """The newest-succeeded-with-a-url deployment row per app, ORM-aliased — the row
+    PROJECTION a catalog query needs (a deployment's `url`, and via it the builder), not a
+    second membership rule (membership is `live_app_ids()` above, joined separately by each
+    caller). Shares the SAME `ix_deployments_success_collapse` partial index `live_app_ids`
+    does — same predicate, same reason it must render as a literal (see there).
+
+    Lives here, not in `marketplace/router.py` where it was first written (#145) — moved
+    here (#191 slice 4) so the duplicate check can reuse the identical collapse instead of a
+    second copy of it; `services/projects/duplicates.py` and `api/v1/marketplace/router.py`
+    both import it from this one place now.
+    """
+    last_success = (
+        sa.select(Deployment)
+        .where(
+            Deployment.status
+            == sa.bindparam("succeeded", DeploymentStatus.SUCCEEDED, literal_execute=True),
+            Deployment.url.is_not(None),
+        )
+        .distinct(Deployment.app_id)
+        .order_by(Deployment.app_id, Deployment.id.desc())
+        .subquery()
+    )
+    return aliased(Deployment, last_success, name="last_success")

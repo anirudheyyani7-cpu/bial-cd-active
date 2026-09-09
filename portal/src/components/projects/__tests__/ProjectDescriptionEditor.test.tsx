@@ -1,28 +1,31 @@
 /**
- * ProjectDescriptionEditor: the two load-bearing behaviours are
- *   1. "Generate saves first" — a dirty field is PATCHed BEFORE generate, so the
- *      model revises what the user sees rather than a stale stored copy; and
- *   2. every failure leaves the field untouched (never optimistically cleared).
- * Plus the length gate, the whitespace→null clear, and the disable-during-billing lock.
+ * ProjectDescriptionEditor (U5): the load-bearing behaviour is that every failure
+ * leaves the field untouched (never optimistically cleared). Plus the required/word-bound
+ * gate (#191 — 15-120 words, no clear-to-null any more), the character backstop, and the
+ * disable-during-save lock.
  *
- * projectApi is mocked at the module boundary so we control patch/generate timing
- * and assert exact call order; ApiError is the real class so `instanceof` narrows.
+ * projectApi is mocked at the module boundary so we control patch timing; ApiError
+ * is the real class so `instanceof` narrows.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import ProjectDescriptionEditor from '../ProjectDescriptionEditor'
 import { ApiError } from '../../../utils/apiError'
 import type { Project } from '../../../utils/projectApi'
+import { MIN_PROJECT_DESCRIPTION_WORDS, MAX_PROJECT_DESCRIPTION_WORDS } from '../../../utils/words'
 
 const h = vi.hoisted(() => ({
   patchProject: vi.fn(),
-  generateDescription: vi.fn(),
 }))
 
 vi.mock('../../../utils/projectApi', () => ({
   patchProject: h.patchProject,
-  generateDescription: h.generateDescription,
 }))
+
+/** A description of exactly `n` words — the shape Save actually requires (#191). Defaults
+ *  to the minimum, since most tests below only need SOME value that clears the bar. */
+const wordsOf = (n: number = MIN_PROJECT_DESCRIPTION_WORDS): string =>
+  Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
 
 const makeProject = (over: Partial<Project> = {}): Project => ({
   id: 'p1',
@@ -49,7 +52,6 @@ function deferred<T>() {
 }
 
 const textarea = () => screen.getByRole('textbox', { name: /project description/i }) as HTMLTextAreaElement
-const generateBtn = () => screen.getByRole('button', { name: /generate/i }) as HTMLButtonElement
 const saveBtn = () => screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
 const cancelBtn = () => screen.getByRole('button', { name: /cancel/i }) as HTMLButtonElement
 const editBtn = () => screen.getByRole('button', { name: /edit/i }) as HTMLButtonElement
@@ -57,7 +59,7 @@ const closeXBtn = () => screen.getByRole('button', { name: 'Close' }) as HTMLBut
 const dialog = () => screen.queryByRole('dialog')
 /** The click-to-dismiss backdrop — the dialog's elder sibling inside the portaled wrapper. */
 const backdrop = () => dialog()!.parentElement!.firstElementChild as HTMLElement
-/** Open the pop-up editor — every Save/Generate/Cancel interaction now happens inside it. */
+/** Open the pop-up editor — every Save/Cancel interaction now happens inside it. */
 const openEditor = () => fireEvent.click(editBtn())
 
 beforeEach(() => {
@@ -93,11 +95,10 @@ describe('ProjectDescriptionEditor — read view and pop-up open/close', () => {
   })
 
   it('tells the author, at the write surface, that this becomes public catalog copy', () => {
-    // `Project.description` was introduced as CHAT GROUNDING, and the marketplace
-    // republishes it verbatim org-wide and makes it full-text searchable. It can also be
-    // model-written from the app's source by Generate, so the broadcast text is not
-    // necessarily anything the author composed. Nothing here said so, and the notice belongs
-    // at the WRITE surface because that is the only place it can change what someone types.
+    // `Project.description` was introduced as CHAT GROUNDING, and the marketplace (#145/#147)
+    // republishes it verbatim org-wide and makes it full-text searchable. Nothing here said
+    // so, and the notice belongs at the WRITE surface because that is the only place it can
+    // change what someone types.
     render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
 
     openEditor()
@@ -136,139 +137,67 @@ describe('ProjectDescriptionEditor — read view and pop-up open/close', () => {
 
   it('Save persists the text AND closes the pop-up on success', async () => {
     const onProjectUpdate = vi.fn()
-    h.patchProject.mockResolvedValue(makeProject({ description: 'edited text' }))
+    const edited = wordsOf()
+    h.patchProject.mockResolvedValue(makeProject({ description: edited }))
     render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={onProjectUpdate} />)
 
     openEditor()
-    fireEvent.change(textarea(), { target: { value: 'edited text' } })
+    fireEvent.change(textarea(), { target: { value: edited } })
     fireEvent.click(saveBtn())
 
     await waitFor(() => expect(dialog()).toBeNull())
-    expect(h.patchProject).toHaveBeenCalledWith('p1', { description: 'edited text' })
-    expect(screen.getByText('edited text')).toBeTruthy()
+    expect(h.patchProject).toHaveBeenCalledWith('p1', { description: edited })
+    expect(screen.getByText(edited)).toBeTruthy()
   })
 
   it('a failed Save leaves the pop-up open with the typed text intact', async () => {
     h.patchProject.mockRejectedValue(new ApiError('boom', 500))
     render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
 
+    const edited = wordsOf()
     openEditor()
-    fireEvent.change(textarea(), { target: { value: 'edited text' } })
+    fireEvent.change(textarea(), { target: { value: edited } })
     fireEvent.click(saveBtn())
 
     expect(await screen.findByText('boom')).toBeTruthy()
     expect(dialog()).toBeTruthy()
-    expect(textarea().value).toBe('edited text')
+    expect(textarea().value).toBe(edited)
   })
 })
 
-describe('ProjectDescriptionEditor — generate', () => {
-  it('replaces the textarea with the returned description (clean field, no save-first)', async () => {
-    h.generateDescription.mockResolvedValue(makeProject({ description: 'Generated summary of the app.' }))
-    render(<ProjectDescriptionEditor projectId="p1" description="old stored text" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.click(generateBtn())
-
-    await waitFor(() => expect(textarea().value).toBe('Generated summary of the app.'))
-    expect(h.patchProject).not.toHaveBeenCalled()
-  })
-
-  it('with a DIRTY field, PATCHes the typed text FIRST and only then generates', async () => {
-    h.patchProject.mockResolvedValue(makeProject({ description: 'unsaved user text' }))
-    h.generateDescription.mockResolvedValue(makeProject({ description: 'server generated text' }))
-    render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.change(textarea(), { target: { value: 'unsaved user text' } })
-    fireEvent.click(generateBtn())
-
-    await waitFor(() => expect(h.generateDescription).toHaveBeenCalledTimes(1))
-    // The PATCH carried the user's UNSAVED text...
-    expect(h.patchProject).toHaveBeenCalledWith('p1', { description: 'unsaved user text' })
-    // ...and it happened BEFORE generate — order, not merely "both happened".
-    expect(h.patchProject.mock.invocationCallOrder[0]).toBeLessThan(
-      h.generateDescription.mock.invocationCallOrder[0],
-    )
-    await waitFor(() => expect(textarea().value).toBe('server generated text'))
-  })
-
-  it('409 → "build the app first"; textarea unchanged; Generate re-enabled', async () => {
-    h.generateDescription.mockRejectedValue(new ApiError('No app code yet.', 409))
-    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.click(generateBtn())
-
-    expect(await screen.findByText(/build the app first/i)).toBeTruthy()
-    expect(textarea().value).toBe('stored text')
-    expect(generateBtn().disabled).toBe(false)
-    expect(h.patchProject).not.toHaveBeenCalled()
-  })
-
-  it('429 → surfaces the daily-limit message the ApiError carries; textarea unchanged', async () => {
-    h.generateDescription.mockRejectedValue(
-      new ApiError('You have reached your daily token limit.', 429, 'daily_token_limit_exceeded'),
-    )
-    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.click(generateBtn())
-
-    expect(await screen.findByText(/daily token limit/i)).toBeTruthy()
-    expect(textarea().value).toBe('stored text')
-  })
-
-  it('503 → "unavailable"; textarea unchanged', async () => {
-    h.generateDescription.mockRejectedValue(new ApiError('nope', 503))
-    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.click(generateBtn())
-
-    expect(await screen.findByText(/unavailable/i)).toBeTruthy()
-    expect(textarea().value).toBe('stored text')
-  })
-
-  it('500 → "Generation failed. Try again."; textarea unchanged', async () => {
-    h.generateDescription.mockRejectedValue(new ApiError('boom', 500))
-    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
-    openEditor()
-
-    fireEvent.click(generateBtn())
-
-    expect(await screen.findByText(/generation failed\. try again/i)).toBeTruthy()
-    expect(textarea().value).toBe('stored text')
-  })
-
-  it('disables the textarea while Generate is in flight and re-enables it on SUCCESS', async () => {
+describe('ProjectDescriptionEditor — busy state (Save)', () => {
+  // These two used to hold a `generateDescription` promise open to reach "busy" — Generate
+  // is gone (#191), so Save is now the only request that can put the surface in that state.
+  // Nothing here asserts anything Generate-specific; it never did — the point was always
+  // that a busy request disables every control, not what produced the busy state.
+  it('disables the textarea while Save is in flight and re-enables it on SUCCESS', async () => {
     const d = deferred<Project>()
-    h.generateDescription.mockReturnValue(d.promise)
+    h.patchProject.mockReturnValue(d.promise)
     render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
     openEditor()
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
-    fireEvent.click(generateBtn())
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(textarea().disabled).toBe(true))
-    expect(generateBtn().disabled).toBe(true)
     expect(saveBtn().disabled).toBe(true)
     expect(cancelBtn().disabled).toBe(true)
-    expect(screen.getByRole('status')).toBeTruthy() // "a model call is running"
 
     await act(async () => {
-      d.resolve(makeProject({ description: 'done' }))
+      d.resolve(makeProject({ description: wordsOf() }))
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(textarea().disabled).toBe(false))
+    await waitFor(() => expect(dialog()).toBeNull())
   })
 
-  it('re-enables the textarea when Generate FAILS', async () => {
+  it('re-enables the textarea when Save FAILS', async () => {
     const d = deferred<Project>()
-    h.generateDescription.mockReturnValue(d.promise)
+    h.patchProject.mockReturnValue(d.promise)
     render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
     openEditor()
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
-    fireEvent.click(generateBtn())
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(textarea().disabled).toBe(true))
 
     await act(async () => {
@@ -277,65 +206,139 @@ describe('ProjectDescriptionEditor — generate', () => {
     })
 
     await waitFor(() => expect(textarea().disabled).toBe(false))
-    expect(await screen.findByText(/generation failed/i)).toBeTruthy()
+    expect(await screen.findByText('boom')).toBeTruthy()
   })
 })
 
-describe('ProjectDescriptionEditor — save + length gate', () => {
-  it('saves a description of exactly 2000 characters', async () => {
-    const long = 'x'.repeat(2000)
-    h.patchProject.mockResolvedValue(makeProject({ description: long }))
+describe('ProjectDescriptionEditor — character backstop', () => {
+  it('saves a description inside the character cap and inside the word bound', async () => {
+    // 100 words of 15 characters + 99 separating spaces = 1599 characters, well under the
+    // 2000 cap, and 100 words is inside 15-120 — the word rule and the char rule agree here.
+    const value = Array.from({ length: 100 }, () => 'x'.repeat(15)).join(' ')
+    h.patchProject.mockResolvedValue(makeProject({ description: value }))
     render(<ProjectDescriptionEditor projectId="p1" description={null} onProjectUpdate={vi.fn()} />)
     openEditor()
 
-    fireEvent.change(textarea(), { target: { value: long } })
+    fireEvent.change(textarea(), { target: { value } })
     expect(saveBtn().disabled).toBe(false)
     fireEvent.click(saveBtn())
 
-    await waitFor(() => expect(h.patchProject).toHaveBeenCalledWith('p1', { description: long }))
+    await waitFor(() => expect(h.patchProject).toHaveBeenCalledWith('p1', { description: value }))
   })
 
-  it('blocks a 2001-character description client-side — no request fires', () => {
+  it('blocks an over-2000-character description client-side even though the word count is in bounds', () => {
+    // 100 words of 20 characters + 99 spaces = 2099 characters — over the cap, but still only
+    // 100 words (inside 15-120), so this is the character rule firing, not the word rule.
+    const value = Array.from({ length: 100 }, () => 'x'.repeat(20)).join(' ')
     render(<ProjectDescriptionEditor projectId="p1" description={null} onProjectUpdate={vi.fn()} />)
     openEditor()
 
-    fireEvent.change(textarea(), { target: { value: 'x'.repeat(2001) } })
+    fireEvent.change(textarea(), { target: { value } })
     expect(saveBtn().disabled).toBe(true)
     fireEvent.click(saveBtn())
 
     expect(h.patchProject).not.toHaveBeenCalled()
   })
+})
 
-  it('clearing to whitespace saves description:null, closes the pop-up, and the read view shows the placeholder', async () => {
-    h.patchProject.mockResolvedValue(makeProject({ description: null }))
-    render(<ProjectDescriptionEditor projectId="p1" description="something meaningful" onProjectUpdate={vi.fn()} />)
+describe('ProjectDescriptionEditor — required + word bound (#191)', () => {
+  it('Save is disabled with fewer than the minimum words', () => {
+    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(MIN_PROJECT_DESCRIPTION_WORDS - 1) } })
+
+    expect(saveBtn().disabled).toBe(true)
+    fireEvent.click(saveBtn())
+    expect(h.patchProject).not.toHaveBeenCalled()
+  })
+
+  it('Save is enabled at exactly the minimum word count', () => {
+    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(MIN_PROJECT_DESCRIPTION_WORDS) } })
+
+    expect(saveBtn().disabled).toBe(false)
+  })
+
+  it('Save is enabled at exactly the maximum word count', () => {
+    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(MAX_PROJECT_DESCRIPTION_WORDS) } })
+
+    expect(saveBtn().disabled).toBe(false)
+  })
+
+  it('Save is disabled one word past the maximum', () => {
+    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(MAX_PROJECT_DESCRIPTION_WORDS + 1) } })
+
+    expect(saveBtn().disabled).toBe(true)
+  })
+
+  it('a whitespace-only description no longer clears to null — it is simply invalid', () => {
+    // #191 R11: description can no longer be cleared. Blank is a write that fails the
+    // required/word-bound rule, not a special "clear" request the way it used to be.
+    render(
+      <ProjectDescriptionEditor
+        projectId="p1"
+        description="something meaningful"
+        onProjectUpdate={vi.fn()}
+      />,
+    )
     openEditor()
 
     fireEvent.change(textarea(), { target: { value: '   ' } })
+
+    expect(saveBtn().disabled).toBe(true)
+    fireEvent.click(saveBtn())
+    expect(h.patchProject).not.toHaveBeenCalled()
+  })
+
+  it('shows the word-bound rule and a live counter that turns red out of bounds', () => {
+    render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    expect(screen.getByText(/between 15 and 120 words/i)).toBeTruthy()
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(3) } })
+    const counter = screen.getByText('3/120 words')
+    expect(counter.className).toMatch(/text-danger/)
+
+    fireEvent.change(textarea(), { target: { value: wordsOf(MIN_PROJECT_DESCRIPTION_WORDS) } })
+    const validCounter = screen.getByText(`${MIN_PROJECT_DESCRIPTION_WORDS}/120 words`)
+    expect(validCounter.className).not.toMatch(/text-danger/)
+  })
+
+  it('a project with no prior description (R14) still opens and closes normally', () => {
+    // The grandfather clause: a pre-#191 project with nothing saved is not forced to add
+    // one just to open the editor — only to SAVE it does the bound apply.
+    render(<ProjectDescriptionEditor projectId="p1" description={null} onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    expect(dialog()).toBeTruthy()
+    expect(textarea().value).toBe('')
+    expect(saveBtn().disabled).toBe(true) // 0 words — cannot save empty, but CAN close
+
+    fireEvent.click(cancelBtn())
+    expect(dialog()).toBeNull()
+    expect(h.patchProject).not.toHaveBeenCalled()
+  })
+
+  it('the same project can add a description once it clears the bar', async () => {
+    const value = wordsOf()
+    h.patchProject.mockResolvedValue(makeProject({ description: value }))
+    render(<ProjectDescriptionEditor projectId="p1" description={null} onProjectUpdate={vi.fn()} />)
+    openEditor()
+
+    fireEvent.change(textarea(), { target: { value } })
     fireEvent.click(saveBtn())
 
-    await waitFor(() => expect(h.patchProject).toHaveBeenCalledWith('p1', { description: null }))
-    await waitFor(() => expect(dialog()).toBeNull())
-    expect(screen.getByText('No description yet')).toBeTruthy()
-  })
-})
-
-describe('ProjectDescriptionEditor — a dirty save survives a failed generate', () => {
-  it('lifts the SAVED project to the parent even when generation then fails', async () => {
-    // The patch already landed on the server. If generation fails afterwards, the parent must
-    // not go on believing the description is the one it held before the user typed.
-    const onProjectUpdate = vi.fn()
-    h.patchProject.mockResolvedValue(makeProject({ description: 'typed by hand' }))
-    h.generateDescription.mockRejectedValue(new ApiError('boom', 500))
-
-    render(<ProjectDescriptionEditor projectId="p1" description={null} onProjectUpdate={onProjectUpdate} />)
-    openEditor()
-    fireEvent.change(screen.getByLabelText(/project description/i), { target: { value: 'typed by hand' } })
-    fireEvent.click(screen.getByRole('button', { name: /generate/i }))
-
-    expect(await screen.findByText(/Generation failed\. Try again\./i)).toBeTruthy()
-    expect(onProjectUpdate).toHaveBeenCalledWith(expect.objectContaining({ description: 'typed by hand' }))
-    expect((screen.getByLabelText(/project description/i) as HTMLTextAreaElement).value).toBe('typed by hand')
+    await waitFor(() => expect(h.patchProject).toHaveBeenCalledWith('p1', { description: value }))
   })
 })
 
@@ -418,10 +421,10 @@ describe('ProjectDescriptionEditor — keyboard + focus (405a1d6 regression)', (
 
   it('restores focus to the Edit button after a SUCCESSFUL Save (Save was the one close path that skipped it)', async () => {
     const onProjectUpdate = vi.fn()
-    h.patchProject.mockResolvedValue(makeProject({ description: 'edited text' }))
+    h.patchProject.mockResolvedValue(makeProject({ description: wordsOf() }))
     render(<ProjectDescriptionEditor projectId="p1" description="stored text" onProjectUpdate={onProjectUpdate} />)
     openEditor()
-    fireEvent.change(textarea(), { target: { value: 'edited text' } })
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
     fireEvent.click(saveBtn())
 
@@ -434,12 +437,14 @@ describe('ProjectDescriptionEditor — keyboard + focus (405a1d6 regression)', (
     // CAUSES focusables.length to hit 0 during a busy request — mutation check: reverting the
     // tabIndex/focus-on-busy fix makes this assertion fail (document.activeElement falls to
     // <body> instead), confirming this test actually catches the regression 405a1d6 missed.
+    // Generate is gone (#191) — Save is now the only request that can hold this busy.
     const d = deferred<Project>()
-    h.generateDescription.mockReturnValue(d.promise)
+    h.patchProject.mockReturnValue(d.promise)
     render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
     openEditor()
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
-    fireEvent.click(generateBtn())
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(textarea().disabled).toBe(true))
 
     expect(document.activeElement).toBe(screen.getByRole('dialog'))
@@ -448,43 +453,45 @@ describe('ProjectDescriptionEditor — keyboard + focus (405a1d6 regression)', (
     expect(document.activeElement).toBe(screen.getByRole('dialog')) // still inside — never <body>
 
     await act(async () => {
-      d.resolve(makeProject({ description: 'done' }))
+      d.resolve(makeProject({ description: wordsOf() }))
       await Promise.resolve()
     })
   })
 
   it('Escape does NOT close while a request is in flight (the busy guard, exercised directly rather than via disabled)', async () => {
     const d = deferred<Project>()
-    h.generateDescription.mockReturnValue(d.promise)
+    h.patchProject.mockReturnValue(d.promise)
     render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
     openEditor()
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
-    fireEvent.click(generateBtn())
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(textarea().disabled).toBe(true))
 
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(dialog()).toBeTruthy()
 
     await act(async () => {
-      d.resolve(makeProject({ description: 'done' }))
+      d.resolve(makeProject({ description: wordsOf() }))
       await Promise.resolve()
     })
   })
 
   it('the backdrop click does NOT close while a request is in flight', async () => {
     const d = deferred<Project>()
-    h.generateDescription.mockReturnValue(d.promise)
+    h.patchProject.mockReturnValue(d.promise)
     render(<ProjectDescriptionEditor projectId="p1" description="stored" onProjectUpdate={vi.fn()} />)
     openEditor()
+    fireEvent.change(textarea(), { target: { value: wordsOf() } })
 
-    fireEvent.click(generateBtn())
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(textarea().disabled).toBe(true))
 
     fireEvent.click(backdrop())
     expect(dialog()).toBeTruthy()
 
     await act(async () => {
-      d.resolve(makeProject({ description: 'done' }))
+      d.resolve(makeProject({ description: wordsOf() }))
       await Promise.resolve()
     })
   })

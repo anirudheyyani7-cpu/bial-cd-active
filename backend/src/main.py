@@ -134,6 +134,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.services.appdb import aclose_maintenance_engine
     from src.services.deploy.aca_publish import aclose_published_apps
     from src.services.deploy.images import aclose_image_builder
+    from src.services.lake import aclose_lake
     from src.services.redis import aclose_redis
     from src.services.sandbox import aclose_sandbox
     from src.services.storage import aclose_storage
@@ -147,6 +148,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # second connection pool alongside the sandbox's.
     await aclose_published_apps()
     await aclose_image_builder()
+    # The connector lake holds a THIRD managed-identity credential — a different identity from
+    # the two above, named by client id rather than resolved from the ambient environment — plus
+    # its own blob client. A no-op when no lake is configured.
+    await aclose_lake()
 
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})

@@ -627,12 +627,13 @@ class _TurnState:
     # and the argument completing never reaches that arm, and without this the terminal has no way
     # to name the step it must withdraw. `None` on every turn that never opened one.
     plan_status_tool_call_id: str | None = None
-    #: Is the model REASONING right now — the only thing reasoning is allowed to become.
+    #: Does the model HAVE THE FLOOR right now — see `_set_working` for the six sites that move it.
     #:
     #: A boolean, never the text. The blocks are stored so the next turn can replay them and
     #: are never projected, never framed and never sent to the browser; what the citizen gets
-    #: is one status line saying the agent is working. Set when a reasoning part opens, cleared
-    #: when anything else does or when the turn ends.
+    #: is one status line saying the agent is working. This said "set when a reasoning part opens"
+    #: after that stopped being the only raiser — the last outstanding tool returning raises it
+    #: too, and that is the window a hung-looking transcript was actually sitting in.
     working: bool = False
     subscribers: set[asyncio.Queue[None]] = field(default_factory=set)
     task: asyncio.Task[None] | None = None
@@ -2871,6 +2872,23 @@ class TurnEngine:
                         item=resolved,
                     ),
                 )
+            # THE GAP AFTER THE LAST TOOL RETURNS, which is where the screen used to go quiet.
+            #
+            # Every tool has come back and the model has the floor again: the next thing that
+            # happens is a request nobody can see, lasting as long as it lasts. The status used to
+            # be raised only by a THINKING block, so a response that opened with a tool call, or
+            # one the provider answered without any reasoning at all, left the transcript showing
+            # the last finished step and nothing else — indistinguishable from a hang, and reported
+            # as exactly that ("I don't know if the chat is currently thinking or not").
+            #
+            # GUARDED ON NOTHING STILL PENDING, because tools can overlap: raising it while another
+            # call is still out would claim the model is waiting on itself when it is waiting on a
+            # container. Every reset already exists and needs no counterpart here — `_open_step`
+            # takes it down when the next call opens, `_push_text` when the first word arrives, and
+            # `_finish` at the terminal. Edge-triggered, so this costs at most one frame per model
+            # request.
+            if not any(item.state == "pending" for item in state.steps.values()):
+                self._set_working(state, True)
 
     # -- the long-operation status line --------------------------------------
 
@@ -3000,6 +3018,19 @@ class TurnEngine:
     def _set_working(self, state: _TurnState, working: bool) -> None:
         """Turn the working status on or off, and frame the CHANGE only.
 
+        "WORKING" IS THE MODEL HAVING THE FLOOR, not a reasoning block streaming — see
+        `WorkingFrame`. Three sites raise it — a thinking part opening, a thinking delta arriving,
+        and the last outstanding tool returning — and three lower it (`_open_step`, `_push_text`,
+        `_finish`). The raisers are the windows nothing else can narrate; the lowerers are the
+        moments something real appears to replace it.
+
+        WHAT IS NOT A RAISER, because an earlier draft of this docstring claimed it was: a tool
+        call's ARGUMENTS opening. No such call site exists. The window is real — a turn whose very
+        first act is a tool call, with no reasoning before it, streams that call's arguments with
+        the flag still down — but it is narrated by the acknowledgement row that is already open at
+        that point, not by this flag. Adding a raiser there would double every step row, which is
+        why the neighbouring `PLAN_OPTIONS_TOOL` case deliberately does not.
+
         THE FLAG RIDES THE TURN, NOT A MESSAGE — an earlier draft got this seam wrong. The browser
         synthesises a CONTENT-FREE reasoning part at the TAIL of the streaming message while this
         is true; pinning it to the head instead put "Working on your app" above paragraphs already
@@ -3094,11 +3125,28 @@ class TurnEngine:
         )
         state.steps[event.tool_call_id] = resolved
         if len(state.steps) > _STEPS_CAP:
-            # Drop the oldest resolved step — snapshot material only; rows are authoritative.
+            # Drop the oldest RESOLVED step — snapshot material only; rows are authoritative.
             # THROUGH `drop_step`, so its POSITION goes with it: a ref left pointing at an
             # evicted step is skipped by the snapshot but never reclaimed, and a build that
             # evicts for minutes would accumulate one dead entry per step it ever ran.
-            state.drop_step(next(iter(state.steps)))
+            #
+            # "RESOLVED" IS NOW ENFORCED RATHER THAN ASSERTED. This read `next(iter(state.steps))`,
+            # which is the oldest INSERTED key whatever its state — so a slow call that overlapped
+            # a cap's worth of quick ones was itself the victim. Two things broke: the slow call's
+            # own finished frame was lost (the lookup at the top of this method returns None once
+            # the id is gone, leaving it pending on screen forever), and the working flag's raise
+            # guard — which asks this very dict whether anything is still out — was told no while a
+            # container was mid-command, claiming the model had the floor when it did not.
+            #
+            # Evicting NOTHING when every step is somehow still pending is the deliberate other
+            # half: the overshoot is bounded by however many calls are genuinely outstanding at
+            # once, which is small, and a bounded overshoot is a better failure than a lost frame
+            # and a lying status line.
+            oldest_settled = next(
+                (sid for sid, item in state.steps.items() if item.state != "pending"), None
+            )
+            if oldest_settled is not None:
+                state.drop_step(oldest_settled)
         return resolved
 
     # -- frames, ring, fan-out ----------------------------------------------------------

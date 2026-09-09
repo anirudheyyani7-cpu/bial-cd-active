@@ -193,7 +193,20 @@ class TextDeltaFrame(CamelModel):
 
 
 class WorkingFrame(CamelModel):
-    """The model is REASONING — and this is the whole of what reasoning becomes.
+    """THE MODEL HAS THE FLOOR and nothing readable has arrived yet.
+
+    IT USED TO MEAN "a reasoning block is streaming", and that was too narrow to be useful. The
+    window a citizen actually experiences as a frozen screen is the one where the model is being
+    ASKED: after the last tool returns and before the next response starts. A response the provider
+    answered with no reasoning at all left that window unmarked, so the transcript sat on the last
+    finished step looking hung — reported from production as exactly that. The flag now covers it.
+
+    ONE WINDOW IS STILL NOT COVERED, and it is named here rather than quietly implied: a turn whose
+    FIRST act is a tool call, with no reasoning before it, streams that call's arguments with the
+    flag still down. That window is narrated instead by the acknowledgement row, which is already
+    open at that point; raising the flag there as well would double every step row in the
+    transcript. So the flag answers "is the model being asked?", and the ack answers "has the turn
+    started?" — two questions, two narrators, neither speaking over the other.
 
     A BOOLEAN, NEVER THE TEXT. Reasoning blocks are stored so the provider can be given them
     back on the next turn (it rejects a tool call whose reasoning block is missing) but are

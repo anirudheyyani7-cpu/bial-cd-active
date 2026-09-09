@@ -15,13 +15,14 @@ import contextlib
 import json
 import uuid
 import warnings
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import sqlalchemy as sa
 from pydantic import SecretStr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -51,6 +52,7 @@ from src.services.build_sessions.manager import SessionManager, StopOutcome
 from src.services.messages.projection import (
     PLAN_OPTIONS_TOOL,
     TURN_TERMINAL_KIND,
+    StepItem,
     project_rows,
 )
 from src.services.orchestrator.constants import (
@@ -390,7 +392,16 @@ async def test_a_part_start_event_for_a_non_offer_tool_emits_no_extra_frame(
     """Deliberately NOT widened to every tool: the other tools resolve fast and already
     emit at `FunctionToolCallEvent`, so widening this branch would double every step row in
     the transcript. Pinned on the RING'S TOTAL FRAME COUNT, not just the step phases, so a
-    silent extra frame of any type sneaking in from `PartStartEvent` would be caught too."""
+    silent extra frame of any type sneaking in from `PartStartEvent` would be caught too.
+
+    THE TWO `working` FRAMES ARE NOT FROM `PartStartEvent` — they are the pair the tool RESULT
+    raises and the first word lowers, and they are spelled out here rather than filtered out
+    precisely because filtering them would blind this test to the widening it exists to catch.
+    A `working` frame appearing BEFORE the fourth step (i.e. at the part start rather than at the
+    result) fails this test on ordering, which is the guard, intact.
+
+    Mutation check: add `self._set_working(state, True)` to the `ToolCallPart` branch of
+    `PartStartEvent` and this goes red with a `working` frame at index 1."""
     call_id = "call-1"
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
@@ -415,15 +426,19 @@ async def test_a_part_start_event_for_a_non_offer_tool_emits_no_extra_frame(
 
     state = engine.peek(conv.id)
     assert state is not None and state.status == "completed"
-    # Ack opened, ack retired, tool started, tool finished = four step frames, one text delta
-    # and the terminal. The workspace/compile/preview boilerplate is filtered out here since
-    # it's unrelated to what this test pins — hard-coding it would fail on unrelated changes.
+    # Ack opened, ack retired, tool started, tool finished = four step frames; then the pair of
+    # working frames the tool's return and the model's first word raise and lower (annotated
+    # below); then one text delta and the terminal. The workspace/compile/preview boilerplate is
+    # filtered out here since it's unrelated to what this test pins — hard-coding it would fail on
+    # unrelated changes.
     non_lifecycle = [f for f in state.ring if f.type not in {"workspace", "compile", "preview"}]
     assert [f.type for f in non_lifecycle] == [
         "step",
         "step",
         "step",
         "step",
+        "working",  # the tool returned and nothing else is pending — the model has the floor
+        "working",  # ...and the first word takes it straight back down
         "text_delta",
         "turn_ended",
     ]
@@ -1487,7 +1502,18 @@ async def test_a_step_takes_the_working_status_down(
 ) -> None:
     """The other half of "cleared by anything that is not thinking". A turn that thinks and then
     acts without saying a word would otherwise keep the status up under a running step, which
-    reads as the agent still deciding while it is already doing."""
+    reads as the agent still deciding while it is already doing.
+
+    FOUR TRANSITIONS NOW, NOT TWO, and the two new ones are the point of this arm rather than
+    noise beside it. `working` used to mean "a reasoning block is streaming", so it went up once
+    and came down once. It now means THE MODEL HAS THE FLOOR, which is also true of the window
+    after the last tool returns and before the next response starts — the window a citizen watches
+    with nothing on screen changing, reported as "I don't know if the chat is thinking or not".
+    So: up on the thinking delta, down when the step opens, UP AGAIN when the tool returns and
+    nothing else is pending, down when the first word arrives.
+
+    Mutation check: delete the `_set_working(state, True)` in the `FunctionToolResultEvent` arm of
+    `_on_event` and this goes red on the third element — the quiet window goes unnarrated again."""
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         if len(messages) == 1:
@@ -1512,7 +1538,7 @@ async def test_a_step_takes_the_working_status_down(
     state = engine.peek(conv.id)
     assert state is not None and state.status == "completed"
     working = [f for f in state.ring if f.type == "working"]
-    assert [f.working for f in working] == [True, False]
+    assert [f.working for f in working] == [True, False, True, False]
     ring = list(state.ring)
     step_started = next(
         f for f in ring if f.type == "step" and f.tool_call_id == "r-1" and f.phase == "started"
@@ -1700,3 +1726,60 @@ def test_the_deployed_model_takes_adaptive_thinking_and_refuses_a_budget() -> No
             ),
             params,
         )
+
+
+async def test_the_step_cap_never_evicts_a_call_that_is_still_out() -> None:
+    """A tool still running must survive the cap, because the working flag reads this dict.
+
+    The cap drops a step whenever the map outgrows `_STEPS_CAP`, and the eviction used to take
+    `next(iter(state.steps))` — the oldest INSERTED key, whatever its state. Two things then
+    went wrong at once on a long build that overlapped a slow call with many quick ones:
+
+      1. The slow call's own "finished" frame was lost. `_resolve_step` looks the id up and
+         returns None when it is gone, so the step it evicted stays pending on screen forever.
+      2. Worse, and the reason this is being fixed alongside the working flag rather than after
+         it: `_on_event`'s raise guard asks `state.steps` whether anything is still pending. An
+         evicted-but-running call answers no. The transcript then says the model has the floor
+         while a container is genuinely mid-command — the precise claim the guard's own comment
+         says it exists to prevent.
+
+    Mutation check: put `state.drop_step(next(iter(state.steps)))` back in `_resolve_step` and
+    this goes red on the first assertion, with the pending id gone from the map.
+    """
+    engine = TurnEngine()
+    state = _TurnState(
+        turn_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        kind=ChatKind.BUILD,
+    )
+
+    def _item(step_state: Literal["ok", "failed", "pending"]) -> StepItem:
+        return StepItem(seq=0, tool="run_command", label="Working", state=step_state, hidden=False)
+
+    # The slow one goes in FIRST, so insertion order alone would always pick it as the victim.
+    # Filled to exactly the cap, so the next call is the one that tips it over — the same way a
+    # real turn arrives at eviction, one step at a time.
+    state.steps["slow-call-still-out"] = _item("pending")
+    for n in range(engine_module._STEPS_CAP - 1):
+        state.steps[f"quick-{n}"] = _item("ok")
+
+    # One more resolution tips the map over the cap and triggers an eviction.
+    state.steps["the-one-being-resolved"] = _item("pending")
+    engine._resolve_step(
+        state,
+        FunctionToolResultEvent(
+            ToolReturnPart(
+                tool_name="run_command", content="done", tool_call_id="the-one-being-resolved"
+            )
+        ),
+    )
+
+    # THE CALL THAT IS STILL OUT IS STILL THERE.
+    assert "slow-call-still-out" in state.steps
+    assert state.steps["slow-call-still-out"].state == "pending"
+    # LIVENESS, so the assertion above cannot pass on a cap that simply stopped evicting: an
+    # eviction really did happen, and it took the oldest step that had already FINISHED.
+    assert len(state.steps) == engine_module._STEPS_CAP
+    assert "quick-0" not in state.steps
+    assert "quick-1" in state.steps

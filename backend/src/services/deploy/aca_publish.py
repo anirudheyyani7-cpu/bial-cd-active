@@ -31,6 +31,7 @@ from azure.mgmt.appcontainers import models as aca_models
 
 from src.services.deploy.config import DeployConfig
 from src.services.deploy.names import published_app_name, revision_suffix
+from src.services.lake.env import identity_resource_id_for_env
 
 # `AcaTransientError as AcaTransientError` is a DELIBERATE re-export, not a stutter: this
 # module raises it itself (see `_call`), so callers must be able to catch it by importing from
@@ -144,6 +145,25 @@ def _did_it_bind(port: int) -> list[aca_models.ContainerAppProbe]:
     ]
 
 
+def _user_assigned(resource_id: str | None) -> aca_models.ManagedServiceIdentity | None:
+    """The ARM `identity` block for one user-assigned identity, or `None` for no identity at all.
+
+    A DELIBERATE DUPLICATE of `services/sandbox/aca.py`'s function of the same name, and the two
+    modules stay separate: this one's docblock already says why (a published app and a build
+    sandbox are different resources with different lifecycles, and unifying their envelope
+    builders is how a probe or an ingress setting crosses between them). Four lines is a cheaper
+    coupling than a shared module that would have to be imported by both.
+
+    `None` rather than `ManagedServiceIdentity(type="None")`, so a spec for an app that was
+    granted nothing is byte-identical to what this platform sent before connectors existed."""
+    if resource_id is None:
+        return None
+    return aca_models.ManagedServiceIdentity(
+        type=aca_models.ManagedServiceIdentityType.USER_ASSIGNED,
+        user_assigned_identities={resource_id: aca_models.UserAssignedIdentity()},
+    )
+
+
 def _managed_environment_id(config: DeployConfig) -> str:
     return (
         f"/subscriptions/{config.subscription_id}"
@@ -244,7 +264,8 @@ class AcaPublishedApps:
         Pure — no I/O, no SDK calls — so it can be asserted on directly in tests without
         any Azure at all. That matters: every hazard this module exists to avoid (the
         supervisor probe, the wrong port, a tag instead of a digest, a plaintext DSN) is
-        visible in the returned object."""
+        visible in the returned object — and now so is the managed identity, which is the one
+        thing here that grants access to data outside this platform."""
         c = self._config
         secrets = [
             aca_models.Secret(name=_ACR_PASSWORD_SECRET, value=c.acr_password.get_secret_value())
@@ -270,6 +291,17 @@ class AcaPublishedApps:
 
         return aca_models.ContainerApp(
             location=c.region,
+            # THE CONNECTOR'S MANAGED IDENTITY, and `None` for every app that was not granted
+            # one — no lake configured, the connector switched off for this project, or its
+            # owner's access not approved. Derived from the coordinates already in `env`, the
+            # same way the sandbox derives it, so "has the coordinates" and "has the credential"
+            # are one fact rather than two that must be kept in step.
+            #
+            # THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, which cuts both ways here: an app
+            # whose owner's access has been withdrawn does NOT lose its identity on the next
+            # redeploy unless the gate below says so — it does, because `env` is rebuilt from
+            # the same gate every time. And an app that never had it never gains it.
+            identity=_user_assigned(identity_resource_id_for_env(env)),
             # ARM identity tags. THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, so a tag missing
             # from this envelope is not merely un-written — it is STRIPPED from a resource that
             # already had it. `bial-kind=published-app` is what makes "a citizen's live

@@ -3,6 +3,10 @@
 Everything in this PR runs today against the personal dev subscription. Three things are
 required before it runs against BIAL, and only the first has a lead time.
 
+**Since the connector data plane landed there is a fourth**, needed only if BIAL wants published
+apps to read connector data — see "The connector's managed identity" below. It has its own lead
+time, because it is a grant on somebody else's resource.
+
 ---
 
 ## 1. The registry role grant — BLOCKING, file it first
@@ -101,6 +105,80 @@ published URL is `pub-<28 hex>.<defaultDomain>`, and it is still noted as "read 
 
 ---
 
+## 4. The connector's managed identity — only if published apps read connector data
+
+A published app reads the connected system's data **directly**, with a user-assigned managed
+identity attached to its container app. There is no server-side proxy and no copy of that data
+inside the platform, which is what keeps the platform out of the data path — and it means the
+grant has to exist in ARM before the first publish, not at first read.
+
+**Two grants, on two different resources, for two different principals.** They are commonly
+confused, and getting them the wrong way round produces two different failures that look alike.
+
+| | Principal | Role | Scope |
+|---|---|---|---|
+| **To attach the identity** | the control plane's own principal — the backend App Service's managed identity in production, i.e. whatever `DefaultAzureCredential` resolves to when the API calls ARM | **Managed Identity Operator** | the user-assigned identity itself |
+| **To read the data** | the user-assigned identity | **Storage Blob Data Reader** | the one container, never the account |
+
+The first is the one that has never been checked, and it is easy to miss precisely because the
+platform *already* creates container apps: creating them needs rights on the resource **group**,
+while assigning an identity needs a role on **the identity**, which is a different resource. The
+underlying permission is `Microsoft.ManagedIdentity/userAssignedIdentities/assign/action`; an
+administrator who prefers to verify rather than grant should check for that action.
+
+Its symptom is loud and immediate rather than silent: without it **every container create is
+refused**, so a missing grant stops builds, not just connector reads.
+
+```sh
+# the control plane may attach this identity
+az role assignment create \
+  --assignee <backend App Service principal id> \
+  --role "Managed Identity Operator" \
+  --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity name>"
+
+# the identity may read the one container (BIAL reports this already exists)
+az role assignment create \
+  --assignee <identity's principal id> \
+  --role "Storage Blob Data Reader" \
+  --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<account>/blobServices/default/containers/<container>"
+```
+
+### The three app settings
+
+```
+CONNECTOR_LAKE__URL=https://<account>.blob.core.windows.net/<container>/<folder>/
+CONNECTOR_LAKE__IDENTITY_CLIENT_ID=<the identity's CLIENT id>
+CONNECTOR_LAKE__IDENTITY_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<name>
+```
+
+The last two are **the same identity in two different vocabularies** and are not
+interchangeable. The client id is what the credential inside a container names; the resource id
+is the key ARM's identity map uses, and the only value that can attach anything. Leave all three
+unset and the feature is simply off: no build and no published app is handed coordinates or an
+identity, and nothing is copied.
+
+None of the three is a bearer credential — a URL and two identity identifiers are labels. The
+credential is the managed identity, which Azure mints inside the container and which cannot be
+copied out. That is why they ride the container spec as plain environment values rather than as
+ACA secret references.
+
+### The admin go-live lineage takes this line, not an abstraction
+
+The one-click path above builds the identity block into the container spec. The **manual**
+go-live path is a human running `az containerapp create`; it has no envelope in code, so it
+needs `--user-assigned <resource id>` added by hand, and the app settings above supplied the
+same way. Written down here rather than abstracted, because there is no seam to put an
+abstraction in.
+
+### Turn on Storage diagnostic logging before the first production read
+
+It is the only record of what an app actually read. Reads are direct by design, so the control
+plane sees none of them, and the identity is shared across apps with no revocation story — so
+without diagnostic logging a misuse question has no evidence on either side, for or against. It
+is an ops setting on the storage account, it is cheap, and it is not code.
+
+---
+
 ## What is already true in production
 
 No new infrastructure. Published apps run in the **existing** `bial-citizen-dev-aca-env`
@@ -129,6 +207,21 @@ Until confirmed, treat a published app as reachable on the public internet by an
 the URL, not just staff — the safer assumption. The URL is unguessable but not secret once
 shared, and that is the whole of the current protection either way. Closing it — an
 authenticated proxy, or confirmed + enforced VNet-internal ingress — is a separate task.
+
+**A published app's connector reach exceeds its builder's grant, and there is no revocation.**
+Both are accepted and recorded rather than solved. The app reads with the shared identity, which
+is scoped to one container and read-only — but it is not scoped to the window the project picked,
+and an app published by somebody whose access is later withdrawn keeps reading. Closing either
+means proxying reads through the control plane, which was considered and rejected: it would put
+the platform back in the data path the direct-read design exists to keep it out of.
+
+**The build-time sandbox now holds the same identity, and it has public ingress.** The accepted
+risk above was reasoned about the *published* app, which sits behind the portal's login. The
+sandbox does not: it defaults to external Container Apps ingress by a recorded POC decision, and
+it runs agent-authored code with outbound network access. Whether sandbox egress is restricted is
+**unestablished**, and it decides whether "read-only, one container, behind a login" is still an
+adequate description once a build holds the credential. Establish it, and tell BIAL the answer
+alongside the revocation gap — do not inherit a note written about a different surface.
 
 Also deferred: blue/green traffic splitting, custom domains, ACR image retention, and
 rollback beyond ACA keeping the previous revision serving when a new one fails to activate.

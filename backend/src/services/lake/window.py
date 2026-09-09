@@ -70,11 +70,18 @@ class WindowSelection:
     from three months ago is not one of them, and a folder is never one at all.
 
     `total_bytes` is the sum of what was SELECTED — the number a byte budget is checked against,
-    reported so the transfer can refuse before it writes rather than after."""
+    reported so the transfer can refuse before it writes rather than after.
+
+    `duplicates` counts extra files carrying a date another file in this window already carried.
+    It should always be zero, and it is reported precisely because a non-zero value means the
+    lake's shape stopped matching the one-file-per-date premise the `max_files` ceiling rests
+    on — a condition that would otherwise show up only as a window covering half the days it
+    claims, with nothing anywhere saying so."""
 
     files: tuple[SelectedFile, ...]
     skipped: int
     total_bytes: int
+    duplicates: int = 0
 
 
 def _day_in_name(name: str) -> date | None:
@@ -115,10 +122,25 @@ def select_files(
        so that `skipped` counts days this window could not read, rather than every stub the
        container has ever held.
     3. Zero bytes is a FAILED LOAD, not a folder: excluded, and counted.
-    4. Sort newest first and cap.
+    4. ONE FILE PER DATE. The pattern anchors on `(?:^|/)`, so a copy of a day sitting in a
+       sub-folder under the prefix — `archive/`, `backup/`, anything a human made — matches
+       exactly as the live file does and carries the same date. Left alone, a lake with such a
+       folder yields two entries per day, the `max_files` ceiling covers half the days it claims,
+       and every row of that day is counted twice by whatever reads the copy.
+
+       THE WINNER IS THE LEXICOGRAPHICALLY SMALLEST NAME, AND THAT IS AN ARBITRARY RULE ON
+       PURPOSE. There is no principled winner: the real files live under `YYYY/MONTH/` and are
+       DEEPER than a copy dropped beside them, so "shallowest is canonical" is exactly backwards
+       here; "largest wins" would prefer an archived full copy over a live truncated one, which
+       may or may not be right. What actually matters is that the same lake yields the same
+       window on every read, so the rule is chosen for determinism and nothing else — and the
+       losers are COUNTED, so a `duplicates` above zero sends somebody to look at the container
+       rather than leaving the platform to guess well.
+    5. Sort newest first and cap.
     """
-    selected: list[SelectedFile] = []
+    best: dict[date, SelectedFile] = {}
     skipped = 0
+    duplicates = 0
     for name, size in listing:
         day = _day_in_name(name)
         if day is None:
@@ -128,10 +150,20 @@ def select_files(
         if size == 0:
             skipped += 1
             continue
-        selected.append(SelectedFile(name=name, size=size, day=day))
+        candidate = SelectedFile(name=name, size=size, day=day)
+        held = best.get(day)
+        if held is None:
+            best[day] = candidate
+            continue
+        duplicates += 1
+        if candidate.name < held.name:
+            best[day] = candidate
 
-    selected.sort(key=lambda item: item.day, reverse=True)
+    selected = sorted(best.values(), key=lambda item: item.day, reverse=True)
     kept = tuple(selected[:max_files])
     return WindowSelection(
-        files=kept, skipped=skipped, total_bytes=sum(item.size for item in kept)
+        files=kept,
+        skipped=skipped,
+        total_bytes=sum(item.size for item in kept),
+        duplicates=duplicates,
     )

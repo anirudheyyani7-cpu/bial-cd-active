@@ -349,3 +349,64 @@ def test_the_total_is_the_worst_case_the_caller_must_budget_for() -> None:
 
     assert selection.total_bytes == 80_004_000
     assert selection.total_bytes == sum(item.size for item in selection.files)
+
+
+# --- one file per date, which the ceiling depends on ---------------------------------------------
+
+
+def test_a_second_file_for_the_same_date_is_dropped_and_counted() -> None:
+    """★ THE PREMISE THE `max_files` CEILING RESTS ON. The pattern anchors on `(?:^|/)`, so a copy
+    of a day living in a sub-folder under the prefix — `archive/`, `backup/`, whatever a human
+    made — matches exactly as the live file does and carries the same date.
+
+    Left alone that is not a tidy duplicate: a thirty-file ceiling would cover fifteen days while
+    still calling itself thirty, and every row of the duplicated day would be counted twice by
+    anything that reads the copy. Exactly one entry per date survives, and its bytes are the only
+    ones the budget is asked to cover.
+
+    `duplicates` is asserted alongside, because a silent de-duplication would hide the fact that
+    the lake's shape has changed — which is the thing an operator needs to know."""
+    live = _file(date(2026, 9, 1))
+    archived = LakeEntry(f"{_ROOT}archive/{live.name.rsplit('/', 1)[1]}", 9_000)
+    window = _window(date(2026, 9, 1), date(2026, 9, 3))
+
+    selection = select_files([archived, live, _file(date(2026, 9, 2))], window, max_files=30)
+
+    assert [item.day for item in selection.files] == [date(2026, 9, 2), date(2026, 9, 1)]
+    assert selection.duplicates == 1
+    assert selection.total_bytes == 4_000 + min(archived.size, live.size), (
+        "only ONE of the two files for 1 Sep may be counted"
+    )
+
+
+def test_the_winner_between_two_copies_is_the_same_one_on_every_read() -> None:
+    """★ DETERMINISM, WHICH IS THE ONLY PROPERTY ON OFFER — there is no principled winner between
+    two files claiming the same day, so the rule is arbitrary by design. What must not happen is
+    the LISTING ORDER deciding: the same lake would then yield different windows on different
+    reads, and a number that moves for no reason is worse than one that is consistently the
+    second-best answer."""
+    window = _window(date(2026, 9, 1), date(2026, 9, 1))
+    a = LakeEntry(f"{_ROOT}aaa/tb_flight_fact_report_20260901.parquet", 1_000)
+    b = LakeEntry(f"{_ROOT}zzz/tb_flight_fact_report_20260901.parquet", 2_000)
+
+    forwards = select_files([a, b], window, max_files=30)
+    backwards = select_files([b, a], window, max_files=30)
+
+    assert forwards.files == backwards.files
+    assert forwards.files[0].name == a.name
+
+
+def test_the_ceiling_now_counts_days_rather_than_files() -> None:
+    """★ The pairing that makes the fix worth having: with a duplicate per day, a cap of five used
+    to return five FILES covering three days. It now returns five DAYS."""
+    listing: list[LakeEntry] = []
+    for day in range(1, 11):
+        original = _file(date(2026, 9, day))
+        listing.append(original)
+        listing.append(LakeEntry(f"{_ROOT}backup/{original.name.rsplit('/', 1)[1]}", 4_000))
+    window = _window(date(2026, 9, 1), date(2026, 9, 10))
+
+    selection = select_files(listing, window, max_files=5)
+
+    assert _selected(selection) == [date(2026, 9, day) for day in range(10, 5, -1)]
+    assert selection.duplicates == 10

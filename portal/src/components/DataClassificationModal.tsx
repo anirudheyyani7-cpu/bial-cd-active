@@ -26,7 +26,8 @@
  * citizen acts.
  */
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Loader2, ShieldAlert } from 'lucide-react'
+import { ShieldAlert } from 'lucide-react'
+import { BusyGlyph } from './ui/Waiting'
 import {
   AUTO_DEPLOY_MAX_SCORE,
   DATA_CLASSIFICATION_QUESTIONS,
@@ -448,7 +449,7 @@ export default function DataClassificationModal({
             className="mt-1 flex items-start gap-1.5 text-xs text-neutral leading-relaxed"
           >
             {reviewPending && (
-              <Loader2 size={13} className="animate-spin flex-shrink-0 mt-0.5" aria-hidden />
+              <BusyGlyph size={13} className="flex-shrink-0 mt-0.5" />
             )}
             <span>{statusSentence}</span>
           </div>
@@ -654,7 +655,7 @@ export default function DataClassificationModal({
               onClick={() => void handleConfirm()}
               className="flex-1 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition text-sm"
             >
-              {busy && <Loader2 size={15} className="animate-spin" />}
+              {busy && <BusyGlyph size={15} />}
               {sendForReview ? 'Send for review' : 'Publish'}
             </button>
           )}

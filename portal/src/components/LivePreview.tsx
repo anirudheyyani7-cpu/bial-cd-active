@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Loader2, Moon, PowerOff, RotateCcw, WifiOff } from 'lucide-react'
+import { Moon, PowerOff, RotateCcw, WifiOff } from 'lucide-react'
+import { BusyGlyph } from './ui/Waiting'
 import type { BuildSessionStatus } from '../utils/buildSessionTypes'
 import type { PreviewLifeState } from '../utils/buildSessionApi'
 import type { CompileState } from '../utils/compileState'
@@ -974,7 +975,11 @@ export default function LivePreview({
         {frameStalled && !showCover && (
           <div className="absolute inset-0 z-20 bg-[#e8edf2] flex flex-col items-center justify-center text-center px-6">
             <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-              <Loader2 size={26} className="text-warning animate-spin" style={{ animationDuration: '1.8s' }} />
+              {/* THE STALL CARD IS THE ONE PLACE A FROZEN SPINNER IS ACTIVELY MISLEADING: it is
+                  already saying the load is slow, so a motionless glyph beside that sentence reads
+                  as confirmation the thing died. Under `prefers-reduced-motion` this renders no
+                  spinner at all — see `ui/Waiting.tsx`. */}
+              <BusyGlyph size={26} className="text-warning" />
             </div>
             <p className="text-sm font-semibold text-neutral mb-1">{SLOW_TEXT}</p>
             {/* THE COPY NAMES NO CONTROL THIS CARD DOES NOT HAVE. The one start control lives in

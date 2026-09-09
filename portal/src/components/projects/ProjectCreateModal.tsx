@@ -12,7 +12,8 @@
  */
 import { useState } from 'react'
 import { countWords, MAX_PROJECT_NAME_WORDS } from '../../utils/words'
-import { X, Loader2 } from 'lucide-react'
+import { X } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { createProject, type Project } from '../../utils/projectApi'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
 
@@ -156,7 +157,7 @@ export default function ProjectCreateModal({ onClose, onCreated }: ProjectCreate
               disabled={!canSubmit}
               className="flex-1 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy ? <Loader2 size={15} className="animate-spin" /> : null} Create project
+              {busy ? <BusyGlyph size={15} /> : null} Create project
             </button>
             <button
               type="button"

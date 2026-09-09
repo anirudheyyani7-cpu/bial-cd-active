@@ -1,5 +1,6 @@
 import type { ColumnDef, Column, Row } from '@tanstack/react-table'
-import { Pencil, Loader2, UserX, UserCheck, ShieldCheck, ArrowUpDown, RotateCcw } from 'lucide-react'
+import { Pencil, UserX, UserCheck, ShieldCheck, ArrowUpDown, RotateCcw } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { tableHeadLabelClass } from '../ui/table'
 import type { LimitFields } from '../../utils/admin'
 
@@ -212,7 +213,7 @@ export function createUserColumns({
               data-testid={`reset-usage-${u.email}`}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-bial-border text-blue-600 hover:bg-blue-50 transition text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Reset usage
+              {busy ? <BusyGlyph size={12} /> : <RotateCcw size={12} />} Reset usage
             </button>
             {/* Suspended wins over the super-admin guard: role is derived at read time
                 from the env allowlist, so a suspended user who later lands on
@@ -234,7 +235,7 @@ export function createUserColumns({
                 data-testid={`reactivate-${u.email}`}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition text-xs font-medium disabled:opacity-50"
               >
-                {busy ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />} Reactivate
+                {busy ? <BusyGlyph size={12} /> : <UserCheck size={12} />} Reactivate
               </button>
             ) : (
               <button
@@ -243,7 +244,7 @@ export function createUserColumns({
                 data-testid={`deactivate-${u.email}`}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition text-xs font-medium disabled:opacity-50"
               >
-                {busy ? <Loader2 size={12} className="animate-spin" /> : <UserX size={12} />} Deactivate
+                {busy ? <BusyGlyph size={12} /> : <UserX size={12} />} Deactivate
               </button>
             )}
           </div>

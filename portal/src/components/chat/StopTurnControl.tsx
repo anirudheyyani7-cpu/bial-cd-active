@@ -9,8 +9,8 @@
  * by `Composer`, so reachable in both kinds of chat.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Square } from 'lucide-react'
-import { usePrefersReducedMotion } from './ToolActivityLine'
+import { Square } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 
 /** The live turn to stop: which conversation, and which turn within it. */
 export interface StopTarget {
@@ -59,9 +59,6 @@ export default function StopTurnControl({
   onStopFailed,
 }: StopTurnControlProps) {
   const [stopping, setStopping] = useState(false)
-  // Same gate the step rows use, for the same reason: a spinner is the one piece of chrome on
-  // this surface that moves continuously, and `prefers-reduced-motion` means it.
-  const reducedMotion = usePrefersReducedMotion()
 
   // A stop request outlives the control: the turn ends, `running` flips false, this unmounts, and
   // the promise then settles. Without this the state update lands on a dead component.
@@ -102,11 +99,7 @@ export default function StopTurnControl({
         stopping ? 'opacity-50 cursor-default' : 'hover:border-primary hover:text-primary'
       }`}
     >
-      {stopping ? (
-        <Loader2 size={12} className={reducedMotion ? undefined : 'animate-spin'} />
-      ) : (
-        <Square size={12} />
-      )}
+      {stopping ? <BusyGlyph size={12} /> : <Square size={12} />}
       Stop
     </button>
   )

@@ -8,7 +8,8 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import type { SortingState, ColumnFiltersState } from '@tanstack/react-table'
-import { X, AlertCircle, Loader2, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import { fetchUsers, updateUserLimits, deactivateUser, reactivateUser, resetUserUsage } from '../../utils/admin'
 import type { LimitFields, UserLimitsOut } from '../../utils/admin'
 import { ApiError } from '../../utils/apiError'
@@ -250,7 +251,7 @@ function EditModal({ user, defaults, onClose, onSaved, onToast }: EditModalProps
             data-testid="save-limits"
             className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50 transition"
           >
-            {saving && <Loader2 size={15} className="animate-spin" />}
+            {saving && <BusyGlyph size={15} />}
             Save limits
           </button>
           <button
@@ -506,7 +507,7 @@ export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
   if (users.length === 0 && (!error || isAbortError) && (loading || appliedQuery === null || isAbortError)) {
     return (
       <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm">
-        <Loader2 size={16} className="animate-spin" /> Loading users…
+        <BusyGlyph size={16} /> Loading users…
       </div>
     )
   }
@@ -689,7 +690,7 @@ export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
           <div className="flex items-center gap-1.5">
             {hasMore && !error && (
               <>
-                <Loader2 size={12} className="animate-spin" /> Loading more users…
+                <BusyGlyph size={12} /> Loading more users…
               </>
             )}
           </div>

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import type { RefObject } from 'react'
 import { useLocation } from 'react-router-dom'
-import { MessageSquare, X, Loader2, AlertCircle } from 'lucide-react'
+import { MessageSquare, X, AlertCircle } from 'lucide-react'
+import { BusyGlyph } from './ui/Waiting'
 import { submitFeedback } from '../utils/feedback'
 
 // Mirrors the server's MAX_FEEDBACK_CHARS (server/feedback.js). The counter and
@@ -164,7 +165,7 @@ export default function FeedbackModal({ open, onClose, onSubmitted, triggerRef, 
             data-testid="feedback-submit"
             className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm bg-primary text-white hover:bg-primary/90 disabled:opacity-50 transition"
           >
-            {busy && <Loader2 size={15} className="animate-spin" />}
+            {busy && <BusyGlyph size={15} />}
             Send feedback
           </button>
           <button

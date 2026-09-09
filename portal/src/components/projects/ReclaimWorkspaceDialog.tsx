@@ -11,7 +11,8 @@
  * falls to `<body>` and the keydown handler stops firing, as `ProjectDescriptionEditor` does.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { FolderOpen, Hammer, Loader2 } from 'lucide-react'
+import { FolderOpen, Hammer } from 'lucide-react'
+import { BusyGlyph, WaitingLine } from '../ui/Waiting'
 import type { HandoverStep, ReclaimBlocked } from '../../utils/buildSessionApi'
 
 interface Props {
@@ -249,9 +250,13 @@ export default function ReclaimWorkspaceDialog({
         {/* THE NARRATION, in place of a silent spinner. `role="status"` so it is announced as it
             changes; permanently reserved space is not needed because the buttons below stay put. */}
         {busy !== null && step !== null && (
-          <p data-testid="reclaim-step" role="status" className="mt-3 flex items-center gap-2 text-sm text-neutral">
-            <Loader2 size={14} className="animate-spin text-primary" aria-hidden />
-            {STEP_SAYS[step]}
+          <p data-testid="reclaim-step" role="status" className="mt-3 text-sm text-neutral">
+            {/* THE ELAPSED COUNT IS THE POINT, not the glyph. Measured in production, this
+                sequence runs stop 5s -> save 40s -> release 31s: seventy-six seconds during which
+                the only thing that changed was a sentence, every thirty. Under
+                `prefers-reduced-motion` — the default on the Windows VMs this was reported from —
+                nothing changed at all, and the dialog was read as hung. */}
+            <WaitingLine label={STEP_SAYS[step]} active />
           </p>
         )}
 
@@ -273,7 +278,7 @@ export default function ReclaimWorkspaceDialog({
               onClick={() => void run('save', onSaveAndSwitch)}
               className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy === 'save' ? <Loader2 size={15} className="animate-spin" /> : null} {copy.save}
+              {busy === 'save' ? <BusyGlyph size={15} /> : null} {copy.save}
             </button>
           )}
           <button
@@ -285,7 +290,7 @@ export default function ReclaimWorkspaceDialog({
             onClick={() => void run('discard', onSwitchAnyway)}
             className="w-full flex items-center justify-center gap-2 border border-bial-border text-tertiary hover:bg-bial-bg font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {busy === 'discard' ? <Loader2 size={15} className="animate-spin" /> : null}{' '}
+            {busy === 'discard' ? <BusyGlyph size={15} /> : null}{' '}
             {copy.discard}
           </button>
           <button

@@ -27,7 +27,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, PlayCircle, RotateCcw, ArrowRight, Undo2 } from 'lucide-react'
+import { PlayCircle, RotateCcw, ArrowRight, Undo2 } from 'lucide-react'
+import { BusyGlyph } from '../ui/Waiting'
 import {
   BuildSessionAlreadyActiveError,
   asReclaimBlocked,
@@ -622,7 +623,7 @@ function Control({ label, pending, inert = false, pendingLabel, icon, onPress, s
           : 'bg-primary text-white shadow-sm shadow-primary/30 hover:bg-primary-600'
       } ${unavailable ? 'opacity-60' : ''}`}
     >
-      {pending ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : icon}
+      {pending ? <BusyGlyph size={15} /> : icon}
       {/* THE WORDS ARE WHAT CHANGES. With no `aria-label` over the top, this is also the
           accessible name — so the button renames itself from "Launch Application" to "Starting
           your app…" as it goes, and a reader on the control hears the change. */}

@@ -1514,7 +1514,21 @@ class SessionManager:
         # `saved_head` is still reported alongside it: the answer is "there is unsaved work on top
         # of the version you saved", not "nothing here is saved", and a client that lost the
         # saved version would be describing a bigger loss than the one that happened.
-        if state.uncommitted:
+        #
+        # ...BUT FRAMEWORK CHURN IS NOT WORK, and this arm is where that was forgotten. `next dev`
+        # rewrites `next-env.d.ts` and normalises `tsconfig.json` on every boot, so merely OPENING
+        # a project — never touching it — made the porcelain non-empty and every reader of this
+        # flag act on it: the rail announced "You have changes that are not saved yet", the reclaim
+        # dialog offered to save them, and the exit guard demanded a save before leaving. On one
+        # observed hand-over that cost a citizen forty seconds of a modal spinner to store two
+        # files a framework had rewritten by itself.
+        #
+        # THE FILTER ALREADY EXISTED. `clean_but_for_churn` is the tree half of `_nothing_to_lose`,
+        # written for exactly this question, and this was the one caller that did not consult it —
+        # two spellings of "is this dirty" that were free to disagree, and did. It fails CLOSED on
+        # a truncated porcelain (too much changed to enumerate is itself evidence of real work), so
+        # routing through it cannot turn a genuinely dirty tree clean.
+        if state.uncommitted and not clean_but_for_churn(state):
             return SaveState(
                 app_id=app_id,
                 dirty=True,

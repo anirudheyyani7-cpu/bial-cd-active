@@ -4,6 +4,7 @@ startup check (#191 slice 3, R19-R23)."""
 from __future__ import annotations
 
 import pytest
+from openai import Timeout
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from structlog.testing import capture_logs
@@ -94,6 +95,26 @@ def test_build_embedder_api_key_mode_requires_a_key() -> None:
     object.__setattr__(config, "api_key", None)
     with pytest.raises(EmbeddingFoundryOnlyError):
         build_embedder(config)
+
+
+def test_build_embedder_carries_the_configured_timeout_and_retries() -> None:
+    # Review of #191 (agc129): the embedding client had no explicit timeout/retry bound at
+    # all, so an unresponsive Foundry endpoint would hang on the OpenAI SDK's own generous
+    # default — with the caller's DB transaction still open the whole time, since
+    # `write_description_embedding` runs before `db.commit()`. Pinned here against the SAME
+    # `FoundryConfig` fields the Claude path already shares (`read_timeout_s`/
+    # `connect_timeout_s`/`max_retries`), reached via the model's private client because
+    # neither `Embedder` nor `OpenAIEmbeddingModel` surfaces them publicly.
+    config = _config(read_timeout_s=42.0, connect_timeout_s=7.0, max_retries=3)
+    embedder = build_embedder(config)
+    assert embedder is not None
+    model = embedder._get_model()  # noqa: SLF001
+    assert isinstance(model, OpenAIEmbeddingModel)
+    client = model._client  # noqa: SLF001 — the underlying AsyncAzureOpenAI
+    assert isinstance(client.timeout, Timeout)
+    assert client.timeout.read == 42.0
+    assert client.timeout.connect == 7.0
+    assert client.max_retries == 3
 
 
 def test_build_embedder_entra_mode_also_targets_foundry(monkeypatch: pytest.MonkeyPatch) -> None:

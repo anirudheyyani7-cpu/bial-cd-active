@@ -25,7 +25,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import Depends
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, Timeout
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
 from pydantic_ai.providers.azure import AzureProvider
@@ -68,15 +68,36 @@ def _assert_foundry_only(base_url: str) -> None:
 
 
 def _build_provider(config: FoundryConfig) -> AzureProvider:
+    """Build the Azure provider with the SAME anti-hang socket bounds the Claude path uses
+    (`services/agent/model.py::build_foundry_client`) — `config.read_timeout_s` /
+    `connect_timeout_s` / `max_retries` are ONE shared `FoundryConfig`, not a second knob set
+    for this client to drift from. Without them, an unresponsive Foundry endpoint hangs on the
+    OpenAI SDK's own default timeout (up to several minutes) with the caller's DB transaction
+    still open the whole time — `write_description_embedding` runs before `db.commit()`, so a
+    wedged embed call would hold that connection, not just the one request (review of #191,
+    agc129).
+
+    BUILDS AN EXPLICIT `AsyncAzureOpenAI` IN BOTH AUTH MODES, unlike before: `AzureProvider`'s
+    own `azure_endpoint`/`api_key`/`api_version` constructor path has no `timeout=`/
+    `max_retries=` parameters at all, so passing those meant handing it a client it built
+    internally with the SDK's bare defaults. Building the client here and handing it in via
+    `openai_client=` — already the entra branch's own shape — is the only way to reach them.
+    """
     azure_endpoint = f"https://{config.resource}.services.ai.azure.com"
+    # The SDK's OWN `Timeout`, not `httpx.Timeout` — see `build_foundry_client`'s identical
+    # note: `openai.Timeout` is a distinct type from `httpx.Timeout`, so taking it from the
+    # SDK's public re-export tracks whichever httpx it vendors next.
+    timeout = Timeout(config.read_timeout_s, connect=config.connect_timeout_s)
     if config.auth_mode == "api_key":
         if config.api_key is None:
             # The config validator already enforces this pairing; narrow + fail closed.
             raise EmbeddingFoundryOnlyError("FOUNDRY__API_KEY is required in api_key auth mode.")
-        provider = AzureProvider(
+        client = AsyncAzureOpenAI(
             azure_endpoint=azure_endpoint,
             api_key=config.api_key.get_secret_value(),
             api_version=_EMBEDDING_API_VERSION,
+            timeout=timeout,
+            max_retries=config.max_retries,
         )
     else:  # entra — managed identity, no static secret; same scope as the Claude path
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -86,8 +107,10 @@ def _build_provider(config: FoundryConfig) -> AzureProvider:
             azure_endpoint=azure_endpoint,
             azure_ad_token_provider=token_provider,
             api_version=_EMBEDDING_API_VERSION,
+            timeout=timeout,
+            max_retries=config.max_retries,
         )
-        provider = AzureProvider(openai_client=client)
+    provider = AzureProvider(openai_client=client)
     _assert_foundry_only(str(provider.client.base_url))
     return provider
 

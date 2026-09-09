@@ -18,7 +18,7 @@ MIGRATION_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "2026_09_08_0040_project_description_embedding.py"
+    / "2026_09_08_0040_description_embedding.py"
 )
 
 

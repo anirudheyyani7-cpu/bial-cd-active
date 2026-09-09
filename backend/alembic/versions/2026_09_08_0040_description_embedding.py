@@ -1,8 +1,14 @@
 """`projects.description_embedding` — the semantic-search index (#191 slice 3)
 
-Revision ID: 0040_project_description_embedding
+Revision ID: 0040_description_embedding
 Revises: 0039_drop_current_code
 Create Date: 2026-09-08
+
+SHORTENED FROM THE ORIGINALLY-AUTHORED "0040_project_description_embedding": that form is 34
+characters, two over `alembic_version.version_num`'s `VARCHAR(32)` — `alembic upgrade head`
+fails with "value too long for type character varying(32)" at exactly this revision, not at
+authoring time, so nothing catches it before a real migration run does (review of #191,
+agc129). Filename renamed to match, mirroring every other migration in this chain.
 
 A nullable `vector(1536)` column, populated from the write path (`api/v1/projects/router.py`)
 whenever a description is first set or changes — never derived by Postgres, unlike
@@ -37,7 +43,7 @@ from pgvector.sqlalchemy import Vector
 
 from alembic import op
 
-revision: str = "0040_project_description_embedding"
+revision: str = "0040_description_embedding"
 down_revision: str | Sequence[str] | None = "0039_drop_current_code"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

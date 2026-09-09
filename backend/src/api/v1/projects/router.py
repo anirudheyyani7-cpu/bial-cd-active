@@ -197,6 +197,12 @@ async def create_project(
     await write_description_embedding(project, embedder)
     project_id = project.id  # a plain scalar for the post-commit work (no expired-attribute I/O)
     await db.commit()
+    # THE SECOND REFRESH IS NOT REDUNDANT WITH THE ONE ABOVE. `commit()` expires every
+    # attribute by default (`expire_on_commit`), so the pre-commit refresh's values are gone
+    # by the time `_to_response` reads them below — accessing an expired attribute outside
+    # an awaited context is `MissingGreenlet`, a 500 on every create. Mirrors `patch_project`'s
+    # identical commit-then-refresh order (review of #191, agc129).
+    await db.refresh(project)
     # A project one statement old owns no app, so nothing of its can be serving. Passed
     # explicitly rather than defaulted: this is an answer, not an omission.
     response = _to_response(project, is_serving=False)

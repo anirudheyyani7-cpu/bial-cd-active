@@ -183,3 +183,64 @@ async def test_work_no_one_has_ever_saved_is_dirty_not_unknown(store: FakeStorag
 
     assert state.dirty is True
     assert state.saved_head is None
+
+
+# =============================================================================
+# Framework churn: a dirty tree that nobody dirtied
+# =============================================================================
+
+
+async def test_a_tree_dirty_only_with_framework_churn_is_not_unsaved_work(
+    store: FakeStorage,
+) -> None:
+    """★★ THE REPORTED BUG. Open a project, touch nothing, and be told there are unsaved changes.
+
+    `next dev` rewrites `next-env.d.ts` and normalises `tsconfig.json` on every boot, so the
+    porcelain of a LIVE container is never empty — which meant merely starting an app made the
+    rail announce unsaved work, the reclaim dialog offer to save it, and the exit guard demand a
+    save first. One production hand-over spent forty seconds writing those two files.
+
+    Mutation check: drop `clean_but_for_churn` from the `state.uncommitted` arm and this goes red
+    with `dirty is True` — the platform inventing work the citizen never did."""
+    await _saved(store, SAVED_AT)
+    just_booted = _container(head=SAVED_AT, porcelain=" M next-env.d.ts\n M tsconfig.json")
+
+    state = await SessionManager()._save_state_of(just_booted, _HANDLE, APP)
+
+    # Falls through to the commit comparison, which is the honest answer: the container sits
+    # exactly where the last Save left it.
+    assert state.dirty is False
+    assert state.container_head == SAVED_AT
+    assert state.saved_head == SAVED_AT
+
+
+async def test_churn_beside_real_work_is_still_unsaved_work(store: FakeStorage) -> None:
+    """The filter narrows, it never swallows. A page the agent wrote in the same tree as the two
+    files the framework rewrote is work, and the whole of `_save_state_of` exists to say so.
+
+    Mutation check: widen the filter to "ignore the tree when ANY churn is present" and this goes
+    red — which is the version of this fix that would lose somebody their build."""
+    await _saved(store, SAVED_AT)
+    real = _container(head=SAVED_AT, porcelain=" M next-env.d.ts\n M app/page.tsx")
+
+    state = await SessionManager()._save_state_of(real, _HANDLE, APP)
+
+    assert state.dirty is True
+
+
+async def test_a_porcelain_too_long_to_read_stays_dirty(store: FakeStorage) -> None:
+    """Fails CLOSED, and this is the arm that proves the routing did not quietly open a hole. A
+    capped porcelain comes back truncated, so `changed_paths` is empty — and "no paths" through a
+    naive `all(...)` reads as "nothing but churn", which would report a heavily-edited tree clean.
+    `clean_but_for_churn` answers False on truncation for exactly this reason."""
+    await _saved(store, SAVED_AT)
+    # Past `PORCELAIN_CAP_BYTES`, so the probe reports it truncated.
+    from src.services.build_sessions.integrity import PORCELAIN_CAP_BYTES
+
+    flooded = _container(
+        head=SAVED_AT, porcelain=" M app/f.tsx\n" * (PORCELAIN_CAP_BYTES // 12 + 40)
+    )
+
+    state = await SessionManager()._save_state_of(flooded, _HANDLE, APP)
+
+    assert state.dirty is True

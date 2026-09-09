@@ -39,6 +39,7 @@ from azure.core.exceptions import (
     HttpResponseError,
     ResourceNotFoundError,
     ServiceRequestError,
+    ServiceResponseError,
 )
 from azure.identity.aio import ManagedIdentityCredential
 from azure.storage.blob.aio import BlobServiceClient
@@ -171,14 +172,12 @@ class LakeClient:
         self._config = config
         self._account = _account(config)
 
-    @property
-    def config(self) -> LakeConfig:
-        """The block this client was built from — public so a caller composing an environment
-        for a container reads the SAME coordinates the control plane just used."""
-        return self._config
-
     def _raise(
-        self, exc: HttpResponseError | ServiceRequestError, *, op: str, target: str
+        self,
+        exc: HttpResponseError | ServiceRequestError | ServiceResponseError,
+        *,
+        op: str,
+        target: str,
     ) -> NoReturn:
         """SANITISED re-raise that KEEPS the coordinates and drops the SDK's own text.
 
@@ -267,9 +266,17 @@ class LakeClient:
         # broader clause above this one would swallow the confirmed-absent container and report
         # it as a generic failure. That inversion is a shipped defect this repository has
         # already paid for once, in a bounded retry made unreachable by a parent-class `except`.
+        #
+        # `ServiceResponseError` IS THE THIRD ONE, and it is easy to leave out because it is not
+        # an `HttpResponseError` — it is a SIBLING of `ServiceRequestError` under `AzureError`.
+        # The aiohttp transport raises it for a read timeout, which is precisely the failure this
+        # module's own `_READ_TIMEOUT_S` manufactures. Without it a slow lake escapes the
+        # sanitised re-raise AND `transfer_window_or_log`'s `(LakeError, RedisError)`, landing as
+        # a raw stack with none of the coordinates. `aca_publish.py` and `sandbox/client.py` both
+        # already catch all three.
         except ResourceNotFoundError as exc:
             self._raise_absent(exc, op="list", target=self._config.prefix)
-        except (HttpResponseError, ServiceRequestError) as exc:  # fmt: skip  # ruff py314 parens
+        except (HttpResponseError, ServiceRequestError, ServiceResponseError) as exc:  # fmt: skip
             self._raise(exc, op="list", target=self._config.prefix)
         return tuple(entries)
 
@@ -286,7 +293,7 @@ class LakeClient:
             data = await downloader.readall()
         except ResourceNotFoundError as exc:
             self._raise_absent(exc, op="download", target=name)
-        except (HttpResponseError, ServiceRequestError) as exc:  # fmt: skip  # ruff py314 parens
+        except (HttpResponseError, ServiceRequestError, ServiceResponseError) as exc:  # fmt: skip
             self._raise(exc, op="download", target=name)
         if not isinstance(data, bytes):
             raise LakeError(

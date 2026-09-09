@@ -31,6 +31,7 @@ from azure.core.exceptions import (
     HttpResponseError,
     ResourceNotFoundError,
     ServiceRequestError,
+    ServiceResponseError,
 )
 from azure.identity.aio import ManagedIdentityCredential
 from azure.storage.blob import BlobProperties
@@ -360,6 +361,27 @@ async def test_a_transport_failure_is_the_apps_own_error_type() -> None:
 
     with pytest.raises(LakeError):
         await LakeClient(_config()).list_files()
+
+
+async def test_a_read_timeout_is_the_apps_own_error_type_too() -> None:
+    """★ `ServiceResponseError` IS NOT AN `HttpResponseError` — it is a sibling of
+    `ServiceRequestError` under `AzureError`, and it is what the aiohttp transport raises when the
+    server accepted the request and then stopped answering. This module sets `_READ_TIMEOUT_S`
+    itself, so it manufactures exactly that failure; a clause that named only the other two would
+    let a slow lake escape both the sanitised re-raise here AND `transfer_window_or_log`'s
+    `(LakeError, RedisError)`, landing as a raw stack with none of the coordinates on it.
+
+    Asserted on both verbs because the two `except` chains are written out separately."""
+    _bind(_FakeServiceClient(list_raises=ServiceResponseError(message=_SDK_NOISE)))
+    with pytest.raises(LakeError) as listing:
+        await LakeClient(_config()).list_files()
+    assert _SDK_NOISE not in str(listing.value)
+
+    await reset_lake_for_tests()
+    _bind(_FakeServiceClient(download_raises=ServiceResponseError(message=_SDK_NOISE)))
+    with pytest.raises(LakeError) as download:
+        await LakeClient(_config()).download("slow.parquet")
+    assert "slow.parquet" in str(download.value)
 
 
 # --- the cache ----------------------------------------------------------------------------------

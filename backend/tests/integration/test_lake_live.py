@@ -14,9 +14,29 @@ marked `integration`, which `addopts = "-m 'not integration and not destructive_
 already deselects, and it skips CLEANLY when the lake is unconfigured — the e2e conftest's rule,
 so the lane degrades to a visible skip rather than a hang or a false pass.
 
-HOW TO RUN IT. Point `CONNECTOR_LAKE__*` at a real lake (see `backend/.env.example`), then:
+WHICH CREDENTIAL IT USES, AND WHY THAT IS NOT A HOLE. `LakeClient` builds
+`ManagedIdentityCredential(client_id=...)` and nothing can change that — the whole point of the
+module is that the identity is named explicitly, so a swappable credential would be the first
+thing to erode. A managed identity only exists INSIDE Azure, so a test that used the client's own
+credential could never run on a developer machine and this file would skip forever, which is the
+same as not existing.
 
-    cd backend && uv run pytest tests/integration/test_lake_live.py -m integration -v
+So this check injects a `BlobServiceClient` built from the developer's `az login` into the
+client's own cache — the same seam `test_client.py` uses for its fakes — and then drives the REAL
+`list_files` / `download` / `_raise_absent` code paths against the REAL lake. Everything is
+genuine except which principal is asking.
+
+**It therefore does NOT prove the managed-identity path.** That is proven separately and from
+inside Azure by the `dice-mi-probe` Container Apps job (`az containerapp job start -n
+dice-mi-probe -g bial-cd-rg`), which exists for exactly this reason. Do not read a green run here
+as evidence that the role assignment or the token mint works — it is evidence that the listing,
+the object-name pattern, the trap shapes and the byte handling are right.
+
+HOW TO RUN IT. `az login` against the subscription holding the lake, point `CONNECTOR_LAKE__URL`
+at it, then:
+
+    cd backend && CONNECTOR_LAKE__URL=https://<account>.blob.core.windows.net/<container>/<pre>/ \
+      uv run pytest tests/integration/test_lake_live.py -m integration -v -s
 
 Its output belongs in the PR body, pasted rather than linked, because nothing else will ever run
 it.
@@ -31,12 +51,17 @@ golden template and are proven against the replica out of band.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
+from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
+from azure.storage.blob.aio import BlobServiceClient
 
 from src.core.connectors import CONNECTORS
-from src.services.lake.client import LakeClient
+from src.services.lake import client as lake_client
+from src.services.lake.client import LakeClient, reset_lake_for_tests
 from src.services.lake.config import LakeConfig
 from src.services.lake.window import LAKE_FILE_PATTERN, select_files
 from src.services.usage import ist_today
@@ -49,35 +74,60 @@ _DICE = CONNECTORS["dice"]
 _PARQUET_MAGIC = b"PAR1"
 
 
-@pytest.fixture(scope="module")
-def lake() -> LakeClient:
-    """A client against the configured lake, or a clean skip.
+# FUNCTION-SCOPED, not module-scoped, and that is forced rather than chosen: `asyncio_mode = auto`
+# gives each test its own event loop, so a module-scoped async fixture builds its aiohttp session
+# on one loop and hands it to tests running on another — which fails as
+# `got Future attached to a different loop` at the first DOWNLOAD, after the listing tests have
+# already passed. The cost is one extra listing per test against a container holding a few dozen
+# small objects.
+@pytest.fixture
+async def lake() -> AsyncIterator[LakeClient]:
+    """A `LakeClient` pointed at a real lake and reading with the developer's own `az` login.
 
-    Reads the environment DIRECTLY rather than through `settings`, so this check can be pointed
-    at a replica without the whole process being configured for one — and so the skip message
-    names the variables to set."""
+    Reads the environment DIRECTLY rather than through `settings`, so this check can be pointed at
+    a replica without the whole process being configured for one — and so the skip message names
+    the variable to set.
+
+    THE CACHE INJECTION IS THE POINT, NOT A WORKAROUND. See the module docblock: the client's
+    credential is deliberately unswappable, so the only way to exercise its real code against real
+    bytes from outside Azure is to hand its cache a service client built from a credential that
+    works here. The client's own `list_files` / `download` / error translation all run unchanged.
+    """
     url = os.environ.get("CONNECTOR_LAKE__URL")
-    client_id = os.environ.get("CONNECTOR_LAKE__IDENTITY_CLIENT_ID")
-    if not url or not client_id:
+    if not url:
         pytest.skip(
-            "no lake configured — set CONNECTOR_LAKE__URL and "
-            "CONNECTOR_LAKE__IDENTITY_CLIENT_ID to run this against a real lake"
+            "no lake configured — set CONNECTOR_LAKE__URL to a real lake "
+            "(https://<account>.blob.core.windows.net/<container>/<prefix>/) to run this"
         )
-    return LakeClient(
-        LakeConfig(
-            url=url,
-            identity_client_id=client_id,
-            # Never used on this path: the resource id attaches an identity to a container app,
-            # and this test IS the caller rather than a container. Filled with the client id so
-            # the model constructs; nothing reads it.
-            identity_resource_id=os.environ.get(
-                "CONNECTOR_LAKE__IDENTITY_RESOURCE_ID", f"/local/{client_id}"
-            ),
-        )
+
+    config = LakeConfig(
+        url=url,
+        # Neither identifier is used on this path. The client id names the identity a CONTAINER
+        # would present, and the resource id attaches that identity to a container app; this test
+        # is neither. They are filled so the model constructs, and nothing reads them.
+        identity_client_id=os.environ.get(
+            "CONNECTOR_LAKE__IDENTITY_CLIENT_ID", "00000000-0000-0000-0000-000000000000"
+        ),
+        identity_resource_id=os.environ.get(
+            "CONNECTOR_LAKE__IDENTITY_RESOURCE_ID", "/not-used-by-this-test"
+        ),
     )
 
+    credential = AzureCliCredential()
+    service_client = BlobServiceClient(config.account_url, credential=credential)
+    await reset_lake_for_tests()
+    lake_client._client_cache[lake_client._fingerprint(config)] = lake_client._LakeClientState(
+        service_client, credential=cast("ManagedIdentityCredential", credential)
+    )
+    try:
+        yield LakeClient(config)
+    finally:
+        await service_client.close()
+        await credential.close()
+        lake_client._client_cache.clear()
 
-@pytest.fixture(scope="module")
+
+@pytest.fixture
 async def listing(lake: LakeClient) -> tuple:
     entries = await lake.list_files()
     assert entries, "the lake answered with nothing at all — check the container and the prefix"

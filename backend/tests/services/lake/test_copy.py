@@ -25,6 +25,7 @@ from datetime import timedelta
 
 import fakeredis.aioredis
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.connector_access import ConnectorRequestStatus
 from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
@@ -266,3 +267,59 @@ async def test_a_lake_failure_never_escapes_the_detached_copy(db_session, lake, 
     lake.list_files = _explode
 
     await lake_copy._copy_in_its_own_session(user_id, project_id)
+
+
+# --- the pool the copy must not sit on ---------------------------------------------------------
+
+
+async def test_the_database_session_is_closed_before_a_single_byte_is_downloaded(
+    db_session, lake, redis_bytes, monkeypatch
+):
+    """★ THE COPY MUST NOT HOLD A POOLED CONNECTION ACROSS ITS NETWORK WORK. The transfer is a
+    listing plus up to a full window of blob downloads — measured at ~6.7 s for one window from
+    outside the region, and unbounded in the general case. The control plane's pool is twenty
+    wide, so a background copy nobody reads, sitting idle-in-transaction for that long on every
+    container birth, is a request-path outage waiting for enough concurrent builds.
+
+    ASSERTED AT THE HAND-OFF, NOT BY READING THE INDENTATION. `in_transaction()` is precisely
+    "this session is holding a connection out of the pool", and it is sampled at the moment the
+    network half is invoked. Moving `run_window_copies` back inside the `async with` turns this
+    red, which is the only reason the test is worth having.
+
+    Deliberately independent of what the database contains: this asserts WHERE the two halves
+    are called from, and it must not quietly pass because the plan came back empty."""
+    holding_a_connection: list[bool] = []
+    planned_first: list[bool] = []
+
+    from src.db import base as db_base
+
+    made: list[AsyncSession] = []
+    original_factory = db_base.async_session_factory
+
+    def _recording_factory():
+        session = original_factory()
+        made.append(session)
+        return session
+
+    monkeypatch.setattr(db_base, "async_session_factory", _recording_factory)
+
+    real_plan = lake_copy.plan_window_copies
+
+    async def _plan(db, **kwargs):
+        planned_first.append(True)
+        return await real_plan(db, **kwargs)
+
+    async def _run(plans, *, project_id):
+        holding_a_connection.append(any(s.in_transaction() for s in made))
+        return None
+
+    monkeypatch.setattr(lake_copy, "plan_window_copies", _plan)
+    monkeypatch.setattr(lake_copy, "run_window_copies", _run)
+
+    await lake_copy._copy_in_its_own_session(uuid.uuid4(), uuid.uuid4())
+
+    # Liveness first: both halves must actually have been reached, in order, or the assertion
+    # underneath is about a hand-off that never happened.
+    assert planned_first == [True]
+    assert made, "the detached copy did not open a session at all"
+    assert holding_a_connection == [False]

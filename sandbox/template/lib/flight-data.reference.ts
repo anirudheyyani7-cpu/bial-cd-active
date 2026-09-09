@@ -322,14 +322,20 @@
 //
 //   const files = await listFlightFiles()
 //
-//   // Which files could hold a flight in this window? A load never carries flights from AFTER it,
-//   // so anything loaded before the window opened is still a candidate (it may hold future
-//   // schedule) but anything loaded well before is mostly waste. Widen rather than narrow: the
-//   // cost of one extra file is milliseconds, the cost of missing one is a wrong answer.
-//   const candidates = files.filter((f) => f.loadDate >= new Date(from.getTime() - 86_400_000 * 2))
-//
+//   // WHICH FILES COULD HOLD A FLIGHT IN THIS WINDOW? ALL OF THEM — THERE IS NO ARITHMETIC ON THE
+//   // LOAD DATE THAT SAFELY RULES ONE OUT. The load-date trap above has the measurement: one file
+//   // loaded on a single day in August 2026 carried flights scheduled from July 2022 to October
+//   // 2026. A load date bounds neither end of the flights inside it, so the only honest filter is
+//   // the ROW filter, and it runs on `SIBT_SOBT_TIME` in `flightsBetween` below.
+//   //
+//   // This loop used to run over `files.filter((f) => f.loadDate >= from - 2 days)`. It emptied any
+//   // window starting more than two days after the newest load — every forward-looking question
+//   // returned `[]` with no error — and for a backward window it dropped a flight whose only
+//   // surviving record lived in an older load. The set is already bounded upstream: the platform
+//   // copies at most one retention window into the workspace, which is the 30 files and ~6.7 s the
+//   // docblock measured. Reading all of them costs seconds; guessing costs a wrong answer silently.
 //   const rows: T[] = []
-//   for (const file of candidates) appendAll(rows, await readColumns<T>(file, needed))
+//   for (const file of files) appendAll(rows, await readColumns<T>(file, needed))
 //
 //   return flightsBetween(currentRecordsOnly(rows), from, to)
 // }

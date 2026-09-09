@@ -30,7 +30,9 @@ from datetime import date, timedelta
 
 import pytest
 import sqlalchemy as sa
+from redis.exceptions import RedisError
 
+from src.api.v1.connectors import router
 from src.core.connectors import CONNECTORS
 from src.db.models.connector_access import ConnectorRequestStatus
 from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
@@ -685,6 +687,38 @@ async def test_the_other_two_live_signals_refuse_as_well(
 
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "session_is_live"
+
+
+async def test_a_redis_that_answers_badly_refuses_the_change_rather_than_allowing_it(
+    client, db_session, fake_redis, monkeypatch
+) -> None:
+    """★ THE FAIL-CLOSED ARM, WHICH IS A DIFFERENT ARM FROM "NO REDIS AT ALL". No Redis
+    configured means no sandbox coordination, so there is no live session to protect and the write
+    is allowed — that is the supported dev posture. A CONFIGURED Redis that raises is the opposite
+    situation: the platform cannot tell whether a session is live, and a guess in that state is
+    the half-configured container the whole R11a lock exists to prevent.
+
+    Refusing costs nothing real, which is why this is the right posture rather than a cautious
+    one: if Redis cannot answer, `acquire_lock` cannot take a lock either, so no build the refusal
+    blocks could have started anyway.
+
+    Turning the `raise` in that `except RedisError` into a `return` makes this test red and every
+    other test in this file stay green — which is the only reason it is worth writing."""
+    user, project = await _approved(db_session)
+
+    async def _redis_that_is_having_a_bad_day(*args, **kwargs):
+        raise RedisError("connection reset by peer")
+
+    # Patched on the FIRST of the three liveness reads: the three are `or`-ed, so a failure in any
+    # one of them has to refuse — short-circuiting past a broken check would be the bug.
+    monkeypatch.setattr(router, "lock_is_held", _redis_that_is_having_a_bad_day)
+
+    resp = await _put(client, user, project.id, {"enabled": True})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "session_is_live"
+    # And nothing was written, exactly as for a genuinely live session.
+    assert await _stored_rows(db_session, project.id) == []
 
 
 async def test_once_the_session_ends_the_switch_is_settable_again(

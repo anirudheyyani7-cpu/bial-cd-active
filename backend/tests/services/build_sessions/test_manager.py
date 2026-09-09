@@ -42,6 +42,7 @@ from src.core.errors import AppApiError
 from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.conversation import ChatKind
 from src.db.models.user import User
+from src.services.build_sessions import manager as manager_module
 from src.services.build_sessions.appdata import (
     APP_SWITCHED_OFF_CODE,
     build_app_env,
@@ -2925,3 +2926,93 @@ async def test_an_unapproved_project_is_born_with_nothing_extra(
     assert client.provision_env is not None
     assert url_name not in client.provision_env
     assert client_id_name not in client.provision_env
+
+
+# --- the copy fires on a BIRTH, and only on a birth ----------------------------------------------
+
+
+async def test_both_birth_arms_schedule_the_window_copy(
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _lake_configured: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ The two arms that hand a container its environment must also start the copy of the files
+    that environment points at. The call is fire-and-forget by design — it returns before the task
+    runs and swallows everything after — so nothing downstream ever notices its absence. Deleting
+    either `schedule_window_copy(...)` line leaves every other test in this file green.
+
+    Both arms in one test because they are one decision made twice, and a test per arm would let
+    somebody add a third arm without noticing there was a pattern to follow."""
+    fired: list[tuple[uuid.UUID, uuid.UUID]] = []
+    monkeypatch.setattr(
+        manager_module,
+        "schedule_window_copy",
+        lambda user_id, project_id: fired.append((user_id, project_id)),
+    )
+
+    user, project_id = await _approved_connector_project(db_session, "cx4@rvaiglobal.com")
+    manager = SessionManager()
+    await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=FakeSandboxClient(), may_write=True
+    )
+    assert fired == [(user.id, project_id)], "the turn-start birth arm did not start the copy"
+
+    other, other_project = await _approved_connector_project(db_session, "cx5@rvaiglobal.com")
+    await _seed_app_with_bundle(db_session, other, other_project, fake_storage)
+    await manager.relaunch_preview(db_session, other, other_project, _RelaunchRecorder())
+    assert fired[-1] == (other.id, other_project), "the relaunch birth arm did not start the copy"
+
+
+async def test_attaching_to_a_live_container_does_not_re_copy_the_window(
+    db_session: AsyncSession,
+    fake_redis: aioredis.Redis,
+    fake_storage: FakeStorage,
+    _lake_configured: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ THE ABSENCE IS THE POINT, AND IT IS THE COMMON PATH. Attach is the steady state — every
+    message after the first — and it forwards no environment because the container already has
+    one. Firing the copy here would list the lake and re-check a whole window once per message,
+    for a copy nothing reads.
+
+    Paired with a liveness assertion rather than left as a bare `== []`: a run that had somehow
+    taken the BIRTH arm, or failed before reaching either, would satisfy the absence for entirely
+    the wrong reason. `client.provisioned` staying empty is what proves this went through attach.
+    """
+    user, project_id = await _approved_connector_project(db_session, "cx6@rvaiglobal.com")
+    manager = SessionManager()
+    client = FakeSandboxClient()
+    app_id = await resolve_app_for_project(db_session, user.id, project_id)
+    await db_session.commit()
+    client.attach_handle = SandboxHandle(
+        fqdn="existing.example",
+        token="tok",
+        app_name=app_name_for(app_id),
+        preview_url="https://existing.example/",
+        ready=True,
+    )
+    await fake_redis.hset(
+        registry_key(user.id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: app_name_for(app_id),
+            REGISTRY_FIELD_FQDN: "existing.example",
+            REGISTRY_FIELD_TOKEN_REF: "ref",
+            REGISTRY_FIELD_CREATED_AT: "2026-07-14T00:00:00+00:00",
+            REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+        },
+    )
+
+    fired: list[tuple[uuid.UUID, uuid.UUID]] = []
+    monkeypatch.setattr(
+        manager_module,
+        "schedule_window_copy",
+        lambda user_id, project_id: fired.append((user_id, project_id)),
+    )
+    await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
+    )
+
+    assert client.provisioned == [], "this took the BIRTH arm; the assertion below proves nothing"
+    assert fired == []

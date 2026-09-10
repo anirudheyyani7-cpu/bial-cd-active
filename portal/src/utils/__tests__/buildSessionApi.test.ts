@@ -8,10 +8,14 @@ import {
   asReclaimBlocked,
   releaseProject,
   fetchPreviewState,
+  fetchSaveState,
+  sameSaveState,
+  canBePutBack,
   handOverWorkspace,
   STOP_CEILING_MS,
   STOP_POLL_MS,
 } from '../buildSessionApi'
+import type { SaveState } from '../buildSessionApi'
 import { ApiError } from '../apiError'
 
 /** A fake `Response`: `json()` is re-callable and `clone()` returns itself, so the
@@ -736,5 +740,87 @@ describe('fetchPreviewState — the wire mirror', () => {
       occupyingProjectId: null,
       restorable: null,
     })
+  })
+})
+
+/**
+ * ★ THE SAVE-STATE WIRE, AND THE ONE FIELD THE PORTAL USED TO THROW AWAY.
+ *
+ * `recoveryAt` says whether the platform is holding a copy of this app's tree it can put back, and
+ * three surfaces decide what to SAY and whether to STOP somebody from it. It arrived on the wire
+ * long before anything here parsed it: the reported bug was a freshly built app announcing unsaved
+ * changes and blocking its owner's exit while the answer sat unread in the response body.
+ */
+describe('fetchSaveState — the recovery instant, parsed like its siblings', () => {
+  const saveFetch = (body: unknown) => ({ fetchImpl: async () => res(200, body) })
+
+  it('★ keeps a string instant exactly as it arrived', async () => {
+    const state = await fetchSaveState(
+      'p1',
+      saveFetch({ appId: 'a1', dirty: true, containerHead: '059d936', savedHead: null, recoveryAt: '2026-09-10T10:38:43Z' }),
+    )
+    expect(state.recoveryAt).toBe('2026-09-10T10:38:43Z')
+    // …and the rest of the reading is untouched by the addition — `dirty` STAYS TRUE beside it,
+    // because a recovery copy is not a saved version and nothing here promotes one into one.
+    expect(state.dirty).toBe(true)
+    expect(state.savedHead).toBeNull()
+  })
+
+  it('★ reads an ABSENT field as no copy at all, rather than inventing one', async () => {
+    // The direction this fact is allowed to fail in. Every consumer uses a non-null instant to
+    // STOP warning somebody, so a field the server did not send must never arrive as one.
+    const state = await fetchSaveState('p1', saveFetch({ appId: 'a1', dirty: true }))
+    expect(state.recoveryAt).toBeNull()
+    // …and the reading is otherwise alive, so this is not a null from a body that failed to parse.
+    expect(state.dirty).toBe(true)
+  })
+
+  it('refuses a non-string instant instead of coercing it', async () => {
+    const state = await fetchSaveState('p1', saveFetch({ appId: 'a1', dirty: true, recoveryAt: 1757500723 }))
+    expect(state.recoveryAt).toBeNull()
+    expect(state.dirty).toBe(true)
+  })
+})
+
+describe('sameSaveState — what a poll is allowed to call "no change"', () => {
+  const reading = (over: Partial<SaveState> = {}): SaveState => ({
+    appId: 'a1',
+    dirty: true,
+    containerHead: '059d936',
+    savedHead: null,
+    recoveryAt: null,
+    ...over,
+  })
+
+  it('★ sees a change in `recoveryAt` and nothing else', () => {
+    // THE MUTANT THAT MATTERS. `useWorkspaceState` keeps the PREVIOUS object whenever this says
+    // "same", so a comparator blind to this field discards the reading that changed: the rail
+    // freezes on the first poll's sentence and the exit guard on the first poll's verdict, with
+    // no other test in the repo going red. Drop the `a.recoveryAt === b.recoveryAt` conjunct and
+    // this is the assertion that catches it.
+    expect(sameSaveState(reading(), reading({ recoveryAt: '2026-09-10T10:38:43Z' }))).toBe(false)
+  })
+
+  it('still calls two identical readings the same, recovery instant included', () => {
+    // The other half: this exists to stop a poll re-rendering on an unchanged answer, and a
+    // comparator that answered `false` for everything would pass the test above by doing nothing.
+    const instant = '2026-09-10T10:38:43Z'
+    expect(sameSaveState(reading({ recoveryAt: instant }), reading({ recoveryAt: instant }))).toBe(true)
+  })
+})
+
+describe('★ canBePutBack — absent means warn', () => {
+  it('answers yes only to an actual instant', () => {
+    expect(canBePutBack('2026-09-10T10:38:43Z')).toBe(true)
+  })
+
+  it('★ answers NO to undefined, to null and to an empty string alike', () => {
+    // The fail-open this replaced: written as `recoveryAt !== null`, an `undefined` from a caller
+    // that predates the field reads as "the platform has a copy" and silently disarms a warning
+    // about work that exists only inside a container. Every consumer of this asks it in order to
+    // STOP warning somebody, so every unusable value has to answer no.
+    expect(canBePutBack(undefined)).toBe(false)
+    expect(canBePutBack(null)).toBe(false)
+    expect(canBePutBack('')).toBe(false)
   })
 })

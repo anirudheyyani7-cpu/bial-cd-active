@@ -48,7 +48,7 @@ function reading(over: Partial<PreviewState> = {}): PreviewState {
   }
 }
 
-const SAVE: SaveState = { appId: 'app-1', dirty: false, containerHead: 'abc1234', savedHead: 'abc1234' }
+const SAVE: SaveState = { appId: 'app-1', dirty: false, containerHead: 'abc1234', savedHead: 'abc1234', recoveryAt: null }
 
 /** The hook, mounted against a project, with the defaults every scenario shares. */
 const mount = (projectId: string | null = 'proj-1', projectHasSavedBuild: boolean | null = null) =>

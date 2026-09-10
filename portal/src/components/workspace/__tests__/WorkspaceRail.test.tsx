@@ -109,6 +109,10 @@ describe('the save half, which exists only while the app is running', () => {
     dirty: false,
     containerHead: 'aaaaaaabbbbbb',
     savedHead: 'ccccccc1111111',
+    // The DEFAULT IS NULL and every existing scenario keeps it, so the `dirty: true` readings
+    // below still land on the plain warning they were written against. A scenario that wants the
+    // recoverable arm has to ask for it by name.
+    recoveryAt: null,
     ...over,
   })
 
@@ -130,6 +134,49 @@ describe('the save half, which exists only while the app is running', () => {
     // lose. This is the half a loose assertion on the null arm would let through.
     renderRail({ save: save({ dirty: null }) })
     expect(screen.getByTestId('rail-save-state').textContent).not.toMatch(/everything is saved/i)
+  })
+
+  /**
+   * ★ THE FOURTH SENTENCE, and the reading that produced the bug it exists for.
+   *
+   * A citizen described an app, the platform built it, they touched nothing — and the rail told
+   * them they had changes that were not saved. `dirty` was right (there is no saved VERSION; Save
+   * is the citizen's own act) and the sentence was wrong, because the platform was holding a
+   * recovery copy of that tree the whole time.
+   */
+  const RECOVERY_INSTANT = '2026-09-10T10:38:43Z'
+
+  it('★ says the work is safe when the platform is holding a copy it can put back', () => {
+    // MUTATION RECEIPT: collapse `saveSentence`'s two `true` arms back into one warning and this
+    // is the only case in the file that goes red — the three below stay green.
+    renderRail({ save: save({ dirty: true, savedHead: null, recoveryAt: RECOVERY_INSTANT }) })
+
+    const block = screen.getByTestId('rail-save-state')
+    expect(block.textContent).toBe('Your work is safe. Save it to keep a version you can come back to.')
+    // …and it is neither of the sentences it replaced: not the alarm, and not a claim of a save.
+    expect(block.textContent).not.toMatch(/not saved yet/i)
+    expect(block.textContent).not.toMatch(/everything is saved/i)
+  })
+
+  it('★ STILL says the old warning when there is no recovery copy', () => {
+    // The half that keeps the fix honest. Real unsaved work the platform is holding nothing for
+    // must not have become invisible — this is the reading the original sentence was written for.
+    renderRail({ save: save({ dirty: true, recoveryAt: null }) })
+
+    expect(screen.getByTestId('rail-save-state').textContent).toBe('You have changes that are not saved yet.')
+  })
+
+  it('★ answers the tri-state FIRST — a recovery copy never speaks for a check that did not run', () => {
+    // ORDERING, and it is not cosmetic: reverse the two decisions in `saveSentence` and a `null`
+    // beside a recovery instant starts reporting safety about a container nobody could read, and
+    // a clean workspace starts being told to go and save something. Both sentences are untouched
+    // by the new fact, deliberately.
+    renderRail({ save: save({ dirty: null, recoveryAt: RECOVERY_INSTANT }) })
+    expect(screen.getByTestId('rail-save-state').textContent).toBe('We could not check for unsaved changes.')
+    cleanup()
+
+    renderRail({ save: save({ dirty: false, recoveryAt: RECOVERY_INSTANT }) })
+    expect(screen.getByTestId('rail-save-state').textContent).toBe('Everything is saved.')
   })
 
   it('★ says only whether the container has moved on — the VERSION is the panel\'s row now', () => {

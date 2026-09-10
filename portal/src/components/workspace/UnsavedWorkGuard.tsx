@@ -8,13 +8,32 @@
  * not an unload, so `beforeunload` never fires for it.
  *
  * THE ARMING RULE. `beforeunload` stays armed only on a definite `true` — its prompt has
- * fixed text, so arming it on "we could not check" trains people to dismiss prompts. This
+ * fixed text, so arming it on "we could not check" trains people to dismiss prompts. (It takes
+ * the recovery carve-out below as well, and for the same reason; what it cannot take is the
+ * `null` arm, because its fixed text cannot say "we could not check".) This
  * in-app dialog CAN carry a reason, so it also warns on `null` — but `null` has TWO causes:
  * (1) the check ran and could not answer, or (2) it was NEVER ASKED, because `fetchSaveState`
  * only runs on a live workspace, so a stopped/never-built project is permanently `null` with
  * nothing to check. Warning on case 2 would fire on every exit from every stopped project —
  * the exact prompt-with-nothing-behind-it the rule exists to avoid. So: warn on `true`; warn
- * on `null` ONLY while alive; never on `false`; never when not running.
+ * on `null` ONLY while alive; never on `false`; never when not running — with the one exception
+ * the next paragraph carves out of `true`.
+ *
+ * AND A `true` IS NOT ALWAYS SOMETHING TO LOSE. `dirty` answers "is there a saved VERSION of this
+ * tree?", so THE BUILD ITSELF makes it true: a citizen who described an app, watched the platform
+ * build it and then touched nothing arrives at `dirty: true, savedHead: null` — and this guard
+ * stopped them on the way out over work they never did. Nothing was at risk. The platform writes
+ * a RECOVERY copy of the tree at every turn boundary, and `SessionManager.newest_restore_source`
+ * hands THAT copy, not the saved one, to every automatic restore. So a `true` the platform holds
+ * a recovery copy of is precisely the prompt-with-nothing-behind-it the paragraph above refuses
+ * to raise, and `recoveryAt` is the fact that tells the two apart. A `true` with NO recovery copy
+ * is real unsaved work and still stops somebody, unchanged.
+ *
+ * WHAT THIS IS NOT: a claim that anything was saved. A recovery copy is not a version — `dirty`
+ * stays true, the Save control stays where it is and does what it did, and Save remains the
+ * citizen's own manual act. The only thing that changes is that leaving stops being treated as a
+ * way to lose something the platform can put back. THE RULE IN FULL: warn on a `true` with no
+ * recovery copy; warn on `null` ONLY while alive; never on `false`; never when not running.
  *
  * Uses confirm-before-navigate, not `useBlocker`: that needs a data router and the app is on
  * `BrowserRouter` — migrating for one hook is out of scope; the workspace's own exits are
@@ -23,7 +42,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { BusyGlyph, useElapsedSeconds, ELAPSED_AFTER_MS } from '../ui/Waiting'
-import { saveProject } from '../../utils/buildSessionApi'
+import { canBePutBack, saveProject } from '../../utils/buildSessionApi'
 
 export interface UnsavedWorkGuardHandle {
   /**
@@ -51,12 +70,44 @@ export interface UnsavedWorkGuardOptions {
    * removes the ambiguity entirely.
    */
   projectName?: string | null
+  /**
+   * WHEN THE PLATFORM LAST WROTE A RECOVERY COPY of this app's tree (ISO-8601), or `null` when it
+   * holds none. `null` is also the right answer when the caller cannot say: "no copy" is the
+   * reading that keeps warning, and an absent fact must never be the reason somebody loses work.
+   *
+   * NON-NULL MEANS "THE PLATFORM CAN PUT THIS BACK" — not "this was saved". Every automatic
+   * restore goes through `SessionManager.newest_restore_source`, which returns this copy in
+   * preference to the saved bundle; where it does not — the saved bundle is genuinely newer, or
+   * the two hold the same tree — what comes back is no older than this instant anyway. That is
+   * what makes a `true` beside a non-null `recoveryAt` a warning about nothing.
+   *
+   * Comes from `SaveState.recoveryAt` on `GET /build-sessions/projects/{id}/save-state`, the same
+   * read that produces `saveDirty` — the two must describe ONE reading, or the guard is deciding
+   * from a dirty flag of one moment and a recovery instant of another.
+   */
+  recoveryAt?: string | null
 }
 
 /** Is there anything a person could lose by leaving right now? */
-function worthWarningAbout(saveDirty: boolean | null, workspaceIsAlive: boolean): boolean {
-  if (saveDirty === true) return true
-  // `null` while ALIVE is a check that ran and could not answer, so the platform says so.
+function worthWarningAbout(
+  saveDirty: boolean | null,
+  workspaceIsAlive: boolean,
+  recoveryAt: string | null,
+): boolean {
+  // A definite `true` is unsaved work — but only work the platform CANNOT put back is work
+  // leaving could cost somebody. A recovery copy is what every automatic restore already
+  // reaches for first, so warning beside one is a prompt with nothing behind it.
+  //
+  // THE QUESTION IS ASKED THROUGH `canBePutBack`, NOT WITH `!== null`, and the difference is a
+  // real one: `!== null` reads an `undefined` from a caller that has not been updated as "there
+  // is a copy" and disarms this guard on work nothing is holding. Absent means warn.
+  if (saveDirty === true) return !canBePutBack(recoveryAt)
+  // `null` while ALIVE is a check that ran and could not answer, so the platform says so. A
+  // recovery copy does NOT quiet this arm: the question that went unanswered was whether the
+  // container holds anything at all, and the honest dialog for that is the one that says so.
+  // (The server cannot even pair the two today — every `dirty=None` arm of `project_save_state`
+  // reports no recovery instant — so this reads the same either way, deliberately, rather than
+  // depending on that.)
   // `null` while not alive is a check nobody asked, which is not the same claim at all.
   return saveDirty === null && workspaceIsAlive
 }
@@ -66,6 +117,7 @@ export function useUnsavedWorkGuard({
   workspaceIsAlive,
   projectId,
   projectName = null,
+  recoveryAt = null,
 }: UnsavedWorkGuardOptions): UnsavedWorkGuardHandle {
   const [pending, setPending] = useState<(() => void) | null>(null)
   const [saving, setSaving] = useState(false)
@@ -80,7 +132,7 @@ export function useUnsavedWorkGuard({
 
   const guard = useCallback(
     (go: () => void) => {
-      if (!worthWarningAbout(saveDirty, workspaceIsAlive)) {
+      if (!worthWarningAbout(saveDirty, workspaceIsAlive, recoveryAt)) {
         go()
         return
       }
@@ -90,7 +142,7 @@ export function useUnsavedWorkGuard({
       setError(null)
       setPending(() => go)
     },
-    [saveDirty, workspaceIsAlive],
+    [saveDirty, workspaceIsAlive, recoveryAt],
   )
 
   const leave = useCallback(() => {

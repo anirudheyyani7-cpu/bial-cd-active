@@ -291,11 +291,43 @@ export interface SaveState {
   dirty: boolean | null
   containerHead: string | null
   savedHead: string | null
+  /** WHEN THE PLATFORM LAST PUT THIS APP'S NEWEST TREE SOMEWHERE IT CAN BE BROUGHT BACK FROM —
+   *  an ISO instant, or `null` if it never has. Kept as the string it arrived as: the only
+   *  question anything asks of it is null-vs-not, and no surface here does date arithmetic.
+   *
+   *  IT IS NOT A SECOND `savedHead` AND MAY NEVER BE READ AS ONE. A recovery copy is the
+   *  platform's own doing; a saved version is the citizen's, Save stays MANUAL, and `dirty`
+   *  stays true while this is set. What it licenses is a truer WARNING, never a claim of
+   *  safety-by-saving — the rail's `saveSentence` is where that reasoning is written down. */
+  recoveryAt: string | null
 }
+
+/**
+ * IS THE PLATFORM HOLDING A COPY OF THIS TREE THAT IT CAN PUT BACK? Named once because three
+ * surfaces ask it — the rail's sentence, the in-place exit dialog and the browser-unload prompt —
+ * and three hand-written readings of one fact are three chances for them to disagree about the
+ * same app in the same moment.
+ *
+ * ANYTHING THAT IS NOT AN ACTUAL INSTANT IS "NO", `undefined` INCLUDED, and that is the whole
+ * reason this is a function rather than `!== null` written out three times. Written that way, an
+ * `undefined` — a caller that never set the field, a test double that predates it, a body the
+ * server did not send — reads as YES. That is the one direction this fact may never fail in:
+ * every consumer uses a YES to STOP warning somebody, so an absent field would silently disarm a
+ * warning about work that exists only inside a container. Absent means warn.
+ */
+export const canBePutBack = (recoveryAt: string | null | undefined): boolean =>
+  typeof recoveryAt === 'string' && recoveryAt !== ''
 
 /** Two readings that say the same thing. Every field is a primitive, so this is exact rather
  *  than an approximation — and it exists so a poll that keeps reporting the same answer stops
- *  handing consumers a new object to re-render for. */
+ *  handing consumers a new object to re-render for.
+ *
+ *  EVERY FIELD MEANS EVERY FIELD, AND OMITTING ONE IS NOT A MISSED OPTIMISATION — IT DISCARDS
+ *  THE NEW VALUE. The caller keeps the PREVIOUS object whenever this answers "same"
+ *  (`useWorkspaceState`: `sameSaveState(prev, state) ? prev : state`), so a field this cannot
+ *  see never reaches the screen at all: the reading that changed is thrown away and the rail
+ *  goes on saying the sentence that belonged to the old one. `recoveryAt` is polled like the
+ *  rest of them, and it decides which sentence the rail says. */
 export const sameSaveState = (a: SaveState | null, b: SaveState | null): boolean =>
   a === b ||
   (a !== null &&
@@ -303,7 +335,8 @@ export const sameSaveState = (a: SaveState | null, b: SaveState | null): boolean
     a.appId === b.appId &&
     a.dirty === b.dirty &&
     a.containerHead === b.containerHead &&
-    a.savedHead === b.savedHead)
+    a.savedHead === b.savedHead &&
+    a.recoveryAt === b.recoveryAt)
 
 /** Push the project's current tree to durable storage. THE USER'S CLICK — nothing else writes
  *  the bundle. A 409 means the workspace is no longer running, and is surfaced, never
@@ -812,5 +845,10 @@ export async function fetchSaveState(
     dirty: typeof body.dirty === 'boolean' ? body.dirty : null,
     containerHead: typeof body.containerHead === 'string' ? body.containerHead : null,
     savedHead: typeof body.savedHead === 'string' ? body.savedHead : null,
+    // Whitelisted one at a time like its siblings, and narrowed the same way: anything that is
+    // not literally a string is `null`. Defaulting the other way is not available here — a
+    // fabricated instant would tell a citizen their work can be brought back on the strength of
+    // a field the server never sent.
+    recoveryAt: typeof body.recoveryAt === 'string' ? body.recoveryAt : null,
   }
 }

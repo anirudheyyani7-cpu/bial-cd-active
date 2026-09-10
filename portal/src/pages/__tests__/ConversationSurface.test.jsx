@@ -217,6 +217,35 @@ describe('the save-state TRI-STATE is published uncollapsed', () => {
     expect(tryToLeave()).toBe(false)
   })
 
+  it('★ carries the RECOVERY INSTANT with the flag, and it is what disarms the prompt', async () => {
+    // THE PRODUCER HOP OF THE REPORTED BUG. `refreshSaveState` read the save state and kept
+    // `state.dirty` alone, dropping the instant that says the platform can put this tree back —
+    // so a citizen who described an app, watched it get built and touched nothing got the
+    // browser's unload prompt over work they had never done.
+    //
+    // TWO RUNS, ONE FIELD APART, AND THE FIRST IS THE CONTROL: it proves this wait is long enough
+    // for a reading to reach the shell at all, which is the only thing that makes the second
+    // run's silence mean anything. Without it a publish that never happened would read as a pass.
+    //
+    // MUTATION RECEIPT: drop `recoveryAt: state.recoveryAt` from `refreshSaveState` and the
+    // second half goes red — the instant never reaches the channel and the prompt arms again.
+    h.fetchSaveState.mockResolvedValue({ dirty: true, recoveryAt: null })
+    renderBuilder({ deps: deps().deps })
+    await waitFor(() => expect(tryToLeave()).toBe(true))
+    cleanup()
+
+    h.fetchSaveState.mockClear()
+    h.fetchSaveState.mockResolvedValue({ dirty: true, recoveryAt: '2026-09-10T10:38:43Z' })
+    renderBuilder({ deps: deps().deps })
+    await waitFor(() => expect(h.fetchSaveState).toHaveBeenCalled())
+    await waitFor(() => expect(tryToLeave()).toBe(false))
+
+    // …and NOTHING here claims the work was saved. `dirty` is still true, Save is still the
+    // citizen's own act, and the only thing that changed is that leaving stopped being treated as
+    // a way to lose something the platform can put back.
+    expect(screen.queryByText(/no unsaved|nothing unsaved|all saved|up to date/i)).toBeNull()
+  })
+
   it('an UNKNOWN stays unknown — it is not collapsed into either boolean', async () => {
     // THE CASE THAT MATTERS, and the one this surface could break on its own. `null` means "we
     // could not check", never "clean": collapsing it to `false` reports the work as safe when

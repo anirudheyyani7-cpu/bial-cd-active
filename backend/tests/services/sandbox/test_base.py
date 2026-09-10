@@ -154,9 +154,11 @@ def test_file_op_rejects_missing_action_subfield() -> None:
 # worse than the black error page the whole branch exists to remove — that one at least had words.
 
 
-def _dev(**over: object) -> DevStatus:
-    base: dict[str, object] = {"running": True, "ready": True, "port": 3000, "root_status": 200}
-    return DevStatus(**{**base, **over})  # type: ignore[arg-type]
+def _dev(*, ready: bool = True, root_status: int | None = 200) -> DevStatus:
+    # Explicit keywords, not a merged `dict[str, object]` unpacked into the constructor: ty reads
+    # the merged dict's values as `object` and rejects them, and the mypy-coded ignore that hid it
+    # locally is not one ty honours — it was the one red step on CI.
+    return DevStatus(running=True, ready=ready, port=3000, root_status=root_status)
 
 
 def test_a_page_is_a_page() -> None:

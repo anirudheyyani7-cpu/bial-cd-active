@@ -41,9 +41,12 @@ test('a 403 "Account suspended" on any authed call bounces to login with the sus
 
   await page.goto('/projects')
 
-  await expect(page).toHaveURL(/\/login\?authError=account_suspended/)
-  // The banner is deliberately non-alarming and points at an administrator — the user is not
-  // at fault, and the word "suspended" never reaches them.
+  await expect(page).toHaveURL(/\/login/)
+  // The BANNER is the assertion, not the query string: LoginPage consumes ?authError once it
+  // has been shown (otherwise reload / hard-reload / reopen all replay the same failure
+  // forever — the 2026-09-10 sign-in incident), so the param is gone by the time the page
+  // has settled. The banner is deliberately non-alarming and points at an administrator —
+  // the user is not at fault, and the word "suspended" never reaches them.
   await expect(page.getByText(/paused by an administrator/i)).toBeVisible()
   await expect(page.getByText('Sign-in failed. Please try again.')).toHaveCount(0)
 })

@@ -447,6 +447,43 @@ async def test_a_row_with_no_conversation_link_is_still_found_by_its_id(db_sessi
     assert [f.attachment_id for f in found] == ["loose"]
 
 
+async def test_an_unlinked_row_is_adopted_so_the_second_turn_still_finds_it(db_session) -> None:
+    """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO (#214 R7a).
+
+    The composer uploads before the first send, so on a new chat there is no conversation row to
+    link to and the upload stores NULL. Turn one finds the file anyway, because the message carries
+    its id. Turn two carries no ids — so with the link still NULL the query returned nothing: not
+    placed, not named to the agent, and `read_attachment` not even registered. A file the citizen
+    attached became invisible one message later.
+
+    Adoption happens at the first moment a conversation demonstrably exists AND the file is known
+    to belong to it. Mutation receipt: remove the adoption loop and the second call returns empty.
+    """
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    await _stored(
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="loose",
+        media_type=EXCEL_MEDIA_TYPE,
+        name="book.xlsx",
+        conversation_id=None,
+    )
+
+    # Turn one — found by the message's own ids, and adopted on the way through.
+    first = await code_lane_attachments(
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
+    )
+    assert [f.attachment_id for f in first] == ["loose"]
+
+    # Turn two — no ids on the message at all.
+    second = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+    assert [f.attachment_id for f in second] == ["loose"], "the file vanished on the second turn"
+
+
 async def test_another_owners_file_is_not_reachable_by_naming_its_id(db_session) -> None:
     """★ OWNERSHIP IS ANDed WITH BOTH WAYS IN. The id arm takes client-supplied tokens, so
     without the owner scope a caller could name someone else's attachment and have the platform

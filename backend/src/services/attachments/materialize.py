@@ -160,7 +160,7 @@ async def code_lane_attachments(
     reachable = Attachment.conversation_id == conversation_id
     if wanted:
         reachable = sa.or_(reachable, Attachment.attachment_id.in_(wanted))
-    rows = (
+    rows = list(
         (
             await db.execute(
                 sa.select(Attachment)
@@ -175,7 +175,23 @@ async def code_lane_attachments(
         .scalars()
         .all()
     )
-    return _named_without_collisions(list(rows))
+    # ★ ADOPT A ROW THAT ARRIVED BEFORE THE CHAT EXISTED, and this is not bookkeeping — without it
+    # the file works on turn one and disappears on turn two.
+    #
+    # The composer uploads before the first send, so on a new chat there is no conversation row to
+    # link to yet and the upload stores `NULL` (see the route's `_resolve_conversation_link`). Turn
+    # one still finds the file, because the message carries its id. Turn two carries no ids, the
+    # link is still NULL, and the query returns nothing: not placed, not named to the agent, and
+    # `read_attachment` not even registered. The citizen sees a file they attached become invisible
+    # one message later.
+    #
+    # Stamping it here — the first moment a conversation demonstrably exists AND the file is known
+    # to belong to it — is what makes the link permanent. Owner-scoped by the query above, so this
+    # can only ever adopt the caller's own row.
+    for row in rows:
+        if row.conversation_id is None:
+            row.conversation_id = conversation_id
+    return _named_without_collisions(rows)
 
 
 @dataclass(frozen=True, slots=True)

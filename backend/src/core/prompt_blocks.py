@@ -59,9 +59,9 @@ and must be left exactly as they are:
   instrumentation-client.ts PLATFORM-OWNED — do NOT edit, replace, or delete it, and do not import
                             it. It tells the portal that your app's page is actually showing in
                             the user's browser; without it the user sees a waiting card instead
-                            of your app, however healthy the app is. Never post its message
-                            (`bial:app-mounted`) from your own code — the platform sends it, and
-                            a page that has nothing on it must not claim otherwise.
+                            of your app, however healthy the app is. Never post its `app-mounted`
+                            message from your own code — the platform sends it, and a page that
+                            has nothing on it must not claim otherwise.
 Add routes, components, libraries, and dependencies as your app needs them."""
 
 FIRST_SLICE_RULE = """\

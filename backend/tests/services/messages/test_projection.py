@@ -48,6 +48,7 @@ from src.services.messages.projection import (
     TurnTerminalItem,
     UserTextItem,
     _friendly_area,
+    _user_text_and_refs,
     classify_command,
     classify_file_step,
     classify_tool_call,
@@ -57,6 +58,7 @@ from src.services.messages.projection import (
 from src.services.messages.store import (
     SCHEMA_VERSION,
     append_batch,
+    dump_for_row,
     load_history,
     load_rows,
 )
@@ -895,6 +897,27 @@ def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
         label, hidden = classify_command(housekeeping)
         assert hidden is True
         assert label == "Organized the app's files"
+
+
+def test_a_code_lane_attachment_still_has_a_chip_after_reload() -> None:
+    """★ R23a, INVERTED FOR THE NEW FORMATS (#214).
+
+    A chip is rebuilt from a reference marker in the stored payload. A model-lane file leaves one
+    because `_externalize_binaries` fires on its `BinaryContent`; a code-lane file never becomes
+    one, so it left nothing and its chip vanished on reload — the exact regression this work
+    claims to close, for the formats this work adds.
+
+    Mutation receipt: read only `ATTACHMENT_REF_KIND` here and the spreadsheet's chip disappears
+    while the image's survives.
+    """
+    payload = dump_for_row(
+        [ModelRequest(parts=[UserPromptPart(content="what is in this?")])],
+        file_attachment_ids=["att_sheet"],
+    )
+    text, refs = _user_text_and_refs(payload[0]["parts"][0]["content"])
+
+    assert refs == ["att_sheet"]
+    assert text == "what is in this?"  # the marker is not prose and never renders as it
 
 
 def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_entry() -> None:

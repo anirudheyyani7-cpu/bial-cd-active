@@ -27,7 +27,7 @@ from src.db.models.attachment import Attachment
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.schemas import CamelModel
 from src.services.media import chip_kind_for
-from src.services.messages.store import ATTACHMENT_REF_KIND
+from src.services.messages.store import ATTACHMENT_FILE_REF_KIND, ATTACHMENT_REF_KIND
 
 # The Plan chat's options tool. The projection derives the card's resolution state from this
 # tool's stored call/return pair.
@@ -582,7 +582,14 @@ def _user_text_and_refs(content: Any) -> tuple[str, list[str]]:
             if isinstance(item, str):
                 if not _is_attachment_fence(item):
                     texts.append(item)
-            elif isinstance(item, dict) and item.get("kind") == ATTACHMENT_REF_KIND:
+            elif isinstance(item, dict) and item.get("kind") in (
+                ATTACHMENT_REF_KIND,
+                ATTACHMENT_FILE_REF_KIND,
+            ):
+                # BOTH KINDS (#214). A code-lane file leaves the second marker because its bytes
+                # never became a `BinaryContent` — and reading only the first is what made a
+                # spreadsheet's chip vanish on reload while an image's survived, which is the R23a
+                # regression this work exists to close, inverted for the new formats.
                 attachment_id = item.get("attachment_id")
                 if isinstance(attachment_id, str):
                     refs.append(attachment_id)

@@ -232,6 +232,19 @@ async def start_conversation_turn(
     one; Build-it's `None` is a fact rather than a gap, because that route CREATES the Build
     chat it starts — there is no conversation yet for a file to have been attached to."""
 
+    # THE STORED ROW RECORDS THE CODE LANE; THE PROMPT DOES NOT (#214). A code-lane file's bytes
+    # must never enter the prompt — that is the whole lane — but the message still has to RECORD
+    # that the file was sent, because three separate things decide what is still referenced by
+    # scanning stored payloads: the never-sent reclaimer, the conversation cascade, and the
+    # projection that rebuilds chips on reload. With nothing in the payload all three were blind,
+    # and the reclaimer deleted live spreadsheets as orphans 48 hours after upload.
+    #
+    # The ids go to the STORE rather than into `prompt`, because a marker is a payload concept:
+    # `UserPromptPart.content` has no room for one (an unknown dict coerces to `CachePoint`), which
+    # is the same reason `_externalize_binaries` runs on the serialized tree. `load_history` drops
+    # them again, so the model never meets one.
+    file_refs = [file.attachment_id for file in attachments.files] if attachments else []
+
     async def persist_user_turn() -> None:
         await append_batch(
             db,
@@ -242,6 +255,7 @@ async def start_conversation_turn(
             kind=conversation.kind,
             visibility=visibility,
             meta=meta,
+            file_attachment_ids=file_refs,
         )
 
     engine = get_turn_engine()

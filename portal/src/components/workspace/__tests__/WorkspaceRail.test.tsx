@@ -63,7 +63,7 @@ describe("what the rail carries at rest", () => {
   it('carries the composer with its kind picker, the app status, and the description', () => {
     renderRail()
 
-    expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Describe what you have in mind/i)).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Build' })).toBeTruthy()
     expect(screen.getByTestId('rail-app-status')).toBeTruthy()
     expect(screen.getByTestId('description-editor')).toBeTruthy()

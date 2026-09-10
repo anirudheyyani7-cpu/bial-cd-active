@@ -336,6 +336,50 @@ async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake
     assert fake_storage.objects == {}  # refused BEFORE the store
 
 
+async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE CAP WAS BYPASSABLE ON THE ORDINARY PATH (#214 R7b).
+
+    It was gated on `conversation_id is not None`, and an upload whose chat has no row yet stores
+    NULL — which, since the first message of every new chat does exactly that, is the common case
+    rather than a contrived one. Anything uploading without a link was uncapped.
+
+    The account-wide fallback is the same shape the byte budget already used for that case, and the
+    row is adopted into its conversation on first use, so the narrow scope resumes next turn.
+
+    Mutation receipt: restore the `conversation_id is not None` gate and the 21st upload is
+    accepted.
+    """
+    headers, _ = await _auth(db_session)
+    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
+        resp = await client.post(
+            "/v1/attachments",
+            headers=headers,
+            json={
+                "attachmentId": f"att_unlinked_{index}",
+                "name": "shot.png",
+                "mediaType": "image/png",
+                "base64": _b64(_PNG),
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    over = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_unlinked_over",
+            "name": "shot.png",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
+    )
+
+    assert over.status_code == 413, over.text
+    assert over.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
+
+
 async def test_a_csv_is_not_run_through_the_archive_bound(
     client, db_session, fake_storage
 ) -> None:

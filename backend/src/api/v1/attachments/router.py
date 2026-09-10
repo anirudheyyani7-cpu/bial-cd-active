@@ -312,7 +312,14 @@ async def _store_attachment_bytes(
             Attachment.user_id == user_id, Attachment.attachment_id == attachment_id
         )
     )
-    old_size = existing.size if existing is not None else 0
+    # ONLY A ROW IN THE SAME SCOPE OFFSETS THE SUM. `existing` is looked up by (owner, id) alone,
+    # so on a re-upload under a DIFFERENT conversation its size was never in `used` — subtracting
+    # it drove the total negative and handed the citizen free headroom. The offset applies only
+    # where the row actually contributes to the figure being checked.
+    counts_toward_used = existing is not None and (
+        conversation_id is None or existing.conversation_id == conversation_id
+    )
+    old_size = existing.size if (existing is not None and counts_toward_used) else 0
     if used - old_size + size > ATTACHMENT_TOTAL_CAP:
         raise AppApiError(
             413,
@@ -322,8 +329,17 @@ async def _store_attachment_bytes(
     # THE COUNT, and only for a file this conversation does not already hold — a re-upload of the
     # same id replaces a row rather than adding one, so counting it would refuse an idempotent
     # retry at the boundary.
-    if conversation_id is not None and existing is None:
+    #
+    # ★ IT NO LONGER SKIPS AN UNLINKED UPLOAD. Gated on `conversation_id is not None`, the cap was
+    # bypassable by anything that uploads before its chat exists — which, since the first message
+    # of every new chat does exactly that, is the ordinary path rather than a contrived one. The
+    # account-wide fallback below is the same shape the byte budget already uses for that case: an
+    # unlinked row can never be free, and the row is adopted into its conversation on first use
+    # (`code_lane_attachments`), so the narrow scope resumes from the next turn.
+    if existing is None:
         held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
+        # `scope` already narrows to the conversation when there is one, and to the account when
+        # there is not — so this counts the right population either way.
         if int(held or 0) + 1 > MAX_ATTACHMENTS_PER_CONVERSATION:
             raise AppApiError(
                 413,

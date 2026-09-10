@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import LoginPage from '../LoginPage'
 import { LOGIN_URL } from '../../utils/auth'
 
@@ -23,6 +23,24 @@ function renderAtWithState(path, state) {
       <LoginPage />
     </MemoryRouter>,
   )
+}
+
+// Records the router's CURRENT query string on every render, so a test can prove the
+// page rewrote its own URL (LoginPage consumes ?authError via setSearchParams, which
+// re-renders the tree rather than touching window.location).
+function renderAtTrackingSearch(path) {
+  const seen = { search: null }
+  function LocationSpy() {
+    seen.search = useLocation().search
+    return null
+  }
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <LoginPage />
+      <LocationSpy />
+    </MemoryRouter>,
+  )
+  return seen
 }
 
 beforeEach(() => {
@@ -143,5 +161,58 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
       signoutWarning: 'Sign-out may be incomplete on this device.',
     })
     expect(screen.getByTestId('login-notice').textContent).toContain('BIAL organization')
+  })
+})
+
+// The 2026-09-10 incident: a failed sign-in left `?authError=auth_failed` pinned to the
+// URL, so reload / hard-reload / close-and-reopen all re-rendered the same failure banner
+// forever. The banner must be consumed like consumeSignoutReason() consumes its key.
+describe('LoginPage — the failure banner is consumed, not pinned to the URL', () => {
+  it('strips ?authError from the URL after showing the banner', () => {
+    const seen = renderAtTrackingSearch('/login?authError=auth_failed')
+    // Shown once...
+    expect(screen.getByTestId('login-notice').textContent).toContain('Sign-in failed')
+    // ...and gone from the URL, so a reload lands on a clean login screen.
+    expect(seen.search).not.toContain('authError')
+  })
+
+  it('keeps the banner on screen after cleaning the URL', () => {
+    // The guard against "fixing" this by re-running the effect and wiping the notice.
+    renderAtTrackingSearch('/login?authError=wrong_tenant')
+    expect(screen.getByTestId('login-notice').textContent).toContain('BIAL organization')
+  })
+
+  it('does not let the signout reason overwrite the sign-in failure', () => {
+    localStorage.setItem('bial_signout_reason', 'logged_out')
+    renderAtTrackingSearch('/login?authError=auth_failed')
+    const text = screen.getByTestId('login-notice').textContent
+    expect(text).toContain('Sign-in failed')
+    expect(text).not.toContain('signed out')
+  })
+
+  it('preserves unrelated query params while consuming authError', () => {
+    const seen = renderAtTrackingSearch('/login?authError=auth_failed&next=%2Fprojects')
+    expect(seen.search).toContain('next=')
+    expect(seen.search).not.toContain('authError')
+  })
+})
+
+describe('LoginPage — the correlation reference', () => {
+  it('shows the ref the callback supplied, so a screenshot maps to a log line', () => {
+    const seen = renderAtTrackingSearch('/login?authError=auth_failed&ref=a1b2c3d4')
+    expect(screen.getByTestId('login-notice-ref').textContent).toContain('a1b2c3d4')
+    expect(seen.search).not.toContain('ref=')
+  })
+
+  it('ignores a ref that is not the shape the backend mints', () => {
+    // ?ref is attacker-chosen text on an unauthenticated route. Rendering it verbatim
+    // would let a crafted link put arbitrary copy inside the official-looking banner.
+    renderAtTrackingSearch('/login?authError=auth_failed&ref=call+1800-SCAM+now')
+    expect(screen.queryByTestId('login-notice-ref')).toBeNull()
+  })
+
+  it('shows no reference line when the callback supplied none', () => {
+    renderAtTrackingSearch('/login?authError=auth_failed')
+    expect(screen.queryByTestId('login-notice-ref')).toBeNull()
   })
 })

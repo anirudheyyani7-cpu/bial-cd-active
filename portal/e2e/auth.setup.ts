@@ -55,7 +55,11 @@ setup('seed an authenticated session', async ({ page }) => {
     ).toBe(200)
 
     await page.goto('/dashboard')
-    await expect(page).toHaveURL(/\/dashboard/)
+    // `/dashboard` was retired and now only redirects (App.tsx) — the landing route is
+    // `/projects`. Landing there is what proves the session was admitted through RequireAuth;
+    // asserting the URL we typed asserted a route that no longer renders anything, and failed
+    // EVERY spec at setup.
+    await expect(page).toHaveURL(/\/projects/)
     await page.context().storageState({ path: AUTH_FILE })
     return
   }
@@ -87,6 +91,7 @@ setup('seed an authenticated session', async ({ page }) => {
   })
 
   await page.goto('/dashboard')
-  await expect(page).toHaveURL(/\/dashboard/)
+  // Same redirect as the real-session branch above — assert where the app actually lands.
+  await expect(page).toHaveURL(/\/projects/)
   await page.context().storageState({ path: AUTH_FILE })
 })

@@ -7,12 +7,14 @@ full callback logic runs with no live tenant.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
 import pytest
 from authlib.integrations.starlette_client import OAuthError
 from sqlalchemy import func, select
+from structlog.testing import capture_logs
 
 from src.config import settings
 from src.db.models.refresh_token import RefreshToken
@@ -75,6 +77,18 @@ def _cookie_value(raw: str) -> str:
     return raw.split("=", 1)[1].split(";", 1)[0]
 
 
+def _assert_login_error(resp: httpx.Response, reason: str) -> str:
+    """A failed callback bounces to `/login?authError=<reason>&ref=<correlation id>`.
+
+    The ref is freshly random per request, so it is asserted for SHAPE, not value, and
+    returned so a caller can match it against the log line the same request emitted."""
+    base, sep, ref = resp.headers["location"].partition("&ref=")
+    assert base == f"{settings.FRONTEND_URL}/login?authError={reason}"
+    assert sep, "every login-error bounce must carry a ?ref= correlation id"
+    assert re.fullmatch(r"[0-9a-f]{8}", ref), f"unexpected correlation id: {ref!r}"
+    return ref
+
+
 # --- provisioning --------------------------------------------------------
 
 
@@ -130,7 +144,7 @@ async def test_wrong_tenant_redirects_to_login_error(app, client, db_session) ->
     resp = await client.get("/v1/auth/callback")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=wrong_tenant"
+    _assert_login_error(resp, "wrong_tenant")
     assert resp.headers.get_list("set-cookie") == []  # no session minted
     assert await db_session.scalar(select(User).where(User.azure_oid == "foreign-oid")) is None
 
@@ -140,7 +154,7 @@ async def test_missing_userinfo_redirects_to_login_error(app, client, db_session
     resp = await client.get("/v1/auth/callback")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=invalid_callback"
+    _assert_login_error(resp, "invalid_callback")
     assert resp.headers.get_list("set-cookie") == []
     assert await db_session.scalar(select(func.count()).select_from(User)) == 0
 
@@ -150,7 +164,7 @@ async def test_cancelled_consent_does_not_500(app, client) -> None:
     resp = await client.get("/v1/auth/callback")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=auth_failed"
+    _assert_login_error(resp, "auth_failed")
     assert resp.headers.get_list("set-cookie") == []
 
 
@@ -172,7 +186,7 @@ async def test_entra_error_fails_closed_not_500(app, client, boom: Exception) ->
     resp = await client.get("/v1/auth/callback")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=auth_failed"
+    _assert_login_error(resp, "auth_failed")
     assert resp.headers.get_list("set-cookie") == []
 
 
@@ -195,7 +209,7 @@ async def test_missing_email_and_upn_rejected(app, client, db_session) -> None:
     resp = await client.get("/v1/auth/callback")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=invalid_callback"
+    _assert_login_error(resp, "invalid_callback")
     assert await db_session.scalar(select(User).where(User.azure_oid == "nada-oid")) is None
 
 
@@ -237,4 +251,46 @@ async def test_only_refresh_hash_is_persisted_not_entra_tokens(app, client, db_s
 async def test_missing_oid_or_sub_rejected(app, client, field: str) -> None:
     _use_fake_oauth(app, token=_token(**{field: _ABSENT}))
     resp = await client.get("/v1/auth/callback")
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=invalid_callback"
+    _assert_login_error(resp, "invalid_callback")
+
+
+# --- diagnostics: every failure names itself in the log, and on screen -------------
+
+
+async def test_auth_error_branch_is_logged_not_silent(app, client) -> None:
+    """The AuthError branch (wrong tenant / invalid callback) used to `return` with NO
+    log call at all, so a rejected sign-in left zero server-side trace. Regression guard."""
+    _use_fake_oauth(
+        app, token=_token(oid="foreign-oid", tid="ffffffff-ffff-ffff-ffff-ffffffffffff")
+    )
+    with capture_logs() as logs:
+        resp = await client.get("/v1/auth/callback")
+
+    ref = _assert_login_error(resp, "wrong_tenant")
+    rejected = [entry for entry in logs if entry["event"] == "auth_callback_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0]["reason"] == "wrong_tenant"
+    # The id in the URL bar IS the id in the log — that is the whole point.
+    assert rejected[0]["trace_id"] == ref
+
+
+async def test_provider_failure_log_carries_the_same_ref_as_the_bounce(app, client) -> None:
+    _use_fake_oauth(app, error=OAuthError(error="mismatching_state"))
+    with capture_logs() as logs:
+        resp = await client.get("/v1/auth/callback")
+
+    ref = _assert_login_error(resp, "auth_failed")
+    failed = [entry for entry in logs if entry["event"] == "auth_callback_failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == "OAuthError"
+    assert "mismatching_state" in failed[0]["detail"]
+    assert failed[0]["trace_id"] == ref
+
+
+async def test_each_failed_callback_gets_a_distinct_ref(app, client) -> None:
+    """Two failures must not collapse to one id, or the log line cannot identify which
+    attempt a user is holding a screenshot of."""
+    _use_fake_oauth(app, error=OAuthError(error="access_denied"))
+    first = _assert_login_error(await client.get("/v1/auth/callback"), "auth_failed")
+    second = _assert_login_error(await client.get("/v1/auth/callback"), "auth_failed")
+    assert first != second

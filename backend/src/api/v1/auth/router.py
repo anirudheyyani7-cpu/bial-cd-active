@@ -3,7 +3,7 @@
 
     GET /auth/login    -> 302 to Entra (PKCE state in the oauth_transient cookie)
     GET /auth/callback -> validate fail-closed, provision by oid, mint session,
-                          set cookies, 302 to the SPA (or /login?authError=... )
+                          set cookies, 302 to the SPA (or /login?authError=...&ref=... )
 
 The session/refresh/csrf cookies follow a fixed matrix and are ENVIRONMENT-AWARE:
 `__Host-`/`__Secure-` prefixes + `Secure` in production, relaxed over plain http in
@@ -13,6 +13,7 @@ carries them. The callback redirect_uri is the configured `AUTH__REDIRECT_URI`
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from typing import Annotated
 from urllib.parse import quote
@@ -133,11 +134,16 @@ def _clear_session_cookies(response: Response) -> None:
     )
 
 
-def _login_error_redirect(reason: str) -> RedirectResponse:
+def _login_error_redirect(reason: str, *, trace_id: str) -> RedirectResponse:
     # Fail closed: no session, no user row — bounce to the SPA login with a stable,
-    # non-secret reason code (the SPA maps it to banner copy).
+    # non-secret reason code (the SPA maps it to banner copy) plus the correlation id
+    # this attempt was logged under. Every reason collapses to a handful of strings, so
+    # without `ref` a user's screenshot cannot be tied to a server log line — which is
+    # exactly how the 2026-09-10 sign-in incident ended up undiagnosable.
     return RedirectResponse(
-        f"{settings.FRONTEND_URL}/login?authError={quote(reason, safe='')}", status_code=302
+        f"{settings.FRONTEND_URL}/login"
+        f"?authError={quote(reason, safe='')}&ref={quote(trace_id, safe='')}",
+        status_code=302,
     )
 
 
@@ -155,6 +161,11 @@ async def login(request: Request, oauth: OAuthClient) -> Response:
 
 @router.get("/callback", name="auth_callback")
 async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Response:
+    # One short correlation id per attempt, minted BEFORE anything can fail so every exit
+    # path shares it. It is displayed to the user (the login banner echoes it), so it is
+    # deliberately short hex rather than a UUID — and it is not a credential: it
+    # authenticates nothing and is generated fresh per request.
+    trace_id = secrets.token_hex(4)
     try:
         token = await oauth.entra.authorize_access_token(request)
         identity = validate_entra_token(token)
@@ -172,12 +183,24 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
         # (mismatching_state) — otherwise every callback failure collapses to one
         # indistinguishable `authError=auth_failed` bounce with no root cause.
         logger.warning(
-            "auth_callback_failed", error_type=type(exc).__name__, detail=str(exc)[:500]
+            "auth_callback_failed",
+            error_type=type(exc).__name__,
+            detail=str(exc)[:500],
+            trace_id=trace_id,
         )
-        return _login_error_redirect(REASON_AUTH_FAILED)
+        return _login_error_redirect(REASON_AUTH_FAILED, trace_id=trace_id)
     except AuthError as exc:
-        # Wrong tenant / invalid callback — reason drives the banner.
-        return _login_error_redirect(exc.reason)
+        # Wrong tenant / invalid callback — reason drives the banner. This branch used to
+        # return WITHOUT logging, so a rejected sign-in left no server-side trace at all:
+        # the operator saw a user on ?authError=wrong_tenant and nothing in the log to
+        # match it to. `message` and `reason` are contractually non-secret (see errors.py).
+        logger.warning(
+            "auth_callback_rejected",
+            reason=exc.reason,
+            detail=str(exc)[:500],
+            trace_id=trace_id,
+        )
+        return _login_error_redirect(exc.reason, trace_id=trace_id)
 
     # Provision by the stable Entra oid (never email). Inlined upsert:
     # a returning sign-in updates the mutable profile fields but PRESERVES
@@ -209,8 +232,13 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
         # Entra but gets NO local session — bounce to the login banner. Nothing is
         # committed (get_db rolls the profile touch back), so the refused sign-in
         # leaves no trace beyond this log line.
-        logger.warning("suspended_user_rejected", user_id=str(user_id), seam="login_callback")
-        return _login_error_redirect(REASON_ACCOUNT_SUSPENDED)
+        logger.warning(
+            "suspended_user_rejected",
+            user_id=str(user_id),
+            seam="login_callback",
+            trace_id=trace_id,
+        )
+        return _login_error_redirect(REASON_ACCOUNT_SUSPENDED, trace_id=trace_id)
 
     raw_refresh = await issue_new_family(db, user_id)
     await db.commit()

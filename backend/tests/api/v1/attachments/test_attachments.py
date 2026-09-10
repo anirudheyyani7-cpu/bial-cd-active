@@ -675,20 +675,45 @@ async def test_upload_cross_user_conversation_404(client, db_session, fake_stora
     assert row is None
 
 
-async def test_upload_nonexistent_conversation_404(client, db_session, fake_storage) -> None:
+async def test_upload_for_a_chat_not_written_yet_stores_null(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE FIRST ATTACHMENT OF EVERY NEW CHAT (#214), and it used to be a 404.
+
+    This test previously asserted the opposite — that a well-formed but unknown conversation id
+    is refused — and that assertion was wrong about the product rather than about the code. The
+    composer mints the id in the BROWSER and navigates to it; the conversation ROW is created by
+    the first send, which happens strictly AFTER the file is uploaded (the send route stages the
+    row and writes it only once every side-effect-free refusal has passed, R-18). So on the
+    opening move of any new chat the id is real, unwritten, and refusing it makes attaching a
+    file impossible until the citizen has sent a message without one.
+
+    Found by driving the real UI, not by a test — every suite here passed while the feature's
+    first step was broken, because they all attached to a conversation the fixture had already
+    committed.
+
+    NULL is the state the column was made nullable for, and the reclaimer reads it as legacy
+    rather than as a deletion signal. `code_lane_attachments` still finds the file, by its id.
+    """
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
-            "attachmentId": "att_ghostconv",
+            "attachmentId": "att_newchat",
             "mediaType": "image/png",
             "base64": _b64(_PNG),
-            "conversationId": str(uuid.uuid4()),  # well-formed, nonexistent
+            "conversationId": str(uuid.uuid4()),  # well-formed, not written yet
         },
     )
-    assert resp.status_code == 404
-    assert fake_storage.objects == {}
+
+    assert resp.status_code == 201, resp.text
+    row = await db_session.scalar(
+        select(Attachment).where(Attachment.attachment_id == "att_newchat")
+    )
+    assert row is not None
+    assert row.conversation_id is None
+    assert fake_storage.objects  # the bytes were stored, not refused
 
 
 async def test_upload_malformed_conversation_id_400(client, db_session, fake_storage) -> None:

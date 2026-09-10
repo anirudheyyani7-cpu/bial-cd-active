@@ -241,8 +241,24 @@ async def _resolve_conversation_link(
     Absent (or explicit `null`) → `None` and the row stores `conversation_id = NULL`, so a
     client that sends no conversationId keeps working. Resolving a PRESENT one is referential
     integrity, NOT the tenancy boundary — the row is written and read under the caller's own
-    `user_id` either way; what it buys is that an upload cannot be hung off a stranger's, or a
-    nonexistent, conversation."""
+    `user_id` either way; what it buys is that an upload cannot be hung off a STRANGER's
+    conversation.
+
+    ★ A CONVERSATION THAT DOES NOT EXIST YET IS NOT AN ERROR, and getting this wrong made the
+    first attachment of every NEW chat impossible (#214). The composer mints the id in the browser
+    and navigates to it; the conversation ROW is created by the first send, which by definition
+    happens AFTER the file is uploaded — the send route stages that row and writes it only once
+    every side-effect-free refusal has passed (R-18). So at upload time the id is real, owned by
+    nobody yet, and simply unwritten. Refusing it 404s the opening move of the whole feature.
+
+    It stores `NULL` instead, which is the state this column was made nullable FOR, and nothing
+    downstream is weakened: `code_lane_attachments` finds the file by its ID as well as by the
+    link precisely because this case exists, and the reclaimer reads NULL as legacy rather than as
+    a deletion signal.
+
+    THE STRANGER CHECK IS UNCHANGED, which is why the owner is READ rather than filtered on: a row
+    that exists under another user is still a 404. Only genuine absence is admitted.
+    """
     if raw is None:
         return None
     if not isinstance(raw, str) or not _ID_RE.match(raw):
@@ -252,10 +268,10 @@ async def _resolve_conversation_link(
     except ValueError:
         # An ID_RE-valid token that isn't a UUID can key no stored conversation.
         raise AppApiError(404, "Conversation not found.") from None
-    owned = await db.scalar(
-        sa.select(Conversation.id).where(Conversation.id == cid, Conversation.user_id == user_id)
-    )
-    if owned is None:
+    owner = await db.scalar(sa.select(Conversation.user_id).where(Conversation.id == cid))
+    if owner is None:
+        return None  # not written yet — the first send creates it
+    if owner != user_id:
         raise AppApiError(404, "Conversation not found.")
     return cid
 

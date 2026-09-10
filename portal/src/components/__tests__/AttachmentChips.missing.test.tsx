@@ -37,7 +37,7 @@ describe('a chip whose file is gone', () => {
     // The file is gone from storage: the fetch resolves to nothing rather than throwing, which is
     // the shape a swept or reclaimed attachment actually produces.
     h.fetchAttachmentObjectUrl.mockResolvedValue(null)
-    render(<AttachmentChips attachments={[{ attachmentId: 'att_1', name, mediaType }]} />)
+    render(<AttachmentChips attachments={[{ attachmentId: 'att_1', kind: 'file', name, mediaType }]} />)
 
     fireEvent.click(screen.getByRole('button'))
 
@@ -53,7 +53,9 @@ describe('a chip whose file is gone', () => {
   it('leaves a working chip alone', async () => {
     h.fetchAttachmentObjectUrl.mockResolvedValue('blob:ok')
     render(
-      <AttachmentChips attachments={[{ attachmentId: 'att_2', name: 'book.xlsx', mediaType: XLSX }]} />,
+      <AttachmentChips
+        attachments={[{ attachmentId: 'att_2', kind: 'file', name: 'book.xlsx', mediaType: XLSX }]}
+      />,
     )
 
     fireEvent.click(screen.getByRole('button'))

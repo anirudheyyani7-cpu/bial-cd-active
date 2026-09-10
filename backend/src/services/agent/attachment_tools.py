@@ -33,7 +33,11 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
 from src.core.prompt_blocks import ATTACHMENT_READ_TOOL
-from src.services.agent.read_tools import ATTACHMENTS_PREFIX, is_an_attachment_path
+from src.services.agent.read_tools import (
+    ATTACHMENTS_PREFIX,
+    is_an_attachment_path,
+    to_container_path,
+)
 from src.services.orchestrator.deps import SandboxSession
 
 # Where the canonical reader is baked. Fixed and known, never discovered: R11a's whole point is
@@ -59,7 +63,18 @@ class AttachmentReader:
     session: SandboxSession
 
     async def read(self, path: str) -> str:
-        argv = ["python3", READER_PATH, path]
+        # ★ TRANSLATED, NOT PASSED THROUGH. The model is given `.attachments/<name>` — a token the
+        # READ SURFACE understands and rewrites — but this tool does not go through that surface:
+        # it hands an argv straight to `exec`, which runs in the app root. Passed verbatim, the
+        # reader resolves `.attachments/roster.xlsx` against `/workspace/app` and reports the file
+        # missing while it sits in `/workspace/attachments` the whole time. That is exactly what
+        # the first end-to-end run produced, and no unit test caught it: every test here drives
+        # `read` with a path and asserts on the argv, so the argv was self-consistently wrong.
+        #
+        # The same `to_container_path` `read_file` and `search_files` use, for the same reason and
+        # with the same one-prefix scope — `read_attachment` refuses anything that is not an
+        # attachment path, so this only ever rewrites the prefix it was built for.
+        argv = ["python3", READER_PATH, to_container_path(path)]
         result = await self.session.sandbox_client.exec(
             self.session.handle, argv, timeout_s=_READ_TIMEOUT_SECONDS
         )

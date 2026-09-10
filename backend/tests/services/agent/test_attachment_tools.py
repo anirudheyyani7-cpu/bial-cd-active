@@ -70,9 +70,22 @@ async def test_it_refuses_a_path_that_is_not_an_attachment() -> None:
     assert reader.seen is None  # nothing reached the container
 
 
-async def test_the_command_is_the_shipped_reader_and_nothing_else() -> None:
-    """★ THE ARGV IS THE SCOPE. The command is a fixed interpreter, a fixed script path and one
-    operand — there is no input shape that turns this into a way to run something else."""
+async def test_the_command_is_the_shipped_reader_over_the_container_path() -> None:
+    """★ THE ARGV IS THE SCOPE, AND THE PATH IN IT MUST BE THE CONTAINER'S.
+
+    The command is a fixed interpreter, a fixed script path and one operand — no input shape turns
+    this into a way to run something else. But the operand also has to be a path the container can
+    resolve, and that is the half this test used to get wrong: it asserted the argv carried
+    `.attachments/roster.xlsx`, the MODEL-facing token, which is exactly what the code did. Both
+    were self-consistent and both were wrong.
+
+    `exec` runs in the app root, so a relative `.attachments/…` resolves to
+    `/workspace/app/.attachments/…` and the reader truthfully reports the file missing while it
+    sits in `/workspace/attachments`. Driving the real UI is what found it: the agent said the
+    folder was not there, and it was right.
+
+    Mutation receipt: drop `to_container_path` from `AttachmentReader.read` and this goes red on
+    the prefix — which is the assertion the old version of this test was missing."""
     calls: list[list[str]] = []
 
     class _Client:
@@ -88,7 +101,9 @@ async def test_the_command_is_the_shipped_reader_and_nothing_else() -> None:
     )
     await AttachmentReader(session=session).read(".attachments/roster.xlsx")
 
-    assert calls == [["python3", READER_PATH, ".attachments/roster.xlsx"]]
+    assert calls == [["python3", READER_PATH, "/workspace/attachments/roster.xlsx"]]
+    # The model-facing token must NOT survive into the command.
+    assert ".attachments/" not in calls[0][2]
 
 
 async def test_a_transport_failure_is_a_retry_not_a_fabricated_answer() -> None:

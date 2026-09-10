@@ -10,10 +10,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
-## [Unreleased]
+## [1.7.0-beta.11] - 2026-09-10
 
 Nine defects reported from production on 2026-09-09, traced from the backend log and the citizens'
-own screenshots. No version is claimed here — the number is chosen at merge.
+own screenshots.
 
 ### Fixed
 

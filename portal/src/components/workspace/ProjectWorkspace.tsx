@@ -260,9 +260,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       iterating: false,
       reconnecting: false,
       turnRunning: false,
-      hasSavedBuild: workspace.preview?.restorable ?? project.hasRelaunchableSnapshot,
       previewState: workspace.preview?.state ?? null,
-      occupyingProjectName: workspace.preview?.occupyingProjectName ?? null,
       // THE SERVER'S VERDICT ON THE NEWEST BUILD, read above and passed through UNTRANSLATED.
       // `null` and `unknown` both mean "nothing is claimed" and hold whatever cover is showing;
       // only an affirmative `clean` uncovers, and only `failed` names the failure. See the read.
@@ -273,7 +271,10 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       // COMPLETION CLAIM — which this screen, having stopped making one, no longer has.
       workspaceLost: false,
     }),
-    [workspace.preview, project.hasRelaunchableSnapshot, compileState],
+    // `project.hasRelaunchableSnapshot` LEFT THIS LIST WITH `hasSavedBuild`. It still reaches the
+    // workspace map above, where the restore question actually gets answered; this view stopped
+    // carrying it when the pane stopped writing sentences about the workspace.
+    [workspace.preview, compileState],
   )
 
   useWorkspaceProject(project.id)

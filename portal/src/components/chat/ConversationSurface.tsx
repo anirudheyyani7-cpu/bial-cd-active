@@ -47,6 +47,7 @@ import {
   BACKGROUND_CADENCE,
   SETTLED_GONE,
   STARTING_PROBE_MS,
+  asDecidedReading,
   nextProbeCadence,
   resolveWorkspaceState,
   spendProbeCadence,
@@ -2522,6 +2523,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // `??` on a TRI-STATE, deliberately: a `null` from the poll means the object store was
   // unreachable, which is not an answer, so it falls through to the older-but-real reading
   // rather than retracting a claim the server once made confidently.
+  // WHERE IT GOES NOW: into the workspace map, as `projectHasSavedBuild`. It used to travel the
+  // pane channel to fill in a sentence LivePreview wrote about the workspace; that card is gone
+  // and the map owns the sentence, so the map is what needs the freshest answer. Handing it the
+  // raw route prop instead — which is what it got — meant a citizen who saved and then let the
+  // container sleep was told "Describe what you want to build" over an app they had just saved.
+  // The map applies its own `restorable ?? this`, so source 2 still outranks source 1 whenever the
+  // server has an opinion; this only decides the case where the poll makes no claim, which is
+  // exactly the case the ALIVE hot path produces by design.
   const hasSavedBuild =
     savedBuildProjectId && savedBuildProjectId === projectId
       ? true
@@ -2659,9 +2668,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   usePublishWorkspaceReport(
     projectId
       ? {
+          // DERIVED, NOT KEPT BESIDE IT — same reason as `useWorkspaceState`'s call: this
+          // surface's own `setPolledPreview` returns the previous object when the reading is
+          // `unknown`, so `previewState` only ever HOLDS an `unknown` before anything has been
+          // decided, which is the one case whose answer is the fallback sentence anyway.
           state: resolveWorkspaceState({
             preview: previewState,
-            projectHasSavedBuild,
+            lastDecidedPreview: asDecidedReading(previewState),
+            projectHasSavedBuild: hasSavedBuild,
             startOutcome,
             startInFlight: startPending,
           }),
@@ -2734,9 +2748,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
 
        AND `completedLive` LEFT WITH IT, onto the address as `serving` — see the block above the
        address resolution. Nothing on this view can unmount the frame any more. */
-    hasSavedBuild,
     previewState: previewState?.state ?? null,
-    occupyingProjectName: previewState?.occupyingProjectName ?? null,
     reconnecting: (turnNarrativeIsThisChat && turnPreview.state === 'reconnecting') || (showSession && session.reconnecting),
     /* NOT gated on `turnNarrativeIsThisChat`, unlike the narrative values above it. This is a fact
        about the PROJECT'S APP — one app per project — not about which conversation happens to be

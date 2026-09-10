@@ -180,19 +180,24 @@ describe('frame survival — the case where an unmount kills a live container', 
     const iframe = container.querySelector('iframe')
     expect(iframe).toBeTruthy()
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
-    // showTerminal → false: no ended card over a container that is still serving.
+    // ★ NO ENDED CARD over a container that is still serving — and there is no ended card LEFT to
+    // draw. That placeholder was a verdict about the citizen's WORKSPACE, and the workspace map
+    // owns every one of those now; what survives here is the frame and the covers over it.
     expect(screen.queryByTestId('preview-ended-card')).toBeNull()
     expect(container.textContent).not.toMatch(/no longer running/i)
-    // framePending → true: mounted but not yet loaded, so the wait is up and LABELLED.
+    // framePending → true: mounted but not yet loaded, so the wait is up and LABELLED. The label
+    // says "Opening" rather than "Starting" now: this pane is mounted only once the platform has
+    // watched the app ANSWER a request, so the starting is over and this frame's own document is
+    // the only thing still pending.
     expect(card(container).className).toMatch(/opacity-0/)
-    expect(container.textContent).toMatch(/starting your app/i)
+    expect(container.textContent).toMatch(/opening your app/i)
   })
 
   it('…and the framed document’s own load still resolves that wait', () => {
     const { container } = framedAndPardoned()
     fireEvent.load(container.querySelector('iframe'))
     expect(card(container).className).toMatch(/opacity-100/)
-    expect(container.textContent).not.toMatch(/starting your app/i)
+    expect(container.textContent).not.toMatch(/opening your app/i)
   })
 })
 
@@ -245,7 +250,8 @@ describe('the ordinary states the pane still has to render', () => {
   it('running: a live URL frames the app behind its labelled wait', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
     expect(container.querySelector('iframe')).toBeTruthy()
-    expect(container.textContent).toMatch(/starting your app/i)
+    expect(container.textContent).toMatch(/opening your app/i)
+    // The ended card is not merely withheld here — it no longer exists anywhere in the pane.
     expect(screen.queryByTestId('preview-ended-card')).toBeNull()
   })
 

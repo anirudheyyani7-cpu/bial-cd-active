@@ -532,8 +532,12 @@ describe('BuilderPage — the project arm, and the hard load it exists for', () 
     const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
 
     await waitFor(() => expect(screen.queryByTestId('app-pane-empty')).not.toBeNull())
+    // ★ ONE HELD ARM NOW, WHATEVER THE SERVER COULD ATTRIBUTE. This read to `held-unattributed`,
+    // a second held state offering `action` and `secondAction` both null — a card that named the
+    // problem, named no remedy and left nothing to press at all. A missing holder name is a reason
+    // to say LESS, not to DO less, so the merge keeps the take-back and degrades only the sentence.
     expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state'))
-      .toBe('held-unattributed')
+      .toBe('held-by-another-project')
     expect(frame()).toBeNull()
     view.unmount()
   })

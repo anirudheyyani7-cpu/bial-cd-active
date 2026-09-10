@@ -45,6 +45,7 @@ import type { PreviewState, SaveState } from '../../utils/buildSessionApi'
 import {
   BACKGROUND_CADENCE,
   STARTING_PROBE_MS,
+  asDecidedReading,
   isTerminalReading,
   nextProbeCadence,
   resolveWorkspaceState,
@@ -280,7 +281,18 @@ export function useWorkspaceState({
   }, [projectId, epoch])
 
   return {
-    state: resolveWorkspaceState({ preview, projectHasSavedBuild, startOutcome, startInFlight }),
+    // `lastDecidedPreview` IS DERIVED FROM `preview`, NOT KEPT BESIDE IT, because this hook's own
+    // reducer is already the memory: `setPreview` returns the previous object when the new reading
+    // is `unknown` (see the guard above it), so `preview` only ever HOLDS an `unknown` when nothing
+    // has been decided yet — the one case whose answer is the fallback sentence anyway. A second
+    // copy of that memory could only ever disagree with the first.
+    state: resolveWorkspaceState({
+      preview,
+      lastDecidedPreview: asDecidedReading(preview),
+      projectHasSavedBuild,
+      startOutcome,
+      startInFlight,
+    }),
     preview,
     save,
     readTick,

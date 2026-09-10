@@ -31,8 +31,7 @@ const APP_URL = 'https://app-a.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  hasSavedBuild: null,
-  previewState: null, occupyingProjectName: null, turnRunning: false,
+  previewState: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
 

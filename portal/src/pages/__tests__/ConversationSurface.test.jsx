@@ -344,10 +344,24 @@ describe('a failed launch INSIDE a chat says why', () => {
 
     fireEvent.click(await findStartAppControl())
 
-    expect(await screen.findByText('We could not start your app.')).toBeTruthy()
-    // THE SERVER'S OWN WORDS, carried verbatim — the specific half, and the only thing that tells
-    // the citizen what to do differently.
-    expect(screen.getByText('Your app could not be brought back just now.')).toBeTruthy()
+    // ★ THE SERVER'S OWN WORDS, CARRIED VERBATIM — and that is the whole of what a failed press
+    // changes on screen now.
+    //
+    // IT USED TO GET A CARD OF ITS OWN, headed "We could not start your app." That headline is
+    // deleted: the situation, the honest headline and the next step were all identical to "Your
+    // app is saved.", so a differently-shaped screen told the citizen something had changed that
+    // had not. The reason rides in the map's `note`, which is also the one field the negative-copy
+    // sweep exempts — so a refusal containing the words "not running" can no longer turn a green
+    // suite red on a string this client does not control.
+    expect(await screen.findByText('Your app could not be brought back just now.')).toBeTruthy()
+    expect(screen.queryByText('We could not start your app.')).toBeNull()
+    // LIVENESS, PAIRED WITH THAT ABSENCE: the pane is on the saved card with its one press still
+    // offered, so the missing headline is a deleted card rather than a pane that stopped
+    // rendering. Pressing Launch again is non-destructive by construction — the action union
+    // contains no restore, rebuild or teardown verb.
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('not-running')
+    expect(screen.getByText('Your app is saved.')).toBeTruthy()
+    expect(await findStartAppControl()).toBeTruthy()
   })
 })
 

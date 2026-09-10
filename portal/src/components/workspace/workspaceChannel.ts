@@ -138,10 +138,15 @@ export interface PaneView {
      was still serving. Liveness is a fact about what is framed, so it rides on the address cell,
      which is KEPT across an unmount by design; the hold, and the hazard it was written against,
      are both gone with it. Nothing on THIS view can unmount the frame any more. */
-  /** Project-scoped: the project's one workspace and its restore path. */
-  hasSavedBuild: boolean | null
+  /* `hasSavedBuild` AND `occupyingProjectName` LEFT WITH THE CARDS THAT READ THEM. Both existed
+     only to fill in a sentence LivePreview used to write about the WORKSPACE — "Nothing has been
+     built here yet", "Baggage Reconciliation is using your workspace" — and the pane is no longer
+     an author of workspace sentences: `workspaceState` owns every one of them, resolved from the
+     preview reading it already holds. Neither field was ever read by `AppPane`, `AppPaneHost` or
+     `WorkspaceShell`; they travelled this channel purely to reach a component that has stopped
+     asking. The subset assertion below is what caught them still being here. */
+  /** Project-scoped: the project's one workspace. */
   previewState: PreviewLifeState | null
-  occupyingProjectName: string | null
   turnRunning: boolean
   /** App-scoped: about the project's ONE app, deliberately NOT narrowed to the open chat. */
   compileState: CompileState | null

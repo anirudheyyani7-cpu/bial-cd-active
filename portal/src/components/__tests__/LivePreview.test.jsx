@@ -252,20 +252,43 @@ describe('LivePreview — status-driven visuals, all five statuses', () => {
     expect(iframe).toBeTruthy()
   })
 
-  it('failed / ended show the terminal placeholder (NOT a lingering spinner) — failed-before-ready', () => {
+  // ★ THE TERMINAL PLACEHOLDER IS GONE, AND WHAT REPLACES IT IS AN EMPTY PANE — DELIBERATELY.
+  //
+  // It drew "The preview is no longer running", with a saved-build line under it, and it was this
+  // file's fourth workspace verdict: a sentence about the citizen's app, told by the one component
+  // that can only see a frame. `workspace/workspaceState.ts` computes that sentence once and
+  // `AppPane` draws it, so the placeholder was a second author for it — and the composed product
+  // does not even reach this component in those states, because the frame veto mounts it only on a
+  // `running` reading.
+  //
+  // WHAT IS STILL PINNED HERE IS THE HALF THAT IS THIS FILE'S: a terminal status must not keep
+  // framing a URL nobody is answering at. Post-ready teardown showing a painted corpse of the app
+  // is the failure, and it is still a failure.
+  it('★ failed / ended stop framing, and say NOTHING in the placeholder`s place', () => {
     for (const status of ['failed', 'ended']) {
       const { container, unmount } = render(<LivePreview previewUrl={null} status={status} />)
       expect(container.querySelector('iframe')).toBeNull()
-      expect(container.textContent).toMatch(/no longer running|ended/i)
+      for (const retired of [/no longer running/i, /start a new build/i, /your saved app is still there/i]) {
+        expect(container.textContent, `${status} still draws the placeholder`).not.toMatch(retired)
+      }
+      // ★ LIVENESS, AND IT HAS TO BE STRUCTURAL HERE because the expected screen is empty: an
+      // absence sweep over a component that threw would pass every line above. The pane's permanent
+      // live region is the one thing that exists in every state, so finding it mounted and silent
+      // is what tells "rendered and had nothing to say" from "did not render".
+      expect(container.querySelector('[role="status"]')?.getAttribute('aria-live')).toBe('polite')
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('')
       unmount()
     }
   })
 
-  it('ended AFTER a framed preview (post-ready teardown) collapses to the terminal placeholder, not the dead URL', () => {
+  it('★ ended AFTER a framed preview collapses the frame — a dead URL is never left painted', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" />)
-    // Terminal precedence: even with a previewUrl present, the pane must not keep framing a dead sandbox.
+    // Terminal precedence: even with a previewUrl present, the pane must not keep framing a dead
+    // sandbox. Without the pardon (`serving`) there is nothing to say the URL still answers.
     expect(container.querySelector('iframe')).toBeNull()
-    expect(container.textContent).toMatch(/no longer running|ended/i)
+    expect(container.textContent).not.toMatch(/no longer running/i)
+    // LIVENESS, structural for the same reason as above.
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('')
   })
 
   // `showEmpty` IS GONE, and the empty-state copy this test used to look for ("...will appear
@@ -318,10 +341,16 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     expect(container.textContent).not.toMatch(/build complete/i)
   })
 
-  it('a serving container WITHOUT a previewUrl still shows the terminal placeholder — never a blank pane', () => {
+  it('★ a serving container WITHOUT a previewUrl frames nothing — this pane draws nothing it cannot point at', () => {
+    // Liveness with no address to frame is not a frame. It used to draw the terminal placeholder
+    // here; the sentence for a workspace with nothing on screen is the map's now, and `AppPane`
+    // does not mount this component without a resolved address at all.
     const { container } = render(<LivePreview previewUrl={null} status="ended" serving />)
     expect(container.querySelector('iframe')).toBeNull()
-    expect(container.textContent).toMatch(/no longer running/i)
+    expect(container.textContent).not.toMatch(/no longer running/i)
+    // LIVENESS: the permanent region is mounted and silent, which is what an empty pane looks like
+    // as opposed to a component that failed to render.
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('')
   })
 
   it('★ the terminal sentence is UNREACHABLE while the container is serving, in both nodes', () => {
@@ -360,8 +389,14 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
       />,
     )
 
-    // The build is named as broken, not as finished.
-    expect(screen.getAllByText(/isn\u2019t running right now/i).length).toBeGreaterThan(0)
+    // The build is named as broken, not as finished \u2014 and the sentence names THE PAGE now.
+    //
+    // \u2605 IT USED TO OPEN "Your app isn't running right now", which is word for word the claim the
+    // apps router's own error page makes, told from inside a pane that exists only because the app
+    // IS up. Two authors, one sentence; on 2026-09-10 the two of them contradicted each other on
+    // screen. What this cover is entitled to describe is the document in front of it.
+    expect(screen.getAllByText(/this page can\u2019t open/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/isn\u2019t running right now/i)).toBeNull()
     expect(screen.queryByText(/build complete/i)).toBeNull()
     // LIVENESS: and the citizen is not staring at a raw framework error screen — the cover is up.
     expect(screen.getByRole('status').textContent).not.toMatch(/preview is live/i)
@@ -381,7 +416,10 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     // serving address (see `turnNarrative`'s phase test) and never reaches this state at all.
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" />)
     expect(container.querySelector('iframe')).toBeNull()
-    expect(container.textContent).toMatch(/no longer running/i)
+    // ★ AND IT COLLAPSES TO NOTHING, not to a sentence. The card that used to fill this space was
+    // the last of this file's four workspace verdicts; the map says it once and `AppPane` draws it.
+    expect(container.textContent).not.toMatch(/no longer running/i)
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('')
   })
 
   it('RETIREMENT GUARD: nothing pre-empts the kept frame any more — the Restoring state that did is gone', () => {
@@ -432,7 +470,7 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     expect(screen.getByRole('status').textContent).not.toMatch(/preview is live/i)
     // LIVENESS: …because the retraction is standing in its place, in both nodes — the visible
     // cover and the pane's permanent live region.
-    expect(screen.getAllByText(/stopped running and needs to be brought back/i)).toHaveLength(2)
+    expect(screen.getAllByText(/isn’t your app any more/i)).toHaveLength(2)
     expect(screen.getAllByText(/we\u2019ll restore it/i).length).toBeGreaterThan(0)
   })
 
@@ -472,32 +510,41 @@ describe('LivePreview — relaunch a torn-down preview', () => {
   // `AppPane` from the one computed workspace state (exactly ONE control starts the app). The
   // copy this placeholder still owns is what LIVENESS checks below — the button is what INERTNESS
   // checks.
-  it('INERTNESS GUARD: the terminal placeholder still explains an ended session with a saved build, but offers no button', () => {
-    const onRelaunch = vi.fn()
-    const { container } = render(
-      <LivePreview previewUrl={null} status="ended" onRelaunch={onRelaunch} hasSavedBuild />,
-    )
-    // LIVENESS: the placeholder still says what happened.
-    expect(container.textContent).toMatch(/no longer running/i)
-    // INERTNESS: no button under any retired label, and the relaunch prop is never called.
-    expect(screen.queryByRole('button', { name: /relaunch|bring it back/i })).toBeNull()
-    expect(onRelaunch).not.toHaveBeenCalled()
-  })
-
-  it('INERTNESS GUARD: a FAILED build with a saved snapshot gets the same terminal placeholder, no button', () => {
-    const onRelaunch = vi.fn()
-    const { container } = render(
-      <LivePreview previewUrl={null} status="failed" onRelaunch={onRelaunch} hasSavedBuild />,
-    )
-    expect(container.textContent).toMatch(/no longer running/i)
-    expect(screen.queryByRole('button', { name: /relaunch|bring it back/i })).toBeNull()
-    expect(onRelaunch).not.toHaveBeenCalled()
-  })
-
-  it('without onRelaunch, the terminal keeps its plain "start a new build" copy (no button)', () => {
-    const { container } = render(<LivePreview previewUrl={null} status="ended" />)
-    expect(screen.queryByRole('button', { name: /relaunch preview/i })).toBeNull()
-    expect(container.textContent).toMatch(/start a new build/i)
+  // ★ AND THE PLACEHOLDER ITSELF IS GONE NOW, so the three tests that pinned its copy collapse
+  // into one. They differed only in which terminal status and which `hasSavedBuild` value put the
+  // card on screen, and all three now fail for the identical reason: there is no card. A second
+  // and third copy of that finding would not prove anything the first does not.
+  //
+  // WHERE ITS NEWS LIVES, so nothing is merely dropped: "the preview is no longer running" with a
+  // saved-build line under it is the map's "Your app is saved." plus the one press that brings it
+  // back, drawn by `AppPane` on a board `AppPane.test.tsx` pins.
+  it('★ RETIREMENT GUARD: no terminal status draws a placeholder, under any saved-build answer', () => {
+    for (const status of ['ended', 'failed']) {
+      for (const props of [{}, { hasSavedBuild: true }, { hasSavedBuild: false }, { hasSavedBuild: null }]) {
+        const onRelaunch = vi.fn()
+        const { container, unmount } = render(
+          <LivePreview previewUrl={null} status={status} onRelaunch={onRelaunch} {...props} />,
+        )
+        const where = `${status} / ${JSON.stringify(props)}`
+        for (const retired of [
+          /no longer running/i,
+          /start a new build/i,
+          /your saved app is still there/i,
+          /nothing to relaunch yet/i,
+        ]) {
+          expect(container.textContent, where).not.toMatch(retired)
+        }
+        // INERTNESS: no button under any retired label, and the dead prop is never called.
+        expect(screen.queryByRole('button', { name: /relaunch|bring it back/i })).toBeNull()
+        expect(onRelaunch).not.toHaveBeenCalled()
+        // ★ LIVENESS, STRUCTURAL, because the expected screen is empty and an absence sweep over a
+        // component that threw would pass every line above. The permanent live region is the one
+        // element that exists in every state.
+        expect(container.querySelector('[role="status"]')?.getAttribute('aria-live'), where).toBe('polite')
+        expect(container.querySelector('[role="status"]')?.textContent, where).toBe('')
+        unmount()
+      }
+    }
   })
 
   // THE "RESTORING…" WAIT AND ITS SLOW LABEL ARE GONE, and the three tests that drove them with
@@ -515,8 +562,10 @@ describe('LivePreview — relaunch a torn-down preview', () => {
       const { container } = render(
         <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild relaunching />,
       )
-      // LIVENESS: the terminal placeholder is what renders instead, and it still explains itself.
-      expect(container.textContent).toMatch(/no longer running/i)
+      // LIVENESS: the pane rendered — its permanent region is mounted — and what it drew instead
+      // of a Restoring card is nothing at all, which is the terminal placeholder's retirement.
+      expect(container.querySelector('[role="status"]')?.getAttribute('aria-live')).toBe('polite')
+      expect(container.textContent).not.toMatch(/no longer running/i)
       expect(container.textContent).not.toMatch(/restoring your app/i)
       act(() => vi.advanceTimersByTime(20_000))
       expect(container.textContent).not.toMatch(/taking longer than usual/i)
@@ -611,81 +660,51 @@ describe('LivePreview — the no-previewUrl/no-status combination (formerly "rel
 })
 
 describe('LivePreview — the relaunch response matrix', () => {
-  // THE `not_found` ARM WENT WITH THE PROP — the last of the three `relaunchError` reads to
-  // survive, selecting a `role="alert"` sentence on three placeholders. Its producer, the session
-  // hook's `relaunch()`, was unreachable, so the alert could never fire; a citizen today sees the
-  // `hasSavedBuild` sentence the placeholder resolves on its own, and the live 404 is answered by
-  // `StartAppControl`'s own outcome handling instead (`StartAppControl.test.tsx`).
-  it('RETIREMENT GUARD: a not_found relaunch error selects nothing — the placeholder answers from hasSavedBuild alone', () => {
-    const { container } = render(
-      <LivePreview
-        previewUrl={null}
-        status="ended"
-        onRelaunch={vi.fn()}
-        hasSavedBuild={false}
-        relaunchError={{ kind: 'not_found', message: 'No saved build to relaunch. Build the app first.' }}
-      />,
-    )
-    // LIVENESS: the placeholder rendered, and it makes the tri-state's own confirmed-false claim.
-    expect(container.textContent).toMatch(/nothing to relaunch yet/i)
-    expect(screen.queryByRole('alert')).toBeNull() // …but not as an alert the dead prop selected
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-  })
+  // ★ ALL FOUR OF THESE PINNED A PLACEHOLDER THAT NO LONGER EXISTS, and they collapse into one
+  // for the reason the block above them records: they failed for the identical reason, and a
+  // second, third and fourth copy of one finding proves nothing the first does not.
+  //
+  // WHAT EACH OF THEM WAS. `relaunchError` was read in exactly three places, all special-casing
+  // `kind === 'not_found'`; the `unavailable` and `failed` kinds fell through to a generic
+  // saved-build sentence and their own `.message` was never read anywhere. `lastBuildFailed` used
+  // to pick between two button labels. Every one of those reads landed on the terminal
+  // placeholder — a workspace verdict this file has stopped authoring — so the props now have
+  // nowhere to reach even if a caller sets them.
+  //
+  // WHERE THE LIVE 404 IS ANSWERED NOW: `StartAppControl`'s own outcome handling, which carries
+  // the server's words verbatim onto the map's `note` (`StartAppControl.test.tsx`,
+  // `workspaceState.test.ts`).
+  it('★ RETIREMENT GUARD: every relaunch-response prop reaches no render at all', () => {
+    const everyResponse = [
+      { relaunchError: { kind: 'not_found', message: 'No saved build to relaunch. Build the app first.' }, hasSavedBuild: false },
+      { relaunchError: { kind: 'unavailable', message: 'Sandbox unavailable. Please try again later or contact the admin' }, hasSavedBuild: true },
+      { relaunchError: { kind: 'failed', message: 'Failed to relaunch the preview' }, hasSavedBuild: true },
+      { lastBuildFailed: true, hasSavedBuild: true },
+    ]
 
-  // INERTNESS GUARD, AND A DOCUMENTED FINDING, NOT JUST A RE-POINT. `relaunchError` is read in
-  // exactly THREE places in `LivePreview.tsx`, all special-casing ONLY `kind === 'not_found'`; the
-  // `unavailable`/`failed` kinds fall through to the generic hasSavedBuild-only sentence, and
-  // their own `.message` is never read anywhere. The component's own docblock
-  // (`LivePreviewProps.relaunchError`) still claims these two kinds "show their copy with the
-  // button restored for a retry" — stale now, filed as a finding rather than silently reasserted.
-  // What is left to pin honestly is that the generic saved-build sentence still renders, with no
-  // button.
-  it('INERTNESS GUARD: an `unavailable` relaunch error no longer gets its own alert copy — only the generic saved-build sentence survives', () => {
-    const { container } = render(
-      <LivePreview
-        previewUrl={null}
-        status="ended"
-        onRelaunch={vi.fn()}
-        hasSavedBuild
-        relaunchError={{ kind: 'unavailable', message: 'Sandbox unavailable. Please try again later or contact the admin' }}
-      />,
-    )
-    // LIVENESS: the terminal placeholder still renders and still makes the saved-build claim.
-    expect(container.textContent).toMatch(/your saved app is still there/i)
-    // The kind-specific copy is gone, not merely un-alerted — pinned so a reader does not assume
-    // it survives elsewhere on the pane.
-    expect(container.textContent).not.toMatch(/try again later/i)
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-  })
-
-  it('INERTNESS GUARD: a `failed` relaunch error no longer gets its own alert copy — only the generic saved-build sentence survives', () => {
-    const { container } = render(
-      <LivePreview
-        previewUrl={null}
-        status="ended"
-        onRelaunch={vi.fn()}
-        hasSavedBuild
-        relaunchError={{ kind: 'failed', message: 'Failed to relaunch the preview' }}
-      />,
-    )
-    expect(container.textContent).toMatch(/your saved app is still there/i)
-    expect(container.textContent).not.toMatch(/failed to relaunch/i)
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-  })
-
-  // INERTNESS GUARD. `lastBuildFailed` used to pick between two button labels ("Relaunch
-  // preview" vs "Relaunch last saved version"); `LivePreview`'s own docblock records that the prop
-  // is now accepted and DELIBERATELY UNREAD — the distinction it drew belongs to
-  // `restoredFromFailedBuild` now, which says the same thing on a FRAMED pane where a citizen can
-  // actually see it (see "overlays the last-saved-version notice..." below, unaffected by this).
-  it('INERTNESS GUARD: `lastBuildFailed` no longer labels a button — there is no button left to label', () => {
-    const { container } = render(
-      <LivePreview previewUrl={null} status="failed" onRelaunch={vi.fn()} hasSavedBuild lastBuildFailed />,
-    )
-    expect(container.textContent).toMatch(/no longer running/i)
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
+    for (const props of everyResponse) {
+      const { container, unmount } = render(
+        <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} {...props} />,
+      )
+      const where = JSON.stringify(props)
+      // Neither the kind-specific copy nor the generic sentence it used to fall through to.
+      for (const retired of [
+        /nothing to relaunch yet/i,
+        /your saved app is still there/i,
+        /no longer running/i,
+        /try again later/i,
+        /failed to relaunch/i,
+      ]) {
+        expect(container.textContent, where).not.toMatch(retired)
+      }
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
+      // ★ LIVENESS, STRUCTURAL: the expected screen is empty, so an absence sweep alone would pass
+      // over a component that threw. The permanent region is what proves it rendered.
+      expect(container.querySelector('[role="status"]')?.getAttribute('aria-live'), where).toBe('polite')
+      expect(container.querySelector('[role="status"]')?.textContent, where).toBe('')
+      unmount()
+    }
   })
 
   // ★ THE THIRD OVERLAY. This asserted the "Showing your last saved version — the most
@@ -807,8 +826,9 @@ describe('LivePreview — the stop-clock instant: `onRevealed`', () => {
   it('\u2605 does NOT fire when the workspace-lost cover is up over the frame', () => {
     // `revealed` is NOT "the cover is down". `showCover` is `covered || workspaceLost` while
     // `revealed` reads only `covered`, so a confirmed reversion leaves the frame at full opacity
-    // UNDERNEATH a cover that says the app stopped running. Firing here reports a first view of
-    // an app the citizen cannot see \u2014 and reports it as FAST, since the frame loaded fine.
+    // UNDERNEATH a cover that says what is in the frame is not the citizen's app. Firing here
+    // reports a first view of an app the citizen cannot see \u2014 and reports it as FAST, since the
+    // frame loaded fine.
     //
     // Mutation check: drop `workspaceLost` from the effect's guard and this goes red.
     const onRevealed = vi.fn()
@@ -817,7 +837,10 @@ describe('LivePreview — the stop-clock instant: `onRevealed`', () => {
     )
     fireEvent.load(container.querySelector('iframe'))
 
-    expect(container.textContent).toMatch(/stopped running/i) // the cover really is up
+    // The cover really is up \u2014 and it names the FRAME, not the workspace. That sentence used to
+    // open "Your app stopped running", a verdict on the workspace that this component cannot reach
+    // and that contradicts its own mounting condition.
+    expect(container.textContent).toMatch(/isn\u2019t your app any more/i)
     expect(onRevealed).not.toHaveBeenCalled()
   })
 
@@ -855,12 +878,12 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
     expect(iframe).toBeTruthy()
     expect(card(container).className).toMatch(/opacity-0/)
     // …and the wait is LABELLED. This is the whole requirement.
-    expect(container.textContent).toMatch(/starting your app/i)
+    expect(container.textContent).toMatch(/opening your app/i)
 
     fireEvent.load(iframe)
 
     expect(card(container).className).toMatch(/opacity-100/)
-    expect(container.textContent).not.toMatch(/starting your app/i)
+    expect(container.textContent).not.toMatch(/opening your app/i)
   })
 
   it('time passing NEVER reveals the frame (mutation: put the 400ms grace back and this goes red)', () => {
@@ -869,7 +892,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
       const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
       act(() => vi.advanceTimersByTime(FRAME_LOAD_CAP_MS - 1))
       expect(card(container).className).toMatch(/opacity-0/) // nothing painted, nothing revealed
-      expect(container.textContent).toMatch(/starting your app/i)
+      expect(container.textContent).toMatch(/opening your app/i)
     } finally {
       vi.useRealTimers()
     }
@@ -943,7 +966,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
     rerender(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
     // The fresh frame must not inherit the previous one's verdict — that is the blank card again.
     expect(card(container).className).toMatch(/opacity-0/)
-    expect(container.textContent).toMatch(/starting your app/i)
+    expect(container.textContent).toMatch(/opening your app/i)
 
     fireEvent.load(container.querySelector('iframe'))
     expect(card(container).className).toMatch(/opacity-100/)
@@ -961,11 +984,11 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
 
       rerender(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
       expect(container.textContent).not.toMatch(/taking longer than usual/i)
-      expect(container.textContent).toMatch(/starting your app/i)
+      expect(container.textContent).toMatch(/opening your app/i)
 
       // …and the new frame gets its own full cap, not the remains of the old one.
       act(() => vi.advanceTimersByTime(FRAME_LOAD_CAP_MS - 1))
-      expect(container.textContent).toMatch(/starting your app/i)
+      expect(container.textContent).toMatch(/opening your app/i)
       act(() => vi.advanceTimersByTime(2))
       expect(container.textContent).toMatch(/taking longer than usual/i)
     } finally {
@@ -981,7 +1004,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
     rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" reconnecting />) // dev process died
     rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" reconnecting={false} />) // fresh preview_ready
     expect(card(container).className).toMatch(/opacity-0/)
-    expect(container.textContent).toMatch(/starting your app/i)
+    expect(container.textContent).toMatch(/opening your app/i)
   })
 
   it('reveals on the load of an ERROR response — a broken app must look broken, not pending forever', () => {
@@ -1005,7 +1028,15 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
   it('no state shows an unlabelled blank pane: while the frame is hidden, the pane always says why', () => {
     // The unit's verification line, made executable. Anything the citizen can be looking at
     // before the document paints must carry one of these labels.
-    const LABELLED = /setting up your sandbox|building your app|starting your app|taking longer than usual/i
+    //
+    // ★ "Starting your app…" IS NOW "Opening your app…", AND THE WORD IS THE WHOLE POINT. This
+    // pane is mounted only once the platform has watched the app ANSWER a request, so by the time
+    // this sentence is on screen the starting is over and the only thing still pending is this
+    // frame's own document — which is the one fact this component is entitled to describe.
+    // "Starting your app…" also belongs to somebody else now: it is `StartAppControl`'s pending
+    // label and `ReclaimWorkspaceDialog`'s step, both of them about a press, and one sentence with
+    // two authors is what this whole change exists to stop.
+    const LABELLED = /setting up your sandbox|building your app|opening your app|taking longer than usual/i
     vi.useFakeTimers()
     try {
       // Every pre-reveal state, in the order a citizen actually meets them.
@@ -1022,7 +1053,19 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
       for (const mount of waits) {
         const { container, unmount } = mount()
         expect(container.querySelector('[data-testid="device-card"].opacity-100')).toBeNull()
-        expect(container.textContent).toMatch(LABELLED)
+        // ★ THE LABEL HAS TO BE ON SCREEN, NOT MERELY SPOKEN, and this test read
+        // `container.textContent` — which INCLUDES the permanent sr-only live region. That region
+        // announces in every state, so the assertion was satisfied by the announcement alone and
+        // stayed green with the visible card deleted. Caught by mutation: removing the frame-stall
+        // card's render left this passing while a citizen watched a blank rectangle. Asserting on
+        // the visible half is the fix, and it is the same lesson the `starting` refusal already
+        // records one file over — an absence paired with a liveness check that cannot fail is an
+        // absence on its own.
+        const spoken = container.querySelector('[role="status"]')
+        const seen = [...container.querySelectorAll('p')].filter(
+          (el) => !spoken.contains(el) && LABELLED.test(el.textContent ?? ''),
+        )
+        expect(seen.length).toBeGreaterThan(0)
         unmount()
       }
     } finally {
@@ -1031,22 +1074,37 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
   })
 })
 
-describe('LivePreview — the reconnecting state is BOUNDED after a completed build', () => {
-  // INERTNESS GUARD. The bound itself (never a forever spinner) is untouched and stays asserted;
-  // only the button half — this pane's own way to act on the collapse — moved off it.
-  it('INERTNESS GUARD: after the cap with no recovery, still collapses to "preview unavailable" (no forever spinner), with no button of its own', () => {
+describe('★ the reconnecting cover is NO LONGER BOUNDED here — the bound moved to the server', () => {
+  // ★ THE CAP IS GONE AND ITS LANDING STATE IS WHY. A 20-second timer used to collapse this cover
+  // into the "preview unavailable" card, which was one of the four WORKSPACE verdicts this file
+  // has stopped authoring — so an expiry now has nowhere honest to go. Letting it expire into an
+  // empty rectangle says nothing; re-mounting the frame instead frames the apps router's own
+  // "This app isn't running right now" page, which is the exact defect this whole change exists
+  // to end.
+  //
+  // WHERE THE BOUND WENT, so this is a move and not a deletion: a dev server that dies and never
+  // comes back is the SERVING STAMP's business now. The turn watcher clears the stamp on the
+  // debounced crash edge and the five-minute reconciler clears it out of turn, the reading stops
+  // being `running`, `AppPane` unmounts this pane, and the ONE workspace author draws the ONE
+  // card. What this pane owes that citizen in the meantime is not a verdict — it is to keep
+  // saying, honestly, that it is still waiting.
+  it('★ keeps saying "Reconnecting…" indefinitely, and never reaches for a verdict', () => {
     vi.useFakeTimers()
     try {
       const onRelaunch = vi.fn()
       const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
+        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={onRelaunch} />,
       )
-      expect(container.textContent).toMatch(/reconnecting/i) // before the cap
-      act(() => vi.advanceTimersByTime(20001))
-      // LIVENESS: the bounded terminal still fires.
-      expect(container.textContent).toMatch(/preview unavailable/i)
-      expect(container.textContent).not.toMatch(/reconnecting to your preview/i)
-      // INERTNESS: no button, and the relaunch prop is never called.
+      expect(container.textContent).toMatch(/reconnecting/i)
+
+      // Six times the old cap. Nothing collapses, nothing is claimed.
+      act(() => vi.advanceTimersByTime(120_000))
+
+      // LIVENESS FIRST, and it is what makes the two absences below mean anything: the cover is
+      // still on screen saying the honest thing.
+      expect(container.textContent).toMatch(/reconnecting to your preview/i)
+      expect(container.textContent).not.toMatch(/preview unavailable/i)
+      expect(container.textContent).not.toMatch(/no longer running/i)
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
       expect(onRelaunch).not.toHaveBeenCalled()
     } finally {
@@ -1054,22 +1112,38 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
     }
   })
 
-  it('★ does NOT bound while the build is still ACTIVE — the loop owns recovery, and LIVENESS does not change that', () => {
-    // ★ `serving` IS PASSED HERE ON PURPOSE, and that is the mutant this scenario now catches.
-    //
-    // Reading `reconnecting && completedLive` alone would mean "the build is over" only
-    // because that flag is set by a turn ENDING. Liveness is true DURING a running build as well —
-    // the preview-state read says so — so substituting it one-for-one would arm this timer
-    // mid-build and answer a recovery the loop was about to make with "preview unavailable".
-    // The cap keys on the TERMINAL status instead; `status="ready"` is what holds it off.
+  it('★ nor while the build is still ACTIVE — the loop owns recovery, and LIVENESS does not change that', () => {
+    // ★ `serving` IS PASSED HERE ON PURPOSE, and it is the mutant this scenario has always caught.
+    // Reading `reconnecting && serving` as "the build is over" is wrong: liveness is true DURING a
+    // running build as well, so a cap keyed on it would fire mid-build and answer a recovery the
+    // loop was about to make. There is no cap at all now, which makes that mutant unreachable
+    // rather than merely guarded — and this scenario stays as the record of why.
     vi.useFakeTimers()
     try {
       const { container } = render(
         <LivePreview previewUrl={SANDBOX_URL} status="ready" serving reconnecting />,
       )
       act(() => vi.advanceTimersByTime(60000))
-      expect(container.textContent).toMatch(/reconnecting/i) // still reconnecting, never "unavailable"
+      expect(container.textContent).toMatch(/reconnecting/i)
       expect(container.textContent).not.toMatch(/preview unavailable/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a fresh preview_ready clears the cover and re-frames, however long the wait ran', () => {
+    // The recovery half, and the reason an uncapped wait is not an abandoned one: the cover is
+    // self-healing by construction — a restarted dev server produces a fresh `preview_ready`.
+    vi.useFakeTimers()
+    try {
+      const view = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting />)
+      act(() => vi.advanceTimersByTime(300_000))
+      expect(view.container.querySelector('iframe')).toBeNull()
+
+      view.rerender(<LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting={false} />)
+
+      expect(view.container.querySelector('iframe')).toBeTruthy()
+      expect(view.container.textContent).not.toMatch(/reconnecting to your preview/i)
     } finally {
       vi.useRealTimers()
     }
@@ -1083,119 +1157,74 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
 // `WorkspaceToolbar.test.tsx`. Named rather than deleted quietly, because a guard that vanishes
 // with its markup is how the claim stops being checked.
 
-describe('LivePreview — the preview only claims a build that exists', () => {
-  // The exact bug this closes: a fresh, never-built project opened on the terminal placeholder
-  // promised "restore your saved app" and offered a Relaunch that could only 404.
-  it('terminal + hasSavedBuild=false: no affordance, no saved-app promise (mutation: ungate the render and this goes red)', () => {
-    const { container } = render(
-      <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild={false} />,
-    )
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-    expect(container.textContent).not.toMatch(/relaunch it|relaunch the preview/i)
-    expect(container.textContent).toMatch(/nothing to relaunch yet/i)
-  })
+describe('★ the saved-build claim left this pane entirely, along with the prop that made it', () => {
+  // ★ WHAT THESE FIVE TESTS WERE, AND WHY THEY COLLAPSE INTO ONE. Each drove a different
+  // `hasSavedBuild` value through a different terminal branch and pinned the sentence it selected:
+  // "nothing to relaunch yet", "your saved app is still there", "start a new build". The exact bug
+  // they closed was real — a fresh, never-built project opened on the terminal placeholder,
+  // promised to restore a saved app and offered a Relaunch that could only 404.
+  //
+  // ★ THE FINDING IS NOT DROPPED; IT MOVED WITH ITS SUBJECT. "Do not promise a restore the server
+  // cannot make" is now `atRest()` in `workspace/workspaceState.ts`, where `restorable`'s TRI-STATE
+  // is read with `??` against the project row's own answer and only a definite `false` suppresses
+  // the start control — asserted in `workspaceState.test.ts` under "the restore question, and the
+  // one answer that suppresses the start control", and drawn by a board `AppPane.test.tsx` pins.
+  // Both files are named here rather than left to be found, because a guard that vanishes with its
+  // markup is how a claim stops being checked.
+  //
+  // WHAT IS LEFT TO ASSERT HERE IS THE PROP'S SILENCE: every value of it, through every branch
+  // that used to read it, reaching no sentence at all.
+  it('★ RETIREMENT GUARD: no value of `hasSavedBuild` selects any sentence on this pane', () => {
+    const everyClaim = [
+      /nothing to relaunch yet/i,
+      /your saved app is still there/i,
+      /start a new build/i,
+      /no saved build/i,
+      /relaunch it|relaunch the preview/i,
+    ]
 
-  it('unavailable + hasSavedBuild=false: same gate, same honesty', () => {
-    vi.useFakeTimers()
-    try {
-      const { container } = render(
-        <LivePreview
-          previewUrl={SANDBOX_URL}
-          status="ended"
-          serving
-          reconnecting
-          onRelaunch={vi.fn()}
-          hasSavedBuild={false}
-        />,
+    for (const hasSavedBuild of [true, false, null]) {
+      // The branch that used to be the terminal placeholder.
+      const terminal = render(
+        <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild={hasSavedBuild} />,
       )
-      act(() => vi.advanceTimersByTime(20001)) // past the reconnect cap → showUnavailable
-      expect(container.textContent).toMatch(/preview unavailable/i)
+      const where = `hasSavedBuild=${String(hasSavedBuild)}`
+      for (const claim of everyClaim) {
+        expect(terminal.container.textContent, where).not.toMatch(claim)
+      }
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-      expect(container.textContent).not.toMatch(/relaunch it|relaunch the preview/i)
-      expect(container.textContent).toMatch(/nothing to relaunch yet/i)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
+      // ★ LIVENESS, STRUCTURAL, because the expected screen is empty: an absence sweep over a
+      // component that threw would pass every line above. The permanent live region is the one
+      // element that exists in every state of this pane.
+      expect(terminal.container.querySelector('[role="status"]')?.getAttribute('aria-live'), where).toBe('polite')
+      terminal.unmount()
 
-  // INERTNESS GUARD, and the interesting half is what SURVIVES. This was never about the
-  // button; it was about not promising a restore where none exists. That promise is still made —
-  // in the copy — in both branches; only the button that used to accompany it is gone.
-  it('INERTNESS GUARD: both branches with hasSavedBuild=true still MAKE the saved-app claim in copy, but neither offers its own button', () => {
-    // Terminal:
-    const onRelaunchTerminal = vi.fn()
-    const first = render(
-      <LivePreview previewUrl={null} status="ended" onRelaunch={onRelaunchTerminal} hasSavedBuild />,
-    )
-    expect(first.container.textContent).toMatch(/your saved app is still there/i)
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-    expect(onRelaunchTerminal).not.toHaveBeenCalled()
-    first.unmount()
-    // Unavailable (reconnect cap expired):
-    vi.useFakeTimers()
-    try {
-      const onRelaunchUnavailable = vi.fn()
-      const { container } = render(
-        <LivePreview
-          previewUrl={SANDBOX_URL}
-          status="ended"
-          serving
-          reconnecting
-          onRelaunch={onRelaunchUnavailable}
-          hasSavedBuild
-        />,
-      )
-      act(() => vi.advanceTimersByTime(20001))
-      expect(container.textContent).toMatch(/your saved app is still there/i)
-      expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-      expect(onRelaunchUnavailable).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
+      // And the branch that used to be the unavailable card, long past the retired cap.
+      vi.useFakeTimers()
+      try {
+        const crashed = render(
+          <LivePreview
+            previewUrl={SANDBOX_URL}
+            status="ended"
+            serving
+            reconnecting
+            onRelaunch={vi.fn()}
+            hasSavedBuild={hasSavedBuild}
+          />,
+        )
+        act(() => vi.advanceTimersByTime(20001))
+        for (const claim of everyClaim) {
+          expect(crashed.container.textContent, where).not.toMatch(claim)
+        }
+        expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
+        // LIVENESS, and here it can be the visible one: the reconnecting cover is what holds this
+        // screen now, so the absences above are a withheld claim rather than a blank pane.
+        expect(crashed.container.textContent, where).toMatch(/reconnecting to your preview/i)
+        crashed.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
     }
-  })
-
-  it('hasSavedBuild=null (store unreachable) claims NOTHING in either direction, in both branches', () => {
-    const first = render(
-      <LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild={null} />,
-    )
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-    expect(document.body.textContent).not.toMatch(/relaunch it|relaunch the preview/i) // no "there is one"
-    expect(document.body.textContent).not.toMatch(/no saved build/i) // and no "there is none"
-    expect(document.body.textContent).toMatch(/start a new build/i)
-    first.unmount()
-    vi.useFakeTimers()
-    try {
-      render(
-        <LivePreview
-          previewUrl={SANDBOX_URL}
-          status="ended"
-          serving
-          reconnecting
-          onRelaunch={vi.fn()}
-          hasSavedBuild={null}
-        />,
-      )
-      act(() => vi.advanceTimersByTime(20001))
-      expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-      expect(document.body.textContent).not.toMatch(/relaunch it|relaunch the preview/i)
-      expect(document.body.textContent).not.toMatch(/no saved build/i)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('RETIREMENT GUARD: the terminal branch has no not-found alert left — its selector was a dead prop', () => {
-    // "A 404 after the click is said out loud, never a silently vanished button" was the
-    // discipline this pinned, and it still holds where a click can happen: the pane's one start
-    // control reports its own 404 (`StartAppControl.test.tsx`). What went is this branch's copy of
-    // it, which only `relaunchError` could select and only `relaunch()` could produce.
-    const { container } = render(
-      <LivePreview previewUrl={null} status="ended" hasSavedBuild
-        relaunchError={{ kind: 'not_found', message: 'No saved build to relaunch. Build the app first.' }} />,
-    )
-    expect(container.textContent).toMatch(/your saved app is still there/i) // liveness
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 })
 
@@ -1244,66 +1273,63 @@ describe('LivePreview — the device width it is told to frame at', () => {
   })
 })
 
-describe('LivePreview — compact ended-state card', () => {
-  it('renders the terminal state as a small bounded card, not a full-pane block', () => {
-    // Under the new hasSavedBuild gating, onRelaunch alone no longer renders the button —
-    // pass hasSavedBuild explicitly so this exercises the button-present path.
-    const { container } = render(<LivePreview previewUrl={null} status="ended" onRelaunch={vi.fn()} hasSavedBuild />)
-    const card = container.querySelector('[data-testid="preview-ended-card"]')
-    expect(card).toBeTruthy()
-    expect(card.className).toMatch(/max-w-xs/)
-    // Not the old full-pane stretch — the card itself is bounded, its parent centers it.
-    expect(card.className).not.toMatch(/flex-1/)
-  })
+describe('★ the two compact cards are gone — and their geometry rule outlived them', () => {
+  // ★ WHAT THEY WERE. `preview-ended-card` and `preview-unavailable-card` were the last two
+  // renderers of this file's workspace verdicts, and these four tests pinned their SHAPE: bounded
+  // (`max-w-xs`), centred by their parent, never the old full-pane stretch (`flex-1`). Both cards
+  // are deleted with the sentences they drew, so their test hooks answer nothing.
+  //
+  // ★ THE RULE THEY ENCODED IS WORTH MORE THAN THE CARDS, so it is re-pointed rather than dropped:
+  // a card that fills the pane reads as the app having been replaced by an error page, which is
+  // the impression this whole change exists to stop giving. The two covers that survive keep it —
+  // they are anchored overlays with bounded text, never stretched blocks — and that is what is
+  // asserted below, on the covers a citizen can still reach.
+  it('★ RETIREMENT GUARD: neither card`s test hook answers in any state that used to draw one', () => {
+    const oncePinned = [
+      ['terminal, saved build', { previewUrl: null, status: 'ended', hasSavedBuild: true }],
+      ['terminal, nothing saved', { previewUrl: null, status: 'ended', hasSavedBuild: false }],
+      ['failed build', { previewUrl: null, status: 'failed', hasSavedBuild: true }],
+    ]
 
-  // INERTNESS GUARD. The compact card itself is untouched; what it no longer contains is a
-  // button of its own.
-  it('INERTNESS GUARD: the compact ended-state card contains no button of its own', () => {
-    const onRelaunch = vi.fn()
-    const { container } = render(<LivePreview previewUrl={null} status="ended" onRelaunch={onRelaunch} hasSavedBuild />)
-    const card = container.querySelector('[data-testid="preview-ended-card"]')
-    expect(card).toBeTruthy() // LIVENESS: the compact card still renders
-    expect(card.textContent).toMatch(/no longer running/i)
-    expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-    expect(onRelaunch).not.toHaveBeenCalled()
-  })
-})
-
-describe('LivePreview — compact unavailable-state card', () => {
-  it('renders the bounded reconnect-cap-expired state as a small card, distinct from the ended card', () => {
-    vi.useFakeTimers()
-    try {
-      const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={vi.fn()} hasSavedBuild />,
-      )
-      act(() => vi.advanceTimersByTime(20001))
-      const card = container.querySelector('[data-testid="preview-unavailable-card"]')
-      expect(card).toBeTruthy()
-      expect(card.className).toMatch(/max-w-xs/)
-      expect(card.className).not.toMatch(/flex-1/)
-    } finally {
-      vi.useRealTimers()
+    for (const [where, props] of oncePinned) {
+      const { container, unmount } = render(<LivePreview onRelaunch={vi.fn()} {...props} />)
+      expect(container.querySelector('[data-testid="preview-ended-card"]'), where).toBeNull()
+      expect(container.querySelector('[data-testid="preview-unavailable-card"]'), where).toBeNull()
+      // ★ LIVENESS, STRUCTURAL: the pane rendered and had nothing to say, which is not the same
+      // thing as the pane failing to render.
+      expect(container.querySelector('[role="status"]')?.getAttribute('aria-live'), where).toBe('polite')
+      unmount()
     }
   })
 
-  // INERTNESS GUARD. Same story as the ended-state card above: the compact unavailable card is
-  // untouched, its button is not.
-  it('INERTNESS GUARD: the compact unavailable card contains no button of its own', () => {
+  it('★ and the covers that survive are still BOUNDED, never a full-pane block', () => {
+    // The geometry finding, re-pointed at the surfaces that still exist. A cover is an anchored
+    // overlay with a `max-w` on its text; the moment one of these stretches, the pane reads as a
+    // replaced app rather than as an app with something in front of it.
     vi.useFakeTimers()
     try {
-      const onRelaunch = vi.fn()
-      const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
-      )
+      const stalled = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
       act(() => vi.advanceTimersByTime(20001))
-      const card = container.querySelector('[data-testid="preview-unavailable-card"]')
-      expect(card).toBeTruthy() // LIVENESS: the compact card still renders
-      expect(card.textContent).toMatch(/preview unavailable/i)
-      expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
-      expect(onRelaunch).not.toHaveBeenCalled()
+      const stallText = [...stalled.container.querySelectorAll('p')].find((el) =>
+        /taking longer than usual to open/i.test(el.textContent ?? ''),
+      )
+      expect(stallText).toBeTruthy() // LIVENESS: the stall card really is up
+      expect(stalled.container.querySelector('.absolute.inset-0.z-20')).toBeTruthy()
+      expect([...stalled.container.querySelectorAll('.max-w-xs')].length).toBeGreaterThan(0)
+      stalled.unmount()
     } finally {
       vi.useRealTimers()
     }
+
+    const covered = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="ready" serving compileState="failed" />,
+    )
+    const coverText = [...covered.container.querySelectorAll('p')].find((el) =>
+      /this page can’t open/i.test(el.textContent ?? ''),
+    )
+    expect(coverText).toBeTruthy() // LIVENESS: the compile cover really is up
+    expect(coverText.className).toMatch(/max-w-sm/)
+    expect(coverText.className).not.toMatch(/flex-1/)
   })
 })
 
@@ -1341,10 +1367,18 @@ const ESCALATE_MS = 20000
 
 // …and what the cover says when no turn is running, so the holding wording cannot outlive the
 // work it describes. TWO sentences, because the cover's two idle causes are opposites:
-// `failed` means the app is not usable, `building` means it is compiling a route right now —
-// which a perfectly healthy completed app does on demand.
-const IDLE_BROKEN = /Your app isn.t running right now/i
-const IDLE_BUSY = /Getting your app ready/i
+// `failed` means the newest change did not come together, `building` means the app is compiling a
+// route right now — which a perfectly healthy completed app does on demand.
+//
+// ★ BOTH WERE REWRITTEN, AND BOTH FOR THE SAME REASON: they described the WORKSPACE, which is not
+// this pane's subject. `IDLE_BUSY` read "Getting your app ready…", which is word for word the
+// sentence the workspace map says while nothing is serving, so one situation had two authors on
+// one screen. `IDLE_BROKEN` opened "Your app isn't running right now" — the same claim the apps
+// router's own error page makes, told from inside a pane that is mounted only because the app IS
+// up; on 2026-09-10 the two of them contradicted each other in front of a citizen. The rule now is
+// that a cover may describe the DOCUMENT in front of it and nothing else.
+const IDLE_BROKEN = /The last change didn.t come together, so this page can.t open/i
+const IDLE_BUSY = /Putting this page together/i
 
 /** The cover is an opaque, full-bleed element over the frame. Identified by what makes it a
  *  cover rather than by a test id, so a refactor that stops covering fails here — and matched
@@ -1540,17 +1574,36 @@ describe('LivePreview — the cover: the framework error screen is never seen', 
     expect(container.textContent).not.toMatch(/restoring your app/i)
   })
 
-  it('loses to a terminal session and to a container that is not serving', () => {
+  it('★ loses to a terminal session, and to a start the platform has not watched serve', () => {
+    // The cover only exists OVER A FRAME, so anything that unmounts the frame takes it with it.
+    // Two such things are left, and the second one is the change.
+    //
+    // ★ THE LIVENESS HALVES BOTH MOVED. This test used to prove the frame was gone by finding the
+    // sentence that replaced it — the terminal placeholder in the first case, "Your workspace is
+    // asleep" in the second. Both of those were workspace verdicts this file has stopped
+    // authoring, so neither is a handle any more. What is left to assert is structural in the
+    // first case (the pane rendered, and rendered nothing) and behavioural in the second (the
+    // wait replaced the frame, which is what `starting` is for).
     const terminal = render(<LivePreview turnRunning previewUrl={SANDBOX_URL} status="ended" compileState="failed" />)
     expect(coverEl(terminal.container)).toBeFalsy()
-    expect(terminal.container.textContent).toMatch(/preview/i) // liveness: the placeholder rendered
+    expect(terminal.container.querySelector('iframe')).toBeNull()
+    // LIVENESS, structural: the pane rendered and had nothing to say.
+    expect(terminal.container.querySelector('[role="status"]')?.getAttribute('aria-live')).toBe('polite')
     cleanup()
 
-    const asleep = render(
-      <LivePreview turnRunning previewUrl={SANDBOX_URL} status="ready" previewState="asleep" compileState="failed" />,
+    // ★ `asleep` NO LONGER TAKES THE FRAME DOWN HERE, and that is not a regression — it is the
+    // veto moving up a level. `AppPane` will not mount this component at all unless the workspace
+    // reading is `running`, so a gone reading never reaches this file. What this pane still
+    // refuses on its own is `starting`: a container being brought up answers 502 at its own edge,
+    // and the apps router turns a 502 into an error page shown to the one citizen watching.
+    const starting = render(
+      <LivePreview turnRunning previewUrl={SANDBOX_URL} status="ready" previewState="starting" compileState="failed" />,
     )
-    expect(coverEl(asleep.container)).toBeFalsy()
-    expect(screen.getAllByText(/Your workspace is asleep/i).length).toBeGreaterThan(0) // liveness
+    expect(coverEl(starting.container)).toBeFalsy()
+    expect(starting.container.querySelector('iframe')).toBeNull()
+    // LIVENESS: the wait is what replaced the frame, so this is a withheld frame rather than an
+    // empty rectangle — the half the first version of that refusal shipped without.
+    expect(screen.getAllByText(/opening your app/i).length).toBeGreaterThan(0)
   })
 
   it('beats the frame-load wait: two waits are never on screen at once', () => {

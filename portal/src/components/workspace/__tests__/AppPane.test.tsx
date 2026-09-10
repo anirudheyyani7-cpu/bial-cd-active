@@ -19,7 +19,7 @@ import {
   type WorkspaceChannel,
   type WorkspaceReport,
 } from '../workspaceChannel'
-import { resolveWorkspaceState, type StartOutcome } from '../workspaceState'
+import { asDecidedReading, resolveWorkspaceState, type DecidedPreview, type StartOutcome } from '../workspaceState'
 import { ApiError } from '../../../utils/apiError'
 import type { HandoverStep, PreviewState } from '../../../utils/buildSessionApi'
 
@@ -51,13 +51,30 @@ const reading = (over: Partial<PreviewState> = {}): PreviewState => ({
   ...over,
 })
 
+/** A reading the platform stood behind — the memory an unreadable read falls back to. */
+const settled = (over: Partial<PreviewState> = {}): DecidedPreview => {
+  const decided = asDecidedReading(reading(over))
+  if (decided === null) throw new Error('a settled reading may not be `unknown`')
+  return decided
+}
+
 function reportFor(
   preview: PreviewState | null,
   startOutcome: StartOutcome | null = null,
   startInFlight = false,
+  // WHAT THE PANE WAS SHOWING BEFORE, and it defaults to "nothing has ever been decided" so a
+  // caller that does not care about the memory gets the cold-load answer rather than a smuggled
+  // one. Every test that exercises decision D3 passes it explicitly.
+  lastDecidedPreview: DecidedPreview | null = null,
 ): WorkspaceReport {
   return {
-    state: resolveWorkspaceState({ preview, projectHasSavedBuild: null, startOutcome, startInFlight }),
+    state: resolveWorkspaceState({
+      preview,
+      lastDecidedPreview,
+      projectHasSavedBuild: null,
+      startOutcome,
+      startInFlight,
+    }),
     projectId: 'p1',
     onStarted: vi.fn(),
     onStartPending: vi.fn(),
@@ -144,19 +161,54 @@ describe('★ NOT ORPHANED — every no-frame state still offers a way to start 
     })
   }
 
-  const retryable: [string, PreviewState | null, StartOutcome | null][] = [
-    ['the state could not be read', reading({ state: 'unknown' }), null],
-    ['the start did not paint', reading({ state: 'asleep' }), { kind: 'not-painted' }],
-    ['the start timed out', reading({ state: 'asleep' }), { kind: 'timed-out' }],
-    ['the start failed with a reason', reading({ state: 'asleep' }), { kind: 'failed', reason: 'no image' }],
+  it('offers a retry on the one arm that still has one: nothing has ever been decided', () => {
+    // THE RETRY SHRANK FROM FOUR ARMS TO ONE, and the three that lost it are the three cards the
+    // ten-to-five collapse deleted. `not-painted`, `timed-out` and `start-failed` all described a
+    // FETCH rather than a workspace, and each of them landed the citizen on a card whose Try again
+    // asked the same question that had just been answered. The reading decides the card now, and
+    // the press's own ending rides along as a note.
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'unknown' }))))
+    expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy()
+  })
+
+  const nowASavedCard: [string, StartOutcome][] = [
+    ['the start did not paint', { kind: 'not-painted' }],
+    ['the start timed out', { kind: 'timed-out' }],
+    ['the start failed with a reason', { kind: 'failed', reason: 'no image' }],
   ]
 
-  for (const [name, preview, outcome] of retryable) {
-    it(`offers a retry: ${name}`, () => {
-      renderPane((c) => c.workspace.set(reportFor(preview, outcome)))
-      expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy()
+  for (const [name, outcome] of nowASavedCard) {
+    it(`★ offers the ordinary Launch, not a retry, when ${name}`, () => {
+      // THE TRAP THIS FILE EXISTS FOR, applied to the deletion itself: asserting only that the
+      // retry is gone would pass on a card with nothing to press at all. So the affordance that
+      // replaced it is asserted for its PRESENCE, and the retry's absence beside it.
+      renderPane((c) =>
+        c.workspace.set(reportFor(reading({ state: 'asleep', restorable: true }), outcome)),
+      )
+
+      expect(screen.getByRole('button', { name: /^Launch Application$/ })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /try again/i })).toBeNull()
+      expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('not-running')
     })
   }
+
+  it('★ and the server`s own reason is on the card, in the line the copy sweep exempts', () => {
+    // The reason used to select a card of its own with the sentence in `detail`. `detail` is inside
+    // the negative-copy sweep, so one refusal containing "not running" turned a green suite red on
+    // a string this client does not control. It rides in `note` now, which the pane draws as its
+    // own line — and the card is the ordinary saved one, because the next step is unchanged.
+    renderPane((c) =>
+      c.workspace.set(
+        reportFor(reading({ state: 'asleep', restorable: true }), {
+          kind: 'failed',
+          reason: 'The container is not running.',
+        }),
+      ),
+    )
+
+    expect(screen.getByTestId('app-pane-note').textContent).toBe('The container is not running.')
+    expect(screen.getByTestId('app-pane-empty').textContent).toContain('Your app is saved.')
+  })
 
   it('offers the REMEDY, not a retry, when another project holds the workspace', () => {
     renderPane((c) =>
@@ -236,15 +288,47 @@ describe('one author for every pane sentence', () => {
     }
   })
 
-  it('★ and draws none for a state no board has a mark for', () => {
-    // Seven of the ten states are hand-overs, read failures and start outcomes the canvas has
-    // never drawn — borrowing one of the three marks would be this file inventing the design.
-    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'unknown' }))))
+  it('★ and EVERY board that draws a card draws a mark — no bare cards left', () => {
+    // ★ THIS ASSERTION USED TO BE ITS OPPOSITE, and the inversion is the change. The lookup carried
+    // SEVEN nulls, on the reading that the canvas had never drawn those boards — but four of the
+    // seven were the start-outcome and second-held arms the collapse deleted outright, and the last
+    // two drew a real card with a real headline and real buttons and stood there bare. A blank
+    // half-screen with no mark reads as a page that failed to load, which is the one thing the
+    // glyph exists to prevent, so the two survivors take the mark THIS PRODUCT ALREADY USES for
+    // what they are rather than borrowing one of the three boards' or inventing a vocabulary.
+    const everyBoard: [string, PreviewState | null][] = [
+      ['never-built', reading({ state: 'never_built', restorable: false })],
+      ['not-running', reading({ state: 'asleep', restorable: true })],
+      ['starting', reading({ state: 'starting' })],
+      ['held-by-another-project', reading({ state: 'slot_taken', occupyingProjectName: 'Roster', occupyingProjectId: 'p-9' })],
+      ['could-not-read', reading({ state: 'unknown' })],
+    ]
 
+    for (const [name, preview] of everyBoard) {
+      const { unmount } = renderPane((c) => c.workspace.set(reportFor(preview)))
+      expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state'), name).toBe(name)
+      const glyph = screen.getByTestId('app-pane-glyph')
+      expect(glyph.getAttribute('width'), name).toBe('30')
+      expect(glyph.getAttribute('aria-hidden'), name).toBe('true')
+      unmount()
+    }
+  })
+
+  it('★ and `running` is the one entry with no mark, because it draws no card at all', () => {
+    // The null that is an ANSWER rather than a gap. The frame IS the state, so there is nothing
+    // for a mark to sit above — asserted as the absence of the whole board, not of the glyph, or
+    // it would pass on a card that rendered bare.
+    const { container } = renderPane((c) => {
+      c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
+      c.project.set('p1')
+      c.visible.set(true)
+    })
+
+    expect(screen.queryByTestId('app-pane-empty')).toBeNull()
     expect(screen.queryByTestId('app-pane-glyph')).toBeNull()
-    // LIVENESS: the card is there and speaking, so this is a deliberate absence rather than a
-    // pane that rendered nothing.
-    expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
+    // LIVENESS: the pane really did render, and what it rendered is the app.
+    expect(container.querySelector('iframe')).toBeTruthy()
   })
 
   it('never says what the app is NOT', () => {
@@ -322,17 +406,187 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     expect(screen.queryByTestId('app-pane-empty')).toBeNull()
   })
 
-  it('keeps framing while a start outcome describes a press, not a container', () => {
-    // `not-painted` / `timed-out` / `start-failed` say a press did not land. If a frame is already
-    // up, that frame is better evidence than the press was.
+  it('★ DECISION D3 — a blip over a RUNNING app leaves the frame exactly where it is', () => {
+    // The pane-level half of "an unreadable read never changes the pane". The map renders the last
+    // settled reading, so this arrives here as `running` and the frame is never even asked to come
+    // down — which is the point: the invariant is kept by the value the pane receives not moving,
+    // rather than by this component carving an exception into its own frame rule.
+    //
+    // MUTATION RECEIPT: drop the map's `?? lastDecidedPreview` fallback and this goes red — the
+    // report becomes `could-not-read` and the card replaces the app.
     const { container } = renderPane((c) => {
-      c.workspace.set(reportFor(reading({ state: 'asleep' }), { kind: 'timed-out' }))
+      c.workspace.set(
+        reportFor(reading({ state: 'unknown' }), null, false, settled({ state: 'alive', alive: true })),
+      )
       c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
 
     expect(container.querySelector('iframe')).toBeTruthy()
+    expect(screen.queryByTestId('app-pane-empty')).toBeNull()
+  })
+
+  it('★ and a blip over a STANDING CARD leaves that card exactly where it is', () => {
+    // The other direction of the same rule, and the one a name-only assertion would miss: the
+    // citizen keeps the sentence AND the button they were looking at, rather than watching
+    // "Your app is saved. [Launch Application]" turn into "We could not check on your app.
+    // [Try again]" because one poll did not come back.
+    renderPane((c) =>
+      c.workspace.set(
+        reportFor(reading({ state: 'unknown' }), null, false, settled({ state: 'asleep', restorable: true })),
+      ),
+    )
+
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('not-running')
+    expect(screen.getByRole('button', { name: /^Launch Application$/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull()
+  })
+})
+
+/**
+ * ★ THE FRAME MOUNTS IF AND ONLY IF THE APP HAS BEEN WATCHED TO ANSWER A REQUEST.
+ *
+ * This block is the whole citizen-visible point of the change, so it is asserted as a RULE over
+ * every state rather than as a handful of examples. The wire's `alive` is now gated on a serving
+ * stamp written where something watched the app ANSWER; it used to mean only that a container had
+ * been SCHEDULED. The eight seconds a citizen spent reading "This app isn't running right now"
+ * INSIDE this pane on 2026-09-10 are the distance between those two meanings.
+ *
+ * The two carve-outs below are NOT exceptions to the rule — they are its precondition. Only a
+ * VERDICT moves the frame, so a pane with no verdict in hand does not act.
+ */
+describe('★ the frame mounts if and only if the state is RUNNING', () => {
+  /** An address in hand on every one of these, or the assertions would be about the URL. */
+  const withAnAddress = (preview: PreviewState | null) => (c: WorkspaceChannel) => {
+    c.workspace.set(reportFor(preview))
+    c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
+    c.project.set('p1')
+    c.visible.set(true)
+    c.pane.set(PANE_VIEW)
+  }
+
+  it('★ mounts it on `running`, and on nothing else a citizen is ever shown', () => {
+    const withheld: [string, PreviewState][] = [
+      ['never-built', reading({ state: 'never_built', restorable: false })],
+      ['not-running', reading({ state: 'asleep', restorable: true })],
+      ['starting', reading({ state: 'starting' })],
+      ['held-by-another-project', reading({ state: 'slot_taken', occupyingProjectName: 'Roster', occupyingProjectId: 'p-9' })],
+    ]
+
+    for (const [name, preview] of withheld) {
+      const { container, unmount } = renderPane(withAnAddress(preview))
+      expect(container.querySelector('iframe'), `${name} framed the app`).toBeNull()
+      // LIVENESS, and it is what stops this passing on a pane that failed to render at all: the
+      // board really is up, really says which state it is, and really says something.
+      expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state'), name).toBe(name)
+      expect(screen.getByTestId('app-pane-empty').textContent?.length ?? 0, name).toBeGreaterThan(10)
+      unmount()
+    }
+
+    const { container } = renderPane(withAnAddress(reading({ state: 'alive', alive: true })))
+    expect(container.querySelector('iframe')).toBeTruthy()
+    expect(screen.queryByTestId('app-pane-empty')).toBeNull()
+  })
+
+  it('★ `starting` is the arm the measured defect lived in, and it is the one that changed', () => {
+    // At 48s on 2026-09-10 the container had been created and the registry said `ready`, so the
+    // poll answered `alive`, the frame mounted on the apps router's 404 page, and four seconds
+    // later a screen reader was told the preview was live. The same instant now reads `starting`,
+    // because nothing has watched the app answer — and this pane draws a wait instead.
+    renderPane(withAnAddress(reading({ state: 'starting' })))
+
+    expect(document.querySelector('iframe')).toBeNull()
+    const board = screen.getByTestId('app-pane-empty')
+    expect(board.getAttribute('data-workspace-state')).toBe('starting')
+    expect(board.textContent).toContain('Getting your app ready.')
+    // AND THE WAIT SAYS IT IS A WAIT, to a reader who cannot see the glyph.
+    expect(board.getAttribute('aria-busy')).toBe('true')
+  })
+
+  it('the two carve-outs are the rule`s precondition: no verdict, no move', () => {
+    // `could-not-read` is a read that decided nothing at a moment when nothing had ever been
+    // decided — every surface's own first render — and a null report is the window every hop
+    // between two surfaces has, because the publisher clears on unmount. Withholding on either
+    // would unmount the host on every navigation into a running app: a cross-origin `src`
+    // re-issued, and the citizen's form entries, scroll position and open tab thrown away.
+    for (const preview of [reading({ state: 'unknown' }), null] as const) {
+      const { container, unmount } = renderPane((c) => {
+        if (preview !== null) c.workspace.set(reportFor(preview))
+        c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
+        c.project.set('p1')
+        c.visible.set(true)
+        c.pane.set(PANE_VIEW)
+      })
+      expect(container.querySelector('iframe')).toBeTruthy()
+      unmount()
+    }
+  })
+})
+
+/**
+ * ★ DECISION D2 — THERE IS NO PATIENCE BUTTON, AND TIME DOES NOT GROW ONE.
+ *
+ * The design wanted a "Launch Application" to appear after 150 seconds of waiting so the wait was
+ * never a dead end. It is not shipped, because of where that press would land: `relaunch_preview`'s
+ * cold arm tears the live container down before restoring the last saved bundle, and the situation
+ * such a button exists for — a start whose observer was lost — is exactly the situation that takes
+ * the cold arm. The button would be most dangerous at the precise moment it appeared.
+ *
+ * The map's own sweep proves no action for any INPUT. This proves the other half, at the one
+ * surface that has a clock: the pane counts elapsed time from the moment the wait begins, so this
+ * is where a timed affordance would have to be built.
+ */
+describe('★ no timed action ever appears in the wait — decision D2', () => {
+  let clock = 0
+  beforeEach(() => {
+    clock = 0
+    vi.useFakeTimers()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('★ five minutes into a build there is still nothing to press', () => {
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'starting' }))))
+    expect(screen.queryByRole('button', { name: /launch application|try again|open |^stop /i })).toBeNull()
+
+    // Well past the 150s the design proposed, and past the 300-second accelerated window too.
+    act(() => {
+      clock += 300_000
+      vi.advanceTimersByTime(300_000)
+    })
+
+    expect(screen.queryByRole('button', { name: /launch application|try again|open |^stop /i })).toBeNull()
+    // ★ LIVENESS, AND IT IS THE WHOLE VALUE OF THIS TEST. An absence assertion after a clock
+    // advance passes just as happily when the clock never moved, when the board unmounted, or when
+    // the component crashed inside a boundary. The counter proves all three: it is rendered, it is
+    // on the wait's own board, and it really did see five minutes go by.
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('5m 00s so far')
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('starting')
+    expect(screen.getByTestId('app-pane-empty').textContent).toContain('Getting your app ready.')
+  })
+
+  it('★ and the wait`s wording never changes either, however long it runs', () => {
+    // A patience button would arrive with a sentence beside it. The rule is that the headline and
+    // the detail are chosen once and never named a duration, so a wait that starts saying something
+    // new is the same defect wearing different clothes.
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'starting' }))))
+    const opening = screen.getByTestId('app-pane-empty').textContent ?? ''
+
+    act(() => {
+      clock += 300_000
+      vi.advanceTimersByTime(300_000)
+    })
+
+    const later = screen.getByTestId('app-pane-empty').textContent ?? ''
+    expect(opening).toContain('Getting your app ready.Setting up somewhere for it to run.')
+    expect(later).toContain('Getting your app ready.Setting up somewhere for it to run.')
+    // The ONLY thing that moved is the elapsed count, which is a measured fact rather than a claim.
+    expect(opening).toContain('0s so far')
+    expect(later).toContain('5m 00s so far')
   })
 })
 
@@ -619,11 +873,50 @@ describe('★ taking the workspace back', () => {
     expect(takeBack()).toBeTruthy()
   })
 
-  it('the unattributed arm still draws neither', () => {
+  /**
+   * ★ THIS TEST USED TO PIN THE OPPOSITE, and it passed while the product was broken.
+   *
+   * It read "the unattributed arm still draws neither" and asserted BOTH controls absent — which
+   * was true of `held-unattributed`, the state that was a documented dead end: a card that named
+   * the problem, named no remedy, and left the citizen nothing to press. Merging it into
+   * `held-by-another-project` was supposed to end that, and the map does its half — with no holder
+   * to open, the take-back becomes `action` rather than `secondAction`.
+   *
+   * The pane did NOT do its half. `AppPane` handed the sequence only to the second slot, on the
+   * reasonable-looking assumption that a take-back is always the second control, and
+   * `StartAppControl` draws nothing at all for a take-back it has no sequence for. So the dead end
+   * survived one slot along — and this test went on passing, because it was asserting the very
+   * absence the bug produces. An assertion that agrees with the defect is not a guard.
+   *
+   * MUTATION-CHECKED: drop `takeBack={takeBack}` from the LEADING `StartAppControl` in
+   * `AppPane.tsx` and this test goes red. That is the mutant that shipped.
+   */
+  it('★ the unattributed arm degrades the sentence but KEEPS the remedy', () => {
     renderPane((c) => c.workspace.set(reportFor(reading({ state: 'slot_taken' }))))
-    expect(screen.queryByRole('button', { name: /^Stop|^Open /i })).toBeNull()
-    // LIVENESS: it is still speaking, so this is a withheld pair rather than an empty card.
-    expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
+
+    // The remedy is offered, unnamed — a missing holder is a reason to say less, not to do less.
+    const remedy = screen.getByRole('button', { name: /^Stop the other project and open this app instead$/ })
+    expect(remedy).toBeTruthy()
+    // And there is nothing to open, so the go-to is correctly absent rather than empty-quoted.
+    expect(screen.queryByRole('button', { name: /^Open /i })).toBeNull()
+    // Nor does the sentence invent a name or leave a hollow pair of quotes where one belongs.
+    const board = screen.getByTestId('app-pane-empty').textContent ?? ''
+    expect(board).toContain('Another project is using your workspace.')
+    expect(board).not.toMatch(/[“"]\s*[”"]/)
+  })
+
+  /** THE INVARIANT ITSELF, over both arms: a held card is never a dead end. */
+  it('★ no held arm, named or not, leaves the citizen with nothing to press', () => {
+    for (const held of [
+      reading({ state: 'slot_taken', occupyingProjectName: 'Car pool', occupyingProjectId: 'pA' }),
+      reading({ state: 'slot_taken' }),
+    ]) {
+      const view = renderPane((c) => c.workspace.set(reportFor(held)))
+      expect(screen.queryAllByRole('button', { name: /^Stop|^Open /i }).length).toBeGreaterThan(0)
+      // LIVENESS: the board really rendered, so a crash cannot masquerade as a pass here.
+      expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
+      view.unmount()
+    }
   })
 
   it('★ pressing it asks THIS project`s own start, and the server`s refusal is what opens the dialog', async () => {
@@ -740,8 +1033,13 @@ describe('★ taking the workspace back', () => {
     expect(pane.report.onRefresh).toHaveBeenCalled()
     await waitFor(() => expect(dialog()).toBeNull())
 
-    // And that outcome, over the reading that follows it, is the pane this ending specifies: the
-    // ordinary failed-to-start sentence, one line naming the holder, and the same Try again.
+    // And that outcome, over the reading that follows it, is the pane this ending specifies.
+    //
+    // ★ IT IS THE ORDINARY SAVED CARD NOW, not a `start-failed` board of its own. The situation,
+    // the honest headline and the next step were always identical to SAVED's — giving it a
+    // differently-shaped screen told the citizen something had changed that had not. What survives
+    // is the one thing they could not find out any other way: what we did to the other project,
+    // and then the server's own words, both in the line the negative-copy sweep exempts.
     cleanup()
     renderPane((c) =>
       c.workspace.set(
@@ -750,9 +1048,12 @@ describe('★ taking the workspace back', () => {
         }),
       ),
     )
-    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('start-failed')
-    expect(screen.getByTestId('app-pane-note').textContent).toBe('“Car pool” was stopped.')
-    expect(screen.getByRole('button', { name: /^Try again$/ })).toBeTruthy()
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('not-running')
+    expect(screen.getByTestId('app-pane-note').textContent).toBe(
+      '“Car pool” was stopped. the image could not be pulled',
+    )
+    expect(screen.getByRole('button', { name: /^Launch Application$/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Try again$/ })).toBeNull()
   })
 
   it('★ ENDING 5 — another tab takes the freed slot: the question reopens, remounted, and takes focus', async () => {

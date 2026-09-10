@@ -83,6 +83,23 @@ function goneNoticeFor(err: unknown): string | null {
   return err instanceof ApiError && (err.status === 400 || err.status === 404) ? PROJECT_GONE_NOTICE : null
 }
 
+/**
+ * THE ARRIVAL THAT RESOLVES WITHOUT ASKING ANYBODY — a chat this session just minted, carrying the
+ * project it belongs to.
+ *
+ * Both halves are needed and neither is enough. The marker says the row does not exist yet, so the
+ * GET can only 404; the query is the only place the answer can then come from without a request.
+ * With the marker and no project there IS nothing to render from, so the fetch happens after all.
+ *
+ * NAMED ONCE BECAUSE TWO PLACES HAVE TO AGREE ABOUT IT: the effect that skips the guaranteed-404
+ * GET, and the wait board, which must not narrate a load that is never going to happen. They were
+ * the same condition written twice for about ten minutes and that is exactly long enough for them
+ * to drift — and the expensive direction of a drift is this one, a real request left unnarrated.
+ */
+function resolvesWithoutAsking(freshlyMinted: boolean, queryProjectId: string | null): boolean {
+  return freshlyMinted && queryProjectId !== null
+}
+
 export default function ChatRoute() {
   const { chatId } = useParams()
   const [search] = useSearchParams()
@@ -151,7 +168,7 @@ export default function ChatRoute() {
       // Both conditions, not just the marker: without a project in the query there is nothing to
       // resolve the chat FROM, so fall through to the fetch rather than resolve to 'gone'. The
       // skip only ever removes a request whose answer we already have.
-      if (freshlyMinted && queryProjectId) {
+      if (resolvesWithoutAsking(freshlyMinted, queryProjectId)) {
         ready(kindFromQuery(queryKind), queryProjectId)
         return
       }
@@ -263,13 +280,31 @@ export default function ChatRoute() {
     // (`Announcer.tsx` records it breaking three tests). The old `aria-label` is gone with it —
     // a label on a region whose text says the same thing is the same duplication in another
     // spelling, and the visible words are what a reader should get.
+    //
+    // ON ONE ARRIVAL IT IS NOT ANNOUNCED AT ALL, AND THE WORDS STILL ARE.
+    //
+    // A freshly minted chat resolves inside the mount effect with no request (see
+    // `resolvesWithoutAsking`), so this board is one committed frame on the way to the surface
+    // rather than a wait — and it lands in the middle of a sentence somebody else is already
+    // saying. `RailComposer` raises the workspace's start flag BEFORE its request and navigates
+    // AFTER it, so the pane in the next column has been announcing "Getting your app ready." for
+    // this whole moment. A second polite region opening and closing inside that frame makes two
+    // sentences for one wait, and the surface publishing the same state again makes three — the
+    // three-in-two-seconds relay measured on 2026-09-10. This is the middle one, and it is the
+    // one with nothing behind it: there is no load here to report on.
+    //
+    // ONLY THE INTERRUPTION IS DROPPED. The dots and the sentence stay exactly as they are — a
+    // citizen who does see that frame should be able to read what it is, and the reduced-motion
+    // rule above is about words existing, not about them being announced. `aria-busy` goes with
+    // the region because it is a claim about the same absent load.
+    const announced = !resolvesWithoutAsking(freshlyMintedRef.current, queryRef.current.projectId)
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center bg-bial-bg">
         <div
           className="flex flex-col items-center gap-3"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
+          role={announced ? 'status' : undefined}
+          aria-live={announced ? 'polite' : undefined}
+          aria-busy={announced ? 'true' : undefined}
           data-testid="chat-wait"
         >
           <div className="flex gap-1.5" aria-hidden="true">

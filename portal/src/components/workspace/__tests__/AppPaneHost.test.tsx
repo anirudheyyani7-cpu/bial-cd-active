@@ -32,8 +32,7 @@ const OTHER_APP_URL = 'https://app-b.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  hasSavedBuild: null,
-  previewState: null, occupyingProjectName: null, turnRunning: false,
+  previewState: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
 
@@ -275,11 +274,21 @@ describe('AppPaneHost — the frame outlives a move between the two addresses', 
     // failure `AppPaneHost`'s own docblock is written against.
     //
     // Paired with a liveness assertion, because "no iframe" is also what a crashed render looks
-    // like: the pane's own terminal card has to be on screen saying why.
+    // like.
+    //
+    // ★ THE LIVENESS HANDLE MOVED, AND THE MOVE IS THE CHANGE. It was `preview-ended-card` — the
+    // pane's own "The preview is no longer running" card — which is DELETED. That card was a
+    // verdict about the citizen's WORKSPACE, drawn by the one component that can only see a frame,
+    // and `workspace/workspaceState.ts` computes that sentence once for the whole product. So what
+    // proves this render happened is the pane's permanent live region, which is mounted in every
+    // state of `LivePreview` and is the one element that exists whether or not it has anything to
+    // say. See `components/__tests__/LivePreview.test.tsx` for the deletion itself.
     render(<Workspace chatSurface={<ChatSurface status="ended" serving={false} />} />)
 
     expect(frame()).toBeNull()
-    expect(screen.getByTestId('preview-ended-card').textContent).toMatch(/no longer running/i)
+    const spoken = document.querySelector('[role="status"][aria-live="polite"]')
+    expect(spoken).toBeTruthy()
+    expect(screen.queryByTestId('preview-ended-card')).toBeNull()
   })
 
   it('but leaving for ANOTHER project\'s screen takes the frame down', () => {

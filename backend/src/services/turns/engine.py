@@ -1140,25 +1140,25 @@ class TurnEngine:
                         output_type=output_type,
                         usage=turn_usage,
                         event_stream_handler=self._event_handler(state),
-                        # A CEILING, NOT A TUNING KNOB. This run passed no model settings at
-                        # all and inherited the provider default of 4096 output tokens. A plan
-                        # is written for a person to read and can run long — and truncation
-                        # here does not degrade, it wipes: the argument carrying the plan is
-                        # cut mid-string, the offer is refused, and the citizen pays for a turn
-                        # that produced nothing they can press. The same two settings the build
-                        # loop already passes, for the same reason.
+                        # MAX_TOKENS IS A CEILING, NOT A TUNING KNOB: the provider's 4096
+                        # default truncates a long plan mid-argument, so the offer is refused and
+                        # the citizen pays for a turn with nothing they can press. Effort is
+                        # medium because a plan is a conversation with the person still in it;
+                        # adaptive, not a budget — the model refuses one (ADAPTIVE_THINKING).
                         #
-                        # REASONING AT MEDIUM EFFORT, and it is the ONLY thing the kind decides
-                        # about how the model is asked to think. A plan is a conversation about
-                        # what to build with the person still in it; a build is where the
-                        # thinking is spent on something that has to compile, and it gets high.
-                        # Adaptive rather than a token budget because the deployed model
-                        # refuses a budget outright — see `ADAPTIVE_THINKING`.
+                        # THE SAME THREE CACHE BREAKPOINTS THE BUILD LOOP SETS, MISSING HERE
+                        # until 2026-09-10. The provider caches only where the REQUEST carries
+                        # `cache_control`, and these three settings place those markers — so every
+                        # plan turn re-read its whole prefix at full price. It hid because build's
+                        # `iter` loop pays off inside one turn; a plan's `run` only across turns.
                         model_settings=AnthropicModelSettings(
                             max_tokens=MAX_OUTPUT_TOKENS,
                             temperature=TEMPERATURE,
                             anthropic_thinking=ADAPTIVE_THINKING,
                             anthropic_effort=PLAN_EFFORT,
+                            anthropic_cache_instructions=CACHE_TTL,
+                            anthropic_cache_tool_definitions=CACHE_TTL,
+                            anthropic_cache=CACHE_TTL,
                         ),
                     )
                     persistable = _persistable_messages(result.new_messages())

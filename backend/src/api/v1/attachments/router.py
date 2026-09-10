@@ -36,7 +36,7 @@ from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
 from src.schemas import AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
-from src.services.media.lanes import code_lane_refusal, is_code_lane
+from src.services.media.lanes import code_lane_refusal, is_code_lane, is_opc_archive
 from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
 from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
@@ -520,18 +520,27 @@ async def upload_attachment(
         refusal = code_lane_refusal(media_type, name, data)
         if refusal is not None:
             raise AppApiError(415, refusal)
-        # THE ARCHIVE BOUND, RE-POINTED ONTO THE LANE THAT NOW CARRIES ARCHIVES (R18b). Office
-        # files are ZIPs, and a 4 MB one can declare 300 MB uncompressed. Its previous three
+        # THE ARCHIVE BOUND, ON THE HALF OF THE LANE THAT ACTUALLY CARRIES ARCHIVES (R18b).
+        # Office files are ZIPs, and a 4 MB one can declare 300 MB uncompressed.
+        #
+        # `is_opc_archive`, NOT `is_code_lane`, and the difference was a live defect: gated on the
+        # whole lane this refused every CSV and TSV with "Malformed archive (no ZIP
+        # end-of-central-directory)" — true about a file that was never an archive, and
+        # unactionable to a citizen holding a normal spreadsheet export. Delimited files are bytes
+        # of text with no central directory to bound; the size cap is their bound.
+        #
+        # Its previous three
         # callers were all server-side extraction arms that this work deletes, and its own suite
         # calls it directly — so it proves the algorithm and would never have told us it had gone
         # unwired. This path is stricter than what it replaces, not looser: the old office lane
         # extracted inside a killable, memory-capped subprocess and never stored a file it could
         # not read, while this one stores the archive and hands it to a reader in the citizen's
         # own sandbox, where neither that ceiling nor that deadline reaches.
-        try:
-            assert_zip_not_bomb(data)
-        except FileParseError as exc:
-            raise AppApiError(413, str(exc)) from None
+        if is_opc_archive(media_type):
+            try:
+                assert_zip_not_bomb(data)
+            except FileParseError as exc:
+                raise AppApiError(413, str(exc)) from None
 
     ref = await _store_attachment_bytes(
         db, storage, user.id, attachment_id, media_type, name, conversation_id, data

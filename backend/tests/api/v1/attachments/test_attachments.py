@@ -336,6 +336,40 @@ async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake
     assert fake_storage.objects == {}  # refused BEFORE the store
 
 
+async def test_a_csv_is_not_run_through_the_archive_bound(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE CODE LANE IS NOT ALL ARCHIVES, and gating the zip-bomb check on the whole lane
+    refused every CSV and TSV at the door.
+
+    The refusal read "Malformed archive (no ZIP end-of-central-directory)" — a true statement
+    about a file that was never supposed to be an archive, and unactionable advice to a citizen
+    holding an ordinary spreadsheet export. Found by attaching one in the real UI; the test above
+    stayed green throughout, because it only ever fed the check an `.xlsx`.
+
+    A delimited file is bytes of text with no central directory to bound. The size cap is its
+    bound, and the OOXML half keeps the archive check (asserted directly above).
+
+    Mutation receipt: gate on `is_code_lane` instead of `is_opc_archive` and this goes red with a
+    413 naming a ZIP.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_plaincsv",
+            "name": "movements.csv",
+            "mediaType": "text/csv",
+            "base64": _b64(b"badge,name,terminal\n1,Asha,T1\n2,Ravi,T2\n"),
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert fake_storage.objects  # stored, not refused
+
+
 # --- the conversation-scoped budgets (#214 R7a/R7b) ---------------------------
 
 

@@ -99,6 +99,21 @@ def is_code_lane(media_type: str) -> bool:
     return media_type in CODE_LANE_MEDIA
 
 
+def is_opc_archive(media_type: str) -> bool:
+    """Is this a ZIP-based Office file, as opposed to a delimited text file?
+
+    ★ THE CODE LANE IS NOT ALL ARCHIVES, and treating it as one refused every CSV and TSV at the
+    door with "Malformed archive (no ZIP end-of-central-directory)" — which is a true statement
+    about a file that was never supposed to be an archive, and unactionable advice to a citizen
+    holding a perfectly good spreadsheet export.
+
+    The zip-bomb bound belongs to the OOXML half alone: those are ZIPs and a 4 MB one can declare
+    300 MB uncompressed. A `.csv` is bytes of text, bounded by the size cap like anything else,
+    and has no central directory to check.
+    """
+    return media_type in _OPC_PART
+
+
 def looks_password_protected(data: bytes) -> bool:
     """Is this an encrypted Office file? True for the OLE2 wrapper Office writes for one."""
     return data[:8] == _OLE2_SIGNATURE

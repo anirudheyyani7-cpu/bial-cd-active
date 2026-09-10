@@ -2,6 +2,7 @@ from src.services.media.lanes import CODE_LANE_MEDIA as CODE_LANE_MEDIA
 from src.services.media.lanes import canonical_suffix as canonical_suffix
 from src.services.media.lanes import code_lane_refusal as code_lane_refusal
 from src.services.media.lanes import is_code_lane as is_code_lane
+from src.services.media.lanes import is_opc_archive as is_opc_archive
 from src.services.media.lanes import looks_password_protected as looks_password_protected
 from src.services.media.magic import ALLOWED_MEDIA as ALLOWED_MEDIA
 from src.services.media.magic import bytes_match_declared as bytes_match_declared

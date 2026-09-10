@@ -58,6 +58,7 @@ from src.services.messages.projection import (
 from src.services.orchestrator.constants import (
     ADAPTIVE_THINKING,
     BUILD_EFFORT,
+    CACHE_TTL,
     MAX_OUTPUT_TOKENS,
     PLAN_EFFORT,
     TEMPERATURE,
@@ -1448,6 +1449,40 @@ async def test_a_build_run_asks_for_the_same_thinking_at_high_effort(
     # regression that pointed both sites at one constant would pass every assertion above.
     assert BUILD_EFFORT == "high"
     assert BUILD_EFFORT != PLAN_EFFORT
+
+
+async def test_both_runs_ask_the_provider_to_cache_the_prefix_they_resend(
+    _fresh_engine, db_session, session_factory
+) -> None:
+    """Both arms must carry all three cache breakpoints, at the 1-hour tier.
+
+    The two settings sites already drifted once — build had all three from the day it was written
+    and plan had none — so both are asserted here rather than one each, and on what the run HANDED
+    the model rather than on the constants, exactly as the two effort tests above do.
+
+    Mutation check: drop any one of the three lines from either site and this goes red naming the
+    arm and the key.
+    """
+    engine = _fresh_engine
+    sent: dict[ChatKind, dict[str, Any]] = {}
+    for kind in (ChatKind.PLAN, ChatKind.BUILD):
+        model, seen = _capturing_model()
+        _, conv, _ = await _start(engine, db_session, session_factory, model, kind=kind)
+        await _settle(engine, conv.id)
+        # LIVENESS, as above: a request really did fire, so an empty `seen` cannot pass.
+        assert len(seen) == 1, f"{kind.value} fired no model request"
+        sent[kind] = seen[0]
+
+    for kind, asked_for in sent.items():
+        for key in (
+            "anthropic_cache_instructions",
+            "anthropic_cache_tool_definitions",
+            "anthropic_cache",
+        ):
+            assert asked_for.get(key) == CACHE_TTL, (
+                f"a {kind.value} request carries no `{key}` breakpoint, so the provider has "
+                "nowhere to cache and the whole prefix is re-read at full price every turn"
+            )
 
 
 async def test_reasoning_becomes_a_working_flag_and_never_its_words(

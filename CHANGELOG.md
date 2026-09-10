@@ -12,8 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.7.0-beta.11] - 2026-09-10
 
-Nine defects reported from production on 2026-09-09, traced from the backend log and the citizens'
-own screenshots.
+Eleven defects reported from production on 2026-09-09 and 2026-09-10, traced from the backend log
+and the citizens' own screenshots.
 
 ### Fixed
 
@@ -65,6 +65,19 @@ own screenshots.
 - **A build that fails to compile is reported while you are watching it.** The check ran once when a
   workspace came up and never again, so "Getting your app ready…" could sit over a build that had
   already finished or already failed until you left the screen and came back.
+- **A failed sign-in stops being permanent.** When signing in failed, the failure stayed in the
+  address bar, and the sign-in screen had no way to forget it: reloading, hard-reloading, and
+  closing and reopening the tab each brought "Sign-in failed. Please try again." straight back,
+  while the browser's network panel filled with the two red errors any signed-out visitor produces.
+  Nothing was wrong with the account — one person spent a call being told to refresh a page that
+  could not clear itself, and it only came right when they happened to reach the sign-in screen by
+  some other route. The message is now shown once and then cleared, so a reload lands on a clean
+  sign-in screen and the button works.
+- **A failed sign-in now says which failure it was.** Every way of failing produced the same
+  sentence, and one whole class of them — an account from outside the organization, a callback that
+  did not validate — wrote nothing to the server log at all, so there was nothing to look up. The
+  message now carries a short reference code and every failure records one log line under that same
+  code: a screenshot is enough to find the attempt and its real cause.
 
 ## [1.7.0-beta.10] - 2026-09-08
 

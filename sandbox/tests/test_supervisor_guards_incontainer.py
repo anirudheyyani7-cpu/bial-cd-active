@@ -336,3 +336,58 @@ def test_dev_lifecycle_and_log_cursor(
     far = sbx.dev_logs(total + 1_000_000).json()
     assert far["lines"] == []
     assert far["next"] >= total
+
+
+# --- the compile signal, against a REAL `next dev` over a REAL socket -------------------------
+#
+# THE TEST `supervisor/app.py` ASKED FOR IN WRITING AND DID NOT HAVE. The comment above
+# `_HMR_PATH` says, of the endpoint constant: "the test that covers it must assert a REAL
+# connection is made — not merely that the constant has some value." Nothing did. `/_next/hmr`
+# was wrong for the whole Next 16 line and no test noticed; then, once it was right, the canary
+# fired against healthy servers and no test noticed that either. Both defects are invisible to
+# every hand-fed-dict unit case, because both live in what the socket actually does.
+#
+# WHY THE REGISTRY IS BLACKHOLED HERE. Next's Turbopack dev server gates its first `sync` frame —
+# the only connect-burst frame carrying a compile state — behind an untimed
+# `fetch('https://registry.npmjs.org/-/package/next/dist-tags')`. On a developer's machine that
+# answers in about a second, comfortably inside the canary's five, so a test run on clean
+# broadband would pass over the exact bug this is here to catch: the classic "works on my Mac"
+# green. Pinning the registry to TEST-NET-3 (RFC 5737, guaranteed unroutable) makes the fetch
+# stall past the window on EVERY machine, which is what a throttled ACA container with proxied or
+# blocked egress does in the field. The stall is the condition under test, not an obstacle to it.
+_UNROUTABLE_REGISTRY = "registry.npmjs.org:203.0.113.1"
+
+
+def test_the_compile_signal_reaches_clean_over_a_real_socket_with_the_registry_unreachable(
+    sandbox_factory: Callable[..., Sandbox],
+) -> None:
+    sbx = sandbox_factory(
+        {"BIAL_PORTAL_ORIGIN": "http://127.0.0.1:1"},
+        extra_run_args=["--add-host", _UNROUTABLE_REGISTRY],
+    )
+    assert sbx.dev_start().status_code == 200
+
+    # Sample the whole cold start rather than only its end state. A drift alarm is transient —
+    # the supervisor recovers as soon as a frame it understands arrives — so a single assertion
+    # after the fact would sail straight past the defect that shipped.
+    seen_reasons: list[object] = []
+    state = "unknown"
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        body = sbx.dev_compile().json()
+        seen_reasons.append(body["reason"])
+        state = body["state"]
+        if state in ("clean", "failed"):
+            break
+        time.sleep(0.5)
+
+    assert "no_recognised_frame" not in seen_reasons, (
+        "the supervisor reported protocol drift against a healthy dev server; observed reasons: "
+        f"{seen_reasons}"
+    )
+    assert state == "clean", f"the baked template never compiled; observed reasons: {seen_reasons}"
+    # A REAL connection was made — the thing the constant's comment demanded be asserted. `clean`
+    # cannot be reached any other way (`_forget_compile` is the only other writer and it only ever
+    # publishes `unknown`), but pinning the generation says so out loud, and says it about the
+    # socket rather than about the state machine.
+    assert sbx.dev_compile().json()["connect_generation"] >= 1

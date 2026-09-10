@@ -518,10 +518,11 @@ def test_redactor_ignores_short_or_empty_secret() -> None:
 # either patched or pointed at an ephemeral local port bound by the test itself.
 import contextlib  # noqa: E402
 import io  # noqa: E402
+import json  # noqa: E402
 import socket  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
-from collections.abc import Iterator  # noqa: E402
+from collections.abc import Callable, Iterator  # noqa: E402
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer  # noqa: E402
 
 import app as sup  # noqa: E402
@@ -604,16 +605,22 @@ def test_dev_status_owned_ready_child_probes_once_then_serves_from_cache(
     """
     probes: list[tuple[object, ...]] = []
 
-    def counting_probe(*args: object) -> bool:
+    def counting_probe(*args: object) -> int | None:
         probes.append(args)
-        return True
+        return 200
 
     monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
     monkeypatch.setattr(sup._Dev, "ready", True)
-    monkeypatch.setattr(sup, "_dev_port_serving", counting_probe)
+    monkeypatch.setattr(sup, "_dev_port_status", counting_probe)
     r = client.get("/dev/status", headers=AUTH)
     assert r.status_code == 200
-    assert r.json() == {"running": True, "ready": True, "port": 3000, "exit_code": None}
+    assert r.json() == {
+        "running": True,
+        "ready": True,
+        "root_status": 200,
+        "port": 3000,
+        "exit_code": None,
+    }
     assert len(probes) == 1, "a served response — not the stdout marker — must decide `ready`"
 
     for _ in range(3):
@@ -628,9 +635,15 @@ def test_dev_status_booting_child_is_not_ready_unless_answering(
     # prints "Local:" before the first compile) must not frame the preview.
     monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
     monkeypatch.setattr(sup._Dev, "ready", False)
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a: False)
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a: None)  # nothing answered at all
     r = client.get("/dev/status", headers=AUTH)
-    assert r.json() == {"running": True, "ready": False, "port": 3000, "exit_code": None}
+    assert r.json() == {
+        "running": True,
+        "ready": False,
+        "root_status": None,
+        "port": 3000,
+        "exit_code": None,
+    }
 
 
 def test_dev_status_dead_child_with_live_port_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -640,10 +653,16 @@ def test_dev_status_dead_child_with_live_port_is_ready(monkeypatch: pytest.Monke
     and this goes red."""
     monkeypatch.setattr(sup._Dev, "proc", _FakeProc(137))  # pkill'd
     monkeypatch.setattr(sup._Dev, "ready", True)  # marker WAS seen before the kill
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a: True)  # the nohup replacement
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a: 200)  # the nohup replacement
     r = client.get("/dev/status", headers=AUTH)
     # The kill's post-mortem (137) rides along even when the replacement serves fine.
-    assert r.json() == {"running": False, "ready": True, "port": 3000, "exit_code": 137}
+    assert r.json() == {
+        "running": False,
+        "ready": True,
+        "root_status": 200,
+        "port": 3000,
+        "exit_code": 137,
+    }
 
 
 def test_dev_status_dead_child_and_dead_port_is_not_ready(
@@ -651,9 +670,15 @@ def test_dev_status_dead_child_and_dead_port_is_not_ready(
 ) -> None:
     monkeypatch.setattr(sup._Dev, "proc", _FakeProc(137))
     monkeypatch.setattr(sup._Dev, "ready", True)
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a: False)
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a: None)
     r = client.get("/dev/status", headers=AUTH)
-    assert r.json() == {"running": False, "ready": False, "port": 3000, "exit_code": 137}
+    assert r.json() == {
+        "running": False,
+        "ready": False,
+        "root_status": None,
+        "port": 3000,
+        "exit_code": 137,
+    }
 
 
 class _AlwaysErrorHandler(BaseHTTPRequestHandler):
@@ -667,11 +692,12 @@ class _AlwaysErrorHandler(BaseHTTPRequestHandler):
 
 def test_the_probe_counts_any_http_response_as_serving() -> None:
     # A 500-ing dev server is still SERVING — its brokenness is the app's business, not the
-    # supervisor's. urllib surfaces 4xx/5xx as HTTPError, which must still count.
+    # supervisor's. An error status has to come back AS a status: `None` is the probe's only
+    # negative, and `_run_probe` reads every other answer as serving.
     srv = HTTPServer(("127.0.0.1", 0), _AlwaysErrorHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        assert sup._dev_port_serving(port=srv.server_port) is True
+        assert sup._dev_port_status(port=srv.server_port) == 500
     finally:
         srv.shutdown()
         srv.server_close()
@@ -682,7 +708,7 @@ def test_the_probe_counts_connection_refused_as_not_serving() -> None:
     srv = HTTPServer(("127.0.0.1", 0), _AlwaysErrorHandler)
     port = srv.server_port
     srv.server_close()
-    assert sup._dev_port_serving(port=port) is False
+    assert sup._dev_port_status(port=port) is None
 
 
 @contextlib.contextmanager
@@ -728,13 +754,13 @@ def test_the_probe_gives_up_on_a_peer_that_trickles_header_bytes() -> None:
     an answer that never comes, with `ready` reading False over an app that may be healthy.
     Re-arming `settimeout` before `getresponse()` does NOT fix this — only a deadline does.
 
-    Mutation check: delete the watchdog timer from `_dev_port_serving` and this hangs to the
+    Mutation check: delete the watchdog timer from `_dev_port_status` and this hangs to the
     join timeout and then fails on `is_alive()`."""
     with _a_peer_that_trickles_header_bytes() as port:
-        answers: list[bool] = []
+        answers: list[int | None] = []
 
         def probe() -> None:
-            answers.append(sup._dev_port_serving(port=port, timeout=0.5, read_timeout=1.0))
+            answers.append(sup._dev_port_status(port=port, timeout=0.5, read_timeout=1.0))
 
         prober = threading.Thread(target=probe, daemon=True)
         started = time.monotonic()
@@ -743,7 +769,7 @@ def test_the_probe_gives_up_on_a_peer_that_trickles_header_bytes() -> None:
         elapsed = time.monotonic() - started
 
     assert not prober.is_alive(), "the probe never returned — the single-flight slot is pinned"
-    assert answers == [False], "a peer that never completes a status line is not serving"
+    assert answers == [None], "a peer that never completes a status line is not serving"
     assert elapsed < 5.0, f"the probe took {elapsed:.1f}s against a 1.0s read budget"
 
 
@@ -752,7 +778,7 @@ def test_the_probe_counts_a_bound_but_silent_port_as_not_serving() -> None:
     # whole point of the unit. A two-tier "accepted counts as serving" rule would latch `ready`
     # True during exactly that window.
     with _bound_but_silent_port() as port:
-        assert sup._dev_port_serving(port=port, timeout=0.5) is False
+        assert sup._dev_port_status(port=port, timeout=0.5) is None
 
 
 # --- `ready` means a request ACTUALLY SUCCEEDED ------------------------------------------
@@ -841,15 +867,16 @@ def test_a_restart_invalidates_the_cached_ready(monkeypatch: pytest.MonkeyPatch)
     answers = {"serving": True}
     probes: list[tuple[object, ...]] = []
 
-    def probe(*args: object) -> bool:
+    def probe(*args: object) -> int | None:
         probes.append(args)
-        return answers["serving"]
+        # `None` is the probe's negative; a status only exists when something answered.
+        return 200 if answers["serving"] else None
 
     # A server IS serving the port (here an unowned one, so `/dev/start` is reachable without
     # the already-running guard firing first) and `ready` latches True.
     monkeypatch.setattr(sup._Dev, "proc", None)
     monkeypatch.setattr(sup._Dev, "ready", True)
-    monkeypatch.setattr(sup, "_dev_port_serving", probe)
+    monkeypatch.setattr(sup, "_dev_port_status", probe)
     # The start guard asks a DIFFERENT question (`_dev_port_bound` — occupied, not answering),
     # so it gets its own stub; here the server goes away entirely, releasing the port.
     monkeypatch.setattr(sup, "_dev_port_bound", lambda *a: answers["serving"])
@@ -876,7 +903,7 @@ def test_the_childs_death_invalidates_the_cached_ready(monkeypatch: pytest.Monke
     answers = {"serving": True}
     monkeypatch.setattr(sup._Dev, "proc", proc)
     monkeypatch.setattr(sup._Dev, "ready", True)
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a: answers["serving"])
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a: 200 if answers["serving"] else None)
     assert client.get("/dev/status", headers=AUTH).json()["ready"] is True
 
     proc._returncode = 137  # SIGKILL — and nothing took its place on the port
@@ -884,6 +911,9 @@ def test_the_childs_death_invalidates_the_cached_ready(monkeypatch: pytest.Monke
     assert client.get("/dev/status", headers=AUTH).json() == {
         "running": False,
         "ready": False,
+        # The status is the affirmative's and goes when it goes: a 200 outliving the server that
+        # answered it is a page-shaped answer about an app nothing has heard from since.
+        "root_status": None,
         "port": 3000,
         "exit_code": 137,
     }
@@ -892,7 +922,7 @@ def test_the_childs_death_invalidates_the_cached_ready(monkeypatch: pytest.Monke
 def test_a_probe_thread_that_cannot_start_hands_the_single_flight_slot_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE PERMANENT-WEDGE BRANCH, previously uncovered. `_dev_is_serving` claims the
+    """★ THE PERMANENT-WEDGE BRANCH, previously uncovered. `_dev_readiness` claims the
     single-flight slot BEFORE spawning the probe thread, so a spawn failing under memory
     pressure (the realistic case in a capped ACA container) leaves the slot held by a probe that
     never runs — unlike a stale affirmative this has NO expiry, so `ready` reads False forever.
@@ -908,15 +938,15 @@ def test_a_probe_thread_that_cannot_start_hands_the_single_flight_slot_back(
     monkeypatch.setattr(sup.threading, "Thread", _CannotStart)
 
     with pytest.raises(RuntimeError):
-        sup._dev_is_serving()
+        sup._dev_readiness()
 
     assert sup._Ready.probing is None, "the single-flight slot is held by a probe that never ran"
 
     # …and the proof that it is genuinely reusable rather than merely nulled: with threads back,
-    # the very next call runs a probe and latches its answer.
+    # the very next call runs a probe and latches its answer — the status along with it.
     monkeypatch.undo()
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a, **k: True)
-    assert sup._dev_is_serving() is True
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a, **k: 200)
+    assert sup._dev_readiness() == (True, 200)
 
 
 def test_dev_start_refuses_while_something_serves_the_port(
@@ -1033,7 +1063,7 @@ def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
     "did anything ANSWER within a second?" reads that as an empty port and spawns a second child.
 
     Occupancy is what the guard asks. Mutation check: point `dev_start` back at
-    `_dev_port_serving` and the spawn below fires."""
+    `_dev_port_status` and the spawn below fires."""
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", None)  # no owned child — only the unowned server
@@ -1044,7 +1074,7 @@ def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
         monkeypatch.setattr(sup.subprocess, "Popen", refuse_spawn)
         # Premise guard: the answer-based probe genuinely calls this port absent, so the two
         # questions really do disagree here — otherwise this test would pass either way.
-        assert sup._dev_port_serving(port=port, timeout=0.5) is False
+        assert sup._dev_port_status(port=port, timeout=0.5) is None
         assert sup._dev_port_bound(port=port) is True
 
         r = client.post("/dev/start", json={}, headers=AUTH)
@@ -1134,10 +1164,13 @@ def test_an_unowned_server_that_dies_stops_being_ready(monkeypatch: pytest.Monke
     proc = _FakeProc(137)  # our child is already dead and already mourned
     answers = {"serving": True}
     monkeypatch.setattr(sup._Dev, "proc", proc)
-    monkeypatch.setattr(sup, "_dev_port_serving", lambda *a, **k: answers["serving"])
+    monkeypatch.setattr(
+        sup, "_dev_port_status", lambda *a, **k: 200 if answers["serving"] else None
+    )
 
     first = client.get("/dev/status", headers=AUTH).json()
     assert first["ready"] is True and first["running"] is False  # the unowned server answers
+    assert first["root_status"] == 200  # …and what it answered with travels with the flag
 
     answers["serving"] = False  # …and now it dies too. No further death event will fire.
     time.sleep(sup._READY_CACHE_TTL + 0.05)
@@ -1145,6 +1178,7 @@ def test_an_unowned_server_that_dies_stops_being_ready(monkeypatch: pytest.Monke
     assert client.get("/dev/status", headers=AUTH).json() == {
         "running": False,
         "ready": False,
+        "root_status": None,
         "port": 3000,
         "exit_code": 137,
     }
@@ -1158,17 +1192,87 @@ def test_a_healthy_affirmative_is_still_cached_between_polls(
     request, which is the whole reason the cache exists."""
     probes = {"n": 0}
 
-    def _counting(*_a: object, **_k: object) -> bool:
+    def _counting(*_a: object, **_k: object) -> int | None:
         probes["n"] += 1
-        return True
+        return 200
 
     monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
-    monkeypatch.setattr(sup, "_dev_port_serving", _counting)
+    monkeypatch.setattr(sup, "_dev_port_status", _counting)
 
     for _ in range(6):
         assert client.get("/dev/status", headers=AUTH).json()["ready"] is True
 
     assert probes["n"] == 1, "six polls inside the TTL must cost one probe, not six"
+
+
+class _LockThatLetsAnInvalidationIn:
+    """`_Ready.lock` with a NAMED PLACE for an invalidation to land: it fires the intruder once,
+    on the FIRST release, which is exactly the instant a two-acquisition read leaves exposed.
+    Deterministic, where racing a real thread against that window would be a coin flip per run.
+
+    It delegates to a real lock rather than subclassing one — CPython's `threading.Lock` is a
+    factory, not a base class — and it DISARMS BEFORE IT CALLS, because the intruder takes this
+    same lock and would otherwise recurse until the stack ran out."""
+
+    def __init__(self, intruder: Callable[[], None]) -> None:
+        self._lock = threading.Lock()
+        self._intruder: Callable[[], None] | None = intruder
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+        intruder, self._intruder = self._intruder, None
+        if intruder is not None:
+            intruder()
+
+    def __enter__(self) -> _LockThatLetsAnInvalidationIn:
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+def test_dev_status_never_publishes_a_ready_without_the_status_it_came_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ THE GRANDFATHER-SIGNATURE RACE. `ready` and `root_status` were read under two SEPARATE
+    takes of `_Ready.lock` — the readiness call returned True and released, and the handler
+    re-took the lock to read the status beside it. Any `_forget_ready` landing in that gap (a
+    child's death, a `/dev/start`, an agent-driven restart — all of them run off other threads)
+    cleared `served_status` while the caller's local `ready` stayed True, and `/dev/status`
+    published `ready: true, root_status: null`.
+
+    THAT PAIR IS NOT MERELY WRONG, IT IS THE ONE PAIR THAT DISARMS THE GUARD: an absent
+    `root_status` is how the control plane recognises a sandbox image built before the field
+    existed, so it grandfathers the container as PROVEN and frames it. The cheapest possible
+    interleaving therefore re-creates the blank white pane this whole change removes, out of a
+    supervisor that could in fact answer the question.
+
+    Mutation check: split the read back into `ready = ...` followed by a second
+    `with _Ready.lock:` for the status, and this goes red with `root_status: None` under
+    `ready: True`."""
+    # A LIVE child, so the handler's own death-driven `_forget_ready` never fires and the only
+    # invalidation in the request is the one this test injects.
+    monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
+    monkeypatch.setattr(sup, "_dev_port_status", lambda *a, **k: 200)
+
+    # Prime the cache, so the poll under test takes the fresh-affirmative path: it answers from
+    # inside the first acquisition without probing, which is what makes the injection point the
+    # gap BETWEEN the two reads rather than anything to do with the probe.
+    assert client.get("/dev/status", headers=AUTH).json()["root_status"] == 200
+
+    monkeypatch.setattr(sup._Ready, "lock", _LockThatLetsAnInvalidationIn(sup._forget_ready))
+    body = client.get("/dev/status", headers=AUTH).json()
+
+    assert body["ready"] is True and body["root_status"] == 200, (
+        "`ready` and `root_status` came from two different instants — the flag from before the "
+        f"invalidation, the status from after it: {body}"
+    )
+    # …and the injection really did land: the cache is gone, so the NEXT poll has to re-earn it.
+    assert sup._Ready.served_until == 0.0, "the intruding `_forget_ready` never ran"
 
 
 def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
@@ -1186,10 +1290,10 @@ def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", _FakeProc(137))  # dead child, unowned live server
         monkeypatch.setattr(sup, "_STATUS_PROBE_WAIT", _SlowRootHandler.delay + 2.0)
-        answers: list[bool] = []
+        answers: list[tuple[bool, int | None]] = []
 
         def poll() -> None:
-            answers.append(sup._dev_is_serving())
+            answers.append(sup._dev_readiness())
 
         threads = [threading.Thread(target=poll) for _ in range(3)]
         for t in threads:
@@ -1197,8 +1301,9 @@ def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
         for t in threads:
             t.join(timeout=15.0)
 
-        assert answers == [True, True, True], (
-            "three simultaneous pollers must agree — a lone False here is the flap"
+        assert answers == [(True, 200), (True, 200), (True, 200)], (
+            "three simultaneous pollers must agree — a lone False here is the flap, and they "
+            "must agree on the STATUS too: it now rides back with the flag"
         )
 
 
@@ -1297,9 +1402,16 @@ def test_a_uri_that_is_not_a_path_is_ignored() -> None:
 
 # --- the compile state derived from the dev server's HMR socket ---------------------
 #
-# The consumer THREAD is not exercised here (it needs a live `next dev`); what is pinned is the
-# part that decides what the platform believes: frame -> state, the debounce, the fail-closed
-# `unknown`, and the endpoint's shape. The socket half is covered in-container.
+# What is pinned here is the part that decides what the platform believes: frame -> state, the
+# debounce, the fail-closed `unknown`, the endpoint's shape — and, from 2026-09-10, the consumer
+# LOOP itself, replayed against a stub transport in the section further down.
+#
+# THAT LAST ONE IS NEW BECAUSE ITS ABSENCE COST A LIVE INCIDENT. This header used to say the
+# consumer thread could not be exercised offline "because it needs a live `next dev`", so the
+# arm/disarm bookkeeping around the drift canary — where the defect actually was — had no test
+# at any level. It needs a live dev server for the SOCKET, not for the loop. The genuinely
+# socket-shaped half (a real handshake against a real `next dev`) is covered in-container by
+# `tests/test_supervisor_guards_incontainer.py`.
 
 
 def _reset_compile() -> None:
@@ -1352,14 +1464,63 @@ def test_the_verb_is_read_from_either_action_or_type() -> None:
 
 
 def test_an_unknown_frame_verb_says_nothing_rather_than_saying_clean() -> None:
-    """The whole fail-closed contract in one assertion: an unrecognised frame returns None, so
-    it can never publish a state. A frame we do not understand is not good news."""
+    """The whole fail-closed contract in one assertion: an unreadable frame returns None, so it
+    can never publish a state. A frame we do not understand is not good news.
+
+    `serverComponentChanges` and `appIsrManifest` USED TO BE ASSERTED HERE as None, back when
+    `None` was the only non-state answer. They are verbs we have always understood perfectly
+    well, and reading them as unreadable traffic is what armed the drift canary against healthy
+    servers on 2026-09-10 — so they moved to `_HMR_STATELESS_VERBS` and to the two tests below,
+    where the SAME guarantee is asserted more precisely: still never a state, and now also never
+    a false alarm. The genuinely-unknown cases stay here, plus a verb no Next has ever sent, so
+    this test still fails the day someone decides "unrecognised" should mean "harmless"."""
     from app import _derive_compile
 
-    assert _derive_compile({"action": "serverComponentChanges"}) is None
-    assert _derive_compile({"action": "appIsrManifest", "data": {}}) is None
+    assert _derive_compile({"action": "aVerbNextHasNeverSent"}) is None
     assert _derive_compile("not-an-object") is None
     assert _derive_compile({"no": "verb"}) is None
+
+
+def test_the_handshake_frames_are_recognised_as_carrying_no_state_not_as_unreadable() -> None:
+    """THE 2026-09-10 REGRESSION, at the smallest scale it can be pinned.
+
+    These are the two frames a real `next@16.3.1` Turbopack dev server sends within a millisecond
+    of the handshake, transcribed verbatim from a live socket. Neither says anything about
+    compilation — but the answer for them must be `_KNOWN_NO_STATE`, not `None`, because only
+    `None` arms the drift canary. Collapse the two and the connect burst reads as unreadable
+    traffic, the canary fires five seconds later against a perfectly healthy server, and the
+    field log fills with `no_recognised_frame` for a signal that was merely late."""
+    from app import _KNOWN_NO_STATE, _derive_compile
+
+    isr_manifest = {"type": "isrManifest", "data": {}}
+    turbopack_connected = {"type": "turbopack-connected", "data": {"sessionId": 1}}
+
+    assert _derive_compile(isr_manifest) is _KNOWN_NO_STATE
+    assert _derive_compile(turbopack_connected) is _KNOWN_NO_STATE
+    # The half of the old assertion that must never weaken: recognised is still NOT a state.
+    assert not isinstance(_derive_compile(isr_manifest), tuple)
+    assert not isinstance(_derive_compile(turbopack_connected), tuple)
+
+
+def test_the_stateless_set_is_an_allowlist_and_not_everything_that_is_not_a_state() -> None:
+    """The tempting simplification — "anything that is not building/built/sync is stateless" —
+    deletes the drift alarm outright, because every future rename would land in it and be
+    silently welcomed. A verb has to be WRITTEN DOWN to stop arming the canary."""
+    from app import _HMR_STATELESS_VERBS, _KNOWN_NO_STATE, _derive_compile
+
+    # NAMED, NOT COUNTED, and never left to a `for` over a set that could be empty: an emptied
+    # `_HMR_STATELESS_VERBS` is exactly the pre-2026-09-10 behaviour, and a loop-only assertion
+    # passes over it vacuously. These two are the connect burst; without them the defect is back.
+    assert {"turbopack-connected", "isrManifest"} <= _HMR_STATELESS_VERBS
+    # Every verb in the set is genuinely recognised, from either key.
+    for verb in _HMR_STATELESS_VERBS:
+        assert _derive_compile({"type": verb}) is _KNOWN_NO_STATE, verb
+        assert _derive_compile({"action": verb}) is _KNOWN_NO_STATE, verb
+    # And the three that carry state are NOT in it — a stateful verb that leaked into the
+    # allowlist would stop publishing and never be noticed, since nothing would alarm.
+    assert _HMR_STATELESS_VERBS.isdisjoint({"building", "built", "sync"})
+    # A plausible-looking rename of `sync` is still unreadable traffic, so it still alarms.
+    assert _derive_compile({"type": "syncState"}) is None
 
 
 def test_a_frame_missing_its_errors_field_is_read_as_clean_not_as_a_crash() -> None:
@@ -1522,6 +1683,207 @@ def test_a_fresh_supervisor_reports_unknown_never_clean() -> None:
     assert sup._Compile.state == "unknown"
 
 
+# --- the consumer LOOP, driven against a replayed socket ------------------------------------
+#
+# The section header above used to say the consumer thread is not exercised here because it needs
+# a live `next dev`, and that was the gap the 2026-09-10 incident fell straight through: the whole
+# defect lived in the loop's arm/disarm bookkeeping, which no `_derive_compile` unit case can
+# reach. It does not need a dev server, only a transport that answers `recv`.
+#
+# THE FAKE ANSWERS OFF THE VERY VARIABLE THE BUG WAS IN, which is what makes these deterministic
+# rather than timing-dependent. `_consume_hmr` passes `recv` a float timeout while the canary is
+# ARMED and `None` while it is not, so the stub replays the delayed `sync` only on a `None`
+# timeout and raises `TimeoutError` on a float — exactly what a real dev server does while it is
+# still awaiting the npm-registry round trip that gates its first `sync`. No sleeping, no clock
+# skew, and the arming mistake is the only thing that can change the outcome.
+
+
+class _ConsumerStopped(SystemExit):
+    """Ends the consumer thread from inside the stub.
+
+    A `SystemExit`, deliberately: `_consume_hmr` catches `Exception` and reconnects forever, so
+    an ordinary exception would leave a daemon thread re-dialling at 1Hz for the rest of the test
+    session. A `BaseException` walks straight out of the loop and the thread ends."""
+
+
+def _run_consumer_against(
+    frames: list[object], *, deliver_on_block: object = None
+) -> list[object]:
+    """Run the REAL `_consume_hmr` against a replayed frame sequence; return the `recv` timeouts.
+
+    `frames` are handed over one per `recv`, JSON-encoded, regardless of timeout. Once they are
+    exhausted: a `None` timeout (canary disarmed) yields `deliver_on_block` if one was given,
+    and a float timeout (canary armed) raises `TimeoutError`, which is precisely how the real
+    socket behaves when the server has not sent anything we were waiting for."""
+    import app as sup
+
+    timeouts: list[object] = []
+    queue = list(frames)
+    delivered = [False]
+
+    class _Stub:
+        def recv(self, timeout: float | None = None) -> str:
+            timeouts.append(timeout)
+            if queue:
+                return json.dumps(queue.pop(0))
+            if timeout is not None:
+                raise TimeoutError
+            if deliver_on_block is not None and not delivered[0]:
+                delivered[0] = True
+                return json.dumps(deliver_on_block)
+            raise _ConsumerStopped
+
+    @contextlib.contextmanager
+    def _fake_connect(*_a: object, **_k: object) -> Iterator[_Stub]:
+        yield _Stub()
+
+    import websockets.sync.client as ws_client
+
+    original = ws_client.connect
+    ws_client.connect = _fake_connect  # type: ignore[assignment]
+    try:
+        sup._consume_hmr()  # returns when the stub raises _ConsumerStopped
+    except SystemExit:
+        pass
+    finally:
+        ws_client.connect = original
+    return timeouts
+
+
+def test_the_turbopack_handshake_does_not_trip_the_drift_canary_and_a_late_sync_still_lands() -> (
+    None
+):
+    """THE FIELD DEFECT, end to end through the real loop.
+
+    The three frames are a live `next@16.3.1` connect burst, verbatim and in order: two handshake
+    frames within a millisecond, then nothing at all until the dev server's untimed fetch to
+    registry.npmjs.org returns and it can finally send `sync`. Before the fix the handshake
+    counted as unreadable traffic, the deadline stayed pinned at connect+5s no matter what
+    arrived, and the canary published `no_recognised_frame` against a perfectly healthy server —
+    once per container, always on the first connect, because that fetch is memoised per dev-server
+    process.
+
+    The `None` in the recorded timeouts is the assertion that matters: it is the loop saying it is
+    owed nothing and will wait as long as the server needs."""
+    import app as sup
+
+    _reset_compile()
+    timeouts = _run_consumer_against(
+        [
+            {"type": "isrManifest", "data": {}},
+            {"type": "turbopack-connected", "data": {"sessionId": 1}},
+        ],
+        deliver_on_block={"type": "sync", "errors": [], "warnings": [], "hash": ""},
+    )
+
+    assert sup._Compile.reason != "no_recognised_frame", (
+        "the handshake burst was read as unreadable traffic and raised a false drift alarm"
+    )
+    assert None in timeouts, "the canary was still armed after two frames we can read"
+    with sup._Compile.lock:
+        sup._settle_locked(time.monotonic() + 60)
+    assert sup._Compile.state == "clean"
+    assert sup._Compile.connect_generation == 1
+
+
+def test_the_handshake_sharpens_the_reason_without_ever_claiming_a_compile_state() -> None:
+    """While waiting on that late `sync` the honest answer is still `unknown` — the cover must
+    hold. What changes is only what the platform CLAIMS about why: `connected_no_frame_yet` is a
+    plain untruth once we have read two frames, so it sharpens to `awaiting_compile_state`."""
+    import app as sup
+
+    _reset_compile()
+    _run_consumer_against(
+        [
+            {"type": "isrManifest", "data": {}},
+            {"type": "turbopack-connected", "data": {"sessionId": 1}},
+        ]
+    )
+
+    assert sup._Compile.state == "unknown", "a handshake frame is not permission to uncover"
+    assert sup._Compile.reason == "awaiting_compile_state"
+
+
+def test_an_unreadable_frame_still_arms_the_canary_and_it_still_fires() -> None:
+    """THE MUTATION GUARD on the fix above. Teaching the loop to forgive the handshake is one
+    edit away from teaching it to forgive everything, and the failure mode of that edit is
+    silence: a renamed protocol would be received forever and understood never, while the
+    platform reported a healthy app. A verb nobody here has heard of must still arm the window
+    and must still publish the pinned reason the control plane alarms on."""
+    import app as sup
+
+    _reset_compile()
+    timeouts = _run_consumer_against([{"type": "aVerbNextHasNeverSent", "data": {}}])
+
+    assert sup._Compile.state == "unknown"
+    assert sup._Compile.reason == "no_recognised_frame"
+    assert any(t is not None for t in timeouts), "the unreadable frame did not arm the window"
+
+
+def test_a_stateless_frame_arriving_after_the_alarm_does_not_erase_it() -> None:
+    """★ THE SECOND WAY THE ALARM GOES QUIETLY, and it is not the one above. That test guards the
+    alarm FIRING; this one guards it SURVIVING long enough for anyone to see it.
+
+    THE CASE IS A PARTIAL RENAME, which is the likeliest shape a real one takes: upstream keeps
+    `turbopack-connected` and renames `sync`. The canary fires correctly — we genuinely cannot read
+    the frame that carries the state — and then the very next handshake-class frame arrives a
+    moment later, over a state that is `unknown` and therefore looks exactly like the placeholder
+    the connect path writes. Widen `_note_stateless_frame`'s guard by one term and that frame
+    overwrites `no_recognised_frame` with `awaiting_compile_state`, which is a reason no control
+    plane matches on. The alarm fires at most once per connect generation, so an erased one is an
+    alarm NOBODY EVER SEES: the platform reports "the socket is fine, the server just hasn't said
+    anything about compilation yet" forever, which is the exact false-reassurance the drift alarm
+    exists to break.
+
+    Mutation-checked: relax the guard to `if _Compile.state == "unknown":` — dropping only the
+    reason term, which reads as redundant — and this goes red. Nothing else in the suite does; it
+    was a live survivor when this test was written, which is why it exists.
+
+    THE SEQUENCE, since the stub replays it rather than stating it: one unreadable frame (arms the
+    window), then a `recv` timeout with the queue empty (the canary fires), then a handshake frame
+    delivered on the now-unarmed blocking `recv`."""
+    import app as sup
+
+    _reset_compile()
+    _run_consumer_against(
+        [{"type": "aVerbNextHasNeverSent", "data": {}}],
+        deliver_on_block={"type": "turbopack-connected", "data": {"sessionId": 1}},
+    )
+
+    assert sup._Compile.state == "unknown"
+    assert sup._Compile.reason == "no_recognised_frame", (
+        "a stateless frame erased the drift finding before the control plane could poll it"
+    )
+    # GUARD THE PREMISE. Both assertions above are equally true of a run in which the canary never
+    # fired at all and the stateless frame simply never arrived, so the connect really did happen
+    # and the loop really did run to the end of the replay.
+    assert sup._Compile.connect_generation == 1
+
+
+def test_a_stateless_frame_arriving_over_a_clean_app_does_not_knock_it_back_to_unknown() -> None:
+    """`devIndicator`, `serverComponentChanges` and the Turbopack update messages arrive dozens
+    of times per build, most of them while the app is sitting happily compiled. If reading one
+    republished `unknown` the platform's preview cover would drop over a working app on every
+    dev-indicator ping — so the reason-sharpening above is confined to the placeholder the
+    connect path itself wrote, and touches the state never."""
+    import app as sup
+
+    _reset_compile()
+    _run_consumer_against(
+        [
+            {"type": "sync", "errors": []},
+            {"type": "devIndicator", "devIndicator": {"disabledUntil": 0}},
+            {"type": "serverComponentChanges", "hash": "abc"},
+            {"type": "turbopack-message", "data": {}},
+        ]
+    )
+
+    with sup._Compile.lock:
+        sup._settle_locked(time.monotonic() + 60)
+    assert sup._Compile.state == "clean"
+    assert sup._Compile.reason is None
+
+
 @contextlib.contextmanager
 def _stub_http_server(asked: list[str], *, status: int = 200, body: str = "ok") -> Iterator[int]:
     """A dev server stand-in that RECORDS THE REQUEST TARGET it was asked for.
@@ -1605,7 +1967,7 @@ def test_the_readiness_probe_asks_for_the_base_path(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("BIAL_BASE_PATH", base)
     asked: list[str] = []
     with _stub_http_server(asked, status=200) as port:
-        assert sup._dev_port_serving(port=port, timeout=2.0) is True
+        assert sup._dev_port_status(port=port, timeout=2.0) == 200
     assert asked == [base]
 
 
@@ -1616,7 +1978,7 @@ def test_with_no_base_path_the_probe_still_asks_for_the_root(
     monkeypatch.delenv("BIAL_BASE_PATH", raising=False)
     asked: list[str] = []
     with _stub_http_server(asked, status=200) as port:
-        assert sup._dev_port_serving(port=port, timeout=2.0) is True
+        assert sup._dev_port_status(port=port, timeout=2.0) == 200
     assert asked == ["/"]
 
 
@@ -1632,16 +1994,23 @@ def test_the_probe_still_fails_open_on_an_error_status(
     for status in (404, 500):
         asked: list[str] = []
         with _stub_http_server(asked, status=status) as port:
-            assert sup._dev_port_serving(port=port, timeout=2.0) is True
+            # An error status IS an answer — `None`, and only `None`, is the negative. Reporting
+            # WHICH error is the wider question this change added; that an error is tolerated at
+            # all is the invariant that must not move.
+            assert sup._dev_port_status(port=port, timeout=2.0) == status
 
 
-def test_the_status_helper_reports_what_the_predicate_hides() -> None:
-    """`_dev_port_serving` deliberately cannot tell a 404 from a 200. Exactly one caller needs
-    to — the tamper detector — which is why the status is exposed separately rather than by
-    weakening the predicate."""
+def test_the_probe_reports_a_404_as_404_at_the_path_it_was_asked_for() -> None:
+    """A 404 must arrive AS 404, never flattened into "something answered". That distinction is
+    the whole of `/dev/status.root_status` and of the control plane's `shows_a_page`: a dev
+    server 404ing at the root because the agent has not written `app/page.tsx` yet is answering,
+    and framing it is the blank white pane. An explicit `path` also overrides the base-path
+    default, which is how the tamper detector asks about the root under a configured base path.
+    """
     asked: list[str] = []
     with _stub_http_server(asked, status=404) as port:
         assert sup._dev_port_status(port=port, timeout=2.0, path="/") == 404
+    assert asked == ["/"], "an explicit `path` must be asked for verbatim"
 
 
 # --- the base path the app is ACTUALLY serving under ----------------------------------------

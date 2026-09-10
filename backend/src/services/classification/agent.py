@@ -34,7 +34,6 @@ from src.services.classification.constants import (
     CACHE_TTL,
     MAX_TOKENS,
     REVIEW_EFFORT,
-    TEMPERATURE,
     THINKING_FORCING_EFFORT,
 )
 from src.services.classification.prompts import (
@@ -121,9 +120,10 @@ def review_model_settings() -> AnthropicModelSettings:
     three cache breakpoints at the 1-hour tier, the explicit `low` effort, and the
     explicit `max_tokens`. Guarded on the way out so a drifted constant can never ship
     a thinking-enabled block."""
+    # NO `temperature`: the deployed model's profile strips sampling settings and warns on
+    # every call, so sending it bought a log line and nothing else. See the turn engine's note.
     settings = AnthropicModelSettings(
         max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
         anthropic_effort=REVIEW_EFFORT,
         anthropic_cache_instructions=CACHE_TTL,
         anthropic_cache_tool_definitions=CACHE_TTL,

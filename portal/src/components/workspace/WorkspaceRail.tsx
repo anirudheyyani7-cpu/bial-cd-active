@@ -10,6 +10,7 @@ import ProjectDescriptionEditor from '../projects/ProjectDescriptionEditor'
 import RailComposer from './RailComposer'
 import AppStatusPanel from './AppStatusPanel'
 import type { Project } from '../../utils/projectApi'
+import { canBePutBack } from '../../utils/buildSessionApi'
 import type { SaveState } from '../../utils/buildSessionApi'
 
 export interface WorkspaceRailProps {
@@ -26,6 +27,46 @@ export interface WorkspaceRailProps {
 /** The board's section label: 10.5px, weight 700, .7px tracking. Its colour is per-section. */
 function SectionLabel({ children, className = 'text-neutral' }: { children: string; className?: string }) {
   return <h2 className={`text-[10.5px] font-bold tracking-[.7px] ${className}`}>{children}</h2>
+}
+
+/**
+ * WHAT THE PLATFORM MAY HONESTLY SAY ABOUT THE CITIZEN'S WORK — FOUR readings, not three, and
+ * the fourth is the whole reason this is a function instead of a ternary in the markup.
+ *
+ * `dirty === true` was one arm, and on a freshly built app it said the wrong thing: somebody
+ * described an app, the platform built it, they touched nothing, and the rail told them they had
+ * changes that were not saved — then the exit guard stopped them on the way out over work they
+ * had never done. `dirty` is NOT the defect and is not being softened here. It answers "is
+ * there a saved version of this?", and on a fresh build the answer is genuinely no, because
+ * Save is the citizen's own act and nothing else in the platform performs it.
+ *
+ * THE FACT THAT WAS MISSING IS `recoveryAt`. Non-null means the platform is holding this app's
+ * newest tree somewhere it can be brought back from — and that is a fact, not a hope:
+ * `newest_restore_source` (backend `services/build_sessions/manager.py`) is the single path
+ * EVERY automatic restore goes through, and it hands back the recovery copy in preference to
+ * the saved one whenever the recovery copy is the newer of the two. So the work of a build
+ * nobody has saved survives a reclaim, a relaunch and a reload.
+ *
+ * HENCE THE SPLIT, AND WHY IT MUST NOT BE FOLDED BACK TO THREE. The two `true` arms are two
+ * different situations wearing one flag: with `recoveryAt` there is nothing to lose and only a
+ * version left to make; without it, the old warning is the honest sentence and stays exactly as
+ * it was. Collapsing them puts the alarm back on every first build.
+ *
+ * AND IT STILL DOES NOT SAY "SAVED", deliberately. A recovery copy is not a version the citizen
+ * chose; `dirty` stays true, the Save control stays where it is, and Save stays MANUAL. This
+ * arm's whole job is to stop overstating the danger — never to understate the Save.
+ */
+function saveSentence(save: SaveState): string {
+  // Order matters: the tri-state's `null` is answered FIRST, so a check that could not run can
+  // never fall through into a claim about recoverable work.
+  if (save.dirty === null) return 'We could not check for unsaved changes.'
+  if (save.dirty === false) return 'Everything is saved.'
+  // `canBePutBack`, not `recoveryAt !== null`: an `undefined` instant — a caller that predates
+  // the field, a body without it — would otherwise read as a copy that exists and put the
+  // reassuring sentence over work nothing is holding. Absent means say the warning.
+  return canBePutBack(save.recoveryAt)
+    ? 'Your work is safe. Save it to keep a version you can come back to.'
+    : 'You have changes that are not saved yet.'
 }
 
 export default function WorkspaceRail({ project, save, onProjectUpdate }: WorkspaceRailProps) {
@@ -49,16 +90,11 @@ export default function WorkspaceRail({ project, save, onProjectUpdate }: Worksp
         {/* A DIFFERENT QUESTION FROM THE PANEL'S SAVED ROW, which reports the version the citizen
             last saved: this is whether the LIVE container has moved on since. `dirty` is TRI-STATE
             and its `null` is "could not tell" — collapsing it to a boolean turns a failed check
-            into a confident "everything is saved". */}
+            into a confident "everything is saved". Which of the four sentences that makes true is
+            `saveSentence`'s decision, above, where the reasoning can be read. */}
         {save && (
           <div data-testid="rail-save-state" className="mt-3 border-t border-bial-border pt-3">
-            <p className="text-[11.5px] text-neutral">
-              {save.dirty === true
-                ? 'You have changes that are not saved yet.'
-                : save.dirty === false
-                  ? 'Everything is saved.'
-                  : 'We could not check for unsaved changes.'}
-            </p>
+            <p className="text-[11.5px] text-neutral">{saveSentence(save)}</p>
           </div>
         )}
       </section>

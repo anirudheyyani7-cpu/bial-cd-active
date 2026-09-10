@@ -99,8 +99,7 @@ const shellRoot = () => grid().parentElement as HTMLElement
 /** Every pane prop at its quiet default. Individual tests set only what they are about. */
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  hasSavedBuild: null,
-  previewState: null, occupyingProjectName: null, turnRunning: false,
+  previewState: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
 
@@ -230,21 +229,38 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving
     return event.defaultPrevented
   }
 
-  function Surface({ dirty }: { dirty: boolean | null }) {
+  /** THE RECOVERY INSTANT DEFAULTS TO `null` — "the platform holds no copy of this" — so every
+   *  scenario written before it existed still describes work that leaving would genuinely cost
+   *  somebody, and a scenario that wants the recoverable case has to ask for it by name. */
+  function Surface({ dirty, recoveryAt = null }: { dirty: boolean | null; recoveryAt?: string | null }) {
     useWorkspaceProject('p1')
-    usePublishSaveState(dirty)
+    usePublishSaveState({ dirty, recoveryAt })
     return <div data-testid="surface" />
   }
 
   /** A conversation that publishes, then a project screen that does not — the hoist's whole point. */
-  function Workspace({ conversationMounted, dirty }: { conversationMounted: boolean; dirty: boolean | null }) {
+  function Workspace({
+    conversationMounted,
+    dirty,
+    recoveryAt = null,
+  }: {
+    conversationMounted: boolean
+    dirty: boolean | null
+    recoveryAt?: string | null
+  }) {
     return (
       <MemoryRouter initialEntries={['/projects/p1']}>
         <Routes>
           <Route element={<WorkspaceShell />}>
             <Route
               path="/projects/:projectId"
-              element={conversationMounted ? <Surface dirty={dirty} /> : <div data-testid="project-only" />}
+              element={
+                conversationMounted ? (
+                  <Surface dirty={dirty} recoveryAt={recoveryAt} />
+                ) : (
+                  <div data-testid="project-only" />
+                )
+              }
             />
           </Route>
         </Routes>
@@ -295,6 +311,47 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving
     }
   })
 
+  it('★ says nothing when the platform is holding a copy it can put back', () => {
+    // THE REPORTED BUG, at the tab-closing exit. A freshly built app that nobody has saved is
+    // `dirty: true` — there is no VERSION, because Save is the citizen's own act — and the
+    // browser's fixed-text prompt fired on somebody closing a tab over work the platform can put
+    // back at any time. `newest_restore_source` hands that copy to every automatic restore.
+    //
+    // MUTATION RECEIPT: drop `|| canBePutBack(recoveryAt)` from the effect's guard and this goes
+    // red while every other case in this describe stays green.
+    const { container } = render(<Workspace conversationMounted dirty recoveryAt="2026-09-10T10:38:43Z" />)
+
+    // Alive and mounted — so the silence below is the rule's, not a component that failed to render.
+    expect(screen.getByTestId('surface')).toBeTruthy()
+    expect(tryToLeave()).toBe(false)
+    // …and nothing on screen claims the work was SAVED, which it was not.
+    expect(container.textContent).not.toMatch(/all saved|up to date/i)
+  })
+
+  it('★ goes on warning when the same `true` has NO recovery copy', () => {
+    // The half that keeps the carve-out narrow: work the platform is holding nothing for is still
+    // work closing the tab would cost somebody.
+    render(<Workspace conversationMounted dirty recoveryAt={null} />)
+
+    expect(tryToLeave()).toBe(true)
+  })
+
+  it('★ FOLLOWS the instant when a later reading takes it away', () => {
+    // A poll answers again, and only the recovery instant is different — which is a reading the
+    // channel's cell has to let through. Its value comparator is what decides that, and one blind
+    // to this field would hold the first answer forever: the guard would go on letting somebody
+    // out over work the platform has since stopped holding a copy of, for the life of the tab.
+    //
+    // MUTATION RECEIPT: drop the `recoveryAt` conjunct from `sameReading` in `workspaceChannel.ts`
+    // and this goes red — the second reading is discarded and the prompt never re-arms.
+    const view = render(<Workspace conversationMounted dirty recoveryAt="2026-09-10T10:38:43Z" />)
+    expect(tryToLeave()).toBe(false)
+
+    view.rerender(<Workspace conversationMounted dirty recoveryAt={null} />)
+
+    expect(tryToLeave()).toBe(true)
+  })
+
   it('disarms when the state goes from dirty back to clean', () => {
     // The listener has to come off, not merely stop mattering: a stale one left bound would warn
     // about a container that has since been saved, for the life of the tab.
@@ -319,13 +376,13 @@ describe('the workspace channel — a publish wakes only what it concerns', () =
 
   function SaveSubscriber() {
     renders.save += 1
-    return <div data-testid="save-sub">{String(useWorkspaceSaveState())}</div>
+    return <div data-testid="save-sub">{String(useWorkspaceSaveState().dirty)}</div>
   }
 
   /** Publishes from its OWN state, so the change reaches the subscribers only through the cells. */
   function SavePublisher() {
     const [dirty, setDirty] = useState<boolean | null>(null)
-    usePublishSaveState(dirty)
+    usePublishSaveState({ dirty, recoveryAt: null })
     return <button type="button" onClick={() => setDirty(true)}>mark dirty</button>
   }
 
@@ -352,7 +409,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
     usePublishAddress({ url: 'https://app.example/', status: 'ready', serving: true }, 'p1')
     usePublishPaneView(EMPTY_PANE)
     useAppPaneVisible(true)
-    usePublishSaveState(true)
+    usePublishSaveState({ dirty: true, recoveryAt: null })
     return <div data-testid="surface" />
   }
 
@@ -360,7 +417,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
     const address = useWorkspaceAddress()
     const pane = useWorkspacePane()
     const visible = useWorkspacePaneVisible()
-    const dirty = useWorkspaceSaveState()
+    const { dirty } = useWorkspaceSaveState()
     return (
       <div data-testid="probe">
         {`${address.url ?? 'none'}|${pane ? 'view' : 'no-view'}|${visible ? 'shown' : 'hidden'}|${String(dirty)}`}
@@ -439,11 +496,20 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
  * leaving the TAB and arms only on a definite `true`; this one covers leaving the WORKSPACE
  * without an unload and warns on `null` too, since an in-app dialog can carry a reason the
  * browser's fixed prompt cannot. Mounted here rather than in the Outlet child because the exits
- * it guards — the navbar's links — sit above the Outlet.
+ * it guards — the navbar's links — sit above the Outlet. What they now AGREE on is the
+ * recoverable case: neither stops anybody over a `true` the platform holds a recovery copy of.
  */
 describe('WorkspaceShell — the in-place unsaved-work guard', () => {
-  function SurfaceWithSaveState({ dirty, running }: { dirty: boolean | null; running: boolean }) {
-    usePublishSaveState(dirty)
+  function SurfaceWithSaveState({
+    dirty,
+    running,
+    recoveryAt = null,
+  }: {
+    dirty: boolean | null
+    running: boolean
+    recoveryAt?: string | null
+  }) {
+    usePublishSaveState({ dirty, recoveryAt })
     useWorkspaceChannel()?.workspace.set({
       state: running
         ? { name: 'running', headline: 'Your app is running.', detail: null, action: null }
@@ -482,6 +548,35 @@ describe('WorkspaceShell — the in-place unsaved-work guard', () => {
     fireEvent.click(await screen.findByRole('button', { name: /leave to projects/i }))
 
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('★ lets a navbar link through when the work is recoverable — the SEAM, end to end', async () => {
+    // THE WIRING THIS FIX IS: the instant is published on the channel beside the tri-state, read
+    // by the shell, and handed to the guard as one reading. Nothing here reaches into the guard —
+    // it is the same publish a conversation surface makes, and the same navbar link a citizen
+    // presses — so a break in ANY hop of that chain shows up right here.
+    //
+    // MUTATION RECEIPT: delete the `recoveryAt` line from the shell's `useUnsavedWorkGuard` call
+    // and this goes red on its own (the guard then defaults to `null` and stops them again).
+    renderShell(<SurfaceWithSaveState dirty running recoveryAt="2026-09-10T10:38:43Z" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /leave to projects/i }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // …and the shell is alive and the link is still there, so the absent dialog is the rule's
+    // doing rather than a render that fell over.
+    expect(screen.getByTestId('surface')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /leave to projects/i })).toBeTruthy()
+  })
+
+  it('★ still intercepts the same link when the work is NOT recoverable', async () => {
+    // Same publish, same link, one field different — the assertion that stops the fix from
+    // becoming "never warn about anything".
+    renderShell(<SurfaceWithSaveState dirty running recoveryAt={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /leave to projects/i }))
+
+    expect(screen.getByRole('dialog').textContent).toMatch(/changes that are not saved yet/i)
   })
 
   it('★ there is exactly ONE guard, not two', async () => {

@@ -16,20 +16,23 @@ exactly once. `DATA_INTEGRITY_RULES` is the data-safety wording — written once
 from __future__ import annotations
 
 # The golden-template file manifest — hard-coded so the model never needs a computed repo
-# map. Mirrors `sandbox/template/`. Everything is an editable starting point EXCEPT
-# `next.config.ts`, which the platform owns: it carries the app's assigned base path, and an app
-# whose config loses it serves at `/` while the router asks for `/a/<key>/` — a preview that
-# loads a blank page while every automated check still reports healthy. The file itself stays
-# technically writable by decision (the sandbox is an open workspace and renaming a file out from
-# under the agent mid-build is a larger behavioural change than the risk it removes), so this
-# prompt text is the control. It must agree with the two other statements below — the categorical
-# grant in the manifest header and the WRITE SURFACE paragraph — because all three ship in the
-# same composed prompt, and a half-correction reads to the model as a contradiction.
+# map. Mirrors `sandbox/template/`. Everything is an editable starting point EXCEPT two files
+# the platform owns. `next.config.ts` carries the app's assigned base path, and an app whose
+# config loses it serves at `/` while the router asks for `/a/<key>/` — a preview that loads a
+# blank page while every automated check still reports healthy. `instrumentation-client.ts` is
+# the framed document's own proof that it is rendering in the user's browser — the ONLY signal
+# the portal reveals the preview pane on — and an app that loses it sits behind a waiting card
+# however healthy it is. Both stay technically writable by decision (the sandbox is an open
+# workspace and renaming a file out from under the agent mid-build is a larger behavioural change
+# than the risk it removes), so this prompt text is the control. It must agree with the other
+# statements below — the categorical grant in the manifest header, the WRITE SURFACE paragraph,
+# and the `BIAL_PORTAL_ORIGIN` row of the DATA & STORAGE manifest — because all of them ship in
+# the same composed prompt, and a half-correction reads to the model as a contradiction.
 _GOLDEN_TEMPLATE_MANIFEST = """\
 The app starts from a minimal Next.js template (App Router, TypeScript, React, Tailwind v4,
 shadcn/ui, Drizzle + PostgreSQL). Everything below is a starting point you may edit or replace,
-with ONE exception — `next.config.ts` is owned by the platform, carries the address your app is
-served at, and must be left exactly as it is:
+with TWO exceptions — `next.config.ts` and `instrumentation-client.ts` are owned by the platform
+and must be left exactly as they are:
   app/layout.tsx            root layout — keep the <BialErrorCapture/> mount (it publishes the
                             portal origin to window.__BIAL_CONFIG and captures runtime errors)
   app/page.tsx              home page — replace with your app's UI
@@ -53,6 +56,12 @@ served at, and must be left exactly as it is:
                             while the platform routes to `/a/<key>/`, and the user sees a blank
                             page. Nothing you are asked to build needs a change here — put app
                             configuration in your own files instead.
+  instrumentation-client.ts PLATFORM-OWNED — do NOT edit, replace, or delete it, and do not import
+                            it. It tells the portal that your app's page is actually showing in
+                            the user's browser; without it the user sees a waiting card instead
+                            of your app, however healthy the app is. Never post its `app-mounted`
+                            message from your own code — the platform sends it, and a page that
+                            has nothing on it must not claim otherwise.
 Add routes, components, libraries, and dependencies as your app needs them."""
 
 FIRST_SLICE_RULE = """\
@@ -365,10 +374,12 @@ command to learn what the harness is about to tell you anyway — write your cod
 and read the diagnostic that comes back.
 
 WRITE SURFACE — the workspace is editable: feature code, `components/ui/**`, your own config, \
-`package.json`, and your own schema and migrations included. Three exceptions: `.git/` \
+`package.json`, and your own schema and migrations included. Four exceptions: `.git/` \
 (protected so the snapshot history stays intact), paths that escape the workspace (absolute \
-paths or `..`), and `next.config.ts` (platform-owned — it carries the address this app is served \
-at, and editing it takes the app off that address while every automated check still passes).
+paths or `..`), `next.config.ts` (platform-owned — it carries the address this app is served \
+at, and editing it takes the app off that address while every automated check still passes), and \
+`instrumentation-client.ts` (platform-owned — it is how the portal learns your app is showing in \
+the user's browser; without it the user sees a waiting card instead of your app).
 
 DATA & STORAGE — the platform injects your app's identity, database, and object-store coordinates \
 as environment variables (read them server-side from `process.env`). Write your own data/storage \
@@ -385,7 +396,8 @@ silently vanishes on the next restore. Use the variable, not a copy of it.
 - `BIAL_BLOB_SAS` — a WRITE-CAPABLE container SAS. This is a real secret: use it ONLY in \
 server-side code (Route Handlers / Server Actions). NEVER send it to the browser, NEVER put it in \
 a `NEXT_PUBLIC_*` variable, and NEVER return it in a client-visible response.
-- `BIAL_PORTAL_ORIGIN` — the portal origin (used by the error-capture shim).
+- `BIAL_PORTAL_ORIGIN` — the portal origin (used by the error-capture shim, and by the \
+platform-owned `instrumentation-client.ts` to address the framing portal).
 
 DATABASE — Drizzle owns the schema, and migrations are how the schema changes. The template \
 ships `db/schema.ts` (empty — no demonstration tables), `db/index.ts` (the server-only client), \

@@ -38,8 +38,11 @@ import type { WorkspaceStateName } from './workspaceState'
  */
 const SPOKEN_HERE: ReadonlySet<WorkspaceStateName> = new Set<WorkspaceStateName>([
   'starting',
+  // ONE HELD STATE, NOT TWO. `held-unattributed` used to sit beside this and said the same thing
+  // with the holder's name missing. Whether the platform can NAME the other project degrades the
+  // sentence; it was never a different situation, and a second member here meant a second place
+  // to forget when the copy moved.
   'held-by-another-project',
-  'held-unattributed',
   'could-not-read',
 ])
 

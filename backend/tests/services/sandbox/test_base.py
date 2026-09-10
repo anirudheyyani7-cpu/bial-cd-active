@@ -90,6 +90,10 @@ def test_result_value_types_carry_the_expected_fields() -> None:
     assert {f.name for f in dataclasses.fields(DevStatus)} == {
         "running",
         "ready",
+        # WHAT THE ROOT ANSWERED WITH, and it is a separate field from `ready` on purpose:
+        # `ready` is fail-open and counts a 404, which is a dev server that is up with nothing
+        # to show. Anything deciding whether to FRAME reads this one. See `DevStatus`.
+        "root_status",
         "port",
         "exit_code",
     }
@@ -138,3 +142,66 @@ def test_file_op_rejects_missing_action_subfield() -> None:
     # per-variant required fields the flat C1 body could not enforce).
     with pytest.raises(ValidationError):
         _FILE_OP.validate_python({"action": "str_replace", "path": "a.tsx"})
+
+
+# --- "would a citizen see a page?" ------------------------------------------------------------
+#
+# THE DISTINCTION THESE PIN, and it is the one a real build broke on 2026-09-10. `ready` is the
+# supervisor's fail-open "something answered on the dev port" — 4xx and 5xx count, deliberately,
+# so a compile error cannot wedge it False and mislead the model. A build spends its first seconds
+# answering 404s because the agent has not written `app/page.tsx` yet: genuinely ready, nothing to
+# show. Framing that window put a BLANK WHITE pane on screen under a live-preview label, which is
+# worse than the black error page the whole branch exists to remove — that one at least had words.
+
+
+def _dev(**over: object) -> DevStatus:
+    base: dict[str, object] = {"running": True, "ready": True, "port": 3000, "root_status": 200}
+    return DevStatus(**{**base, **over})  # type: ignore[arg-type]
+
+
+def test_a_page_is_a_page() -> None:
+    assert _dev(root_status=200).shows_a_page is True
+
+
+def test_a_redirect_off_the_root_is_still_a_page() -> None:
+    """A 3xx is the app choosing where its first page lives, and the browser follows it. Only 4xx
+    and 5xx mean the citizen is handed nothing."""
+    assert _dev(root_status=302).shows_a_page is True
+    assert _dev(root_status=399).shows_a_page is True
+
+
+def test_the_line_is_drawn_between_399_and_400() -> None:
+    """★ THE OFF-BY-ONE, pinned as an adjacent pair because that is the only way it is pinned.
+    399 above and 404 below leave `< 400` and `<= 400` indistinguishable — the mutant survives the
+    entire suite, and what it buys is a 400 Bad Request framed as a live preview: a page with no
+    words on it, the same thing the citizen saw on 2026-09-10 and the same thing this predicate
+    exists to refuse.
+
+    400 is not a hypothetical status for an app root either. Agent-written middleware that
+    rejects the request, or a route handler validating a search param, answers exactly one.
+
+    Mutation check: `self.root_status < 400` -> `<= 400` and the second assertion here goes red
+    while every other test in this file stays green."""
+    assert _dev(root_status=399).shows_a_page is True
+    assert _dev(root_status=400).shows_a_page is False
+
+
+def test_a_ready_dev_server_with_nothing_to_show_is_not_a_page() -> None:
+    """★ THE MEASURED DEFECT. `ready` is True and the root is 404 — the exact shape of a build
+    between the dev server binding and the first route existing."""
+    assert _dev(root_status=404).shows_a_page is False
+    assert _dev(root_status=500).shows_a_page is False
+
+
+def test_nothing_answering_is_never_a_page() -> None:
+    assert _dev(ready=False, root_status=None).shows_a_page is False
+    # Belt and braces: even a stale status cannot outvote `ready`.
+    assert _dev(ready=False, root_status=200).shows_a_page is False
+
+
+def test_a_supervisor_that_cannot_say_keeps_todays_behaviour() -> None:
+    """★ THE ROLLOUT ARM. A container built before `root_status` existed answers `None`, and
+    reading that as "no page" would refuse to frame the entire existing fleet — a false negative
+    at fleet scale, which is worse than the window it closes. It self-expires as containers turn
+    over. Delete this arm one fleet turnover after deploy, against this test."""
+    assert _dev(root_status=None).shows_a_page is True

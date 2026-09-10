@@ -112,9 +112,15 @@ def dev_died_error(
 
 
 # THE SERVING HALF. The supervisor's readiness probe fail-opens on 4xx/5xx by explicit
-# design (`_dev_port_serving`), and `someone_has_to_go_first`'s status is contractually
-# non-load-bearing, so neither of them can carry this. An app whose root answers 500 has to be
-# called broken by something, and this is the diagnostic that says so.
+# design (`_dev_port_status`, whose `None` is the only negative), and `someone_has_to_go_first`'s
+# status is contractually non-load-bearing, so neither of them can carry this. An app whose root
+# answers 500 has to be called broken by something, and this is the diagnostic that says so.
+#
+# NOT THE SAME JOB AS `DevStatus.shows_a_page`, which reads the status that same probe now
+# publishes. That predicate decides whether to FRAME — a fast, per-poll question with a blank
+# pane as the cost of getting it wrong — while this text is what the MODEL is told to go and fix.
+# They agree on the reading and differ on the remedy, and collapsing either into the other would
+# either frame a 500 or spend a repair run on a page that had simply not compiled yet.
 _SERVED_BADLY_DETAIL = (
     "The app's own home page answered with HTTP {status} when it was checked, so the app is not "
     "usable even though the dev server is up and the type-check is clean. A 5xx here is a server "

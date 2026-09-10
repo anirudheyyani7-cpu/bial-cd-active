@@ -11,9 +11,27 @@
  * build kind, so without this control the rail could only ever mint Build chats.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import RailComposer from '../RailComposer'
+import AppPane from '../AppPane'
+import { WORKSPACE_RAIL_ID } from '../railId'
+import {
+  WorkspaceChannelProvider,
+  createWorkspaceChannel,
+  type WorkspaceReport,
+} from '../workspaceChannel'
+import { resolveWorkspaceState } from '../workspaceState'
+import type { PreviewState } from '../../../utils/buildSessionApi'
+
+// THE START THIS RAIL ASKS FOR, held by the test rather than answered by the network. The rail
+// AWAITS `relaunchPreview` and navigates only afterwards, so a mock that resolves immediately would
+// close the very window the last block below is about.
+const api = vi.hoisted(() => ({ relaunchPreview: vi.fn() }))
+vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/buildSessionApi')>()),
+  relaunchPreview: api.relaunchPreview,
+}))
 
 // The words a citizen reads come from the bootstrap catalogue, not from this file — so a suite that
 // does not stand one up gets the honest "Chat" fallback on every option and every label assertion
@@ -94,7 +112,7 @@ describe('the mint-and-navigate protocol, carried through the deletion', () => {
     renderComposer()
     send('a visitor log')
 
-    expect(path()).toMatch(/\?projectId=p1&kind=build$/)
+    expect(path()).toMatch(/\?projectId=p1&kind=plan$/)
     expect(routerState()).toMatchObject({ prompt: 'a visitor log', freshlyMinted: true })
   })
 
@@ -112,7 +130,9 @@ describe('the mint-and-navigate protocol, carried through the deletion', () => {
     send()
 
     expect(path()).toContain('projectId=p%201%26kind%3Dplan')
-    expect(path()).toMatch(/&kind=build$/)
+    // The REAL kind is the trailing one the picker wrote; the encoded literal above is part of the
+    // project id and must not be mistaken for it. That is the whole point of this test.
+    expect(path()).toMatch(/&kind=plan$/)
   })
 
   it('navigates nowhere on an empty or whitespace-only draft', () => {
@@ -262,23 +282,26 @@ describe('the kind picker — the control that makes the other half of the produ
     expect(path()).toMatch(/&kind=plan$/)
   })
 
-  it('defaults to Build, which is what this control did before it had a choice', () => {
-    // Defaulting to Plan would silently change what the existing control does for every citizen who
-    // never touches the picker.
+  it('★ defaults to PLAN, so a first prompt is planned rather than built from', () => {
+    // CHANGED BY DECISION, 2026-09-10. It used to default to Build, inherited from the retired
+    // composer, and the argument for keeping it was that changing it would silently change what
+    // the control does for anyone who never touches the picker. That is exactly what it now does,
+    // deliberately: a rough first sentence gets a plan to read and a `Build this plan` button
+    // instead of a container and several minutes of the model spent on a guess.
     renderComposer()
     send()
 
-    expect(path()).toMatch(/&kind=build$/)
+    expect(path()).toMatch(/&kind=plan$/)
   })
 
   it('reads its one line of explanation from the catalogue, never from this file', () => {
     // One source for what a kind IS. A second wording here would drift the first time the
     // server's changed, and nothing would notice.
     renderComposer()
-    expect(screen.getByTestId('kind-description').textContent).toBe('Change the live app.')
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Plan' }))
     expect(screen.getByTestId('kind-description').textContent).toBe('Shape a plan first.')
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Build' }))
+    expect(screen.getByTestId('kind-description').textContent).toBe('Change the live app.')
   })
 
   it('★ cannot reach a third, empty state by re-pressing the active option', () => {
@@ -292,5 +315,164 @@ describe('the kind picker — the control that makes the other half of the produ
     send()
 
     expect(path()).toMatch(/&kind=build$/)
+  })
+})
+
+/**
+ * ★ ONE ANNOUNCEMENT FOR ONE WAIT — and this file owns the FIRST of the three that used to fire.
+ *
+ * WHAT WAS MEASURED ON 2026-09-10: a citizen who sends their first message from this rail got
+ * THREE announcements inside two seconds, for one continuous wait. This rail raises the
+ * workspace's start flag (the pane then says "Getting your app ready."), `ChatRoute` opens and
+ * closes a second polite region on the way to the chat, and the surface publishes the same state
+ * a third time on arrival.
+ *
+ * ★ THE FIRST ONE WAS PROPOSED FOR DELETION, ON A READING OF THIS FILE THAT IS FALSE. The argument
+ * was that `onStartPending(true)` "fires on a ProjectWorkspace that navigation is about to unmount
+ * … for a page nobody sees". The ORDER is the proof that it does not: the flag goes up, then
+ * `relaunchPreview` is AWAITED, and only then does the navigate happen. That await is the attach
+ * or the cold restore — bounded server-side at `_COLD_READY_BUDGET_SECONDS` — and the citizen
+ * spends every second of it on THIS page watching THIS pane. Delete the flag and the whole wait is
+ * silent: the pane goes on saying "Your app is saved." over a start that is already running, and a
+ * screen reader is told nothing at all.
+ *
+ * SO BOTH HALVES ARE PINNED: the sentence exists for the whole wait, and there is exactly ONE of
+ * it. The middle announcement's suppression is pinned in `ChatRoute.test.tsx` ("paints the wait
+ * board but does not ANNOUNCE it on a freshly minted arrival").
+ */
+describe('★ the rail is the pane`s only narrator for the whole start, and says it once', () => {
+  /** A promise this test opens and closes by hand, so the MIDDLE of the wait is observable. */
+  function deferred<T>() {
+    let settle!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      settle = res
+    })
+    return { promise, settle }
+  }
+
+  const ASLEEP: PreviewState = {
+    state: 'asleep',
+    alive: false,
+    previewUrl: null,
+    occupyingProjectName: null,
+    occupyingProjectId: null,
+    restorable: true,
+  }
+
+  /**
+   * The rail and the pane on one channel, with `onStartPending` wired through the REAL map —
+   * exactly as both production publishers wire it (the project hook's `reportStartPending` and the
+   * chat surface's `setStartPending`).
+   *
+   * WITHOUT THAT WIRING THIS WOULD BE VACUOUS: a harness holding one frozen state cannot show a
+   * flag moving a pane, so every assertion below would pass against a rail that raised none.
+   */
+  function railAndPane() {
+    const channel = createWorkspaceChannel()
+    channel.visible.set(true)
+    const stateFor = (startInFlight: boolean) =>
+      resolveWorkspaceState({
+        preview: ASLEEP,
+        lastDecidedPreview: null,
+        projectHasSavedBuild: null,
+        startOutcome: null,
+        startInFlight,
+      })
+    const report: WorkspaceReport = {
+      state: stateFor(false),
+      projectId: 'p1',
+      onStarted: vi.fn(),
+      onStartPending: vi.fn((pending: boolean) => {
+        act(() => channel.workspace.set({ ...report, state: stateFor(pending) }))
+      }),
+      onStartOutcome: vi.fn(),
+      onRefresh: vi.fn(),
+      onReclaimRefusal: vi.fn(),
+    }
+    channel.workspace.set(report)
+    return {
+      report,
+      ...render(
+        <MemoryRouter initialEntries={['/projects/p1']}>
+          <WorkspaceChannelProvider value={channel}>
+            <Routes>
+              <Route
+                path="/projects/:projectId"
+                element={
+                  <>
+                    <div id={WORKSPACE_RAIL_ID} />
+                    <RailComposer projectId="p1" />
+                    <AppPane device="Desktop" reloadNonce={0} />
+                  </>
+                }
+              />
+              <Route path="*" element={<LocationProbe />} />
+            </Routes>
+          </WorkspaceChannelProvider>
+        </MemoryRouter>,
+      ),
+    }
+  }
+
+  const paneSays = () => screen.queryByTestId('app-pane-empty')?.textContent ?? ''
+
+  it('★ says "Getting your app ready." for the WHOLE wait, before the navigate and not after', async () => {
+    // Mutation receipt: delete `report.onStartPending(true)` from `startChat` and this goes red on
+    // the mid-wait assertion — the pane sits on "Your app is saved." for the length of the restore.
+    const hold = deferred<{ previewUrl: string; ready: boolean }>()
+    api.relaunchPreview.mockReturnValue(hold.promise)
+    railAndPane()
+
+    // BEFORE: the honest at-rest sentence, with the one press that starts the app.
+    expect(paneSays()).toContain('Your app is saved.')
+
+    send('a visitor log')
+
+    // ★ MID-WAIT, WHICH IS THE WHOLE POINT. The request is still in flight and the citizen is
+    // still on this page — `open()` sits BELOW the await, so no navigation has happened yet.
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledWith({ projectId: 'p1' }))
+    expect(paneSays()).toContain('Getting your app ready.')
+    expect(screen.queryByTestId('path')).toBeNull()
+
+    // ★ AND EXACTLY ONE ELEMENT SAYS IT. Three authors for one wait is the measured defect, and
+    // this is the half of it that lives on this screen: a second polite region under the composer
+    // repeating the pane's sentence would be the same duplication in another spelling.
+    expect(screen.getAllByText('Getting your app ready.')).toHaveLength(1)
+
+    // …and the navigate lands only once the server has answered.
+    await act(async () => {
+      hold.settle({ previewUrl: 'https://app.example/', ready: true })
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByTestId('path').textContent).toMatch(/^\/chat\//))
+  })
+
+  it('★ and the wait names no duration, however long it runs', async () => {
+    // The rule the pane's copy is written under, asserted from the surface that OPENS the wait:
+    // nobody has measured a cold start, so no sentence may name one.
+    const hold = deferred<{ previewUrl: string; ready: boolean }>()
+    api.relaunchPreview.mockReturnValue(hold.promise)
+    railAndPane()
+    send('a visitor log')
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalled())
+
+    const board = screen.getByTestId('app-pane-empty')
+    // The elapsed counter is exempt and deliberately so: it is read off the pane's own clock as it
+    // passes, which is a measured fact rather than a duration claimed in advance.
+    const sentences = [...board.querySelectorAll('p')]
+      .filter((el) => el.getAttribute('data-testid') !== 'app-pane-elapsed')
+      .map((el) => el.textContent ?? '')
+      .join(' ')
+    expect(sentences).not.toMatch(/\d/)
+    expect(sentences).not.toMatch(
+      /\b(second|seconds|minute|minutes|moment|moments|about|roughly|soon|shortly)\b/i,
+    )
+    // LIVENESS: the wait really is on screen, so the absences above are about a rendered board.
+    expect(sentences).toContain('Getting your app ready.')
+
+    await act(async () => {
+      hold.settle({ previewUrl: 'https://app.example/', ready: true })
+      await Promise.resolve()
+    })
   })
 })

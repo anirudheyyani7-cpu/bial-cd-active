@@ -2751,3 +2751,175 @@ async def test_an_unrecoverable_workspace_also_frees_the_slot(
         "no workspace was taken, so the leak this test is about could not have happened"
     )
     assert manager.active_session_for(user.id) is None
+
+
+# --- the verify seam's own frame waits for a PAGE ---------------------------------------------
+#
+# ★ THE SECOND EMITTER. `claim_preview_frame` is a once-per-TURN one-shot with exactly two
+# consumers — the 1s watcher and this path — and which one gets there first is a coin toss: the
+# watcher's `except SandboxError` arm sleeps a whole poll, while verify runs the moment a model
+# step ends. So a page gate on only one of them is not a fix, it is a race with a 50% failure
+# rate, and the losing half frames the blank container the other half just refused.
+#
+# `outcome.dev_ready` CANNOT ANSWER THIS. It is a boolean distilled from `Readiness.READY`, which
+# is `/dev/status.ready` — the supervisor's fail-open "something answered the dev port", a 404
+# included. So this path takes its OWN `/dev/status` reading between model steps, and the tests
+# below script what the ROOT said on that reading.
+#
+# THE ORDER OF THE `and` IS THE WHOLE OF IT. `page_is_up and state.claim_preview_frame()` — write
+# it the other way round and Python's short-circuit spends the turn's one-shot on a page-less
+# reading, leaving the 1s watcher with nothing to frame the app WITH once it finally has a page.
+# The absence assertions below are therefore paired with `claim_preview_frame()` itself, because
+# "no frame yet" is only half the claim.
+
+
+class _UnreachableSupervisor(FakeSandboxClient):
+    """A container whose supervisor will not answer `/dev/status` at all. A transport failure,
+    never a verdict about the app — the distinction the blip arm exists to keep.
+
+    The call COUNT is what makes the absence assertion honest: without it, "no frame went out"
+    reads the same whether the reading was refused or never taken."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.status_calls = 0
+
+    async def dev_status(self, handle: SandboxHandle) -> DevStatus:
+        self.status_calls += 1
+        raise SandboxError("the supervisor did not answer")
+
+
+async def _a_healthy_verify(*_a: object, **_k: object) -> tuple[VerifyOutcome, int]:
+    """A green verdict with the dev server reporting ready — the setup for both tests below.
+
+    STUBBED rather than driven through the real `verify`, because the reading under test is the
+    EXTRA `/dev/status` call the engine makes after this returns. Letting the real verify share
+    the same scripted client would couple its own readiness polling to that reading, and a stub
+    is what keeps the two questions apart."""
+    return (
+        VerifyOutcome(state=HealthState.HEALTHY, dev_ready=True, error=None, preview_url=None),
+        0,
+    )
+
+
+async def test_a_verify_that_finds_no_page_frames_nothing_and_leaves_the_claim_unspent(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ THE VERIFY SEAM ON A ROOT WITH NOTHING TO SHOW. `dev_ready` is True — the dev server is
+    up and answering — and the app root is 404ing because the agent has not written
+    `app/page.tsx` yet. Nothing may frame that, and the once-per-turn claim must survive intact
+    so the watcher can still frame the app when the page arrives.
+
+    Mutation-check: swap the `and` to `state.claim_preview_frame() and page_is_up` and this goes
+    red on the surviving claim — the one-shot is spent on the refusal and no emitter is left."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-verify-no-page@rvaiglobal.com")
+    manager, client = SessionManager(), FakeSandboxClient()
+    client.root_status = 404
+    monkeypatch.setattr(engine_module, "verify", _a_healthy_verify)
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    _, state = await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    assert state.sandbox is not None, "guard the premise: a container was attached at all"
+    assert _preview_ready_frames(state) == [], "the browser was told to mount over a 404"
+    assert state.preview_framed is False
+    assert state.claim_preview_frame() is True, (
+        "the once-per-turn claim was spent on a page-less reading, so the real first serve — a "
+        "second later, in the watcher — would have had nothing left to frame with"
+    )
+
+
+async def test_the_same_turn_frames_the_moment_the_root_answers_with_a_page(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE CONTROL RUN, and the sibling above is worthless without it: an absence assertion goes
+    green just as readily when the emitter is dead as when it correctly declined. Identical setup,
+    one field different — the root answers 200 — and exactly one frame must go out.
+
+    ITS JOB IS TO STAY GREEN under the mutants that red its sibling, and it does: swapping the
+    `and` to `state.claim_preview_frame() and page_is_up` reds the 404 sibling and leaves this
+    one untouched, which is what proves the pair is measuring the ROOT and not the plumbing."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-verify-a-page@rvaiglobal.com")
+    manager, client = SessionManager(), FakeSandboxClient()
+    client.root_status = 200
+    monkeypatch.setattr(engine_module, "verify", _a_healthy_verify)
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    _, state = await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    assert len(_preview_ready_frames(state)) == 1, "a serving app never reached the citizen"
+    assert state.preview_framed is True
+
+
+async def test_a_blip_on_the_verify_reading_frames_nothing_and_leaves_the_claim_unspent(
+    _fresh_engine,
+    db_session,
+    session_factory,
+    fake_redis: aioredis.Redis,
+    fake_storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ A BLIP WAITS RATHER THAN FRAMES. The extra `/dev/status` call can simply fail — a busy
+    supervisor, a container mid-restart — and "we could not ask" has never been the same as "we
+    watched it paint". Reading it as a page would frame a container nothing has ever seen serve,
+    on the strength of a transport error.
+
+    It costs nothing to wait: the watcher's next poll is a second away, and the claim is still
+    there for it. That second half is why this asserts on the claim and not only on the ring.
+
+    Mutation-check: answer the `except SandboxError` arm with `page_is_up = True` and this goes
+    red."""
+    engine = _fresh_engine
+    user, project, conv = await _write_conversation(db_session, "wt-verify-blip@rvaiglobal.com")
+    manager, client = SessionManager(), _UnreachableSupervisor()
+    monkeypatch.setattr(engine_module, "verify", _a_healthy_verify)
+    model, _ = _scripted([[_WROTE_A_FILE, _DECLARED_DONE]])
+
+    _, state = await _run(
+        engine,
+        db_session,
+        session_factory,
+        model,
+        user=user,
+        project=project,
+        conv=conv,
+        manager=manager,
+        client=client,
+    )
+
+    assert client.status_calls > 0, "guard the premise: something really did try to ask"
+    assert _preview_ready_frames(state) == [], "a transport error was framed as a serving app"
+    assert state.preview_framed is False
+    assert state.claim_preview_frame() is True, "the blip spent the turn's one-shot"

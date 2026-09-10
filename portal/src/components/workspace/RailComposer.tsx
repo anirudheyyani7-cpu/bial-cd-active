@@ -34,11 +34,23 @@ import {
 import type { ChatKind } from '../../pages/ChatRoute'
 
 /**
- * THE TWO KINDS, IN THE BOARD'S ORDER — Plan first, then Build, with Build selected.
+ * THE TWO KINDS, IN THE BOARD'S ORDER — Plan first, then Build, and PLAN IS SELECTED.
  *
- * The order is the board's and the default is this rail's inheritance: the retired composer minted
- * a Build chat for every send, so defaulting to Plan would silently change what the control does.
- * Order and default are separate decisions and this is the one place both are made.
+ * The order is the board's. The default was Build, inherited from the retired composer, which
+ * minted a Build chat for every send; the argument for keeping it was that changing it would
+ * silently change what the control does.
+ *
+ * CHANGED TO PLAN, PER THE OWNER (2026-09-10), and what it costs is exactly what that argument
+ * warned about: a citizen who types into a fresh project and presses send now gets a plan to read
+ * and a `Build this plan` button, instead of an app being built from their first sentence. That is
+ * the point. A first prompt is the one most likely to be a rough description rather than a brief,
+ * and building straight from it spends a container and several minutes of the model's time on a
+ * guess nobody agreed to — which is also the moment the citizen has the least idea what the
+ * platform is about to do.
+ *
+ * IT ONLY MOVES THE DEFAULT. Build is one click away and unchanged, `?kind=build` still mints a
+ * build chat, and a chat's kind is still fixed at creation. Order and default remain separate
+ * decisions, and this is still the one place both are made.
  */
 const KINDS: readonly ChatKind[] = ['plan', 'build']
 
@@ -86,7 +98,8 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   // the surface that publishes it, and the alternative is a prop chain through the rail that no
   // component in between has any business carrying.
   const report = useWorkspaceReport()
-  const [kind, setKind] = useState<ChatKind>('build')
+  // PLAN, per the owner — see the `KINDS` docblock above for what that changes and what it costs.
+  const [kind, setKind] = useState<ChatKind>('plan')
   const [guardRailModal, setGuardRailModal] = useState<PromptViolation | null>(null)
   const [urgent, setUrgent] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement>(null)
@@ -163,6 +176,26 @@ function RailComposerBody({ projectId }: RailComposerProps) {
       }
 
       const attempt = async (): Promise<void> => {
+        // THE FLAG GOES UP BEFORE THE REQUEST, AND THE NAVIGATE HAPPENS AFTER IT — which is what
+        // makes this the pane's ONLY narration for the whole wait, not a duplicate of the chat's.
+        //
+        // IT LOOKS DELETABLE AND IS NOT. The tempting reading is that it "fires on a page
+        // navigation is about to unmount", which would make it a wasted commit and a wasted
+        // announcement. That reading is wrong, and the order below is the proof: `open()` —
+        // the navigate — sits BELOW the `await` on the next line, not beside this call, and the
+        // no-saved-build arm's `open()` is below it too. This surface stays mounted for the
+        // entire `relaunchPreview` POST, which blocks server-side until the
+        // container answers and whose cold arm is bounded at `_COLD_READY_BUDGET_SECONDS` = 120s
+        // (`build_sessions/manager.py`). So for a project with a saved build the citizen sits on
+        // THIS page, watching THIS pane, for up to two minutes. Without this line that wait is
+        // silent: the pane goes on saying "Your app is saved." over a start that is already
+        // running, and a screen reader is told nothing at all — the one moment somebody most
+        // needs to be told something is happening.
+        //
+        // THE DUPLICATE IS THE SECOND SENTENCE, NOT THIS ONE. What repeats is the chat surface
+        // re-publishing the same state for the same project after the navigate, and the place to
+        // stop that is where it is produced — silencing the first author to quieten the second
+        // trades a real duplicate for a real silence.
         report.onStartPending(true)
         try {
           const res = await relaunchPreview({ projectId })

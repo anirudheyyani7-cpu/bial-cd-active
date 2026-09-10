@@ -37,7 +37,17 @@ const reading = (over: Partial<PreviewState> = {}): PreviewState => ({
 })
 
 const reportFor = (preview: PreviewState): WorkspaceReport => ({
-  state: resolveWorkspaceState({ preview, projectHasSavedBuild: null, startOutcome: null, startInFlight: false }),
+  // `lastDecidedPreview: null` is "nothing has ever been decided", which is the cold-load answer
+  // and the only one this surface's scenarios need: every reading below is a decided one, so the
+  // memory is never consulted. Decision D3's own behaviour — an unreadable read rendering the last
+  // settled reading — is pinned where the rule lives, in `workspaceState.test.ts`.
+  state: resolveWorkspaceState({
+    preview,
+    lastDecidedPreview: null,
+    projectHasSavedBuild: null,
+    startOutcome: null,
+    startInFlight: false,
+  }),
   projectId: 'p1',
   onStarted: vi.fn(),
   onStartPending: vi.fn(),
@@ -158,9 +168,24 @@ describe('sentence always, action selectively — and only one of the three', ()
     expect(screen.getByTestId('plan-chat-workspace-state').textContent).toMatch(/Roster/)
   })
 
-  it('offers no action for a slot taken by a project the server could not attribute', () => {
-    line(reading({ state: 'slot_taken' }))
+  it('★ renders NO take-back for an unattributed slot — the map offers one, and this surface refuses it', () => {
+    // ★ THE MAP CHANGED UNDER THIS TEST, AND THE ASSERTION IS STRONGER FOR IT. `held-unattributed`
+    // used to be a state of its own with `action` and `secondAction` BOTH null — a card that named
+    // the problem, named no remedy and left nothing to press anywhere. It is merged into the one
+    // held state now, and a missing holder name degrades the SENTENCE rather than the affordance:
+    // the map's `action` on this arm is the TAKE-BACK.
+    //
+    // So this is no longer "the map offered nothing". It is this surface declining the one thing it
+    // was offered, which is a real gate rather than an accident of the data — and the reason is
+    // `PlanChatWorkspaceLine`'s own: a take-back's wait is a modal narrating a stop, a save and a
+    // start, over a screen with no pane to show the result in.
+    const report = reportFor(reading({ state: 'slot_taken' }))
+    // The map really did offer it, or the refusal below proves nothing.
+    expect(report.state.action?.kind).toBe('take-back')
 
+    renderIn(<PlanChatWorkspaceLine />, (c) => c.workspace.set(report))
+
+    // LIVENESS: the sentence is spoken here, so this is a withheld control on a live line.
     expect(screen.getByTestId('plan-chat-workspace-state').textContent).toMatch(/another project/i)
     expect(screen.queryByRole('button')).toBeNull()
   })

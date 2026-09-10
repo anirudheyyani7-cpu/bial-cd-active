@@ -171,7 +171,7 @@ describe('ProjectPage — the composer is unconditional', () => {
 
     expect(await screen.findByTestId('rail-app-status')).toBeTruthy()
     // Regression guard: this control must show regardless of whether the project has an app.
-    expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Describe what you have in mind/i)).toBeTruthy()
     expect(within(screen.getByTestId('description-rail')).getByRole('button', { name: /edit/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /view app/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /continue building/i })).toBeNull()
@@ -186,7 +186,7 @@ describe('ProjectPage — the composer is unconditional', () => {
 
     await screen.findByTestId('rail-app-status')
     // NOT collapsed under an app card — the reverted app-first-fold regression.
-    expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Describe what you have in mind/i)).toBeTruthy()
     // Inertness guards: a passive code view, a lifecycle badge and a chat reroute do not come
     // back with the running sandbox.
     expect(screen.queryByRole('button', { name: /view app/i })).toBeNull()
@@ -374,7 +374,7 @@ describe('ProjectPage — nothing points back to a past chat', () => {
     // Paired with a liveness check: an absence assertion passes just as happily when the page
     // crashed and rendered nothing at all.
     expect(screen.getByTestId('description-rail')).toBeTruthy()
-    expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Describe what you have in mind/i)).toBeTruthy()
   })
 
   it('★ offers no way to reach or delete an existing chat, however many the project has', async () => {

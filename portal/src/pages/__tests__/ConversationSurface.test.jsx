@@ -217,6 +217,35 @@ describe('the save-state TRI-STATE is published uncollapsed', () => {
     expect(tryToLeave()).toBe(false)
   })
 
+  it('★ carries the RECOVERY INSTANT with the flag, and it is what disarms the prompt', async () => {
+    // THE PRODUCER HOP OF THE REPORTED BUG. `refreshSaveState` read the save state and kept
+    // `state.dirty` alone, dropping the instant that says the platform can put this tree back —
+    // so a citizen who described an app, watched it get built and touched nothing got the
+    // browser's unload prompt over work they had never done.
+    //
+    // TWO RUNS, ONE FIELD APART, AND THE FIRST IS THE CONTROL: it proves this wait is long enough
+    // for a reading to reach the shell at all, which is the only thing that makes the second
+    // run's silence mean anything. Without it a publish that never happened would read as a pass.
+    //
+    // MUTATION RECEIPT: drop `recoveryAt: state.recoveryAt` from `refreshSaveState` and the
+    // second half goes red — the instant never reaches the channel and the prompt arms again.
+    h.fetchSaveState.mockResolvedValue({ dirty: true, recoveryAt: null })
+    renderBuilder({ deps: deps().deps })
+    await waitFor(() => expect(tryToLeave()).toBe(true))
+    cleanup()
+
+    h.fetchSaveState.mockClear()
+    h.fetchSaveState.mockResolvedValue({ dirty: true, recoveryAt: '2026-09-10T10:38:43Z' })
+    renderBuilder({ deps: deps().deps })
+    await waitFor(() => expect(h.fetchSaveState).toHaveBeenCalled())
+    await waitFor(() => expect(tryToLeave()).toBe(false))
+
+    // …and NOTHING here claims the work was saved. `dirty` is still true, Save is still the
+    // citizen's own act, and the only thing that changed is that leaving stopped being treated as
+    // a way to lose something the platform can put back.
+    expect(screen.queryByText(/no unsaved|nothing unsaved|all saved|up to date/i)).toBeNull()
+  })
+
   it('an UNKNOWN stays unknown — it is not collapsed into either boolean', async () => {
     // THE CASE THAT MATTERS, and the one this surface could break on its own. `null` means "we
     // could not check", never "clean": collapsing it to `false` reports the work as safe when
@@ -344,10 +373,24 @@ describe('a failed launch INSIDE a chat says why', () => {
 
     fireEvent.click(await findStartAppControl())
 
-    expect(await screen.findByText('We could not start your app.')).toBeTruthy()
-    // THE SERVER'S OWN WORDS, carried verbatim — the specific half, and the only thing that tells
-    // the citizen what to do differently.
-    expect(screen.getByText('Your app could not be brought back just now.')).toBeTruthy()
+    // ★ THE SERVER'S OWN WORDS, CARRIED VERBATIM — and that is the whole of what a failed press
+    // changes on screen now.
+    //
+    // IT USED TO GET A CARD OF ITS OWN, headed "We could not start your app." That headline is
+    // deleted: the situation, the honest headline and the next step were all identical to "Your
+    // app is saved.", so a differently-shaped screen told the citizen something had changed that
+    // had not. The reason rides in the map's `note`, which is also the one field the negative-copy
+    // sweep exempts — so a refusal containing the words "not running" can no longer turn a green
+    // suite red on a string this client does not control.
+    expect(await screen.findByText('Your app could not be brought back just now.')).toBeTruthy()
+    expect(screen.queryByText('We could not start your app.')).toBeNull()
+    // LIVENESS, PAIRED WITH THAT ABSENCE: the pane is on the saved card with its one press still
+    // offered, so the missing headline is a deleted card rather than a pane that stopped
+    // rendering. Pressing Launch again is non-destructive by construction — the action union
+    // contains no restore, rebuild or teardown verb.
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('not-running')
+    expect(screen.getByText('Your app is saved.')).toBeTruthy()
+    expect(await findStartAppControl()).toBeTruthy()
   })
 })
 

@@ -48,7 +48,7 @@ function reading(over: Partial<PreviewState> = {}): PreviewState {
   }
 }
 
-const SAVE: SaveState = { appId: 'app-1', dirty: false, containerHead: 'abc1234', savedHead: 'abc1234' }
+const SAVE: SaveState = { appId: 'app-1', dirty: false, containerHead: 'abc1234', savedHead: 'abc1234', recoveryAt: null }
 
 /** The hook, mounted against a project, with the defaults every scenario shares. */
 const mount = (projectId: string | null = 'proj-1', projectHasSavedBuild: boolean | null = null) =>
@@ -665,19 +665,40 @@ describe('cost — the calls this hook refuses to make', () => {
 })
 
 describe('the start outcome slot', () => {
-  it('renders the reported ending and clears it on request', async () => {
+  it('★ carries the reported ending WITHOUT letting it select a card, and clears it on request', async () => {
+    // ★ THIS ASSERTED `timed-out` AS A STATE NAME, and that is the change. A start outcome used to
+    // select three whole cards of its own — "your app is up but has not served a page yet", "your
+    // app did not answer in time", "we could not start your app" — all three of them sentences
+    // about a FETCH rather than about a workspace. The READING decides the card now and the ending
+    // contributes at most a `note`.
+    //
+    // WHAT THE SLOT STILL HAS TO DO, and the reason this scenario survives rather than being
+    // deleted: the hook must hold the ending and must let go of it. Both halves are asserted
+    // through an ending that DOES have something to say, because two of the four say nothing by
+    // design and would make the "cleared" assertion vacuous — it would pass against a hook that
+    // never recorded anything at all.
     const { result } = mount()
     await waitFor(() => expect(result.current.state.name).toBe('never-built'))
 
+    // The endings with no server prose change nothing a person reads — that IS their contract.
     await act(async () => {
       result.current.reportStartOutcome({ kind: 'timed-out' })
     })
-    expect(result.current.state.name).toBe('timed-out')
+    expect(result.current.state.name).toBe('never-built')
+    expect(result.current.state.note ?? null).toBeNull()
+
+    // …and one that names a reason rides in `note`, on the card the reading already chose.
+    await act(async () => {
+      result.current.reportStartOutcome({ kind: 'failed', reason: 'no image' })
+    })
+    expect(result.current.state.name).toBe('never-built')
+    expect(result.current.state.note).toBe('no image')
 
     await act(async () => {
       result.current.reportStartOutcome(null)
     })
     expect(result.current.state.name).toBe('never-built')
+    expect(result.current.state.note ?? null).toBeNull()
   })
 
   it('reporting an outcome does NOT restart the poll — it is a fact about a press', async () => {

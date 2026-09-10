@@ -23,6 +23,7 @@ import type { DeviceName } from './devices'
 import { WORKSPACE_RAIL_ID } from './railId'
 import { HIDDEN_BUT_MOUNTED } from './hiddenSubtree'
 import { WorkspaceExitProvider, useUnsavedWorkGuard } from './UnsavedWorkGuard'
+import { canBePutBack } from '../../utils/buildSessionApi'
 import {
   WorkspaceChannelProvider,
   createWorkspaceChannel,
@@ -82,24 +83,45 @@ function railWidthClass(collapsed: boolean, paneVisible: boolean): string {
 }
 
 /**
- * THE ONE WARNING THE SAVE MODEL OWES THE CITIZEN. Work that is never saved is lost when the
- * container is reclaimed, so leaving must not be silent — and it lives on the shell rather than
- * on an outlet child, which unmounts on every move to the project screen.
+ * THE ONE WARNING THE SAVE MODEL OWES THE CITIZEN — for the half of leaving that is closing the
+ * TAB. Work the platform holds nowhere is gone when the container is reclaimed, so that exit must
+ * not be silent; it lives on the shell rather than on an outlet child, which unmounts on every
+ * move to the project screen. No new producer and no traffic — the shell reads whatever the
+ * mounted surface last published.
+ *
  * ARMED ONLY ON A DEFINITE `true`: the tri-state's `null` means "could not check", never "clean",
- * and the browser's unload prompt renders fixed text that cannot say so. No new producer and no
- * traffic — the shell reads whatever the mounted surface last published.
+ * and the browser's unload prompt renders fixed text that cannot carry that distinction. A prompt
+ * raised over an unanswered check is a prompt with nothing behind it, and those teach people to
+ * dismiss prompts.
+ *
+ * AND ONLY WHERE THE PLATFORM CANNOT PUT THE WORK BACK — the fourth case, and the reason this
+ * effect reads a pair rather than a flag. `dirty` answers "is there a saved VERSION of this
+ * tree?", so a build nobody has saved answers no: a citizen who described an app, watched the
+ * platform build it and touched nothing arrives at `dirty: true` having done nothing at all, and
+ * this effect raised the browser's prompt on them for it. `recoveryAt` is what tells that apart
+ * from real loss — non-null means the platform wrote a recovery copy that
+ * `SessionManager.newest_restore_source` hands to EVERY automatic restore in preference to the
+ * saved bundle, so the tab closing costs nothing. A `true` with NO recovery copy is real unsaved
+ * work and still raises the prompt, unchanged.
+ *
+ * ONE FACT, ONE ARGUMENT, TWO EXITS. `UnsavedWorkGuard` applies exactly this rule to the in-place
+ * exit and writes the reasoning out in full, including what it emphatically is NOT: a claim that
+ * anything was saved. Both guards read the SAME `SaveReading` off the channel, which is what stops
+ * the tab and the navbar disagreeing about the same app in the same moment.
  */
 function useUnsavedWorkWarning(): void {
-  const saveDirty = useWorkspaceSaveState()
+  const { dirty, recoveryAt } = useWorkspaceSaveState()
   useEffect(() => {
-    if (saveDirty !== true) return undefined
+    // `canBePutBack` rather than `recoveryAt !== null`, for the reason it records: an absent
+    // fact must not be what disarms this prompt.
+    if (dirty !== true || canBePutBack(recoveryAt)) return undefined
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault()
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [saveDirty])
+  }, [dirty, recoveryAt])
 }
 
 /**
@@ -189,8 +211,15 @@ function ShellFrame() {
   // save state means "could not tell" only while the workspace is running, and means "nobody
   // asked" otherwise. Conflating them fires a warning on every exit from every stopped project.
   const report = useWorkspaceReport()
+  // ONE READING, BOTH HALVES — the two arrive on a single cell precisely so this call cannot pair
+  // a dirty flag from one poll with a recovery instant from another. See `SaveReading`.
+  const saveReading = useWorkspaceSaveState()
   const { guard, dialog: unsavedWorkDialog } = useUnsavedWorkGuard({
-    saveDirty: useWorkspaceSaveState(),
+    saveDirty: saveReading.dirty,
+    // WHETHER THE PLATFORM CAN PUT THIS BACK, which decides whether a `true` is worth stopping
+    // anybody for. Threaded from the same read as the flag above and from no second source: a
+    // guard that fetched its own would be answering about a different moment.
+    recoveryAt: saveReading.recoveryAt,
     workspaceIsAlive: report?.state.name === 'running',
     projectId: report?.projectId ?? null,
     // WHOSE WORK IS AT RISK. The heading already carries the name for the toolbar row, and it is

@@ -22,11 +22,6 @@ output is large — tool-call steps are tiny, so the cap binds on exactly one st
 Truncation at this cap is a FAILURE — the review catches `finish_reason == "length"` and
 runs the one guided retry — never something to salvage partial verdicts from."""
 
-TEMPERATURE: Final = 0.0
-"""Set for consistency with the two existing run sites, and DOCUMENTED AS UNSUPPORTED on
-the current model generation — it is silently ignored. That is why the service caches the
-review's RESULT against the version rather than trusting two runs to agree."""
-
 CACHE_TTL: Final[Literal["1h"]] = "1h"
 """TTL for every Anthropic prompt-cache breakpoint the review sets
 (`anthropic_cache_instructions`, `anthropic_cache_tool_definitions`, `anthropic_cache`) —

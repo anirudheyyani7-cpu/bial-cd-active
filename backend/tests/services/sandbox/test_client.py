@@ -206,6 +206,110 @@ async def test_dev_logs_maps_next_to_next_cursor() -> None:
     await client.aclose()
 
 
+# --- the root_status wire seam ----------------------------------------------------------------
+#
+# These four lines in `dev_status` are the ONLY place the supervisor's `root_status` enters the
+# control plane. Every consumer of `DevStatus.shows_a_page` — the frame decision, the status the
+# citizen is shown, the relaunch arm — sits downstream of them, so a mapping bug here is invisible
+# at every one of those sites and surfaces only as a blank white pane on somebody's screen. The
+# field also has to survive the fleet it is being rolled out to: containers running an image that
+# predates it answer a body with no `root_status` key at all, forever.
+
+
+def _status_handler(body: object) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/_sup/dev/status"
+        assert request.headers.get("authorization") == "Bearer tok-secret"
+        return httpx.Response(200, json=body)
+
+    return handler
+
+
+async def test_a_root_status_on_the_wire_reaches_the_frame_decision() -> None:
+    """★ THE MEASURED DEFECT, end to end at the wire. This is the shape the supervisor sent on
+    2026-09-10: the dev server was up and answering (`ready` is fail-open and counts the 404), the
+    agent had not written `app/page.tsx` yet, and the platform framed it — a blank white pane
+    under a live-preview label.
+
+    Asserting `shows_a_page` here and not only the field is the point of the test: the field is
+    worth carrying only because the predicate reads it, and nothing else in the suite walks a
+    supervisor body all the way to that verdict.
+
+    Mutation check: drop `root_status=...` from the `DevStatus(...)` call in `dev_status` and this
+    goes red on the verdict, while every other test in this file stays green."""
+    client = _client(
+        _status_handler({"running": True, "ready": True, "port": 3000, "root_status": 404})
+    )
+    status = await client.dev_status(_handle())
+    assert status.root_status == 404
+    assert status.shows_a_page is False
+    await client.aclose()
+
+
+async def test_a_serving_root_comes_through_the_same_seam() -> None:
+    """The companion bound. A mapping hardwired to "no page" would pass the test above and
+    suppress the preview on every healthy build instead — the failure that is quiet in telemetry
+    and loud with the citizen, because a preview that never uncovers looks like a platform that
+    hung."""
+    client = _client(
+        _status_handler({"running": True, "ready": True, "port": 3000, "root_status": 200})
+    )
+    status = await client.dev_status(_handle())
+    assert status.root_status == 200
+    assert status.shows_a_page is True
+    await client.aclose()
+
+
+async def test_a_supervisor_that_never_heard_of_root_status_reads_none_not_an_error() -> None:
+    """★ THE GRANDFATHER ARM, and the whole rollout rests on it. Every container provisioned
+    before this field shipped answers a `/dev/status` body with no `root_status` key, and there is
+    no version handshake to ask with. `.get` is what makes that body legal: an absent field reads
+    as "this container cannot say", which `shows_a_page` then resolves to today's behaviour.
+    Reading it with `data["root_status"]` instead would raise on the ENTIRE EXISTING FLEET — and
+    because that raise is a `SandboxError`, the best-effort callers would swallow it and the
+    breakage would present as previews that silently never appear.
+
+    Mutation check: `data.get("root_status")` -> `data["root_status"]` and this goes red with
+    `SandboxError: dev/status returned a malformed body`."""
+    client = _client(_status_handler({"running": True, "ready": True, "port": 3000}))
+    status = await client.dev_status(_handle())
+    assert status.root_status is None
+    assert status.shows_a_page is True, "an old container keeps framing exactly as it does today"
+    await client.aclose()
+
+
+async def test_a_root_status_sent_as_a_string_is_coerced_not_carried_through() -> None:
+    """`int(raw_root)` is deliberate, and this test exists so the next reader knows that rather
+    than guessing. The supervisor sends a JSON number today, but it ships in a separately-released
+    image, and a string `"404"` carried through uncoerced would be a truthy non-int arriving at a
+    `< 400` comparison — `TypeError` at the frame decision, at request time, in production.
+
+    Mutation check: `int(raw_root)` -> `raw_root` and this goes red on the `== 404` identity."""
+    client = _client(
+        _status_handler({"running": True, "ready": True, "port": 3000, "root_status": "404"})
+    )
+    status = await client.dev_status(_handle())
+    assert status.root_status == 404
+    assert status.shows_a_page is False
+    await client.aclose()
+
+
+async def test_a_root_status_that_is_not_a_number_at_all_stays_in_the_taxonomy() -> None:
+    """The bound on that coercion. `int("teapot")` is a `ValueError`, and the existing
+    `except (KeyError, TypeError, ValueError)` arm is what keeps it a `SandboxError` — the same
+    guarantee `port` and `exit_code` already have one line up, now asserted for the new field too.
+    Every best-effort caller of `dev_status` guards `except SandboxError` and nothing wider, so a
+    raw `ValueError` escaping here would kill a turn over a diagnostic field.
+
+    Mutation check: remove `ValueError` from that except tuple and this raises `ValueError`."""
+    client = _client(
+        _status_handler({"running": True, "ready": True, "port": 3000, "root_status": "teapot"})
+    )
+    with pytest.raises(SandboxError):
+        await client.dev_status(_handle())
+    await client.aclose()
+
+
 async def test_exec_504_maps_to_plain_sandbox_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(504, json={"detail": "exec timed out"})

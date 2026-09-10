@@ -33,6 +33,7 @@ from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Final, Literal
 
@@ -100,7 +101,13 @@ from src.services.agent.read_tools import (
     ReadOnlyWorkspace,
 )
 from src.services.agent.toolsets import toolsets_for_kind
-from src.services.build_sessions.alarms import HMR_PROTOCOL_DRIFT_EVENT
+from src.services.build_sessions.alarms import (
+    APP_FIRST_SERVED_EVENT,
+    APP_SERVING_LOST_EVENT,
+    HMR_PROTOCOL_DRIFT_EVENT,
+    SANDBOX_DEV_STARTED_EVENT,
+    SERVING_PROOF_STAMP_REFUSED,
+)
 from src.services.build_sessions.counters import count
 from src.services.build_sessions.integrity import (
     baseline_identity,
@@ -108,6 +115,11 @@ from src.services.build_sessions.integrity import (
     stamp_the_watermark,
 )
 from src.services.build_sessions.locks import (
+    an_instant_on_the_hash,
+    clear_serving,
+    elapsed_ms,
+    mark_serving,
+    read_registry,
     release_liveness_lease,
     renew_liveness_lease,
     renew_lock,
@@ -122,6 +134,7 @@ from src.services.build_sessions.manager import (
     SnapshotUnavailableError,
     StopOutcome,
     WorkspaceUnreadableError,
+    app_name_for,
 )
 from src.services.build_sessions.outcome import STOPPED_BY_USER
 from src.services.messages.projection import (
@@ -156,7 +169,6 @@ from src.services.orchestrator.constants import (
     RUN_TOKEN_BUDGET,
     RUN_WALL_CLOCK_DEADLINE_S,
     SELF_HEAL_MAX_RETRIES,
-    TEMPERATURE,
     WORKSPACE_NOTE_MAX_POLLS,
 )
 from src.services.orchestrator.deps import SandboxSession
@@ -171,6 +183,11 @@ from src.services.orchestrator.selfheal import (
     where_are_we,
 )
 from src.services.redis import get_redis
+from src.services.redis.keys import (
+    REGISTRY_FIELD_APP_NAME,
+    REGISTRY_FIELD_CREATED_AT,
+    REGISTRY_FIELD_SERVING_SINCE,
+)
 from src.services.sandbox import SandboxClient, SandboxError
 from src.services.sandbox.base import CompileState
 from src.services.turns.copy import (
@@ -350,6 +367,29 @@ LEASE_RENEW_FAILED_EVENT = "liveness_lease_renew_failed"
 # that exists in two spellings.
 LOCK_LOST_EVENT = "build session lock lost during an active build"
 LOCK_RENEW_FAILED_EVENT = "liveness renew/heartbeat failed during build"
+
+# WHICH observer watched the app answer, in `APP_FIRST_SERVED_EVENT`'s `observer` vocabulary.
+# Two of them live in this file, and they are two DIFFERENT sightings rather than one written
+# twice: the watcher polls `/dev/status` every second for the life of the turn, while the
+# self-heal verify asks between model steps. A first serve credited to `turn_verify` says the
+# 1s watcher was behind — it had gone round its `except SandboxError` arm, or the loop was
+# between polls — which is precisely the condition that used to mean NOTHING EVER STAMPED, so
+# collapsing the two names would hide the one case worth seeing.
+#
+# A closed `Literal` for the same reason the manager's sibling has one: a typo would mint an
+# observer that never existed, and the log rule keyed on the name would silently match nothing.
+_ServingObserver = Literal["turn_watcher", "turn_verify"]
+_OBSERVER_TURN_WATCHER: Final[_ServingObserver] = "turn_watcher"
+_OBSERVER_TURN_VERIFY: Final[_ServingObserver] = "turn_verify"
+
+# THE STORE WOULD NOT ANSWER, which is not the same fact as the compare-and-set REFUSING.
+# `SERVING_PROOF_STAMP_REFUSED` means Redis answered and said no — the hash was gone, ending, or
+# named another container — and its WHAT-TO-DO sends an operator looking for a reclaim. This one
+# means nothing was written at all because the round trip failed, and the remedy is Redis. One
+# alert cannot serve both, so they are two names. Local rather than in `build_sessions/alarms.py`
+# for the reason `LEASE_RENEW_FAILED_EVENT` above is: it is a transport failure in one caller,
+# not a lifecycle notice the whole platform emits.
+SERVING_PROOF_WRITE_FAILED_EVENT = "serving_proof_write_failed"
 
 
 def _deferred_call(output: object) -> ToolCallPart | None:
@@ -691,6 +731,25 @@ class _TurnState:
     # Claim-once for the preview frame, shared by the watcher and the between-verify
     # fallback: whichever sees the dev server first emits, the other stays quiet.
     preview_framed: bool = False
+    # HAS THIS TURN FINISHED ASKING WHETHER THE SERVING PROOF IS DOWN? Set once either observer
+    # gets a DEFINITIVE answer out of Redis — it stamped, someone else already had, or the
+    # compare-and-set refused and said why. Retracted by the crash edge, so a container that
+    # comes back re-proves itself and earns a second `app_first_served`.
+    #
+    # DELIBERATELY NOT `preview_framed`, and that distinction is the whole of this change.
+    # `preview_framed` is a once-per-TURN one-shot that either of two callers may consume
+    # WITHOUT writing anything; riding the proof on it meant that whenever the self-heal verify
+    # won the claim, the app served and nothing ever stamped — the pane then sat on "Getting
+    # your app ready" over a working app until the five-minute reaper. This flag is set only by
+    # a call that actually attempted the write, so whichever observer arrives first, the stamp
+    # lands. It is a latch against REPEATING the ask (the watcher asks once a second), never a
+    # token that gates it.
+    serving_proof_settled: bool = False
+    # `SERVING_PROOF_WRITE_FAILED_EVENT` is said once per turn, for the reason
+    # `said_it_could_not_check` is: a Redis outage under a 1s poll would otherwise write one
+    # identical line per second per live turn, and the second one tells an operator nothing the
+    # first did not. The RETRY is not suppressed — only the sentence.
+    said_the_proof_would_not_write: bool = False
     # Has any turn on this app ever done real work? Resolved ONCE where the workspace is pinned
     # (one HEAD on the recovery slot) and carried, because it cannot change inside one turn and
     # the self-heal loop asks the health verdict for it up to four times. It gates the content
@@ -986,6 +1045,31 @@ class TurnEngine:
         reminder, same terminal arms, same `finally` — but a node-by-node self-heal loop in
         place of the single `agent.run`. Everything around that fork is shared, so a fix to
         the terminal handling can never apply to only one of the two."""
+        # ONE BUILD, ONE GREP — and it has to be bound HERE, inside the detached task, not at
+        # the request seam that spawned it.
+        #
+        # `asyncio` copies the ambient context at task CREATION, so a bind in `start_turn`
+        # covers the request and not reliably this task's lifetime — which is where every line
+        # worth correlating is actually emitted: the attach's failures, `sandbox_dev_started`,
+        # `app_first_served`, `app_serving_lost`, the terminal. `merge_contextvars` is already
+        # wired as the first structlog processor (`main.py`) and until now nothing in
+        # `backend/src` ever called `bind_contextvars`, so it was configured and inert. These
+        # seven keys make the ~200 EXISTING failure lines in this file joinable retroactively,
+        # with no edit to any of them.
+        #
+        # `build_id` IS the turn id for a turn (a relaunch mints its own), spelled as its own
+        # key so one grep spans both doors into a container. `app_id`/`app_name` are what the
+        # CALLER believes; `_attach_sandbox` re-binds both off the session it actually got,
+        # because a Plan chat can carry no app id at all and the container is the authority.
+        log_context = structlog.contextvars.bind_contextvars(
+            build_id=str(state.turn_id),
+            user_id=str(state.user_id),
+            project_id=str(project_id),
+            app_id=str(app_id) if app_id is not None else None,
+            app_name=app_name_for(app_id) if app_id is not None else None,
+            conversation_id=str(state.conversation_id),
+            turn_id=str(state.turn_id),
+        )
         # One usage accumulator threaded through both the primary run and the forced retry
         # (they increment it in place). Because it survives the run, an explicit Stop that
         # cancels the model mid-flight — or a DB error after the model replied — still bills the
@@ -1151,9 +1235,19 @@ class TurnEngine:
                         # `cache_control`, and these three settings place those markers — so every
                         # plan turn re-read its whole prefix at full price. It hid because build's
                         # `iter` loop pays off inside one turn; a plan's `run` only across turns.
+                        # NO `temperature`, AND ITS ABSENCE IS THE FIX FOR A WARNING ON EVERY
+                        # SINGLE CALL. The deployed models — every `claude-opus-4-7` and newer
+                        # in pydantic-ai's profile — carry `anthropic_disallows_sampling_settings`,
+                        # so `prepare_request` STRIPS `temperature`/`top_p`/`top_k` and raises
+                        # `UserWarning: Sampling parameters ['temperature'] are not supported`.
+                        # It was being sent anyway, so the constant's promise of deterministic
+                        # generation was never in force and the log carried the library saying so
+                        # once per model step. Reasoning models do their own sampling; the knobs
+                        # that DO reach this deployment are the effort and the thinking mode
+                        # below. Re-add it only against a profile that accepts it, and prove that
+                        # with `prepare_request` rather than by assuming.
                         model_settings=AnthropicModelSettings(
                             max_tokens=MAX_OUTPUT_TOKENS,
-                            temperature=TEMPERATURE,
                             anthropic_thinking=ADAPTIVE_THINKING,
                             anthropic_effort=PLAN_EFFORT,
                             anthropic_cache_instructions=CACHE_TTL,
@@ -1411,6 +1505,12 @@ class TurnEngine:
                 # -and-pardon sequence — which can easily outlive the 90-second heartbeat TTL
                 # — exposed to a concurrent sweep with nothing at all vouching for it.
                 await self._stop_liveness_lease(state)
+                # AND THE CORRELATION COMES OFF LAST, once every line this turn will ever
+                # write has been written. Hygiene rather than a leak fix: a task's context is
+                # its own copy, so these bindings die with the task even unreset — but
+                # `_run_turn` is awaitable directly (the tests do exactly that), and an
+                # abandoned binding there would stamp one turn's build id onto the next.
+                structlog.contextvars.reset_contextvars(**log_context)
 
     async def _pin_workspace(
         self,
@@ -1607,6 +1707,17 @@ class TurnEngine:
         # snapshot exactly as it should — an UNRECOVERABLE turn must never make a template
         # permanent, which is what the first hold exists to prevent in the first place.
         state.write_session = session
+        # THE CONTAINER IS THE AUTHORITY ON WHICH APP THIS BUILD IS ABOUT, so the correlation
+        # bound at the top of the turn is corrected here off what `ensure_sandbox` actually
+        # handed back. A Plan chat opened before anything was built carries no app id at all,
+        # and this is the seam where one exists — so without this re-bind, the lines that matter
+        # most (`sandbox_dev_started`, `app_first_served`, `app_serving_lost`) would carry a null
+        # `app_name`, which is the one key that joins this trace to the registry hash, the
+        # container name and the app's own URL path. Re-binding rather than binding for the first
+        # time keeps ONE spelling per key; the turn's `finally` resets both with its own tokens.
+        structlog.contextvars.bind_contextvars(
+            app_id=str(session.app_id), app_name=session.handle.app_name
+        )
 
         if session.news is RecoveryNews.UNRECOVERABLE:
             # Nothing was put back, and the container is showing a template. The one thing
@@ -1665,6 +1776,20 @@ class TurnEngine:
         # another one the user can see.
         try:
             await sandbox_client.dev_start(session.handle)
+            # THE DEV SERVER IS COMING UP — AND THAT IS ALL THIS SAYS. The gap between this
+            # line and `app_first_served` is the interesting one: a build that reaches here and
+            # stops has a dev server that started and never compiled a route, which today is
+            # indistinguishable in the log from a build that never got a container.
+            #
+            # `already_running` reads `handle.ready`, the `/dev/status` snapshot taken at handle
+            # construction — BEFORE this call — which is hard-coded False on both birth arms and
+            # a real reading only on the attach arm. That is exactly the question the field
+            # asks: did an attach find something already answering, or did this call start it?
+            _log.info(
+                SANDBOX_DEV_STARTED_EVENT,
+                arm="ensure_sandbox",
+                already_running=session.handle.ready,
+            )
         except SandboxError:
             _log.warning(
                 "write_dev_start_at_attach_failed",
@@ -1827,10 +1952,56 @@ class TurnEngine:
                 )
                 self._emit_verify_step(state, iteration, phase="finished", verdict=outcome.state)
 
-                if outcome.dev_ready and state.claim_preview_frame():
-                    await self._emit_preview_ready(
-                        state, outcome.preview_url or sandbox.handle.preview_url
+                if outcome.dev_ready:
+                    # THE PROOF RIDES THE OBSERVATION, NEVER THE CLAIM — and this is the caller
+                    # that made the difference. `claim_preview_frame` is a once-per-TURN
+                    # one-shot with two consumers, this one and the 1s watcher, and it is a
+                    # coin toss which arrives first: the watcher's `except SandboxError` arm
+                    # sleeps a whole poll, and `verify` runs the moment a model step ends. Had
+                    # the stamp sat inside the claim, every turn where THIS line won it would
+                    # have served a working app while the registry still said "never served" —
+                    # the pane stuck on "Getting your app ready" until the five-minute reaper,
+                    # which is strictly worse than the defect the stamp exists to fix.
+                    #
+                    # `outcome.dev_ready` is the same fact the watcher reads: `/dev/status.ready`
+                    # means a request to the app root actually succeeded. Stamping is
+                    # once-only by the compare-and-set's own first-serve-wins rule, so both
+                    # observers may say it and the second one costs a refused EVAL.
+                    #
+                    # ITS OWN READING, because `outcome.dev_ready` is a BOOLEAN distilled from
+                    # `Readiness.READY` and cannot say what the root answered WITH. One extra
+                    # supervisor call, taken between model steps rather than on the 1s poll, and
+                    # a blip simply leaves the stamp to the watcher.
+                    try:
+                        verified = await sandbox.sandbox_client.dev_status(sandbox.handle)
+                        page_is_up = verified.shows_a_page
+                    except SandboxError:
+                        page_is_up = False
+                    await self._prove_it_serves(
+                        state, sandbox, observer=_OBSERVER_TURN_VERIFY, shows_a_page=page_is_up
                     )
+                    # AND THE FRAME RIDES THE READING THE STAMP RODE, for the reason the watcher's
+                    # arm sets out at length. This caller had the same split as that one: the
+                    # reading was taken, the stamp correctly refused a root that answered without
+                    # a page — and then the claim was spent and the frame emitted anyway, so a
+                    # verify that won the claim framed the 404 the REST poll was still, correctly,
+                    # calling STARTING. Whichever of the two emitters gets there first, the
+                    # browser is told to mount an iframe over a blank document.
+                    #
+                    # `page_is_up` IS TESTED FIRST SO THE CLAIM SURVIVES A REFUSAL. `and`
+                    # short-circuits, and the order is the whole of it: written the other way
+                    # round this would consume the turn's one-shot on a page-less reading and
+                    # leave the 1s watcher — the only other emitter there is — with nothing to
+                    # frame the app WITH once it finally has a page.
+                    #
+                    # A BLIP ON THAT READING WAITS RATHER THAN FRAMES. The `except SandboxError`
+                    # above answers False, which here means "not yet, and not from here": one
+                    # supervisor call failed between model steps, and the watcher's next poll is a
+                    # second away.
+                    if page_is_up and state.claim_preview_frame():
+                        await self._emit_preview_ready(
+                            state, outcome.preview_url or sandbox.handle.preview_url
+                        )
 
                 if outcome.green and sandbox.done_requested:
                     state.snapshot_committed = None  # the finalize answers this, not us
@@ -1989,9 +2160,11 @@ class TurnEngine:
             # the model spends a self-heal round repairing its own truncation. The three
             # cache flags put breakpoints on the context this loop re-sends VERBATIM every
             # step: the instructions and tool definitions never change across a build.
+            # NO `temperature` — see the plan turn's note above. It is stripped by the
+            # deployed model's profile and warns once per step; the effort and thinking mode
+            # below are the knobs that actually reach this deployment.
             model_settings=AnthropicModelSettings(
                 max_tokens=MAX_OUTPUT_TOKENS,
-                temperature=TEMPERATURE,
                 anthropic_thinking=ADAPTIVE_THINKING,
                 anthropic_effort=BUILD_EFFORT,
                 anthropic_cache_instructions=CACHE_TTL,
@@ -2455,9 +2628,169 @@ class TurnEngine:
         state.compile_state = report.state
         self._emit(state, lambda seq: CompileFrame(seq=seq, state=report.state))
 
+    async def _prove_it_serves(
+        self,
+        state: _TurnState,
+        sandbox: SandboxSession,
+        *,
+        observer: _ServingObserver,
+        shows_a_page: bool,
+    ) -> None:
+        """Record that something WATCHED this container's app answer a request — the one fact
+        the preview pane is allowed to say "your app is running" off.
+
+        THIS IS THE WHOLE CHANGE. `state == ready` on the registry hash says a container was
+        SCHEDULED, and the platform reporting that as running is the defect the `serving_since`
+        stamp exists to end. Both of this file's observers call this, and so does the relaunch
+        path in the manager; the compare-and-set in `build_sessions/locks.py` is what makes
+        "first serve wins" true across all of them, and what refuses a stamp aimed at a
+        container the one-per-user slot no longer holds.
+
+        ASKED ONCE PER TURN, NOT ONCE PER POLL — but latched on the ANSWER, never on a token
+        somebody else can take. `state.serving_proof_settled` is set only by a call that got a
+        definitive reply out of Redis, so a store failure keeps retrying on the next poll while
+        a success (or a diagnosed refusal) stops asking.
+
+        NOTHING HERE MAY RAISE, and `RedisError` is too narrow to hold that promise: `get_redis()`
+        answers an unconfigured store with `RedisNotConfiguredError`, a `RuntimeError`. This runs
+        inside the preview watcher, which also owns crash detection — a proof that could kill it
+        would take the crash edge down with it, and the app would go dark with nothing watching."""
+        if state.serving_proof_settled:
+            return
+        # A PAGE, NOT MERELY AN ANSWER — and this is the second half of the change, added after a
+        # real build put a BLANK document on screen under a live-preview label. `/dev/status.ready`
+        # is fail-open by the supervisor's own design (any response counts, 4xx included) so that a
+        # compile error cannot wedge it False and mislead the model. A build spends its first
+        # seconds answering 404s, genuinely "ready" with nothing to show, and stamping there framed
+        # exactly that. NOT LATCHED: this is the ordinary case on the way up, so the next poll asks
+        # again a second later rather than concluding anything.
+        if not shows_a_page:
+            return
+        app_name = sandbox.handle.app_name
+        when = datetime.now(UTC)
+        try:
+            redis = get_redis()
+            stamped = await mark_serving(redis, state.user_id, app_name=app_name, when=when)
+            # ONE EXTRA READ, AND ONLY ONCE PER TURN. On the way in it buys the registry's own
+            # `created_at`, so `ms_since_container_created` is an answer rather than a
+            # subtraction the operator has to do across two log lines — this is the eight-second
+            # number the 2026-09-10 measurement had to be reconstructed from a screen recording
+            # to get. On the refusal path it is the only way to tell the ordinary case (another
+            # observer already proved this same container) from the dangerous one (the hash is
+            # gone, ending, or names a different app), which `locks.mark_serving` cannot tell
+            # apart on its own and says so.
+            registry = await read_registry(redis, state.user_id)
+            state.serving_proof_settled = True
+            if stamped:
+                _log.info(
+                    APP_FIRST_SERVED_EVENT,
+                    app_name=app_name,
+                    serving_since=when.isoformat(),
+                    ms_since_container_created=elapsed_ms(
+                        an_instant_on_the_hash(registry, REGISTRY_FIELD_CREATED_AT), when
+                    ),
+                    observer=observer,
+                    # WHETHER THIS TURN BROUGHT THE CONTAINER UP, read off the same field the
+                    # container-start ratio's denominator is gated on. A turn that joined a
+                    # container already serving is not a cold start, and calling it one would
+                    # put a sub-second window beside a sixty-second one under the same name.
+                    cold=state.started_a_container,
+                )
+                return
+            if registry is not None and registry.get(REGISTRY_FIELD_APP_NAME) == app_name:
+                if registry.get(REGISTRY_FIELD_SERVING_SINCE):
+                    # ALREADY PROVEN, BY AN OBSERVER THAT GOT HERE FIRST — the verify path, an
+                    # earlier turn, or the relaunch that started this container. Silent on
+                    # purpose: `app_first_served` means FIRST, so a second line under that name
+                    # would make `ms_since_container_created` meaningless.
+                    return
+                # The hash still names our container and the field is still the empty sentinel.
+                # Two ways to get here and neither is the near-miss: the compare-and-set refused
+                # on `state`, meaning the reaper has already marked this container `ending` and
+                # it is going away — or the crash edge retracted a proof in the window between
+                # the write and this read, and the next poll will re-stamp. Nothing to alarm on.
+                return
+            _log.warning(
+                SERVING_PROOF_STAMP_REFUSED,
+                expected_app=app_name,
+                # A BOOL, NEVER THE NAME THAT WAS FOUND. The other name belongs to another of
+                # this citizen's projects, and the id vocabulary in this log stays user-scoped.
+                found_app_present=bool(registry and registry.get(REGISTRY_FIELD_APP_NAME)),
+                observer=observer,
+            )
+        except Exception:
+            # NOT LATCHED — the next poll asks again, because a store that would not answer has
+            # told us nothing about whether the app served. Said ONCE per turn, for the reason
+            # `said_it_could_not_check` is: a Redis outage under a 1s poll would write one
+            # identical line per second per live turn.
+            if state.said_the_proof_would_not_write:
+                return
+            state.said_the_proof_would_not_write = True
+            _log.warning(
+                SERVING_PROOF_WRITE_FAILED_EVENT,
+                app_name=app_name,
+                observer=observer,
+                exc_info=True,
+            )
+
+    async def _retract_serving_proof(
+        self,
+        state: _TurnState,
+        sandbox: SandboxSession,
+        *,
+        unanswered_polls: int,
+        exit_code: int | None,
+    ) -> None:
+        """Take the serving proof back off a container that has stopped answering.
+
+        RETRACTED TO THE EMPTY SENTINEL, NEVER DELETED — `redis/keys.py` carries the reading:
+        an ABSENT `serving_since` is the pre-cutover grandfather arm and reads as PROVEN, so a
+        delete here would turn a crashed app into a running one, which is the bug upside down.
+
+        The read runs BEFORE the clear because the clear overwrites the very field
+        `served_for_ms` is measured from. Silent when nothing was standing: the compare-and-set
+        answering 0 is what stops a container that never served logging a loss that never
+        happened. Nothing raises, for the reason `_prove_it_serves` gives."""
+        app_name = sandbox.handle.app_name
+        # RE-ARMED BEFORE THE WRITE IS EVEN ATTEMPTED, so a Redis blip on the way down cannot
+        # leave the turn unable to re-prove a container that comes back. The compare-and-set is
+        # the authority on whether a re-stamp is legitimate; costing it one refused EVAL is the
+        # cheaper mistake.
+        state.serving_proof_settled = False
+        try:
+            redis = get_redis()
+            registry = await read_registry(redis, state.user_id)
+            served_since = an_instant_on_the_hash(registry, REGISTRY_FIELD_SERVING_SINCE)
+            if not await clear_serving(redis, state.user_id, app_name=app_name):
+                return
+            _log.warning(
+                APP_SERVING_LOST_EVENT,
+                app_name=app_name,
+                unanswered_polls=unanswered_polls,
+                # The supervisor's post-mortem of the dead child — 137 is the OOM killer, and
+                # it is the most common answer there is. None while it is alive, when it never
+                # started, or on an image that predates the field.
+                exit_code=exit_code,
+                served_for_ms=elapsed_ms(served_since, datetime.now(UTC)),
+            )
+        except Exception:
+            if state.said_the_proof_would_not_write:
+                return
+            state.said_the_proof_would_not_write = True
+            _log.warning(
+                SERVING_PROOF_WRITE_FAILED_EVENT,
+                app_name=app_name,
+                observer=_OBSERVER_TURN_WATCHER,
+                exc_info=True,
+            )
+
     async def _watch_preview(self, state: _TurnState) -> None:
-        """Poll the dev server so the preview appears the moment it is servable, and so a crash is
-        REPORTED rather than left as a blank iframe.
+        """Poll the dev server so the preview appears the moment the app has a PAGE to show, and
+        so a crash is REPORTED rather than left as a blank iframe.
+
+        SERVABLE IS NOT THE SAME AS SHOWING SOMETHING, which is the distinction the whole ready
+        arm below turns on: `/dev/status.ready` is fail-open and counts a 404, so a container
+        framed on it alone puts a blank document under a live-preview label.
 
         Lives server-side because `/dev/status` is bearer-guarded — only the server holds the
         supervisor token. Every failure is swallowed; a watcher that raised would take the build
@@ -2469,6 +2802,14 @@ class TurnEngine:
         if sandbox is None:
             return
         reconnecting = False
+        # THE CRASH EDGE'S OTHER LATCH, kept apart from `reconnecting` on purpose. That flag is
+        # gated on `state.preview_framed` — correct for the SSE frame, which must not announce a
+        # reconnect for an iframe it never told the client to mount — but wrong for the serving
+        # proof, which is a fact about the CONTAINER and outlives any one turn's framing. A turn
+        # that attaches a container stamped by an earlier turn and watches it die never frames
+        # anything, so a proof-clear riding `preview_framed` would leave a dead app reading
+        # RUNNING. This one fires on the streak alone and re-arms when the app answers again.
+        proof_retracted = False
         unanswered_polls = 0
         while True:
             try:
@@ -2483,43 +2824,140 @@ class TurnEngine:
             await self._poll_compile_state(state, sandbox)
             if status.ready:
                 unanswered_polls = 0
-                first_serve = state.claim_preview_frame()
-                if first_serve or reconnecting:
-                    # First serve, or recovered after a crash — either way the client needs
-                    # the url to (re)mount its iframe on.
-                    await self._emit_preview_ready(state, sandbox.handle.preview_url)
-                if first_serve and state.started_a_container:
-                    # THE CONTAINER-START SUCCESS RATIO'S NUMERATOR, and this is the only place
-                    # the turn learns the answer.
-                    # `ready` here means a request to the app root was actually SERVED — the
-                    # same definition `relaunch_preview` gates its own numerator on, so the two
-                    # writers are counting the same event.
-                    #
-                    # AFTER THE FRAME, NEVER BEFORE. This is an await on the one code path
-                    # between the app becoming servable and the citizen seeing it, so counting
-                    # first would delay their preview by a database round trip to record that
-                    # their preview arrived. Bookkeeping goes behind the thing it books.
-                    #
-                    # NOT `session.handle.ready`, which looks like this fact and is not one: on
-                    # both birth arms it is hard-coded False, and on the attach arm it is a
-                    # `/dev/status` snapshot taken BEFORE this turn's own `dev_start`. Reading
-                    # it at the attach seam would report a near-zero success rate and measure
-                    # the container's birth rather than the app's.
-                    #
-                    # GATED ON THE CLAIM, NOT ON `_emit_preview_ready`. Two emitters call that
-                    # method — this watcher and the self-heal verify — and this watcher calls it
-                    # again on every crash RECOVERY (the `or reconnecting` above). The claim is
-                    # the synchronous once-per-turn one-shot, so counting on it is once by
-                    # construction. And gated on `started_a_container`, or every turn that
-                    # joined a container already serving would land in the numerator without a
-                    # matching denominator row.
-                    await count(HarnessCounter.APP_START_REACHED_RUNNING, app_id=sandbox.app_id)
-                reconnecting = False
+                # THE PROOF GOES DOWN ON THE OBSERVATION, ABOVE THE CLAIM AND AHEAD OF THE
+                # FRAME. Two reasons, in that order of weight.
+                #
+                # ABOVE THE CLAIM, because `claim_preview_frame` is a once-per-turn one-shot
+                # the self-heal verify can take first — see the matching note at its other
+                # caller. Stamping under `if first_serve or reconnecting:` meant that whenever
+                # verify won, this block never ran and NOTHING EVER STAMPED. The
+                # compare-and-set's own first-serve-wins rule supplies the once-only property
+                # the claim was being borrowed for, so the claim goes back to meaning what its
+                # name says: who emits the frame.
+                #
+                # AHEAD OF THE FRAME, which is the one place this file's own "bookkeeping goes
+                # behind the thing it books" rule does NOT apply — and the counter below still
+                # obeys it. The stamp is not bookkeeping; it is the fact the REST poll reads to
+                # decide whether the pane may say "your app is running". Frame first and a poll
+                # landing in between answers STARTING while the live stream says ready. The price
+                # is one Lua EVAL before the citizen's preview, and one per second until it lands.
+                #
+                # ORDERING ALONE DOES NOT CLOSE THE SPLIT-BRAIN, and this paragraph used to be
+                # written as though it did. It closes the RACE — poll and stream can no longer
+                # disagree merely because they read at different instants. The other half is a
+                # disagreement about the FACT: `_prove_it_serves` declines a root that answered
+                # without a page, and the frame went out anyway on the very next line, so the poll
+                # said STARTING while the stream framed a 404. The gate below is what closes that
+                # one; sequencing the two writes could never have.
+                await self._prove_it_serves(
+                    state,
+                    sandbox,
+                    observer=_OBSERVER_TURN_WATCHER,
+                    shows_a_page=status.shows_a_page,
+                )
+                proof_retracted = False
+                # AND THE FRAME WAITS FOR A PAGE, WHICH `status.ready` IS NOT. The supervisor's
+                # readiness is fail-open by its own design — ANY answer on the dev port counts,
+                # 404 and 500 included, so that a compile error cannot wedge it False and mislead
+                # the model — and the stamp above already declines a root that answered without a
+                # page. Emitting the frame off the bare `ready` is what left this branch's two
+                # emitters disagreeing about the same container: the REST poll read the missing
+                # stamp and answered STARTING, while this stream told the browser to mount its
+                # iframe. The browser wins that argument, and it framed the 404 — the blank white
+                # pane measured on 2026-09-10, arriving over SSE instead of over the poll, on a
+                # container whose root was still 404ing because the agent had not written
+                # `app/page.tsx` yet.
+                #
+                # THE GATE IS AROUND THE CLAIM, NOT AROUND THE EMIT, and that is the difference
+                # between a fix and a worse defect. `claim_preview_frame` is a once-per-TURN
+                # one-shot: spend it on a page-less reading and the real first serve — a second
+                # later, in this same loop — has nothing left to emit with, so the pane never
+                # frames at all. Refusing the claim costs nothing, because the next poll asks
+                # again. `reconnecting` is inside for the identical reason: it is the re-frame a
+                # recovered client is still waiting for, and clearing it here on a root with no
+                # page would drop that client's reconnect just as permanently.
+                #
+                # WHAT IS ABOUT THE CONTAINER STAYS ON `ready`: the unanswered-poll streak above,
+                # the crash edge's re-arm, and the compile poll before it. "Is anything answering
+                # the dev port" and "does the app have a page yet" are different questions, and a
+                # dev server 404ing its way through the first seconds of a build is alive — read
+                # that as death and the streak would retract a good proof and report a crash that
+                # did not happen.
+                #
+                # A SUPERVISOR THAT CANNOT SAY STILL FRAMES: `shows_a_page` reads an absent
+                # `root_status` as today's behaviour on purpose, so the pre-`root_status` fleet
+                # keeps its preview instead of being locked out of it by a field it never sends.
+                if status.shows_a_page:
+                    first_serve = state.claim_preview_frame()
+                    if first_serve or reconnecting:
+                        # First serve, or recovered after a crash — either way the client needs
+                        # the url to (re)mount its iframe on.
+                        await self._emit_preview_ready(state, sandbox.handle.preview_url)
+                    if first_serve and state.started_a_container:
+                        # THE CONTAINER-START SUCCESS RATIO'S NUMERATOR, and this is the only
+                        # place the turn learns the answer.
+                        #
+                        # IT RIDES THE PAGE GATE ABOVE rather than the bare `ready`, because
+                        # `relaunch_preview` refuses its own `ready` for a root that answered
+                        # without a page — so both writers count a start that reached a SERVING
+                        # PAGE, and neither can quietly start counting something else.
+                        #
+                        # AFTER THE FRAME, NEVER BEFORE. This is an await on the one code path
+                        # between the app becoming servable and the citizen seeing it, so counting
+                        # first would delay their preview by a database round trip to record that
+                        # their preview arrived. Bookkeeping goes behind the thing it books.
+                        #
+                        # NOT `session.handle.ready`, which looks like this fact and is not one:
+                        # on both birth arms it is hard-coded False, and on the attach arm it is a
+                        # `/dev/status` snapshot taken BEFORE this turn's own `dev_start`. Reading
+                        # it at the attach seam would report a near-zero success rate and measure
+                        # the container's birth rather than the app's.
+                        #
+                        # GATED ON THE CLAIM, NOT ON `_emit_preview_ready`. Two emitters call that
+                        # method — this watcher and the self-heal verify — and this watcher calls
+                        # it again on every crash RECOVERY (the `or reconnecting` above). The
+                        # claim is the synchronous once-per-turn one-shot, so counting on it is
+                        # once by construction. And gated on `started_a_container`, or every turn
+                        # that joined a container already serving would land in the numerator
+                        # without a matching denominator row.
+                        await count(
+                            HarnessCounter.APP_START_REACHED_RUNNING, app_id=sandbox.app_id
+                        )
+                    reconnecting = False
             else:
                 # Counted on the PAIR (nothing answering AND no child alive), not on the framed/
                 # reconnecting bookkeeping, so the streak means exactly what its name says. A
                 # live child that is merely still compiling resets it immediately.
                 unanswered_polls = unanswered_polls + 1 if not status.running else 0
+                if (
+                    not proof_retracted
+                    and not status.running
+                    and unanswered_polls >= CRASH_EDGE_CONSECUTIVE_POLLS
+                ):
+                    # THE APP HAD SERVED AND HAS STOPPED, so the proof comes off the registry
+                    # and the pane falls back to "getting your app ready" instead of framing
+                    # nginx's app-gone page.
+                    #
+                    # THE SAME DEBOUNCE THE FRAME USES, AND NEVER ANYTHING WEAKER. `ready=False`
+                    # alone is not a death — the supervisor's readiness answer lapses benignly
+                    # while a slow root route renders — and a transport error is not a death
+                    # either, which is why the `except SandboxError` arm above still just
+                    # continues. `not status.running` is spelled out even though the streak
+                    # already implies it (a live child resets the count to zero), so that
+                    # nobody later relaxes the streak into a readiness-only test and turns a
+                    # slow render into a retracted proof.
+                    #
+                    # ONLY WHILE A TURN IS STREAMING. This watcher is created at the attach and
+                    # cancelled at the terminal, so the commoner shape — the build finishes, the
+                    # turn ends, the citizen keeps using the app, the dev server dies — is not
+                    # reachable from here at all. The out-of-turn death is the reconciler's.
+                    proof_retracted = True
+                    await self._retract_serving_proof(
+                        state,
+                        sandbox,
+                        unanswered_polls=unanswered_polls,
+                        exit_code=status.exit_code,
+                    )
                 if (
                     state.preview_framed
                     and not reconnecting

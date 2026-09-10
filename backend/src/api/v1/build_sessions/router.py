@@ -499,7 +499,7 @@ class SaveResponse(CamelModel):
 
 
 class PreviewStateResponse(CamelModel):
-    """FOUR STATES AND AN UNKNOWN, not one boolean.
+    """FIVE STATES AND AN UNKNOWN, not one boolean.
 
     A boolean has no unknown arm, so a FAILED registry read says "your preview is gone" for a
     question nobody managed to ask. It also flattens three genuinely different ordinary states
@@ -514,6 +514,28 @@ class PreviewStateResponse(CamelModel):
     # branch on `state`, and this field exists only so old ones keep working.
     alive: bool
     preview_url: str | None = None
+    # DIAGNOSTIC ONLY — NO CLIENT LOGIC MAY BRANCH ON THIS FIELD. Non-null strictly when
+    # `state == alive`: the ISO-8601 instant at which something first watched this container
+    # answer a request (the `serving_since` stamp on the registry hash, the same fact
+    # `app_first_served` carries into the log).
+    #
+    # WHY IT IS HERE AT ALL: "alive" is now a claim the platform earned at a knowable moment,
+    # and an operator handed a screenshot of a wait card — or of a preview that should not have
+    # been on screen — could previously only take that claim on faith. With this field they can
+    # join the screenshot to the log line and read WHEN, which is precisely the question nobody
+    # could answer about the eight seconds on 2026-09-10.
+    #
+    # WHY BRANCHING ON IT IS FORBIDDEN: it is the same fact as `state` spelled a second time
+    # from one read, with nothing forcing the two spellings to agree. A client computing
+    # liveness as `servingSince !== null` is one backend refactor away from disagreeing with
+    # `state`, and a resolver fed both would believe both. `portal/src/utils/previewAddress.ts`
+    # already refuses exactly this shape — a `containerAlive` boolean beside its URL arms — for
+    # exactly this reason: one expression, one source. Keep the field; forbid the branch, in
+    # this docstring and in review.
+    #
+    # Additive and defaulted, so emitters and readers written before it stay wire-valid — the
+    # same rule `StepEvent.hidden` carries in `schemas.py`.
+    serving_since: datetime | None = None
     # SLOT_TAKEN only. Null when the live container matches no app this user owns (a ghost) —
     # naming the wrong project in a sentence about someone's work is worse than naming none.
     occupying_project_id: uuid.UUID | None = None
@@ -563,9 +585,28 @@ class SaveStateResponse(CamelModel):
     app_id: str | None = None
     dirty: bool | None = None
     container_head: str | None = None
-    # When the platform last autosaved. Lets the UI offer unsaved work back after a reclaim
-    # instead of quietly forgetting it. Never a substitute for the user's own save —
-    # `savedHead` is still the only thing a relaunch restores.
+    # When the platform last wrote this app's tree to the recovery slot, or None if it never has
+    # (also None when the store would not answer — an offer nobody can honour is one this does
+    # not make). Lets the UI offer unsaved work back after a reclaim instead of quietly
+    # forgetting it.
+    #
+    # AND IT IS THE ANSWER TO "CAN THE PLATFORM PUT THIS BACK?", which is a stronger fact than
+    # this comment used to claim. It said `savedHead` was the only thing a relaunch restores;
+    # that stopped being true when `SessionManager.newest_restore_source` landed. Every
+    # automatic restore now goes through it, and it hands back the RECOVERY bundle in preference
+    # to the saved one — deliberately, to close the data-loss bug its own docstring describes,
+    # where a reclaimed container was rebuilt from the last SAVED tree and everything done after
+    # that Save then existed nowhere. Where it does hand back the saved one, that bundle is the
+    # newer of the two or holds the same tree, so a non-null instant here means the same thing
+    # either way: what comes back is no older than this. A client may say so, and may stop
+    # treating a bare `dirty: true` as work about to be lost — the state a citizen is in the
+    # moment a build finishes, having saved nothing because there was nothing yet to save.
+    #
+    # STILL NEVER A SUBSTITUTE FOR THE USER'S OWN SAVE, and that distinction is the whole point:
+    # RESUMPTION, NOT PROMOTION. `snapshot_key` is untouched, `dirty` stays true, and nothing on
+    # this path creates a VERSION — only the citizen's own Save does, and Save stays manual. A
+    # recovery copy is what the platform can resume from; `savedHead` is what its owner chose to
+    # keep, and only that one is a thing they can ask to come back to.
     recovery_at: datetime | None = None
     saved_head: str | None = None
 
@@ -791,13 +832,19 @@ async def preview_state(
     # the builder deserves to be told which of their own projects is standing in the way rather
     # than that their app disappeared. A start already in flight for this project — this tab's own
     # press, another tab's, or a chat message that just started one — answers `starting` rather
-    # than the stale `asleep` a second press used to invite.
+    # than the stale `asleep` a second press used to invite. So does a container that exists but
+    # has never answered a request: `alive` here means SERVED, not scheduled, and the whole
+    # window between "a container was created" and "the app answered" is now a wait rather than
+    # a preview URL a tab would frame over nginx's 404 page. The budget above is unchanged by
+    # that — the serving proof is one more field on the registry hash this route already reads
+    # whole, so it costs no extra round trip and still no container call.
     await owned_project_or_404(db, user.id, project_id)
     state = await manager.project_preview_state(db, user, project_id)
     return PreviewStateResponse(
         state=state.state,
         alive=state.alive,
         preview_url=state.preview_url,
+        serving_since=state.serving_since,
         occupying_project_id=state.occupying_project_id,
         occupying_project_name=state.occupying_project_name,
         restorable=state.restorable,

@@ -8,7 +8,7 @@
  * here is paired with the round trip that would break it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom'
 import WorkspaceShell from '../WorkspaceShell'
 import ProjectWorkspace from '../ProjectWorkspace'
@@ -109,8 +109,7 @@ const deployment = (publishState: PublishState = 'draft', over: Partial<Deployme
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  hasSavedBuild: null,
-  previewState: null, occupyingProjectName: null, turnRunning: false,
+  previewState: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
 
@@ -179,16 +178,58 @@ function Workspace({ entry = '/projects/pA', project = PROJECT }: { entry?: stri
 }
 
 const frame = () => document.querySelector('iframe')
-/** The pane's opaque full-bleed cover, found by what makes it one rather than by a test id — so a
- *  refactor that stops covering fails here. Matched on either idle sentence, because WHICH one it
- *  is telling is a separate question from WHETHER the frame is covered. */
+
+// THE ORIGIN THE PANE'S PROVENANCE GATE COMPARES AGAINST, derived exactly as `LivePreview` derives
+// it (`new URL(previewUrl).origin`) rather than typed out by hand a second time — a copy that
+// drifted from `APP_URL` would silently pass every vouch below through the wrong-origin arm the
+// gate exists to close.
+const SANDBOX_ORIGIN = new URL(APP_URL).origin
+
+/**
+ * The frame's own beacon, fired deliberately — a load alone no longer reveals. `LivePreview` only
+ * ever sets `vouchedKey` off a `bial:app-mounted` message whose `origin` matches the preview
+ * origin, whose `source` is this pane's own iframe window, AND whose `path` names the document
+ * framed at `APP_URL` — the beacon is an identity claim now, not just a shape. `path` is derived
+ * the same way the component derives its own framed path (`new URL(...).pathname`) rather than
+ * hand-typed a second time, so a copy that drifted from `APP_URL` could not silently start
+ * matching or failing to. A beacon missing `path` is not a beacon at all under
+ * `isMountedBeaconFor` — it is forwarded to `onFrameMessage` and reveals nothing — which is the
+ * mutant this guards: drop the `path` field here and every reveal assertion below goes red.
+ * Dispatched inside `act()` because it drives a state update outside any `fireEvent` call.
+ */
+function vouch() {
+  const iframe = frame()
+  if (!iframe) throw new Error('vouch() called before the frame mounted')
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'bial:app-mounted', path: new URL(APP_URL).pathname },
+        origin: SANDBOX_ORIGIN,
+        source: iframe.contentWindow,
+      }),
+    )
+  })
+}
+
+/**
+ * The pane's opaque full-bleed cover, found by what makes it one rather than by a test id — so a
+ * refactor that stops covering fails here. Matched on either idle sentence, because WHICH one it
+ * is telling is a separate question from WHETHER the frame is covered.
+ *
+ * ★ BOTH IDLE SENTENCES WERE REWRITTEN, AND THE REASON IS THIS CHANGE. They described the
+ * WORKSPACE, which is not this pane's subject: "Getting your app ready…" is word for word the
+ * sentence the workspace map says while nothing is serving, and "Your app isn't running right now"
+ * is the claim the apps router's own error page makes — told from inside a pane that is mounted
+ * only because the app IS up. On 2026-09-10 the two of them contradicted each other on screen. A
+ * cover may describe the DOCUMENT in front of it and nothing else, so both now do.
+ */
+const COVER_SAYS_BROKEN = /The last change didn’t come together, so this page can’t open/i
 const cover = () =>
   [...document.querySelectorAll('div')].find(
     (el) =>
       el.className.includes('absolute inset-0') &&
-      /Getting your app ready|isn’t running right now|Putting the latest change together/i.test(
-        el.textContent ?? '',
-      ),
+      (COVER_SAYS_BROKEN.test(el.textContent ?? '') ||
+        /Putting this page together|Putting the latest change together/i.test(el.textContent ?? '')),
   )
 // TWO DIFFERENT ELEMENTS, and the distinction is load-bearing. `app-pane-region` is `AppPane`'s
 // own named region — always rendered, whether or not there is anything to frame, and where the
@@ -290,11 +331,11 @@ describe('★ the project screen states no build outcome', () => {
     render(<Workspace />)
 
     await waitFor(() => expect(frame()).toBeTruthy())
-    // THE FRAME'S OWN `load`, FIRED DELIBERATELY. Without it the pane never REVEALS in jsdom, and
-    // the announcement arm this scenario is about is unreachable — so every assertion below would
-    // pass against a screen that still made the claim. The absence has to be measured in the state
-    // where the claim would be made.
-    fireEvent.load(frame() as HTMLIFrameElement)
+    // THE FRAME'S OWN BEACON, FIRED DELIBERATELY — a load alone no longer reveals. Without it the
+    // pane never REVEALS in jsdom, and the announcement arm this scenario is about is unreachable —
+    // so every assertion below would pass against a screen that still made the claim. The absence
+    // has to be measured in the state where the claim would be made.
+    vouch()
 
     // LIVENESS: the app is on screen, revealed, at the address the read named.
     expect(frame()?.getAttribute('src')).toBe(APP_URL)
@@ -365,7 +406,7 @@ describe('★ the compile verdict, gated on liveness', () => {
     )
     // …and the new verdict actually reaches the screen, which is the part a citizen experiences.
     await waitFor(
-      () => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0),
+      () => expect(screen.getAllByText(COVER_SAYS_BROKEN).length).toBeGreaterThan(0),
       patient,
     )
     // LIVENESS: the same app is still framed at the same address, so this is one mounted pane
@@ -388,8 +429,8 @@ describe('★ the compile verdict, gated on liveness', () => {
 
     await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalledWith('pA'))
     // The sentence, and the one route back into the chat that comes with it.
-    await waitFor(() => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0))
-    expect(spoken()).toMatch(/isn’t running right now/i)
+    await waitFor(() => expect(screen.getAllByText(COVER_SAYS_BROKEN).length).toBeGreaterThan(0))
+    expect(spoken()).toMatch(COVER_SAYS_BROKEN)
     expect(spoken()).toMatch(/send a message describing what you’d like/i)
   })
 
@@ -408,11 +449,12 @@ describe('★ the compile verdict, gated on liveness', () => {
 
     await waitFor(() => expect(frame()).toBeTruthy())
     await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalled())
-    // The reveal has to actually happen, or the "no success claim" half below is unreachable and
-    // would pass against a pane that made one.
-    fireEvent.load(frame() as HTMLIFrameElement)
+    // THE FRAME'S OWN BEACON, FIRED DELIBERATELY — a load alone no longer reveals. The reveal has
+    // to actually happen, or the "no success claim" half below is unreachable and would pass
+    // against a pane that made one.
+    vouch()
     // NOTHING IS CLAIMED, in either direction: no failure sentence, and no success claim either.
-    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(screen.queryByText(COVER_SAYS_BROKEN)).toBeNull()
     expect(spoken()).not.toMatch(/preview is live/i)
     expect(screen.queryByText(/build complete/i)).toBeNull()
     // LIVENESS, PAIRED: the pane really did render its app, so the absences above are a refusal to
@@ -441,7 +483,7 @@ describe('★ the compile verdict, gated on liveness', () => {
     api.fetchCompileState.mockResolvedValue('failed')
     render(<Workspace />)
     await waitFor(
-      () => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0),
+      () => expect(screen.getAllByText(COVER_SAYS_BROKEN).length).toBeGreaterThan(0),
       patient,
     )
 
@@ -472,7 +514,7 @@ describe('★ the compile verdict, gated on liveness', () => {
     render(<Workspace />)
 
     await waitFor(() => expect(frame()).toBeTruthy())
-    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(screen.queryByText(COVER_SAYS_BROKEN)).toBeNull()
     expect(screen.queryByText(/build complete/i)).toBeNull()
   })
 
@@ -503,7 +545,7 @@ describe('★ the compile verdict, gated on liveness', () => {
 
     await waitFor(() => expect(frame()).toBeTruthy())
     await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalled())
-    expect(screen.queryByText(/isn’t running right now/i)).toBeNull()
+    expect(screen.queryByText(COVER_SAYS_BROKEN)).toBeNull()
     expect(screen.queryByText(/build complete/i)).toBeNull()
   })
 })

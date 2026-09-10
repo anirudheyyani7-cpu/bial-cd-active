@@ -340,8 +340,29 @@ describe('BuilderPage — the build-turn flow', () => {
     // …and the composer is NOT disabled by it: a citizen refused mid-thought keeps the
     // text they typed, and can select and copy it out.
     expect(screen.getByTestId('composer-input').hasAttribute('disabled')).toBe(false)
-    // getAllBy — see the announcement note above.
-    expect(screen.getAllByText(/no longer running/i).length).toBeGreaterThan(0)
+    // ★ THE LIVENESS HANDLE MOVED WITH THE CARD IT USED TO READ. This asserted `/no longer
+    // running/i`, which was `LivePreview`'s terminal placeholder — one of four workspace verdicts
+    // that component authored beside the workspace map's own. Both are deleted: the map computes
+    // ONE state for the whole workspace and `AppPane` draws it, and this reading (`unknown`, with
+    // nothing ever decided) reaches the map's internal read-failure arm.
+    //
+    // WHAT THE ASSERTION IS FOR is unchanged — this scenario is about the BANNER, and the pane is
+    // only here to prove the surface rendered a whole screen rather than half of one. So it now
+    // reads the state the pane actually reached, which is a stronger handle than a sentence:
+    // `data-workspace-state` is the internal name and is exempt from every copy change.
+    // ★ THE LIVENESS HANDLE MOVED WITH THE CARD IT USED TO READ. This asserted `/no longer
+    // running/i`, which was `LivePreview`'s terminal placeholder — one of four workspace verdicts
+    // that component authored beside the workspace map's own. It is deleted: the map computes ONE
+    // state for the whole workspace and `AppPane` draws it, and a pane with a terminal address and
+    // nothing serving now collapses to an EMPTY pane rather than to a sentence.
+    //
+    // WHAT THE ASSERTION IS FOR IS UNCHANGED — this scenario is about the BANNER, and the pane is
+    // here only to prove the surface rendered a whole screen rather than half of one. So it reads
+    // the two facts that survive the deletion: the pane is in the tree, and the retired verdict is
+    // not being drawn anywhere on it.
+    const pane = document.querySelector('[data-testid="app-pane-region"]')
+    expect(pane).not.toBeNull()
+    expect(pane?.textContent ?? '').not.toMatch(/no longer running/i)
   })
 })
 

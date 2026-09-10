@@ -18,11 +18,25 @@ from src.api.v1.build_sessions.schemas import (
     STARTING_MARKER_TTL_SECONDS,
 )
 from src.services.build_sessions import locks
-from src.services.redis import REGISTRY_STATE_ENDING, heartbeat_key, registry_key
-from src.services.redis.keys import REGISTRY_FIELD_APP_NAME, REGISTRY_FIELD_STATE, starting_key
+from src.services.redis import (
+    REGISTRY_STATE_ENDING,
+    REGISTRY_STATE_READY,
+    heartbeat_key,
+    registry_key,
+)
+from src.services.redis.keys import (
+    REGISTRY_FIELD_APP_NAME,
+    REGISTRY_FIELD_SERVING_SINCE,
+    REGISTRY_FIELD_STATE,
+    starting_key,
+)
+from tests.fakes import a_sandbox_name
 
 USER = uuid.uuid4()
 OTHER = uuid.uuid4()
+
+#: A container name the platform could actually have MINTED — `sbx-` + 28 lowercase hex.
+SBX = a_sandbox_name("locks")
 
 
 async def test_acquire_is_exclusive_per_user(fake_redis: aioredis.Redis) -> None:
@@ -139,6 +153,12 @@ async def test_the_one_guard_never_swallows_cancellation(
         ("hgetall", lambda r: locks.read_registry(r, USER)),
         ("exists", lambda r: locks.mark_registry_ending(r, USER)),
         ("delete", lambda r: locks.delete_registry(r, USER)),
+        # Both serving-proof writes are answer-bearing in the same way `renew_lock` is: their
+        # `False` means "the store said no", and a swallowed error would hand the caller a
+        # REFUSAL that never happened — which `SERVING_PROOF_STAMP_REFUSED` is the alarm for.
+        # An alarm raised on an outage is an alarm nobody can act on.
+        ("eval", lambda r: locks.mark_serving(r, USER, app_name=SBX, when=datetime.now(UTC))),
+        ("eval", lambda r: locks.clear_serving(r, USER, app_name=SBX)),
     ],
 )
 async def test_every_primitive_but_acquire_still_surfaces_redis_errors(
@@ -183,6 +203,256 @@ async def test_registry_state_helpers(fake_redis: aioredis.Redis) -> None:
 
     await locks.delete_registry(fake_redis, USER)
     assert await locks.read_registry(fake_redis, USER) is None
+
+
+# --- the serving proof --------------------------------------------------------------
+# `mark_serving` / `clear_serving` are the ONLY writers of `serving_since`, the one field on the
+# registry hash that means the app ANSWERED a request rather than that a container was
+# SCHEDULED. Everything the preview pane says about a running app is downstream of them, so
+# every refusal below is a real hazard rather than a defensive nicety:
+#
+#   * a DIFFERENT app_name — the registry key is per USER and survives a container swap, so a
+#     slow observer returning after the one-per-user slot flipped would stamp "serving" onto a
+#     container it never watched, and the pane would frame the new project's app on the old
+#     one's evidence;
+#   * `state=ending` — the reaper has already committed to destroying it;
+#   * an instant already standing — FIRST SERVE WINS, or `ms_since_container_created` on the
+#     `app_first_served` line stops meaning anything;
+#   * no hash at all — a stamp must never CONJURE a record for a user with no sandbox.
+#
+# The read side of these three values lives in `test_preview_state.py`; this is the write side.
+
+
+async def _a_registered_container(
+    redis: aioredis.Redis,
+    user: uuid.UUID,
+    *,
+    app_name: str = SBX,
+    state: str = REGISTRY_STATE_READY,
+    serving_since: str = "",
+) -> None:
+    """The hash as `_write_registry` leaves it — including the empty serving sentinel, which is
+    what makes `HSETNX` the wrong primitive here: the field always EXISTS, so a bare `HSETNX`
+    would refuse every legitimate first stamp."""
+    await redis.hset(
+        registry_key(user),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: app_name,
+            REGISTRY_FIELD_STATE: state,
+            REGISTRY_FIELD_SERVING_SINCE: serving_since,
+        },
+    )
+
+
+async def _stamp_on(redis: aioredis.Redis, user: uuid.UUID) -> str | None:
+    reg = await locks.read_registry(redis, user)
+    return None if reg is None else reg.get(REGISTRY_FIELD_SERVING_SINCE)
+
+
+async def test_the_first_observer_to_watch_the_app_answer_stamps_the_instant(
+    fake_redis: aioredis.Redis,
+) -> None:
+    await _a_registered_container(fake_redis, USER)
+    when = datetime(2026, 9, 10, 9, 41, 4, tzinfo=UTC)
+
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=when) is True
+    assert await _stamp_on(fake_redis, USER) == when.isoformat()
+
+
+async def test_a_second_sighting_changes_nothing_because_first_serve_wins(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """Four observers can each watch the same container answer, and a crash-and-recover puts the
+    turn watcher back at the same door. The field has to keep meaning "first serve" rather than
+    "most recent sighting", or the operator's `ms_since_container_created` — the eight-second
+    number from 2026-09-10 — silently becomes the age of the last poll."""
+    await _a_registered_container(fake_redis, USER)
+    first = datetime(2026, 9, 10, 9, 41, 4, tzinfo=UTC)
+    later = datetime(2026, 9, 10, 9, 55, 0, tzinfo=UTC)
+
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=first) is True
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=later) is False
+    assert await _stamp_on(fake_redis, USER) == first.isoformat(), "the instant moved"
+
+
+async def test_a_stamp_aimed_at_a_container_that_no_longer_holds_the_slot_is_refused(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE NEAR-MISS THE COMPARE-AND-SET EXISTS FOR. The slot flipped to another of this
+    citizen's projects between the observation and the write; `redis.exists()` would still be
+    true, so an `exists`-then-`HSETNX` would stamp the successor with the predecessor's evidence
+    and the pane would frame the wrong project's app.
+
+    Mutation-check: drop the `app_name` comparison from `_CAS_MARK_SERVING_LUA` and this goes
+    red on both assertions."""
+    await _a_registered_container(fake_redis, USER, app_name=a_sandbox_name("successor"))
+
+    stamped = await locks.mark_serving(fake_redis, USER, app_name=SBX, when=datetime.now(UTC))
+
+    assert stamped is False
+    assert await _stamp_on(fake_redis, USER) == "", "the successor was stamped"
+
+
+async def test_a_container_the_reaper_has_marked_ending_refuses_the_stamp(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """`ending` means the teardown is already committed. A proof written here would hand the
+    pane a running app for a container that is about to stop existing."""
+    await _a_registered_container(fake_redis, USER, state=REGISTRY_STATE_ENDING)
+
+    assert (
+        await locks.mark_serving(fake_redis, USER, app_name=SBX, when=datetime.now(UTC)) is False
+    )
+    assert await _stamp_on(fake_redis, USER) == ""
+
+
+async def test_a_user_with_no_sandbox_at_all_gets_no_hash_conjured(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """A `HSET` on a missing key CREATES it, which is how a stamp could invent a one-field
+    registry record for a user who has no container — a record the sweep would then read, fail
+    to make sense of, and act on. The `app_name` comparison is what refuses it: `HGET` on a
+    missing key answers nil, which matches nothing."""
+    assert (
+        await locks.mark_serving(fake_redis, USER, app_name=SBX, when=datetime.now(UTC)) is False
+    )
+    assert await fake_redis.exists(registry_key(USER)) == 0
+
+
+async def test_a_naive_instant_is_stamped_as_utc_rather_than_left_ambiguous(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The hash outlives the process that wrote it, so a naive value on it would be ambiguous
+    forever — and `ms_since_container_created` would be wrong by whatever the writer's offset
+    happened to be. Read as UTC on the way in, the same defensive reading every other consumer
+    of an instant on this hash takes."""
+    await _a_registered_container(fake_redis, USER)
+    naive = datetime(2026, 9, 10, 9, 41, 4)  # noqa: DTZ001 - the ambiguity IS the subject
+
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=naive) is True
+    assert await _stamp_on(fake_redis, USER) == naive.replace(tzinfo=UTC).isoformat()
+
+
+async def test_retracting_a_proof_puts_the_sentinel_back_and_never_deletes_the_field(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE RETRACTION'S WHOLE SAFETY. An ABSENT `serving_since` is the PRE-CUTOVER reading and
+    is grandfathered as PROVEN, so an `HDEL` here would turn a crashed app into a running one —
+    the shipped bug upside down, and on the one path whose job is to say the app has stopped.
+
+    Mutation-check: swap the `HSET … ''` in `_CAS_CLEAR_SERVING_LUA` for an `HDEL` and the
+    presence assertion goes red while the value assertion still passes."""
+    await _a_registered_container(fake_redis, USER, serving_since="2026-09-10T09:41:04+00:00")
+
+    assert await locks.clear_serving(fake_redis, USER, app_name=SBX) is True
+    assert await fake_redis.hexists(registry_key(USER), REGISTRY_FIELD_SERVING_SINCE) == 1
+    assert await _stamp_on(fake_redis, USER) == ""
+
+
+async def test_retracting_a_proof_that_was_never_standing_reports_nothing_to_retract(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """False is what stops the crash edge logging `app_serving_lost` for a container that never
+    served anybody in the first place — a loss that never happened."""
+    await _a_registered_container(fake_redis, USER)
+
+    assert await locks.clear_serving(fake_redis, USER, app_name=SBX) is False
+
+
+async def test_retracting_carries_the_same_identity_guard_as_the_stamp(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """A crash observed against the container that HAS gone must not strip the proof off the
+    replacement that took the slot — that would unframe a healthy app."""
+    await _a_registered_container(
+        fake_redis,
+        USER,
+        app_name=a_sandbox_name("successor"),
+        serving_since="2026-09-10T10:00:00Z",
+    )
+
+    assert await locks.clear_serving(fake_redis, USER, app_name=SBX) is False
+    assert await _stamp_on(fake_redis, USER) == "2026-09-10T10:00:00Z"
+
+
+async def test_retracting_still_works_on_a_container_already_marked_ending(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """DELIBERATELY UNLIKE THE STAMP, which refuses on `ending`. A crash edge can be observed
+    after the reaper has flipped the hash, and refusing here would leave a standing proof on a
+    container being torn down — the pane framing an app that is actively being destroyed.
+
+    Mutation-check: add the `state == ready` guard to `_CAS_CLEAR_SERVING_LUA` and this goes
+    red."""
+    await _a_registered_container(
+        fake_redis, USER, state=REGISTRY_STATE_ENDING, serving_since="2026-09-10T10:00:00Z"
+    )
+
+    assert await locks.clear_serving(fake_redis, USER, app_name=SBX) is True
+    assert await _stamp_on(fake_redis, USER) == ""
+
+
+async def test_an_app_that_comes_back_can_be_proven_again(fake_redis: aioredis.Redis) -> None:
+    """The retraction is RECOVERABLE, which is what makes it a card rather than a dead end: the
+    field goes back to the sentinel, so the next observer to watch this app answer re-stamps it
+    and the pane re-frames without anybody restarting anything."""
+    await _a_registered_container(fake_redis, USER)
+    died = datetime(2026, 9, 10, 9, 41, 4, tzinfo=UTC)
+    recovered = datetime(2026, 9, 10, 9, 44, 0, tzinfo=UTC)
+
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=died) is True
+    assert await locks.clear_serving(fake_redis, USER, app_name=SBX) is True
+    assert await locks.mark_serving(fake_redis, USER, app_name=SBX, when=recovered) is True
+    assert await _stamp_on(fake_redis, USER) == recovered.isoformat()
+
+
+def test_neither_serving_script_names_a_registry_field_by_hand() -> None:
+    """Both scripts are BUILT from the `REGISTRY_FIELD_*` constants at module scope, so renaming
+    a field cannot leave a Lua string pointing at the old spelling — a drift that fails SILENTLY,
+    as a stamp that never lands and a pane that never says "running".
+
+    READ FROM THE SOURCE, NOT FROM THE ASSEMBLED STRING, and that is the whole point: the
+    finished script naturally contains `serving_since`, so substituting the constants back out
+    of it would erase a hand-typed literal exactly as it erases an interpolated one and the
+    test would prove nothing. In the AST an interpolation is a `FormattedValue` and a
+    hand-typed name is a `Constant` — which is a difference a test can actually see.
+
+    Modelled on `test_key_migration.py::test_no_module_builds_a_sandbox_key_by_hand`, which
+    greps the source for the same class of bypass one namespace up."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(locks))
+    scripts = {"_CAS_MARK_SERVING_LUA", "_CAS_CLEAR_SERVING_LUA"}
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AnnAssign | ast.Assign):
+            continue
+        targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+        if not any(isinstance(t, ast.Name) and t.id in scripts for t in targets):
+            continue
+        assert node.value is not None
+        literals += [
+            part.value
+            for part in ast.walk(node.value)
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        ]
+
+    assert literals, "neither script was found — this probe has gone inert, not green"
+    hand_typed = [
+        text
+        for text in literals
+        for field in (
+            REGISTRY_FIELD_APP_NAME,
+            REGISTRY_FIELD_STATE,
+            REGISTRY_FIELD_SERVING_SINCE,
+        )
+        if field in text
+    ]
+    assert hand_typed == [], (
+        f"a registry field is spelled by hand inside a serving-proof Lua script: {hand_typed}. "
+        f"Interpolate the REGISTRY_FIELD_* constant instead, or a rename drifts silently."
+    )
 
 
 # --- the start-in-flight marker -----------------------------------------------------

@@ -23,11 +23,21 @@ interface Options {
   saveDirty: boolean | null
   workspaceIsAlive: boolean
   projectId?: string | null
+  /** OMITTED ON PURPOSE by every scenario written before the fourth case existed: leaving it out
+   *  is a caller that says nothing about a recovery copy, which must read as "there is none" and
+   *  keep warning. A scenario that wants the recoverable case names an instant. */
+  recoveryAt?: string | null
 }
 
 /** The guard, plus a control that exits through it — the shape the shell actually uses. */
-function Harness({ saveDirty, workspaceIsAlive, projectId = 'p1', onLeave }: Options & { onLeave: () => void }) {
-  const { guard, dialog } = useUnsavedWorkGuard({ saveDirty, workspaceIsAlive, projectId })
+function Harness({
+  saveDirty,
+  workspaceIsAlive,
+  projectId = 'p1',
+  recoveryAt,
+  onLeave,
+}: Options & { onLeave: () => void }) {
+  const { guard, dialog } = useUnsavedWorkGuard({ saveDirty, workspaceIsAlive, projectId, recoveryAt })
   return (
     <>
       {dialog}
@@ -213,5 +223,92 @@ describe('★ the exit is held, not called — the silent-updater trap', () => {
     // second one, and a guard that ran the first would send them somewhere they did not ask for.
     expect(second).toHaveBeenCalledTimes(1)
     expect(first).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * ★ THE FOURTH CASE OF THE ARMING RULE — a `true` the platform is holding a copy of.
+ *
+ * `dirty` answers "is there a saved VERSION of this tree?", so THE BUILD ITSELF makes it true: a
+ * citizen who described an app, watched the platform build it and touched nothing arrives at
+ * `dirty: true, savedHead: null` — and this guard stopped them on their way out over work they had
+ * never done. `recoveryAt` is what tells that apart from real loss, because every automatic
+ * restore goes through `SessionManager.newest_restore_source` and that hands back the RECOVERY
+ * copy, not the saved one.
+ *
+ * WHAT THESE FIVE HOLD BETWEEN THEM is that the carve-out is narrow. Exactly one situation stops
+ * warning; the other four go on warning exactly as they did, which is what keeps this from
+ * becoming "never warn about anything".
+ */
+describe('★ a `true` the platform can put back is not a warning', () => {
+  const RECOVERY_INSTANT = '2026-09-10T10:38:43Z'
+
+  it('★ lets a freshly built app out with no dialog at all — THE REPORTED BUG', () => {
+    // The exact reading from the report: `{dirty: true, savedHead: null, recoveryAt: <instant>}`.
+    //
+    // MUTATION RECEIPT: put the arm back to `if (saveDirty === true) return true` and this case
+    // alone goes red — every other case in this file stays green, which is what proves the new
+    // clause is load-bearing and no wider than the bug it closes.
+    const onLeave = vi.fn()
+    render(<Harness saveDirty={true} workspaceIsAlive recoveryAt={RECOVERY_INSTANT} onLeave={onLeave} />)
+
+    leaveTheWorkspace()
+
+    // The exit RAN — which is also this assertion's liveness check, since a harness that threw
+    // would leave `onLeave` uncalled and the `toBeNull()` below true for the wrong reason.
+    expect(onLeave).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('★ STILL warns on a `true` with no recovery copy — real unsaved work did not become invisible', () => {
+    // The assertion that stops the fix from being "never warn about anything". A citizen who has
+    // been working in a container the platform is holding nothing for is exactly who this dialog
+    // was written for, and they must still be stopped.
+    const onLeave = vi.fn()
+    render(<Harness saveDirty={true} workspaceIsAlive recoveryAt={null} onLeave={onLeave} />)
+
+    leaveTheWorkspace()
+
+    expect(onLeave).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog').textContent).toMatch(/changes that are not saved yet/i)
+  })
+
+  it('★ warns when the caller says NOTHING about a recovery copy', () => {
+    // A call site that has not been updated passes no instant at all, and the default must not
+    // quietly disarm the guard for it: absent is not the same claim as "there is a copy". This is
+    // the direction the fact is allowed to fail in, and it is the only one.
+    const onLeave = vi.fn()
+    render(<Harness saveDirty={true} workspaceIsAlive onLeave={onLeave} />)
+
+    leaveTheWorkspace()
+
+    expect(onLeave).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
+  it('a recovery copy does NOT quiet the could-not-tell arm', () => {
+    // The question that went unanswered was whether the container holds anything at all. Knowing
+    // a copy exists says nothing about that, and the honest dialog is still the one that says so.
+    const onLeave = vi.fn()
+    render(<Harness saveDirty={null} workspaceIsAlive recoveryAt={RECOVERY_INSTANT} onLeave={onLeave} />)
+
+    leaveTheWorkspace()
+
+    expect(onLeave).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog').textContent).toMatch(/could not tell/i)
+  })
+
+  it('and it does not wake the never-asked arm either', () => {
+    // A stopped project was never asked the question, so there is still nothing to warn about —
+    // a recovery instant beside it changes neither half of that.
+    const onLeave = vi.fn()
+    render(
+      <Harness saveDirty={null} workspaceIsAlive={false} recoveryAt={RECOVERY_INSTANT} onLeave={onLeave} />,
+    )
+
+    leaveTheWorkspace()
+
+    expect(onLeave).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

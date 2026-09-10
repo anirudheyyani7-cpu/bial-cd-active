@@ -260,9 +260,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       iterating: false,
       reconnecting: false,
       turnRunning: false,
-      hasSavedBuild: workspace.preview?.restorable ?? project.hasRelaunchableSnapshot,
       previewState: workspace.preview?.state ?? null,
-      occupyingProjectName: workspace.preview?.occupyingProjectName ?? null,
       // THE SERVER'S VERDICT ON THE NEWEST BUILD, read above and passed through UNTRANSLATED.
       // `null` and `unknown` both mean "nothing is claimed" and hold whatever cover is showing;
       // only an affirmative `clean` uncovers, and only `failed` names the failure. See the read.
@@ -273,7 +271,10 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       // COMPLETION CLAIM — which this screen, having stopped making one, no longer has.
       workspaceLost: false,
     }),
-    [workspace.preview, project.hasRelaunchableSnapshot, compileState],
+    // `project.hasRelaunchableSnapshot` LEFT THIS LIST WITH `hasSavedBuild`. It still reaches the
+    // workspace map above, where the restore question actually gets answered; this view stopped
+    // carrying it when the pane stopped writing sentences about the workspace.
+    [workspace.preview, compileState],
   )
 
   useWorkspaceProject(project.id)
@@ -306,7 +307,13 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     }
   }, [project.id, saving, workspace])
 
-  usePublishSaveState(workspace.save?.dirty ?? null)
+  // ONE OBJECT, BOTH FACTS. `workspace.save` is a single `GET save-state` response, so the pair
+  // published here is by construction one reading — and a project screen holding no reading at all
+  // publishes the "nobody has said" pair rather than a bare `null` that has lost the second half.
+  usePublishSaveState({
+    dirty: workspace.save?.dirty ?? null,
+    recoveryAt: workspace.save?.recoveryAt ?? null,
+  })
   // SAVE IS REACHABLE FROM THE PROJECT SCREEN, and it was not.
   //
   // The only writer of the bundle lived on the conversation surface, so a citizen who had built

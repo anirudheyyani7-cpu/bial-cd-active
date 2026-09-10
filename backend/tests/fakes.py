@@ -45,6 +45,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -207,7 +208,14 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
     writes the registry hash at container-create, for BOTH `provision_new` and
     `restore_from_snapshot` (`services/sandbox/client.py`). Load-bearing: `grant_stay_of_execution`
     is guarded on this hash EXISTING, so skipping it makes every lease assertion silently
-    vacuous, and an undiscoverable registry is a container nobody can reap."""
+    vacuous, and an undiscoverable registry is a container nobody can reap.
+
+    THE SERVING SENTINEL IS PART OF THAT CONTRACT, and leaving it out would be the same class of
+    omission one field further in. An absent `serving_since` is the PRE-CUTOVER reading, which
+    the rollout grandfathers as PROVEN — so a fake that skipped it would hand every test in this
+    suite a brand-new container the platform reports as ALREADY RUNNING, and the "created but
+    never served" arm would be unreachable from any test that provisions through this double.
+    Green, and blind to the whole change."""
     await get_redis().hset(
         registry_key(uuid.UUID(user_id)),
         mapping={
@@ -217,6 +225,9 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
             REGISTRY_FIELD_TOKEN_REF: f"ref-{handle.app_name}",
             REGISTRY_FIELD_CREATED_AT: datetime.now(UTC).isoformat(),
             REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+            # Scheduled, not serving. Only an observer that watched this app answer a request
+            # may replace it (`build_sessions/locks.py::mark_serving`).
+            REGISTRY_FIELD_SERVING_SINCE: "",
         },
     )
 
@@ -255,6 +266,21 @@ class FakeSandboxClient(SandboxClient):
             status=200, head="<!DOCTYPE html><html><body>an app</body></html>"
         )
         self.served_probes: list[str] = []
+        # WHAT `/dev/status` SAYS THE APP ROOT ANSWERED WITH, and the default is `None` because
+        # that is the reading every assertion written before the page proof existed was made
+        # under — not because `None` is neutral. `DevStatus.shows_a_page` reads `None` as the
+        # GRANDFATHER arm ("a supervisor image predating the field cannot say, so keep today's
+        # behaviour") and answers True, so `None` here means every existing test goes on
+        # asserting exactly what it asserted. Moving this default to 200 would change no test's
+        # colour and would be the wrong fix anyway: the gate would still never be exercised.
+        #
+        # AND THAT IS THE GAP THIS KNOB EXISTS TO CLOSE. Until it was added, NO double in this
+        # repo ever set the field, so `if not page_is_up` had never once been True in a test on
+        # any path — which is how a fix that tore a restored container down over a 404 shipped
+        # with a green suite. A test that wants the page-less reading now says
+        # `client.root_status = 404` out loud, and one that wants the pre-`root_status` fleet
+        # says `None` and means it.
+        self.root_status: int | None = None
 
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
@@ -346,7 +372,16 @@ class FakeSandboxClient(SandboxClient):
         return 4321
 
     async def dev_status(self, handle: SandboxHandle) -> DevStatus:
-        return DevStatus(running=True, ready=True, port=3000)
+        """A dev server that is up and answering. `root_status` rides from the attribute rather
+        than being hard-coded here so a test can script what the app ROOT says without
+        subclassing — the two facts are separate questions (`ready` is fail-open by the
+        supervisor's own design and counts a 404), and a fake that could only say them together
+        is a fake no page-gate test can be written against.
+
+        A SUBCLASS THAT OVERRIDES THIS OWNS BOTH FIELDS. Several in this suite do, to script a
+        sequence; each one has to pass `root_status` itself, and one that forgets is asserting
+        against the grandfather arm whether it meant to or not."""
+        return DevStatus(running=True, ready=True, port=3000, root_status=self.root_status)
 
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
         """The compile signal, scripted per test. Defaults to `UNKNOWN`, not `CLEAN`: an existing

@@ -163,10 +163,17 @@ const goneCard = () => screen.queryByTestId('app-pane-empty')
  */
 const paneState = () => goneCard()?.getAttribute('data-workspace-state') ?? null
 
-/** `PreviewLifeState` in, `WorkspaceStateName` out — the map's own arms, as this suite reads them. */
+/**
+ * `PreviewLifeState` in, `WorkspaceStateName` out — the map's own arms, as this suite reads them.
+ *
+ * ★ `slot_taken` USED TO ANSWER `held-unattributed`, a SECOND held arm that offered `action` and
+ * `secondAction` both null: a card that named the problem, named no remedy and left nothing to
+ * press. It is merged into the one held state — a missing holder name degrades the SENTENCE, never
+ * the affordance — so there is one arm for a taken slot however much the server could attribute.
+ */
 const WORKSPACE_STATE_FOR: Record<string, string> = {
   asleep: 'not-running',
-  slot_taken: 'held-unattributed',
+  slot_taken: 'held-by-another-project',
   never_built: 'never-built',
   unknown: 'could-not-read',
 }

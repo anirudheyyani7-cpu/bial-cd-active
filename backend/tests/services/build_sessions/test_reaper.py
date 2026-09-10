@@ -8,6 +8,7 @@ import ast
 import base64
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from src.api.v1.build_sessions.schemas import (
     RELAUNCH_PREVIEW_STAY_SECONDS,
 )
 from src.services.build_sessions import locks, pass_history, reaper
+from src.services.build_sessions.alarms import SERVING_PROOF_NEVER_ARRIVED
 from src.services.build_sessions.pass_history import CopyAttempt
 from src.services.build_sessions.snapshot import reset_divert_streaks_for_tests
 from src.services.redis import (
@@ -35,12 +37,13 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
     starting_key,
 )
 from src.services.sandbox import SandboxError, SandboxHandle
-from src.services.sandbox.base import ExecResult
+from src.services.sandbox.base import DevStatus, ExecResult
 from src.services.storage import recovery_key
 from tests.fakes import FakeSandboxClient, FakeStorage, a_git_bundle, a_sandbox_name
 
@@ -89,17 +92,34 @@ async def _seed(
     app_name: str = SBX,
     with_lock: bool = True,
     with_heartbeat: bool = True,
+    serving_since: str | None = None,
+    created_at: str = "2026-07-14T00:00:00+00:00",
+    state: str = REGISTRY_STATE_READY,
 ) -> None:
+    """`serving_since` is a TRI-STATE and the default is the quiet one:
+
+      None     -> the field is not written at all: PRE-CUTOVER, read as proven, never probed.
+      ""       -> the container exists and has never served.
+      ISO-8601 -> a standing proof.
+
+    The default is `None` because this file is overwhelmingly about REAPING, and a pre-cutover
+    record is the one reading that costs the sweep no container probe — so the forty tests below
+    that have nothing to say about serving keep exercising exactly the sweep they were written
+    for. The tests that DO care say which reading they mean, and the section at the foot of this
+    file is where all three are pinned.
+    """
     await redis.hset(
         registry_key(user),
         mapping={
             REGISTRY_FIELD_APP_NAME: app_name,
             REGISTRY_FIELD_FQDN: f"{app_name}.example",
             REGISTRY_FIELD_TOKEN_REF: "ref-123",
-            REGISTRY_FIELD_CREATED_AT: "2026-07-14T00:00:00+00:00",
-            REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+            REGISTRY_FIELD_CREATED_AT: created_at,
+            REGISTRY_FIELD_STATE: state,
         },
     )
+    if serving_since is not None:
+        await redis.hset(registry_key(user), REGISTRY_FIELD_SERVING_SINCE, serving_since)
     if with_lock:
         await redis.set(lock_key(user), "some-crashed-token", ex=LOCK_TTL)
     if with_heartbeat:
@@ -1015,3 +1035,479 @@ async def test_the_reclamation_passes_own_predicate_agrees(fake_redis: aioredis.
     spared = await claim_for_container(fake_redis, app_name=SBX)
     assert spared is not None and spared.starting is True
     assert spared.spares_the_container is True
+
+
+# --- the serving proof, watched out of turn ---------------------------------------------------
+#
+# Every OTHER observer of `serving_since` lives inside a turn: the engine's `_watch_preview` is
+# created when a turn starts streaming and cancelled at its terminal. The common shape is the
+# opposite of that — the build finishes, the turn ends, the citizen keeps using the app, and THEN
+# the dev server dies. Nothing would retract the stamp, the registry hash is the one family with
+# no TTL, and "your app is running" would decay from "it is serving" into "it served once, ever"
+# while the pane framed nginx's app-gone page: the measured 2026-09-10 defect, one door down.
+#
+# So the sweep watches too, LEVEL-TRIGGERED — it reads what the container is doing right now and
+# makes the stamp agree, in both directions. It is also the whole remedy for a browser tab that
+# has no button and no idea anything is wrong, which is why it ships WITH this change rather
+# than as a later hardening.
+#
+# WHAT IT MAY NEVER DO IS DECIDE ANYTHING. A container that has not yet served is not therefore
+# reapable, so every test below asserts the reap verdict beside the stamp — a section that
+# checked only stamps would stay green on a sweep that had started destroying containers for
+# failing to serve fast enough.
+
+
+class _ProbeableClient(FakeSandboxClient):
+    """A container the reaper's ladder can actually reach, with a scripted supervisor answer.
+
+    `attach_existing` is COUNTED because the probe is the only thing in `reconcile_user` that
+    attaches at all — so an empty `attached_as` is the assertion "no probe was taken", which is
+    what the pre-cutover and age-gate arms are about. Reachability is opt-in: leave
+    `attach_handle` None and this fake spells the container it cannot reach, which is the arm
+    that must change nothing."""
+
+    def __init__(
+        self,
+        *,
+        running: bool = True,
+        ready: bool = True,
+        reachable: bool = True,
+        root_status: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.attached_as: list[str] = []
+        self.scripted = DevStatus(
+            running=running,
+            ready=ready,
+            port=3000,
+            # 137 is the OOM killer's signature, and the field is what `app_serving_lost` carries.
+            exit_code=None if running else 137,
+            # `None` BY DEFAULT, AND THAT IS THE READING EVERY TEST ABOVE WAS WRITTEN UNDER — not
+            # a neutral placeholder. `shows_a_page` grandfathers an absent `root_status` as a page
+            # (a sandbox image built before the field cannot answer, and refusing to frame the
+            # whole existing fleet is worse than the window it would close), so leaving this out
+            # keeps `shows_a_page` exactly equal to `ready` and every assertion in this section
+            # goes on asserting what it asserted.
+            #
+            # AND THAT EQUALITY IS PRECISELY WHY THE KNOB HAD TO EXIST. While it did not, no
+            # reading in this file could tell the sweep's page gate apart from the fail-open
+            # `ready` it replaced — the gate could be reverted to `if not status.ready` and all
+            # 65 tests here stayed green. A test that means the page-less reading now says
+            # `root_status=404` out loud.
+            root_status=root_status,
+        )
+        if reachable:
+            self.attach_handle = SandboxHandle(
+                fqdn=f"{SBX}.example",
+                token="tok",  # noqa: S106 - a fake, never a real bearer
+                app_name=SBX,
+                preview_url=f"https://{SBX}.example/",
+                ready=ready,
+            )
+
+    async def attach_existing(self, user_id: str) -> SandboxHandle:
+        self.attached_as.append(user_id)
+        return await super().attach_existing(user_id)
+
+    async def dev_status(self, handle: SandboxHandle) -> DevStatus:
+        return self.scripted
+
+
+async def _stamp(redis: aioredis.Redis, user: uuid.UUID) -> str | None:
+    reg = await locks.read_registry(redis, user)
+    return None if reg is None else reg.get(REGISTRY_FIELD_SERVING_SINCE)
+
+
+async def test_the_sweep_stamps_a_container_whose_in_turn_watchers_were_all_lost(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE BACKSTOP. An API process restarted mid-wait, so every observer that could have
+    taken this container's first serve is gone — and the container is serving perfectly well.
+    Without this the citizen's pane sits on "getting your app ready" over a working app with no
+    button to press, in this tab and in every already-loaded one.
+
+    Spared by the lock/heartbeat arm on the way in, and STILL spared on the way out: the
+    observation is an observation."""
+    await _seed(fake_redis, USER, serving_since="")
+    client = _ProbeableClient()
+
+    reaped = await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert reaped is False, "an observation must never become a verdict"
+    assert client.torn_down == []
+    stamped = await _stamp(fake_redis, USER)
+    assert stamped is not None and stamped != ""
+    assert datetime.fromisoformat(stamped) <= datetime.now(UTC)
+
+
+async def test_a_container_that_still_answers_nothing_is_not_therefore_reapable(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """THE DISCRIMINATOR for the test above, and the rule this whole section is written under.
+    Same spared arm, same probe, but the app is not answering yet: the stamp stays empty AND the
+    container stays exactly where it was. A build that is merely slow is not a container to
+    destroy."""
+    await _seed(fake_redis, USER, serving_since="")
+    client = _ProbeableClient(running=True, ready=False)
+
+    reaped = await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert reaped is False
+    assert client.torn_down == []
+    assert await _stamp(fake_redis, USER) == ""
+    assert await locks.read_registry(fake_redis, USER) is not None
+
+
+async def test_the_sweep_will_not_stamp_a_root_that_answers_without_a_page(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE BACKSTOP HOLDS THE SAME BAR AS EVERY OTHER OBSERVER, and nothing in this file said
+    so until this test did. The dev server is up and answering on every probe — `ready` is True —
+    and the app root is 404ing because the agent has not written `app/page.tsx` yet. That is not
+    a serve, and a proof minted here is worse than one minted anywhere else: the four in-turn
+    observers all refuse this reading, so a sweep that accepted it would quietly overturn their
+    refusal five minutes later, on a container nothing has ever watched paint. The citizen's pane
+    flips to RUNNING and frames the blank white document measured on 2026-09-10.
+
+    THE SECOND HALF IS NOT DECORATION. An absence assertion goes green just as readily when the
+    stamp arm is dead as when it correctly declined — and the arm really can be dead here, since
+    the age gate, the `ready` state and the empty sentinel all have to line up before a probe is
+    taken at all. Flipping the same container's root to 200 and sweeping again proves the sweep
+    was live the whole time and was refusing this reading specifically.
+
+    Mutation check: revert the gate to `if not status.ready:` and the first half goes red. That
+    mutant survived all 65 tests in this file before this one existed."""
+    await _seed(fake_redis, USER, serving_since="")
+    client = _ProbeableClient(root_status=404)
+
+    reaped = await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert reaped is False, "an observation must never become a verdict"
+    assert client.torn_down == [], (
+        "a container with nothing to show yet is not a container to destroy"
+    )
+    assert await _stamp(fake_redis, USER) == "", "a 404 at the root was recorded as a serve"
+
+    # The agent writes the page. Same container, same registry record, same sweep — the stamp arm
+    # is still open because the sentinel is still empty, and only the reading has changed.
+    client.scripted = replace(client.scripted, root_status=200)
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    stamped = await _stamp(fake_redis, USER)
+    assert stamped is not None and stamped != "", (
+        "the sweep's stamp arm was never live, so the refusal above proved nothing"
+    )
+
+
+async def test_a_container_the_sweep_has_already_condemned_is_never_asked_anything(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """THE STRONGEST FORM OF "AN OBSERVATION IS NEVER AN INPUT": on the arm that REAPS, no
+    observation is taken at all. There is nothing for a verdict to be influenced by, because
+    there is no reading — and a container whose lock, heartbeat, lease, marker and stay have all
+    lapsed is reaped on exactly the evidence it always was.
+
+    It also matters for the sweep's cost: the probe is bounded per SPARED user, and a fleet of
+    dead containers must not turn the reap into a queue of attach timeouts."""
+    await _seed(fake_redis, USER, with_lock=False, with_heartbeat=False, serving_since="")
+    client = _ProbeableClient()
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is True
+    assert SBX in client.torn_down
+    assert client.attached_as == [], "the reaping arm stopped to take a reading"
+
+
+async def test_the_sweep_retracts_the_proof_of_an_app_that_has_stopped_answering(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE OTHER DIRECTION, and the one no in-turn observer can reach: the turn ended hours
+    ago and the dev server has since died. The proof comes off, the pane falls back to a wait,
+    and nothing is torn down — retracting a claim costs the citizen a card, destroying a
+    container costs them their work.
+
+    RETRACTED TO THE SENTINEL, NEVER DELETED: an absent field is the pre-cutover reading and is
+    grandfathered as PROVEN, so a delete here would turn a dead app back into a running one."""
+    await _seed(fake_redis, USER, serving_since="2026-09-10T09:41:04+00:00")
+    client = _ProbeableClient(running=False, ready=False)
+
+    reaped = await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert reaped is False
+    assert client.torn_down == []
+    assert await fake_redis.hexists(registry_key(USER), REGISTRY_FIELD_SERVING_SINCE) == 1
+    assert await _stamp(fake_redis, USER) == ""
+
+
+async def test_a_dead_child_that_is_still_serving_keeps_its_proof(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """`running=False, ready=True` is a DOCUMENTED NORMAL state, not a crash: the open sandbox
+    lets the agent `pkill` our child and `nohup` its own replacement, which then answers the
+    port. `ready` means a request to the app root actually succeeded, so retracting on `running`
+    alone would take the frame away from exactly the apps that are working.
+
+    Mutation-check: relax the guard to `if status.running: return` and this goes red."""
+    await _seed(fake_redis, USER, serving_since="2026-09-10T09:41:04+00:00")
+    client = _ProbeableClient(running=False, ready=True)
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    assert await _stamp(fake_redis, USER) == "2026-09-10T09:41:04+00:00"
+
+
+async def test_a_container_that_cannot_be_reached_keeps_its_standing_proof(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ UNREACHABLE IS NOT DEAD, and that asymmetry is the whole safety of the retraction. An
+    expired ARM credential or a throttled subscription makes every container in the fleet
+    unaskable at once; a probe that read silence as death would retract every standing proof in
+    the platform and drop every pane back to "getting your app ready" over apps that are serving
+    perfectly well."""
+    await _seed(fake_redis, USER, serving_since="2026-09-10T09:41:04+00:00")
+    client = _ProbeableClient(reachable=False)
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    assert await _stamp(fake_redis, USER) == "2026-09-10T09:41:04+00:00"
+
+
+async def test_a_pre_cutover_record_is_left_exactly_as_it_is_and_costs_no_probe(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """ABSENT IS NOT EMPTY. A hash written before the field existed says nothing either way, so
+    there is nothing to prove and nothing to retract — and asking its container would spend an
+    attach plus a supervisor round trip per spared user per sweep to learn nothing.
+
+    Mutation-check: read a missing field as the empty sentinel and `attached_as` stops being
+    empty."""
+    await _seed(fake_redis, USER)  # the pre-cutover shape: no stamp at all
+    client = _ProbeableClient()
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    assert client.attached_as == [], "a pre-cutover record was probed for no reason"
+    assert await fake_redis.hexists(registry_key(USER), REGISTRY_FIELD_SERVING_SINCE) == 0
+
+
+async def test_a_container_younger_than_the_cold_budget_is_left_to_its_own_observers(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The age gate, and it exists so the sweep does not race a watcher that is already on this.
+    Below the cold-start budget somebody is plausibly still watching, and THEIR stamp is the
+    honest one — it carries the instant they saw, not the instant a sweep happened to look.
+
+    Mutation-check: delete the `created_at` age gate and `attached_as` stops being empty."""
+    await _seed(fake_redis, USER, serving_since="", created_at=datetime.now(UTC).isoformat())
+    client = _ProbeableClient()
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    assert client.attached_as == []
+    assert await _stamp(fake_redis, USER) == ""
+
+
+async def test_a_container_the_reaper_has_marked_ending_is_never_stamped(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """A teardown is already committed for this one, so a proof written here would hand the pane
+    a running app for a container that is about to stop existing."""
+    await _seed(fake_redis, USER, serving_since="", state=REGISTRY_STATE_ENDING)
+    client = _ProbeableClient()
+
+    await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert client.attached_as == []
+    assert await _stamp(fake_redis, USER) == ""
+
+
+async def test_every_sparing_arm_that_holds_a_record_takes_the_reading(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """FOUR ARMS, ONE BEHAVIOUR. The liveness lease, the start-in-flight marker, the
+    lock/heartbeat pair and the stay of execution each spare a container while holding its
+    record, and a stranded container has to un-stick through whichever one answered first —
+    otherwise the backstop covers only the citizens whose state happens to take the right
+    branch, which is nobody's idea of a backstop.
+
+    The fifth arm, `has_live_session`, is deliberately NOT one of them and is asserted here as
+    the exception rather than left to be inferred from silence: it returns above the registry
+    read, so observing there would cost every build start an extra round trip, and it is never
+    True on the scheduled sweep this backstop exists to run on."""
+    lease_user, marker_user, pair_user, stay_user, session_user = (uuid.uuid4() for _ in range(5))
+
+    await _seed(fake_redis, lease_user, with_lock=False, with_heartbeat=False, serving_since="")
+    await _hold_a_lease(fake_redis, lease_user)
+
+    await _seed(fake_redis, marker_user, with_lock=True, with_heartbeat=False, serving_since="")
+    await locks.write_starting_marker(fake_redis, marker_user, uuid.uuid4())
+
+    await _seed(fake_redis, pair_user, serving_since="")  # lock + heartbeat, the default
+
+    await _seed(fake_redis, stay_user, with_lock=False, with_heartbeat=False, serving_since="")
+    await fake_redis.hset(
+        registry_key(stay_user),
+        REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
+        _in(RELAUNCH_PREVIEW_STAY_SECONDS),
+    )
+
+    await _seed(fake_redis, session_user, serving_since="")
+
+    proven: dict[str, bool] = {}
+    for name, user, honor_stay in (
+        ("lease", lease_user, False),
+        ("marker", marker_user, False),
+        ("lock+heartbeat", pair_user, False),
+        ("stay", stay_user, True),
+    ):
+        client = _ProbeableClient()
+        spared = await reaper.reconcile_user(
+            fake_redis, user, client, has_live_session=False, honor_stay=honor_stay
+        )
+        assert spared is False, f"the {name} arm stopped sparing"
+        assert client.torn_down == []
+        proven[name] = bool(await _stamp(fake_redis, user))
+
+    live = _ProbeableClient()
+    assert (
+        await reaper.reconcile_user(fake_redis, session_user, live, has_live_session=True) is False
+    )
+
+    assert proven == {"lease": True, "marker": True, "lock+heartbeat": True, "stay": True}
+    assert live.attached_as == [], "the in-process-session arm returns above the record"
+    assert await _stamp(fake_redis, session_user) == ""
+
+
+async def test_a_teardown_of_a_container_that_never_served_anybody_sounds_the_alarm(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """THE INVERSE OF THE SHIPPED BUG. The stamp stops the platform reporting a scheduled
+    container as running; this catches the other failure — an app that never answered anything
+    at all — which is today indistinguishable in the logs from a flawless build.
+
+    Read off the record while it is still in hand: `reg` was taken before the mark-ending flip
+    and the delete is about to remove it for good."""
+    await _seed(fake_redis, USER, with_lock=False, with_heartbeat=False, serving_since="")
+
+    with structlog.testing.capture_logs() as logs:
+        assert await reaper.reap_user(fake_redis, USER, FakeSandboxClient()) is True
+
+    assert [e for e in logs if e.get("event") == SERVING_PROOF_NEVER_ARRIVED]
+
+
+async def test_a_teardown_of_a_container_that_did_serve_is_silent(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """THE DISCRIMINATOR, and without it the alarm above would be satisfied by a line on every
+    teardown — an alarm that fires on the happy path is noise, and noise is what an operator
+    learns to filter.
+
+    The pre-cutover reading is the second silent case, for a different reason: a record written
+    before the field existed says nothing about whether that container served, so alarming on
+    its silence would page somebody once for every container alive at deploy time."""
+    served_user, pre_cutover_user = uuid.uuid4(), uuid.uuid4()
+    await _seed(
+        fake_redis,
+        served_user,
+        with_lock=False,
+        with_heartbeat=False,
+        serving_since="2026-09-10T09:41:04+00:00",
+    )
+    await _seed(fake_redis, pre_cutover_user, with_lock=False, with_heartbeat=False)
+
+    with structlog.testing.capture_logs() as logs:
+        assert await reaper.reap_user(fake_redis, served_user, FakeSandboxClient()) is True
+        assert await reaper.reap_user(fake_redis, pre_cutover_user, FakeSandboxClient()) is True
+
+    assert [e for e in logs if e.get("event") == SERVING_PROOF_NEVER_ARRIVED] == []
+
+
+# --- the fleet sweep's re-ask cadence ---------------------------------------------------------
+#
+# THE COST THIS GUARDS. A record that is READY and already carries a real stamp is the STEADY
+# STATE of every healthy preview, so the "is it still serving?" arm matches essentially every
+# live container on every pass. `sweep_all` walks its users one at a time, and each probe is an
+# `attach_existing` plus a `dev_status` against a real sandbox — so asking every live preview
+# every five minutes turns a Redis-only pass into N serial container round trips, and a sweep
+# that overruns its own cadence starves the reap. These pin the thinning that stops that, and
+# they pin it WITHOUT wall-clock luck: `now` is passed in, never read from the clock.
+
+
+def _a_proven_record() -> dict[str, str]:
+    """READY, stamped, spared — the shape every healthy preview holds between turns."""
+    return {
+        REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+        REGISTRY_FIELD_APP_NAME: SBX,
+        REGISTRY_FIELD_CREATED_AT: "2026-09-10T09:00:00+00:00",
+        REGISTRY_FIELD_SERVING_SINCE: "2026-09-10T09:41:04+00:00",
+    }
+
+
+def test_reconcile_on_start_re_asks_every_time_it_is_asked() -> None:
+    """★ THE UNTHINNED PATH, and it is the one a citizen is waiting on.
+
+    Reconcile-on-start is about ONE user who just pressed something, so there is no fleet to
+    multiply and the answer is about to decide what they see. It pays the probe on every pass,
+    whichever shard the user falls in — so this asserts the arm over a full cycle of passes.
+    """
+    reg = _a_proven_record()
+    for pass_offset in range(reaper._RE_ASK_A_PROVEN_STAMP_EVERY_N_SWEEPS):
+        now = datetime.fromtimestamp(pass_offset * reaper._SWEEP_CADENCE_SECONDS, tz=UTC)
+        assert (
+            reaper._what_this_record_is_missing(reg, now, USER, thin_the_re_ask=False) == "retract"
+        ), f"the on-start path declined to re-ask on pass {pass_offset}"
+
+
+def test_the_fleet_sweep_re_asks_each_proven_container_exactly_once_per_cycle() -> None:
+    """★ THE THINNED PATH: over one full cycle of passes a given user comes up exactly ONCE.
+
+    Exactly once is the whole property — never (the crash is never noticed out of turn) and more
+    than once (the cost is not actually thinned) are both failures, so both are caught by the
+    same equality rather than by a `>= 1`.
+    """
+    reg = _a_proven_record()
+    for user in (USER, uuid.uuid4(), uuid.uuid4()):
+        asked = [
+            pass_offset
+            for pass_offset in range(reaper._RE_ASK_A_PROVEN_STAMP_EVERY_N_SWEEPS)
+            if reaper._what_this_record_is_missing(
+                reg,
+                datetime.fromtimestamp(pass_offset * reaper._SWEEP_CADENCE_SECONDS, tz=UTC),
+                user,
+                thin_the_re_ask=True,
+            )
+            == "retract"
+        ]
+        assert len(asked) == 1, f"{user} came up on passes {asked}, not exactly one"
+
+
+def test_the_thinning_spreads_the_fleet_across_passes_instead_of_spiking() -> None:
+    """★ WHY IT IS SHARDED BY USER AND NOT BY THE STAMP'S AGE.
+
+    An `age % 30min` gate would have been simpler and wrong in a way no single-user test would
+    show: every container stamped in the same busy minute — which is what a morning's builds look
+    like — would come due in the same minute forever after, so the cost would arrive as one spike
+    per cycle rather than being thinned at all. Sharding by user id spreads it: on any ONE pass,
+    a fleet lands in every shard, so no pass carries the whole fleet.
+    """
+    reg = _a_proven_record()
+    fleet = [uuid.uuid4() for _ in range(600)]
+    now = datetime.fromtimestamp(0, tz=UTC)
+    asked = [
+        u
+        for u in fleet
+        if reaper._what_this_record_is_missing(reg, now, u, thin_the_re_ask=True) == "retract"
+    ]
+    # A sixth of six hundred is a hundred; the bound is loose enough not to be a coin-flip test
+    # and tight enough that "the whole fleet on one pass" and "nobody, ever" both fail it.
+    assert 40 < len(asked) < 200, f"{len(asked)} of {len(fleet)} on a single pass"
+
+
+def test_thinning_never_reaches_the_arm_that_stamps_an_unproven_container() -> None:
+    """The thinning is for the RE-ask only. A container that has never served is a citizen
+    staring at a wait card with no observer left alive, and it is asked on every pass it is
+    eligible for — being made to wait another half hour for the answer is the opposite of the
+    fix. Its own gate is the 120-second `_NOBODY_IS_COMING_AFTER_SECONDS` age, not this shard."""
+    unproven = _a_proven_record() | {REGISTRY_FIELD_SERVING_SINCE: ""}
+    old_enough = datetime.fromisoformat("2026-09-10T09:00:00+00:00") + timedelta(seconds=300)
+    for pass_offset in range(reaper._RE_ASK_A_PROVEN_STAMP_EVERY_N_SWEEPS):
+        now = old_enough + timedelta(seconds=pass_offset * reaper._SWEEP_CADENCE_SECONDS)
+        assert (
+            reaper._what_this_record_is_missing(unproven, now, USER, thin_the_re_ask=True)
+            == "stamp"
+        ), f"an unproven container was thinned out of its own stamp on pass {pass_offset}"

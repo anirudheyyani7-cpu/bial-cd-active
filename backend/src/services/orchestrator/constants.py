@@ -271,9 +271,6 @@ runs synchronously on the control-plane event loop — this is the belt to the r
 MAX_OUTPUT_TOKENS = 64_000
 """Per-model-step output clamp."""
 
-TEMPERATURE = 0.0
-"""Deterministic generation — a build task wants the same edit for the same diagnostic."""
-
 ADAPTIVE_THINKING: Final[BetaThinkingConfigParam] = {"type": "adaptive"}
 """How reasoning is asked for, and it is not a token budget.
 

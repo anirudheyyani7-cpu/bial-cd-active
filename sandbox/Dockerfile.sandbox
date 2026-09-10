@@ -86,10 +86,17 @@ RUN useradd -m -u 10001 -s /usr/sbin/nologin appuser
 # `safe.directory=*` is defensive: git keeps working if /workspace/app is ever re-owned (nothing
 # does today — entrypoint.sh no longer chowns at boot — but a bind-mounted workspace would);
 # `init.defaultBranch=main` silences the init hint on the idempotent `git init`.
+# `core.excludesFile` keeps the platform-owned files this image bakes into the workspace OUT of
+# every snapshot (`platform-owned.gitignore`, copied here): a workspace `.gitignore` is itself
+# tracked in the bundle, so it cannot protect a baked file from being tracked after a restore of
+# an older bundle. Excluded system-wide, the baked copy always wins and a fix in a newer image
+# reaches every app on its next launch.
+COPY platform-owned.gitignore /etc/bial/gitignore
 RUN git config --system user.name "BIAL Snapshot Bot" \
     && git config --system user.email "snapshot-bot@bial.local" \
     && git config --system init.defaultBranch main \
-    && git config --system safe.directory '*'
+    && git config --system safe.directory '*' \
+    && git config --system core.excludesFile /etc/bial/gitignore
 
 # --- supervisor + proxy + entrypoint ------------------------------------------------------
 WORKDIR /supervisor

@@ -21,6 +21,7 @@ exist without `/dev/start` (the agent has replaced the supervisor's child before
 from __future__ import annotations
 
 import collections
+import enum
 import http.client
 import json
 import os
@@ -298,7 +299,7 @@ def _abandon_socket(sock: socket.socket) -> None:
 
 def _dev_port_bound(port: int = _DEV_PORT, timeout: float = _READY_CONNECT_TIMEOUT) -> bool:
     """Is the dev port OCCUPIED? A completed TCP connect, nothing sent, nothing awaited.
-    THIS IS `/dev/start`'s QUESTION, not `_dev_port_serving`'s: a second `next dev` is dangerous
+    THIS IS `/dev/start`'s QUESTION, not `_dev_port_status`'s: a second `next dev` is dangerous
     because of a BOUND port, not an answering one — Next 13.4+ finds 3000 taken, falls back to a
     free port, and mints a child Caddy never proxies, whether or not the incumbent has finished
     compiling. So "did anything answer?" would read a mid-recompile server as absent and spawn
@@ -316,36 +317,35 @@ def _dev_port_bound(port: int = _DEV_PORT, timeout: float = _READY_CONNECT_TIMEO
         conn.close()
 
 
-def _dev_port_serving(
-    port: int = _DEV_PORT,
-    timeout: float = 1.0,
-    read_timeout: float | None = None,
-    path: str | None = None,
-) -> bool:
-    """True when something ANSWERS HTTP on the dev port — observed truth, not child state (a dev
-    server the agent relaunched itself is still seen). See `_dev_port_bound` for the stricter
-    sibling question. ANY response counts, INCLUDING 4xx/5xx — fail-open, or a compile error
-    would wedge `ready` False forever and mislead the model. Reads `path` (default:
-    `_base_path()`, else `/`, NEVER trailing-slashed — Next 308s that): under a base path, `/`
-    404s even before the first route compiles, which would read as ready forever. `read_timeout`
-    bounds the response wait; the `_abandon_socket` watchdog tears it down since `settimeout`
-    re-arms per recv and a trickling peer would otherwise starve it forever."""
-    return _dev_port_status(port, timeout, read_timeout, path) is not None
-
-
 def _dev_port_status(
     port: int = _DEV_PORT,
     timeout: float = 1.0,
     read_timeout: float | None = None,
     path: str | None = None,
 ) -> int | None:
-    """The HTTP status the dev port answered with, or None when nothing answered at all.
+    """The HTTP status the dev port answered with, or None when nothing answered at all —
+    observed truth, not child state (a dev server the agent relaunched itself is still seen).
+    See `_dev_port_bound` for the stricter sibling question.
 
-    Holds the mechanics `_dev_port_serving` used to hold inline, so the fail-open lives in one
-    place. NO CALLER READS THE INT TODAY — the split exists to isolate the fail-open, not to
-    serve a second consumer; tamper detection needs a response BODY too, so it opens its own
-    connection (`_served_base_path`) rather than reusing this. If that changes, this is the seam.
-    """
+    NONE IS THE ONLY NEGATIVE. Any response is an answer, INCLUDING 4xx/5xx: the readiness this
+    feeds is fail-open, or a compile error would wedge `ready` False forever and mislead the
+    model. The status rides back with it so a caller can ask the SECOND question — "would a
+    citizen see a page?" — which a 404 answers NO. `_run_probe` derives readiness from this as
+    `status is not None` on one line, and `/dev/status` publishes both, so the flag and the code
+    can never disagree about the same response.
+
+    There was a `_dev_port_serving` boolean in front of this, and it was the readiness probe's
+    entry point until `/dev/status` had to publish the status too. It went in the same change
+    rather than staying on as a second seam: the probe needs the int, so nothing in production
+    would have called it — and a probe seam that only tests still call is one nobody notices has
+    stopped being the probe.
+
+    Reads `path` (default: `_base_path()`, else `/`, NEVER trailing-slashed — Next 308s that):
+    under a base path, `/` 404s even before the first route compiles, which would read as ready
+    forever. `read_timeout` bounds the response wait; the `_abandon_socket` watchdog tears it
+    down since `settimeout` re-arms per recv and a trickling peer would otherwise starve it
+    forever. Tamper detection needs a response BODY as well as a status, so it opens its own
+    connection (`_served_base_path`) rather than reusing this."""
     read_budget = timeout if read_timeout is None else read_timeout
     target = (_base_path() or "/") if path is None else path
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
@@ -471,13 +471,26 @@ class _Ready:
 
     `served_until` is the CACHED AFFIRMATIVE, held as a monotonic DEADLINE (not a bool) so it
     can't outlive what it describes (`_READY_CACHE_TTL`); nothing is ever cached negatively. It
-    lives HERE, not inside `_dev_port_serving` (also `/dev/start`'s double-spawn guard): a cache
+    lives HERE, not inside `_dev_port_status` (also `/dev/start`'s double-spawn guard): a cache
     there would let that guard read a stale True after the server died, 409-ing forever and
     blocking `selfheal.verify`'s dead-child rescue. `generation` disowns an in-flight probe's
     answer when readiness resets, so a restarted server never inherits the old one's `ready`."""
 
     lock = threading.Lock()
     served_until: float = 0.0  # monotonic deadline; anything <= now means "no affirmative"
+    # THE STATUS THAT AFFIRMATIVE CAME WITH, cached beside it because it expires with it.
+    #
+    # `ready` is fail-open BY DESIGN — any response counts, 4xx and 5xx included — so that a
+    # compile error cannot wedge it False forever and mislead the model. That is right for the
+    # model and WRONG for the citizen's preview: a dev server answering 404 because the agent
+    # has not written `app/page.tsx` yet is "answering", and framing it puts a blank page on
+    # screen under a live-preview label. So the code travels with the flag and the control plane
+    # decides for itself which question it is asking. Nothing here changes what `ready` means.
+    #
+    # WRITTEN AND CLEARED WITH `served_until`, NEVER APART — `_run_probe` sets the pair inside one
+    # acquisition and `_forget_ready` drops the pair inside one. That is what lets `_dev_readiness`
+    # read both under a single take and hand back a matched observation; see the race named there.
+    served_status: int | None = None
     generation: int = 0
     probing: threading.Event | None = None  # the in-flight probe's signal; None = idle
     mourned: object | None = None  # the child whose death already invalidated the cache
@@ -500,6 +513,10 @@ def _forget_ready(mourned: object | None = None) -> None:
             return
         _Ready.mourned = mourned
         _Ready.served_until = 0.0
+        # WITH the affirmative it describes. A status outliving its own cache entry would let a
+        # restarted server inherit the previous one's answer, which is the whole reason
+        # `generation` exists one line down.
+        _Ready.served_status = None
         _Ready.generation += 1
         _Ready.probing = None
         # Re-arm the base-path check. `base_path_checked` holds a generation, and the new one is
@@ -511,14 +528,21 @@ def _forget_ready(mourned: object | None = None) -> None:
 def _run_probe(done: threading.Event, generation: int) -> None:
     """Probe the dev port once, then publish — unless a reset has since disowned this answer."""
     serving = False
+    status: int | None = None
     check_base_path = False
     try:
-        serving = _dev_port_serving(_DEV_PORT, _READY_CONNECT_TIMEOUT, _READY_READ_TIMEOUT)
+        # THE STATUS, not merely the fact of an answer — and the boolean is derived from it on
+        # the very next line, which is the only place in the process that turns one into the
+        # other. A separate boolean probe would be a second observation of a moving app, so
+        # `ready: true` could ship beside a `root_status` from a different second.
+        status = _dev_port_status(_DEV_PORT, _READY_CONNECT_TIMEOUT, _READY_READ_TIMEOUT)
+        serving = status is not None
     finally:
         with _Ready.lock:
             if generation == _Ready.generation:  # a restart mid-probe discards the result
                 if serving:
                     _Ready.served_until = time.monotonic() + _READY_CACHE_TTL
+                    _Ready.served_status = status
                     if _Ready.base_path_checked != generation:
                         _Ready.base_path_checked = generation
                         check_base_path = True
@@ -532,21 +556,33 @@ def _run_probe(done: threading.Event, generation: int) -> None:
         threading.Thread(target=_detect_base_path_tampering, daemon=True).start()
 
 
-def _dev_is_serving() -> bool:
-    """Has a request to the app root actually been answered? — `/dev/status`'s `ready`.
+def _dev_readiness() -> tuple[bool, int | None]:
+    """Has a request to the app root actually been answered, AND WITH WHAT? — `/dev/status`'s
+    `ready` and `root_status`, as one observation.
 
     Single-flight, ONE ANSWER: one probe runs at a time and every caller — starter and late
     arrivals — waits on it for a bounded `_STATUS_PROBE_WAIT`, so a slow route can't stack N
     requests against an already-compiling dev server. WAITING MATTERS: an earlier cut let a late
     caller return immediately with "the last known answer" — but negatives are never cached, so
     that was an unconditional False, and two 1s watchers against a 10s probe made most polls
-    report not-ready over a healthy app, reading as a crash edge and flapping the iframe."""
+    report not-ready over a healthy app, reading as a crash edge and flapping the iframe.
+
+    ONE ACQUISITION, AND THE PAIR IS WHY. This returned a bare bool for a while and `/dev/status`
+    re-took `_Ready.lock` afterwards to read the status beside it — two takes, and a
+    `_forget_ready` (a child's death, a `/dev/start`, an agent restart) landing in the gap cleared
+    `served_status` while the caller's local `ready` stayed True. `/dev/status` then published
+    `ready: true, root_status: null`, which is EXACTLY the shape the control plane grandfathers as
+    "a sandbox image built before this field existed" and frames on trust — so the cheapest
+    possible interleaving would have re-created the blank white pane this whole change exists to
+    remove, on a supervisor that could in fact answer the question. Read inside the lock, the pair
+    is always matched: `_run_probe` publishes both together and `_forget_ready` drops both
+    together."""
     done: threading.Event | None = None
     generation = 0
     i_started_it = False
     with _Ready.lock:
         if time.monotonic() < _Ready.served_until:
-            return True  # a FRESH affirmative: no request, no probe.
+            return True, _Ready.served_status  # a FRESH affirmative: no request, no probe.
         if _Ready.probing is None:
             done = _Ready.probing = threading.Event()
             generation = _Ready.generation
@@ -569,7 +605,11 @@ def _dev_is_serving() -> bool:
     if done is not None:
         done.wait(_STATUS_PROBE_WAIT)
     with _Ready.lock:
-        return time.monotonic() < _Ready.served_until
+        ready = time.monotonic() < _Ready.served_until
+        # The status is the affirmative's, so it goes when the affirmative does. An expired entry
+        # still holds the last status it saw — publishing that beside `ready: false` would offer
+        # the control plane a page-shaped answer about a server nothing has heard from since.
+        return ready, (_Ready.served_status if ready else None)
 
 
 def _pump(proc: subprocess.Popen[str]) -> None:
@@ -617,16 +657,47 @@ def _pump(proc: subprocess.Popen[str]) -> None:
 # is silence, not an error, so the test that covers it must assert a REAL connection is made —
 # not merely that the constant has some value.
 #
+# THEN THE TIMING ASSUMPTION MOVED TOO — 2026-09-10, the second incident on this one signal.
+#
+# "It sends the CURRENT state immediately on connect", asserted twice above, is true of what the
+# server INTENDS to send and false of when it arrives. Measured against the pinned `next@16.3.1`,
+# one connect draws THREE frames: `isrManifest` (`server/lib/router-server.js`) and
+# `turbopack-connected` (`server/dev/hot-reloader-turbopack.js`) land in about a millisecond and
+# say nothing about compilation, and `sync` — the only one of the three that does — is emitted
+# from an async IIFE that first `await`s `getVersionInfoCached()`, which is an UNTIMED
+# `fetch('https://registry.npmjs.org/-/package/next/dist-tags')` in
+# `server/dev/hot-reloader-shared-utils.js`. No timeout on it, no env switch off it, and it is
+# memoised per dev-server process — so exactly ONE HMR client per `next dev` pays that round
+# trip, and it is always ours, because this thread connects long before a browser does.
+#
+# On a fast machine with clean broadband the fetch cost 1.1s-2.3s of the five-second budget
+# below. On a CPU-throttled ACA container with cold DNS, or one whose egress is proxied or
+# blackholed — `_child_env`'s fail-closed allowlist deliberately hands `next dev` no
+# `HTTPS_PROXY`/`NO_PROXY`, so the child cannot even be told where the proxy is — it exceeds the
+# whole budget, and undici's own 10s connect timeout is the FLOOR once the packets go nowhere.
+# The canary therefore fired against perfectly healthy dev servers, once per container, ALWAYS
+# at `connect_generation=1` (that memoisation is why it can only ever be the first), and the
+# field log filled with `no_recognised_frame` for a signal that was late rather than moved.
+#
+# THE FIX WAS NOT A BIGGER NUMBER. A longer window buys a longer blind window and still fires
+# the day egress is blackholed. What was actually wrong is that this consumer could not tell a
+# frame whose verb it KNOWS, which happens to carry no compile state, from a frame it cannot
+# read at all — so a two-frame handshake counted as unreadable traffic and the deadline stayed
+# pinned at connect+5s no matter what arrived. `_HMR_STATELESS_VERBS` is that distinction, and
+# the canary now arms only on a verb nobody here has ever heard of.
+#
 # Parsing stays defensive — unknown verbs and missing fields are ignored rather than thrown —
 # which on its own would make an upstream RENAME invisible: we would quietly receive nothing
-# forever while reporting a clean app. `_HMR_CANARY_S` is what gives that teeth. It exploits the
-# sync-on-connect property: a SUCCESSFUL connect that produces no recognised frame within the
-# window is reported as `unknown` with a `reason` the control plane raises a pinned alarm on.
-# That is the one signal that says the protocol moved.
+# forever while reporting a clean app. `_HMR_CANARY_S` is what gives that teeth: a frame whose
+# verb is in NEITHER the stateful set nor the stateless one is reported as `unknown` with a
+# `reason` the control plane raises a pinned alarm on. That is the one signal that says the
+# protocol moved.
 #
 # The frames observed on 16.3.1 carry their verb in `type` (`turbopack-connected`, `sync`,
 # `isrManifest`) rather than in `action`; `_derive_compile` already reads whichever is present,
-# which is why only the PATH needed correcting and not the vocabulary.
+# which is why the PATH needed correcting and, re-checked during the 2026-09-10 incident against
+# `server/dev/hot-reloader-types.js`, the VOCABULARY still did not: `sync`, `built` and
+# `building` are the same three verbs they have always been.
 _HMR_PATH = "/_next/hmr"
 
 _HMR_CONNECT_TIMEOUT = 3.0
@@ -641,10 +712,21 @@ being wired to any one of those events."""
 _HMR_CANARY_S = 5.0
 """How long we may be owed a frame we understand before calling it protocol drift.
 
-Armed at connect (the server sends `sync` within milliseconds, so five seconds of nothing there
-is not slowness) and re-armed by any frame we do NOT recognise — traffic we cannot read is the
-signal that the vocabulary moved. Never armed by quiet alone: an idle dev server sends nothing
-for minutes and is perfectly healthy."""
+Armed at connect and re-armed by any frame whose verb we do NOT recognise — traffic we cannot
+read is the signal that the vocabulary moved. DISARMED by any frame we DO recognise, the
+stateless handshake ones included (`_HMR_STATELESS_VERBS`): whether we can still read this
+server's verbs is the entire question this alarm asks, so a frame we understood answers it even
+when it says nothing about compilation. Never armed by quiet alone: an idle dev server sends
+nothing for minutes and is perfectly healthy.
+
+THE CONNECT ARM USED TO BE JUSTIFIED HERE AS "the server sends `sync` within milliseconds, so
+five seconds of nothing there is not slowness". THAT WAS MEASURED FALSE on 2026-09-10 and the
+sentence is gone rather than softened: `sync` rides behind an untimed fetch to registry.npmjs.org
+made from inside the sandbox (the block above has the file references and the numbers), so the
+innocent explanation for five seconds of no compile state after a connect is an outbound HTTPS
+round trip. The connect arm survives only because the handshake frames that DO arrive in
+milliseconds now disarm it — which keeps the arm's real job, catching a connect burst whose verbs
+have ALL been renamed, without going on pretending that `sync` is prompt."""
 
 _COMPILE_DEBOUNCE_S = 0.4
 """How long `clean` must hold before it is published. One edit produces several `built` frames
@@ -662,6 +744,25 @@ _COMPILE_MAX_ERROR_CHARS = 4000
 webpack error dump with a thousand frames must not become the turn's whole context."""
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+# The two `reason` values the connect path moves between, named because the SECOND one is only
+# ever written by comparing against the first and a literal typed twice is a silent no-op.
+#
+# `awaiting_compile_state` is the word the 2026-09-10 incident was missing. Before it, the whole
+# window between a connect and the first `sync` was reported as `connected_no_frame_yet` — which
+# is a plain untruth once the handshake frames have landed, and it left an operator staring at a
+# stalled build with no way to tell "the socket is alive and we are reading it, the dev server
+# simply has not said anything about compilation yet" from "we connected and heard nothing at
+# all". Both are `unknown`, so nothing downstream BEHAVES differently; the difference is entirely
+# in what the platform can honestly claim, which is the thing this incident was actually about.
+#
+# BACKWARD-COMPATIBLE BY CONSTRUCTION: `reason` is advisory free-form text on the wire, and the
+# only value any control plane matches on is `no_recognised_frame` (pinned as `_DRIFT_REASON` in
+# `backend/src/services/sandbox/base.py`). A control plane older than this constant reads it as
+# an unfamiliar string beside `state: "unknown"`, which is exactly what it already does with
+# `never_connected` and `consumer_unavailable`.
+_REASON_CONNECTED_NO_FRAME_YET = "connected_no_frame_yet"
+_REASON_AWAITING_COMPILE_STATE = "awaiting_compile_state"
 
 
 class _Compile:
@@ -708,10 +809,77 @@ def _error_text(item: Any, secrets: tuple[str, ...]) -> str:
     return _redact(_strip_ansi(text), secrets)[:_COMPILE_MAX_ERROR_CHARS]
 
 
-def _derive_compile(msg: Any) -> tuple[str, tuple[str, ...]] | None:
-    """Derive `(state, errors)` from one HMR frame, or None if this frame says nothing about
-    compilation. None is the ONLY answer for an unrecognised frame — never a state — because
-    an unknown verb must not be read as good news.
+_HMR_STATELESS_VERBS = frozenset(
+    {
+        # The connect burst, and the whole reason this set exists. Both land within a
+        # millisecond of the handshake; neither says anything about compilation.
+        "turbopack-connected",
+        "isrManifest",
+        # Turbopack's own update channel and the rest of `HMR_MESSAGE_SENT_TO_BROWSER` from
+        # `next@16.3.1/dist/server/dev/hot-reloader-types.js`, minus the three stateful verbs
+        # below. Transcribed from that enum rather than from frames we happened to observe, so
+        # a code path we have never triggered in a test cannot become a false drift alarm in
+        # front of a citizen.
+        "turbopack-message",
+        "addedPage",
+        "removedPage",
+        "reloadPage",
+        "serverComponentChanges",
+        "staticParamsChanged",
+        "middlewareChanges",
+        "clientChanges",
+        "serverOnlyChanges",
+        "devPagesManifestUpdate",
+        "cacheIndicator",
+        "devIndicator",
+        "devtoolsConfig",
+        "requestCurrentErrorState",
+        "requestPageMetadata",
+        "requestInsightsUpdate",
+        # A RUNTIME error in the app the server is serving, not a compile failure — so it is
+        # stateless HERE on purpose. Mapping it to `failed` would cover the preview over a page
+        # that compiled perfectly well, which is a different signal with a different owner.
+        "serverError",
+        # The webpack-era spelling of `isrManifest`, kept because the pinned template is not the
+        # only Next this supervisor ever faces: the agent edits `package.json`, and an app the
+        # citizen pulled back to the webpack line would otherwise raise a drift alarm on its
+        # first connect for a frame we have always understood perfectly well.
+        "appIsrManifest",
+    }
+)
+"""HMR verbs we RECOGNISE and which carry no compile state — the answer that is neither a state
+nor "I cannot read this".
+
+AN EXPLICIT ALLOWLIST, and the explicitness is the whole safety property. The tempting shape is
+"anything that is not `building`/`built`/`sync` is stateless", and it would delete the drift
+alarm outright: every future rename would land in that set and be silently welcomed. A verb has
+to be WRITTEN HERE to stop arming the canary, so the day upstream invents one, the platform says
+so instead of going quiet."""
+
+
+class _NoCompileState(enum.Enum):
+    """The type of `_KNOWN_NO_STATE`. A single-member enum because that is the one sentinel shape
+    a type checker narrows correctly through an `is` comparison — `object()` would leave every
+    caller casting."""
+
+    TOKEN = 0
+
+
+_KNOWN_NO_STATE = _NoCompileState.TOKEN
+"""`_derive_compile`'s third answer: "I know this verb and it says nothing about compilation."
+
+Distinct from `None` ("I cannot read this frame at all") because ONLY `None` may arm the drift
+canary. Collapsing the two is precisely the 2026-09-10 defect: the connect handshake was read as
+unreadable traffic, so a healthy dev server was reported as protocol drift once per container."""
+
+
+def _derive_compile(msg: Any) -> tuple[str, tuple[str, ...]] | _NoCompileState | None:
+    """Derive `(state, errors)` from one HMR frame — or `_KNOWN_NO_STATE` for a verb we know that
+    carries no compile state, or `None` for a frame we cannot read at all.
+
+    THREE ANSWERS, NOT TWO, and the split between the last two is load-bearing: `None` arms the
+    drift canary and `_KNOWN_NO_STATE` disarms it. Neither is ever a state — an unknown verb must
+    not be read as good news, and a handshake frame must not be read as one either.
 
     The verb is taken from `action` OR `type`: the frames carry `action`, the surrounding
     protocol documentation says `type`, and reading whichever is present costs one line and
@@ -735,6 +903,8 @@ def _derive_compile(msg: Any) -> tuple[str, tuple[str, ...]] | None:
             else ()
         )
         return ("failed", errors) if errors else ("clean", ())
+    if verb in _HMR_STATELESS_VERBS:
+        return _KNOWN_NO_STATE
     return None
 
 
@@ -753,6 +923,27 @@ def _note_frame(state: str, errors: tuple[str, ...]) -> None:
             _Compile.pending_at = time.monotonic()
             return
         _publish_locked(state, errors)
+
+
+def _note_stateless_frame() -> None:
+    """Record that we READ a frame which carried no compile state — sharpening the reason, never
+    touching the state.
+
+    THE GUARD IS THE POINT, not the assignment. This runs on every `devIndicator`, every
+    `serverComponentChanges`, every Turbopack update message — dozens per build, most of them
+    arriving while the app is happily `clean`. Publishing anything here would knock a good state
+    down to `unknown` and drop the preview cover over a working app on a dev-indicator ping, so
+    the write is confined to the one placeholder the connect path itself just wrote.
+
+    IT MUST NOT OVERWRITE `no_recognised_frame` EITHER, and that is a separate reason from the
+    first. Under a PARTIAL rename — `turbopack-connected` kept, `sync` renamed — the canary fires
+    correctly, and a stateless frame arriving a moment later would erase the finding before the
+    control plane's once-a-second poll could read it. The alarm fires at most once per connect
+    generation, so an erased one is an alarm nobody ever sees. Only a real compile state, or the
+    next connect, may clear that reason."""
+    with _Compile.lock:
+        if _Compile.state == "unknown" and _Compile.reason == _REASON_CONNECTED_NO_FRAME_YET:
+            _Compile.reason = _REASON_AWAITING_COMPILE_STATE
 
 
 def _settle_locked(now: float) -> None:
@@ -795,7 +986,7 @@ def _consume_hmr() -> None:
             with connect(url, open_timeout=_HMR_CONNECT_TIMEOUT, close_timeout=1.0) as ws:
                 with _Compile.lock:
                     _Compile.connect_generation += 1
-                    _publish_locked("unknown", (), "connected_no_frame_yet")
+                    _publish_locked("unknown", (), _REASON_CONNECTED_NO_FRAME_YET)
                 # The canary is ARMED WHENEVER WE ARE OWED AN ANSWER, not just at connect.
                 #
                 # A one-shot latch was the obvious shape and it disarms the alarm for every case
@@ -808,6 +999,11 @@ def _consume_hmr() -> None:
                 # perfectly healthy, so the window is armed only while UNRECOGNISED frames have
                 # arrived since the last recognised one. Traffic we cannot read is the signal;
                 # quiet is not.
+                #
+                # AND "RECOGNISED" MEANS THE VERB, NOT THE STATE — the 2026-09-10 fix. A frame
+                # can be perfectly legible and still say nothing about compilation; the connect
+                # burst is exactly two of those, and reading them as unreadable traffic is what
+                # made this alarm fire against healthy servers once per container.
                 owed_since: float | None = time.monotonic()
                 while True:
                     timeout = (
@@ -831,10 +1027,21 @@ def _consume_hmr() -> None:
                     if derived is None:
                         # Traffic we cannot read. Start owing an answer again (unless we already
                         # are), so a vocabulary that moves mid-session still trips the alarm.
+                        #
+                        # THE `is None` GUARD IS DELIBERATE and stays: `owed_since` measures how
+                        # long we have been owed, not how long since the last unreadable frame.
+                        # Re-stamping it on every one would let a server that chatters in a
+                        # vocabulary we cannot read push the deadline out forever and never trip
+                        # the alarm at all.
                         if owed_since is None:
                             owed_since = time.monotonic()
                         continue
+                    # We read this frame. Whether it carried a state or not, the debt is settled:
+                    # the question the canary asks is "can we still read this server's verbs?".
                     owed_since = None
+                    if derived is _KNOWN_NO_STATE:
+                        _note_stateless_frame()
+                        continue
                     _note_frame(*derived)
         except Exception:  # noqa: BLE001 - every transport failure is the same answer: unknown
             _forget_compile("disconnected")
@@ -852,7 +1059,7 @@ def _ensure_hmr_consumer() -> None:
     try:
         threading.Thread(target=_consume_hmr, daemon=True, name="hmr-compile").start()
     except BaseException:
-        # Hand the slot back, exactly as `_dev_is_serving` does: a spawn that failed under
+        # Hand the slot back, exactly as `_dev_readiness` does: a spawn that failed under
         # memory pressure must not latch "started" for the life of the container.
         with _Compile.lock:
             _Compile.consumer_started = False
@@ -1115,20 +1322,42 @@ def dev_status() -> dict[str, Any]:
         # The child just died: whatever answered the last probe may have BEEN it, so the cached
         # affirmative cannot outlive it. Once only — `_forget_ready` remembers this corpse.
         _forget_ready(proc)
-    # `ready` means A REQUEST ACTUALLY SUCCEEDED. It used to be
-    # `(_Dev.ready and running) or _dev_port_serving()`, and `or` short-circuits, so on the
-    # healthy owned path the probe NEVER ran and `ready` meant only "the child printed its
-    # marker" — which `next dev` does as soon as it is listening, before the first route
-    # compiles. Every consumer (`wait_ready`, both `_watch_preview`s, `are_we_there_yet`)
-    # believed a still-compiling app was up, and the preview framed a blank page.
+    # `ready` means A REQUEST ACTUALLY SUCCEEDED. It used to read `(_Dev.ready and running) or
+    # _dev_port_serving()` — the boolean probe that expression named is gone, `_dev_port_status`
+    # answers now — and `or` short-circuits, so on the healthy owned path the probe NEVER ran and
+    # `ready` meant only "the child printed its marker", which `next dev` does as soon as it is
+    # listening, before the first route compiles. Every consumer (`wait_ready`, both
+    # `_watch_preview`s, `are_we_there_yet`) believed a still-compiling app was up, and the
+    # preview framed a blank page.
     #
     # The marker cannot GATE this either, only the cache may skip its cost: `/dev/start` is not
     # the only way a dev server comes to exist — the agent has been observed pkill-ing the child
     # and nohup-ing its own replacement — so a marker precondition would pin `ready` False over
     # a live app forever. A served response is the sole authority; `running` stays
     # child-process truth, which is what tells the rescue path a dead child is genuinely down.
-    ready = _dev_is_serving()
-    return {"running": running, "ready": ready, "port": _DEV_PORT, "exit_code": exit_code}
+    #
+    # `root_status` IS WHAT THE ROOT ACTUALLY ANSWERED WITH — the same probe `ready` just ran, at
+    # the same path, read out rather than thrown away. `None` when nothing answered, and also when
+    # the answer predates this field on a container built before it existed.
+    #
+    # WHY BOTH ARE PUBLISHED. They are two different questions and two different consumers.
+    # `ready` asks "is a dev server there at all" and stays fail-open, because the MODEL needs to
+    # keep working through a compile error. `root_status` asks "would a citizen see a page", and
+    # a 404 answers that question NO — which is exactly the state a build sits in for the seconds
+    # between the dev server binding and the agent writing `app/page.tsx`. Framing that window is
+    # how a preview comes to show a blank document under a live-preview label.
+    #
+    # ONE CALL, deliberately: the two come back from a single read of the readiness cache, because
+    # a `ready` from before an invalidation paired with a `root_status` from after it publishes
+    # `ready: true, root_status: null` — the grandfather signature, which the control plane trusts.
+    ready, root_status = _dev_readiness()
+    return {
+        "running": running,
+        "ready": ready,
+        "root_status": root_status,
+        "port": _DEV_PORT,
+        "exit_code": exit_code,
+    }
 
 
 @app.get("/dev/logs", dependencies=[Depends(_auth)])
@@ -1153,11 +1382,22 @@ def dev_compile() -> dict[str, Any]:
     """Is the app currently compiling, compiled, or broken? — the signal the platform covers the
     preview frame with.
     `state` is `building` | `clean` | `failed` | `unknown`; `unknown` is a real answer, not an
-    error (consumer not yet connected, socket down between reconnects, or a connect that
-    produced nothing recognisable) — `reason` names which, and callers must treat `unknown` as
-    "hold what you're showing", never as clean. `connect_generation` counts successful connects,
-    so the control plane can raise the protocol-drift alarm once per connect, not once per poll.
-    The consumer starts lazily, on first ask, so no never-polled container reconnects for free."""
+    error (consumer not yet connected, socket down between reconnects, a connect that produced
+    nothing recognisable, or — the common one on a cold start — a live socket whose dev server
+    has not reached its first compile state yet) — `reason` names which, and callers must treat
+    `unknown` as "hold what you're showing", never as clean. `connect_generation` counts
+    successful connects, so the control plane can raise the protocol-drift alarm once per
+    connect, not once per poll. The consumer starts lazily, on first ask, so no never-polled
+    container reconnects for free.
+
+    `reason` IS ADVISORY FREE TEXT AND NEW VALUES APPEAR HERE FIRST. This file ships baked into
+    the sandbox image and the control plane deploys on its own clock, so a supervisor is
+    routinely newer or older than whatever is reading it. The contract that survives that is
+    narrow on purpose: `state` is a closed set of four, and `no_recognised_frame` is the ONLY
+    reason string any consumer matches on. Everything else in this field is for a human reading
+    a log — an older control plane meeting `awaiting_compile_state` treats it exactly as it
+    already treats `never_connected`, and a newer one meeting a supervisor that has never heard
+    of it simply reads the older wording."""
     _ensure_hmr_consumer()
     with _Compile.lock:
         _settle_locked(time.monotonic())

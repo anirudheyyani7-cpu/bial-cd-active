@@ -136,6 +136,12 @@ class Sandbox:
             f"{self.sup}/dev/logs", params={"since": since}, headers=self._auth(), timeout=10.0
         )
 
+    def dev_compile(self) -> httpx.Response:
+        """GET /_sup/dev/compile. The FIRST call is what starts the supervisor's HMR consumer —
+        it is lazy by design — so a caller sampling this over time is also what makes the socket
+        get dialled at all."""
+        return httpx.get(f"{self.sup}/dev/compile", headers=self._auth(), timeout=10.0)
+
     def raw_head(self, path: str = "/") -> httpx.Response:
         """A HEAD to the un-prefixed `next dev` block (`/`) — used for the frame-embedding
         headers (`Content-Security-Policy: frame-ancestors`, asserted in `test_caddy_framing.py`),
@@ -158,16 +164,23 @@ def run_sandbox(
     token: str = SUPERVISOR_TOKEN,
     wait: bool = True,
     health_timeout: float = 60.0,
+    extra_run_args: list[str] | None = None,
 ) -> Sandbox:
     """`docker run -d` the sandbox image with `SUPERVISOR_TOKEN` + `env`, mapped to an ephemeral
     host port. Waits for the supervisor to answer health (unless `wait=False`, e.g. the fail-fast
-    no-token case). Caller owns teardown via `Sandbox.stop()`."""
+    no-token case). Caller owns teardown via `Sandbox.stop()`.
+
+    `extra_run_args` are spliced in ahead of the image, for the scenarios that need the CONTAINER
+    shaped rather than its environment — today that is `--add-host`, which is how the
+    compile-signal test reproduces an unreachable npm registry without depending on the test
+    machine's own egress. Still list-form (no shell), so the no-injection property holds."""
     port = _free_port()
     name = f"bial-sbx-{uuid.uuid4().hex[:10]}"
     full_env = {"SUPERVISOR_TOKEN": token, **(env or {})}
     args = ["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:8080"]
     for k, v in full_env.items():
         args += ["-e", f"{k}={v}"]
+    args += list(extra_run_args or [])
     args += [image]
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode != 0:

@@ -5,6 +5,7 @@
  * conversation, of which kind, in which project — and when it bails to /projects instead.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { useLayoutEffect, type ReactNode } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 
@@ -107,11 +108,50 @@ function ProjectsIndexProbe() {
   )
 }
 
+/** What the wait board looked like on some commit — see `FirstCommitSpy`. */
+interface WaitFrame {
+  present: boolean
+  text: string
+  role: string | null
+  live: string | null
+  busy: string | null
+}
+
+/**
+ * THE WAIT BOARD AS IT WAS ON THE FIRST COMMITTED FRAME, read before anything could erase it.
+ *
+ * A freshly minted chat resolves inside `ChatRoute`'s MOUNT EFFECT with no request at all, and
+ * React runs passive effects after the commit — so by the time `render()` returns, `act` has
+ * flushed that effect and the board is already gone from the tree. `queryByTestId('chat-wait')`
+ * therefore reads null whether or not the change under test exists: an assert-absence test that
+ * false-greens, which is a shape this repo has already been burned by twice.
+ *
+ * A LAYOUT effect is the one hook that runs inside that commit — after every DOM mutation and
+ * before any passive effect — so a sibling holding one sees the frame a screen reader would have
+ * been handed. It records only the FIRST such frame; later commits are what the ordinary queries
+ * already see.
+ */
+function FirstCommitSpy({ onto }: { onto: { seen: WaitFrame | null } }) {
+  useLayoutEffect(() => {
+    if (onto.seen !== null) return
+    const el = document.querySelector('[data-testid="chat-wait"]')
+    onto.seen = {
+      present: el !== null,
+      text: el?.textContent ?? '',
+      role: el?.getAttribute('role') ?? null,
+      live: el?.getAttribute('aria-live') ?? null,
+      busy: el?.getAttribute('aria-busy') ?? null,
+    }
+  })
+  return null
+}
+
 /**
  * `state` is the freshly-minted marker's carrier. Entries without one stay plain strings so the
- * existing cases exercise the exact same router input they always did.
+ * existing cases exercise the exact same router input they always did. `spy` is opt-in for the
+ * same reason: a case that does not pass one renders exactly the tree it always rendered.
  */
-function renderRoute(entry: string, state?: unknown) {
+function renderRoute(entry: string, state?: unknown, spy?: ReactNode) {
   const [pathname, search = ''] = entry.split('?')
   const initial = state === undefined ? entry : { pathname, search: search ? `?${search}` : '', state }
   // UNDER A REAL CHANNEL, so the heading this route publishes is observable. The publishers all
@@ -124,6 +164,8 @@ function renderRoute(entry: string, state?: unknown) {
           <Route path="/chat/:chatId" element={<ChatRoute />} />
           <Route path="/projects" element={<ProjectsIndexProbe />} />
         </Routes>
+        {/* LAST, so its layout effect runs after the route's own subtree has been committed. */}
+        {spy}
       </MemoryRouter>
     </WorkspaceChannelProvider>,
   )
@@ -610,5 +652,59 @@ describe('ChatRoute — the cold-load wait says what it is doing', () => {
     expect(wait.querySelector('[aria-hidden="true"]')).toBeTruthy()
 
     settle({ id: 'c1', projectId: 'p1', kind: 'build', title: 't' })
+  })
+})
+
+describe('ChatRoute — the wait that is not a wait', () => {
+  // WHAT THIS IS ABOUT. A citizen who sends their first message from the rail gets THREE
+  // announcements inside two seconds for ONE continuous wait: the pane says "Getting your app
+  // ready." (the rail raises the workspace's start flag before its request and navigates after
+  // it), this board opens and closes a second polite region on the way to the chat, and the
+  // surface then publishes the same state again. This pair pins the middle one — the only one of
+  // the three describing a load that is not happening, since a freshly minted chat resolves with
+  // no request at all.
+  it('★ paints the wait board but does not ANNOUNCE it on a freshly minted arrival', async () => {
+    const frame: { seen: WaitFrame | null } = { seen: null }
+    renderRoute('/chat/fresh-id?projectId=p1&kind=build', { freshlyMinted: true }, <FirstCommitSpy onto={frame} />)
+
+    // LIVENESS FIRST: the chat really does resolve, so everything below is a claim about a frame
+    // this route actually rendered and not about a route that never got anywhere.
+    expect(await screen.findByTestId('conversation-slot')).toBeTruthy()
+    expect(h.getConversation).not.toHaveBeenCalled()
+
+    // AND THE BOARD REALLY WAS ON SCREEN for that frame. Without this, the three assertions after
+    // it would pass just as happily against a route that rendered nothing at all — which is the
+    // false green the spy exists to close.
+    expect(frame.seen?.present).toBe(true)
+    expect(frame.seen?.text).toContain('Loading this chat…')
+
+    // …and it was silent. Nothing here interrupts a reader who is already being told about this
+    // same wait by the pane in the next column.
+    expect(frame.seen?.role).toBeNull()
+    expect(frame.seen?.live).toBeNull()
+    expect(frame.seen?.busy).toBeNull()
+  })
+
+  it('★ still announces it when the route really does have to ask the server', async () => {
+    // THE CONTROL, and the direction that costs more when it is wrong. The marker alone is not
+    // the condition: with no project in the query there is nothing to resolve from, the GET
+    // happens after all, and a citizen is owed the sentence for however long it takes.
+    const frame: { seen: WaitFrame | null } = { seen: null }
+    let settle: (v: unknown) => void = () => {}
+    h.getConversation.mockImplementation(() => new Promise((r) => { settle = r }))
+
+    renderRoute('/chat/c1', { freshlyMinted: true }, <FirstCommitSpy onto={frame} />)
+
+    const wait = await screen.findByTestId('chat-wait')
+    expect(wait.getAttribute('role')).toBe('status')
+    expect(wait.getAttribute('aria-live')).toBe('polite')
+    expect(wait.getAttribute('aria-busy')).toBe('true')
+    // Read off the same first frame the case above reads, so the two are measured the same way
+    // and neither can be green because the spy itself stopped working.
+    expect(frame.seen?.live).toBe('polite')
+
+    // LIVENESS: this is a load window, not a route that never answered.
+    settle(conversation())
+    expect(await screen.findByTestId('conversation-slot')).toBeTruthy()
   })
 })

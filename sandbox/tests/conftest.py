@@ -66,8 +66,13 @@ def sandbox_factory(sandbox_image: str) -> Iterator[object]:
     even if the test raises. `make(env, wait=...)` returns a ready `Sandbox`."""
     created: list[Sandbox] = []
 
-    def make(env: dict[str, str] | None = None, *, wait: bool = True) -> Sandbox:
-        sbx = run_sandbox(env or {}, image=sandbox_image, wait=wait)
+    def make(
+        env: dict[str, str] | None = None,
+        *,
+        wait: bool = True,
+        extra_run_args: list[str] | None = None,
+    ) -> Sandbox:
+        sbx = run_sandbox(env or {}, image=sandbox_image, wait=wait, extra_run_args=extra_run_args)
         created.append(sbx)
         return sbx
 

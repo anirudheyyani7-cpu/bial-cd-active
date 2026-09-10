@@ -107,6 +107,11 @@ def registry_key(user_id: uuid.UUID) -> str:
     `attach_existing` to reconnect. Fields are the `REGISTRY_FIELD_*` constants below;
     `state` is the reaper's durable mark-ending marker.
 
+    `serving_since` is the first field on this hash to mean THE APP ANSWERED A REQUEST, and it
+    is a different question from `state`, whose two values are reaper-lifecycle labels about the
+    container. Reading `state == ready` as evidence that anything served is the mistake that
+    field exists to end.
+
     THE ONLY WRITE TARGET for the registry. The legacy key below is read-only."""
     return ns(FAMILY_REGISTRY, user_id)
 
@@ -166,6 +171,31 @@ REGISTRY_FIELD_FQDN: Final = "fqdn"
 REGISTRY_FIELD_TOKEN_REF: Final = "token_ref"
 REGISTRY_FIELD_CREATED_AT: Final = "created_at"
 REGISTRY_FIELD_STATE: Final = "state"
+
+# THE SERVING PROOF: the ISO-8601 UTC instant at which something WATCHED this container's app
+# answer a request. The only field on the hash that means "the app worked" — `state` above says
+# a container was SCHEDULED, and the platform reporting a scheduled container as running is the
+# defect this field exists to end.
+#
+# THREE READINGS, AND NOTHING ELSE IS LEGAL. This comment IS the rollout contract:
+#
+#   absent    -> a hash written before this field existed: PRE-CUTOVER, read as PROVEN, which is
+#                the old behaviour and keeps a live fleet framed across the deploy.
+#   ""        -> the container exists and has NEVER served: UNPROVEN.
+#   ISO-8601  -> the instant of first serve: PROVEN.
+#
+# ABSENCE IS IMPOSSIBLE ON ANY RECORD WRITTEN AFTER THE CUTOVER, and that is what makes the
+# grandfather arm safely deletable once the fleet has turned over: `_write_registry` seeds the
+# `""` sentinel at create time, and the legacy-prefix adoption in `build_sessions/locks.py`
+# writes the adopted record's own `created_at` rather than copying an absence forward.
+#
+# WRITTEN ONLY by that create-time seed and by `build_sessions/locks.py::mark_serving` /
+# `clear_serving`, which are Lua compare-and-sets against this same hash's `app_name` — the
+# registry key is per USER and outlives a container swap, so an unguarded write can stamp a
+# container the writer never watched. Retracted to `""`, NEVER `HDEL`-ed: deleting the field
+# resurrects the pre-cutover reading and would report a crashed app as running.
+REGISTRY_FIELD_SERVING_SINCE: Final = "serving_since"
+
 # A relaunched preview's STAY OF EXECUTION: the ISO-8601 UTC instant its bounded
 # lease lapses. A relaunched preview holds no lock and renews no heartbeat, so
 # absent this field the background sweep would reap a preview the user is still
@@ -204,6 +234,7 @@ REGISTRY_FIELDS: Final = frozenset(
         REGISTRY_FIELD_TOKEN_REF,
         REGISTRY_FIELD_CREATED_AT,
         REGISTRY_FIELD_STATE,
+        REGISTRY_FIELD_SERVING_SINCE,
         REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
         REGISTRY_FIELD_STAY_WRITER,
         REGISTRY_FIELD_ADOPTED_FROM_LEGACY,

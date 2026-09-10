@@ -154,14 +154,50 @@ class PreviewLifeState(enum.StrEnum):
     UNKNOWN keeps its own member, never folded in, for the same reason `SaveState.dirty` is
     tri-state: never give the reassuring answer for someone else."""
 
-    ALIVE = "alive"  # a container is serving THIS project; `preview_url` is framable.
+    # A container is SERVING this project — served, not merely scheduled — and `preview_url` is
+    # framable. THE WORDING HERE DID NOT CHANGE WITH THE SERVING PROOF; THE CODE FINALLY MATCHES
+    # IT. This member has always said "is serving", but until the registry hash carried a
+    # `serving_since` stamp the platform answered it from `state == ready`, which means an ACA
+    # container was CREATED. On 2026-09-10 that gap measured eight seconds in which a citizen's
+    # pane framed nginx's "This app isn't running right now" page while the live region
+    # announced "Your app preview is live". ALIVE now additionally requires the stamp, written
+    # only where something watched the app answer a request.
+    #
+    # THE MONOTONICITY INVARIANT — the one a future editor must not "optimise" away: for any one
+    # container, `alive` is emitted no EARLIER than the pre-stamp code emitted it. Same instant
+    # or later, never sooner. That property is what licenses deploying this backend with no
+    # lockstep portal deploy: an already-loaded tab reads `starting` where it used to read a
+    # premature `alive`, and `starting` is a reading those tabs already withhold the frame on.
+    # Relaxing the stamp check — "ready is good enough on the fast path" — breaks the invariant
+    # silently and reopens the eight seconds, which is why it is written down beside the member
+    # rather than left in a plan document.
+    #
+    # WHAT THE INVARIANT DOES NOT SAY, stated plainly because a naive reading of it forbids
+    # something this design does on purpose: it is NOT a latch. `clear_serving` retracts the
+    # stamp on the debounced crash edge, so one container can read ALIVE and later read
+    # STARTING. That is a claim being WITHDRAWN once it stopped being true — the thing the old
+    # code could never do, and the reason an app that died after serving used to go on reading
+    # ALIVE over a 404 forever. The invariant governs the FIRST edge only: nothing may make the
+    # first `alive` for a container arrive sooner than it arrived before the stamp existed.
+    ALIVE = "alive"
     # Built before, nothing serving it now. The next prompt brings it back from the durable
     # copy on Blob. NOT an error, NOT a loss — which is why no surface may style it as one.
     ASLEEP = "asleep"
-    # A build start, a relaunch or a turn's `ensure_sandbox` is IN FLIGHT for this project
-    # right now: the `starting` Redis marker names it. Not `alive` (there is no container yet)
-    # and not `asleep` (a start is actively under way) — a citizen watching this deserves a
-    # third word, not one of the other two stretched to also mean this.
+    # NOTHING IS PROVEN TO BE SERVING THIS PROJECT YET, and TWO situations reach that one word.
+    # (1) A build start, a relaunch or a turn's `ensure_sandbox` is IN FLIGHT right now: the
+    # `starting` Redis marker names this project. (2) THE COVERAGE THE SERVING PROOF ADDED — the
+    # container EXISTS but has never answered a request: the registry names this project's app
+    # with `state = ready` and its `serving_since` stamp is still the empty sentinel. Arm (2) is
+    # where the measured 48s→56s window now lives; it used to answer ALIVE, hand out a preview
+    # URL, and let a tab frame a page that was not up.
+    #
+    # Still not `alive` (nothing has been watched to serve) and not `asleep` (something is
+    # actively under way) — a citizen watching this deserves a third word, not one of the other
+    # two stretched to also mean this. The two arms deliberately do NOT split into two members:
+    # the citizen does the same thing in both (wait), no surface would draw them differently,
+    # and the engineering difference between them is already named in the log by
+    # `sandbox_registry_marked_pending` and `app_first_served`. A member nobody renders
+    # differently is a member that only gives two code paths a way to disagree about one wait.
     STARTING = "starting"
     # Another of this user's projects holds the one-per-user workspace. `occupying_project_name`
     # names it, or is null when the live container matches no app this user owns (a ghost —
@@ -285,6 +321,18 @@ class RelaunchPreviewResponse(CamelModel):
     # container is alive and holds the user's work, the app is just slow to answer. The portal
     # frames the URL either way and keeps its labelled wait up until the frame loads. Defaulted
     # so an older client that ignores the field reads the historic "relaunch returns ready".
+    #
+    # UNCHANGED BY THE SERVING PROOF, AND DEFINITIONALLY THE SAME FACT AS A PROVEN
+    # `serving_since` STAMP — say it here so the two cannot drift. `wait_ready` returning
+    # without `SandboxNotReadyError` is what sets this True, and that IDENTICAL success arm is
+    # where `relaunch_preview` stamps the registry. Anyone who makes one of the two conditional
+    # has to make the other conditional in the same commit, or this wire field says "ready"
+    # while the preview-state poll goes on answering `starting` about the same container.
+    #
+    # What changes is only who MINTS A STATE from it. `ready: false` is no longer a card of its
+    # own on the pane: it leaves the citizen waiting and lets the poll — which now reads the
+    # stamp — be the single authority on what is serving. The field itself stays because old
+    # clients read it and the backend's own start-success numerator is gated on it.
     ready: bool = True
 
 

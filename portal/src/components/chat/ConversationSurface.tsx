@@ -47,12 +47,14 @@ import {
   BACKGROUND_CADENCE,
   SETTLED_GONE,
   STARTING_PROBE_MS,
+  asDecidedReading,
   nextProbeCadence,
   resolveWorkspaceState,
   spendProbeCadence,
 } from '../workspace/workspaceState'
 import type { ProbeCadence, StartOutcome } from '../workspace/workspaceState'
 import {
+  NO_SAVE_READING,
   useAppPaneVisible,
   usePublishAddress,
   usePublishPaneView,
@@ -62,6 +64,7 @@ import {
   usePublishWorkspaceReport,
   useWorkspaceProject,
 } from '../workspace/workspaceChannel'
+import type { SaveReading } from '../workspace/workspaceChannel'
 import { notifyUsageChanged } from '../../utils/usage'
 import { createBuildLock, openBuildLockChannel } from '../../utils/buildLock'
 import type { BuildLock } from '../../utils/buildLock'
@@ -458,8 +461,16 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // where the closed-over state value would be whatever it was when the build STARTED.
   const turnPreviewRef = useRef<TurnNarrative['preview']>({ url: null, state: null })
   const [turnQuota, setTurnQuota] = useState<TurnNarrative['quota']>(null)
-  // The save model. `saveDirty` is TRI-STATE — null is UNKNOWN, not clean.
-  const [saveDirty, setSaveDirty] = useState<boolean | null>(null)
+  // THE SAVE MODEL, HELD AS ONE READING RATHER THAN AS A FLAG. `dirty` is TRI-STATE — null is
+  // UNKNOWN, not clean — and `recoveryAt` says whether the platform is holding a copy of this tree
+  // it can put back. The two are one `useState` because they answer one `GET save-state` and every
+  // consumer of them reasons ACROSS them: the rail picks its sentence from the pair, and the exit
+  // guard decides whether leaving can cost anybody anything from the pair. Two states could drift
+  // apart by a render and let a consumer combine halves of two different readings — `SaveReading`
+  // in `workspaceChannel.ts` records why that is the bug and not a nicety.
+  const [saveReading, setSaveReading] = useState<SaveReading>(NO_SAVE_READING)
+  // The tri-state on its own, for the two consumers that genuinely only want the flag.
+  const saveDirty = saveReading.dirty
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   // `projectHasSavedBuild` arrives as a PROP, read once when the route resolved, and nothing
@@ -536,10 +547,18 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     if (!activeProjectId) return
     try {
       const state = await fetchSaveState(activeProjectId)
-      if (projectIdRef.current === activeProjectId) setSaveDirty(state.dirty)
+      // BOTH HALVES OF THE ONE ANSWER. Taking `state.dirty` alone was the whole of the reported
+      // bug: the recovery instant arrived on the wire, was dropped here, and every surface
+      // downstream was left announcing unsaved changes about a freshly built app the platform
+      // could put back at any moment.
+      if (projectIdRef.current === activeProjectId) {
+        setSaveReading({ dirty: state.dirty, recoveryAt: state.recoveryAt })
+      }
     } catch {
-      // UNKNOWN, never "clean". A failed check must not report the work as safe.
-      if (projectIdRef.current === activeProjectId) setSaveDirty(null)
+      // UNKNOWN, never "clean". A failed check must not report the work as safe — and it drops the
+      // recovery instant with it rather than leaving the previous one standing beside a tri-state
+      // that no longer came from the same read. A reading nobody has is not a reading.
+      if (projectIdRef.current === activeProjectId) setSaveReading(NO_SAVE_READING)
     }
   }, [])
 
@@ -557,7 +576,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // about, and a citizen who navigated away still wants the chip they left behind corrected.
       announceDeploymentChanged(activeProjectId)
       if (projectIdRef.current === activeProjectId) {
-        setSaveDirty(false)
+        // The recovery instant is carried forward untouched: a Save writes the citizen's own
+        // bundle and destroys no recovery copy, and with `dirty` false nothing reads the instant
+        // anyway. Inventing one here — or clearing one that still exists — would be this surface
+        // reporting a fact it did not read.
+        setSaveReading((held) => ({ ...held, dirty: false }))
         // There is now a snapshot to relaunch from — say so without waiting for a reload.
         setSavedBuildProjectId(activeProjectId)
       }
@@ -566,7 +589,9 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // work is stored. The 409 copy from the server already names the way out.
       if (projectIdRef.current === activeProjectId) {
         setSaveError(err instanceof Error ? err.message : 'Could not save your work. Try again.')
-        setSaveDirty(null)
+        // Same fail-toward-warning as the failed check above: the whole reading goes unknown,
+        // because a Save that threw leaves this surface unable to say what the container holds.
+        setSaveReading(NO_SAVE_READING)
       }
     } finally {
       setSaving(false)
@@ -777,15 +802,17 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // caller was added anywhere. What moved is the browser-unload effect, to the shell, because this
   // page is an outlet child now and unmounts on every move to the project screen: left here, the
   // warning would disarm exactly when the citizen navigated away from the conversation that knew
-  // about the unsaved work. The TRI-STATE is carried, never collapsed — `null` means "could not
-  // check", and the shell arms on a definite `true` alone.
-  usePublishSaveState(saveDirty)
+  // about the unsaved work. THE READING IS CARRIED WHOLE, never collapsed to its flag — `null`
+  // means "could not check", and the recovery instant beside it is what lets the shell tell a
+  // build nobody has saved yet from work that leaving would actually cost somebody.
+  usePublishSaveState(saveReading)
   // THE SAVE CONTROL ITSELF LIVES IN THE TOOLBAR ROW NOW, so its three values and
   // its action go up the channel rather than into the pane's view. Two cells rather than one, and
   // the split is deliberate: the values are compared and drive a render, the action is read at
-  // press time and drives none. `usePublishSaveState` above is unchanged and still separate — it
-  // is the tri-state the shell's unload warning arms on, and it is KEPT across an unmount, while
-  // these two are cleared with their publisher.
+  // press time and drives none. `usePublishSaveState` above stays separate — it is the reading the
+  // shell's two exit guards arm on, and it is KEPT across an unmount, while these two are cleared
+  // with their publisher. THE ROW WANTS THE FLAG ALONE, deliberately: its chip reports whether a
+  // version exists, which is the question `dirty` answers, and a recovery copy is not one.
   usePublishSave({ dirty: saveDirty, saving, error: saveError }, { save: handleSave, rename: null })
 
   // A genuine unmount must cancel the in-flight turn-stream reader — a chat switch already
@@ -2522,6 +2549,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // `??` on a TRI-STATE, deliberately: a `null` from the poll means the object store was
   // unreachable, which is not an answer, so it falls through to the older-but-real reading
   // rather than retracting a claim the server once made confidently.
+  // WHERE IT GOES NOW: into the workspace map, as `projectHasSavedBuild`. It used to travel the
+  // pane channel to fill in a sentence LivePreview wrote about the workspace; that card is gone
+  // and the map owns the sentence, so the map is what needs the freshest answer. Handing it the
+  // raw route prop instead — which is what it got — meant a citizen who saved and then let the
+  // container sleep was told "Describe what you want to build" over an app they had just saved.
+  // The map applies its own `restorable ?? this`, so source 2 still outranks source 1 whenever the
+  // server has an opinion; this only decides the case where the poll makes no claim, which is
+  // exactly the case the ALIVE hot path produces by design.
   const hasSavedBuild =
     savedBuildProjectId && savedBuildProjectId === projectId
       ? true
@@ -2659,9 +2694,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   usePublishWorkspaceReport(
     projectId
       ? {
+          // DERIVED, NOT KEPT BESIDE IT — same reason as `useWorkspaceState`'s call: this
+          // surface's own `setPolledPreview` returns the previous object when the reading is
+          // `unknown`, so `previewState` only ever HOLDS an `unknown` before anything has been
+          // decided, which is the one case whose answer is the fallback sentence anyway.
           state: resolveWorkspaceState({
             preview: previewState,
-            projectHasSavedBuild,
+            lastDecidedPreview: asDecidedReading(previewState),
+            projectHasSavedBuild: hasSavedBuild,
             startOutcome,
             startInFlight: startPending,
           }),
@@ -2734,9 +2774,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
 
        AND `completedLive` LEFT WITH IT, onto the address as `serving` — see the block above the
        address resolution. Nothing on this view can unmount the frame any more. */
-    hasSavedBuild,
     previewState: previewState?.state ?? null,
-    occupyingProjectName: previewState?.occupyingProjectName ?? null,
     reconnecting: (turnNarrativeIsThisChat && turnPreview.state === 'reconnecting') || (showSession && session.reconnecting),
     /* NOT gated on `turnNarrativeIsThisChat`, unlike the narrative values above it. This is a fact
        about the PROJECT'S APP — one app per project — not about which conversation happens to be

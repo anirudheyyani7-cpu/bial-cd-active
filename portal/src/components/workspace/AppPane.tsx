@@ -12,8 +12,8 @@
  * preview outranks the session URL describing the previous build. Its `.url` alone is not enough: a
  * provisioning build has a status and no URL yet, driving the loading state instead of an empty
  * pane, and an address outlives its publisher on purpose, so framing a stale one leaves a sleeping
- * app with no way to wake it. The workspace state therefore vetoes the address only for names that
- * definitely mean nothing is serving, never for an undecided answer.
+ * app with no way to wake it. The workspace state is what decides whether that address is framed
+ * at all, and after the serving stamp it takes exactly one name to mount the frame — see `frameIt`.
  *
  * The pane is a cross-origin iframe whose tab sequence and focus belong to the framed app, so a way
  * past it must live outside it. The take-back's sequence and dialog mount here because this is what
@@ -26,7 +26,7 @@
  * host serving nothing; the workspace state draws the empty, stopped and gone states, not the origin.
  */
 import { memo, useCallback, useEffect, useState } from 'react'
-import { Box, Locate, Play, type LucideIcon } from 'lucide-react'
+import { Box, FolderOpen, Locate, Play, WifiOff, type LucideIcon } from 'lucide-react'
 import AppPaneHost from './AppPaneHost'
 import { HIDDEN_BUT_MOUNTED } from './hiddenSubtree'
 import { inertWhile, usePaneLeaving } from './paneExit'
@@ -42,37 +42,31 @@ import {
 } from './workspaceChannel'
 import type { WorkspaceStateName } from './workspaceState'
 
-/** See `frameIt` below. Kept beside the component so the veto's members are readable at a glance. */
-const NOTHING_IS_SERVING: ReadonlySet<WorkspaceStateName> = new Set<WorkspaceStateName>([
-  'not-running',
-  'never-built',
-  'held-by-another-project',
-  'held-unattributed',
-  // `starting` means a start is in flight, with no container yet, and a held address can outlive
-  // the one behind it — so framing on it showed an app while the platform was still bringing one
-  // up. The wait is what the map's `starting` arm says, and it is the honest thing to show.
-  'starting',
-])
-
 /**
- * THE MARK ABOVE THE HEADLINE, ON THE THREE STATES WHOSE BOARDS DRAW ONE. `NothingBuilt`,
- * `PreviewOff` and `PreviewStarting` each put a 30px #9AA5B1 glyph directly above their headline;
- * without it a blank half-screen reads as a page that failed to load. A lookup here rather than a
- * field on `WorkspaceState`, which stays a pure module: the words are the map's, the icon is
- * local. `null` is an answer, not a gap — exhaustive over `WorkspaceStateName` so a new state
- * cannot be added without someone deciding here.
+ * THE MARK ABOVE THE HEADLINE, ON EVERY BOARD THAT DRAWS ONE. Each empty-pane board puts a 30px
+ * #9AA5B1 glyph directly above its headline; without it a blank half-screen reads as a page that
+ * failed to load. A lookup here rather than a field on `WorkspaceState`, which stays a pure
+ * module: the words are the map's, the icon is local. Exhaustive over `WorkspaceStateName`, so a
+ * new state cannot be added without somebody deciding here.
+ *
+ * ONE ENTRY IS `null` AND IT IS AN ANSWER, NOT A GAP. `running` draws no card at all — the frame
+ * IS the state — so there is nothing for a mark to sit above.
+ *
+ * IT USED TO BE SEVEN NULLS, WHICH WAS THE SAME DRIFT THE FRAME VETO HAD. Four of the seven named
+ * states the ten-to-five collapse deleted outright, and `running` is the one that keeps its null.
+ * The last two draw a real card — a real headline, a real detail, real buttons — and stood there
+ * bare. Both now carry the mark THIS PRODUCT ALREADY USES for what they are, which is neither
+ * borrowing one of the three boards' marks nor inventing a vocabulary: `ReclaimWorkspaceDialog`
+ * draws `FolderOpen` for the project holding the workspace, and `LivePreview` draws `WifiOff` for
+ * the platform having lost touch with what it was watching.
  */
 const STATE_GLYPH: Readonly<Record<WorkspaceStateName, LucideIcon | null>> = {
   'never-built': Locate, // NothingBuilt — the ticked circle, the same mark the rail's Plan picker has
   'not-running': Play, // PreviewOff — "Your app is saved", and the press that brings it back
   starting: Box, // PreviewStarting — "Setting up somewhere for it to run"
   running: null, // The frame is up; this pane draws no card at all.
-  'held-by-another-project': null,
-  'held-unattributed': null,
-  'could-not-read': null,
-  'not-painted': null,
-  'timed-out': null,
-  'start-failed': null,
+  'held-by-another-project': FolderOpen, // The other project that is holding the one workspace
+  'could-not-read': WifiOff, // The read itself never came back — see `couldNotRead` in the map
 }
 
 export interface AppPaneProps {
@@ -115,14 +109,41 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // host — the two must not disagree about whether they are still on their way out.
   const leaving = usePaneLeaving(visible)
 
-  // THE STATES THAT MEAN NOTHING IS SERVING, and therefore that a held address is stale.
+  // THE FRAME MOUNTS IF AND ONLY IF THE PLATFORM HAS PROOF THE APP SERVED, and `running` is the
+  // only name that carries that proof: the wire's `alive` is now gated on a stamp written where
+  // something watched the app ANSWER a request, where it used to mean only that a container had
+  // been SCHEDULED. The eight seconds a citizen spent reading "This app isn't running right now"
+  // INSIDE this pane on 2026-09-10 are the distance between those two meanings.
   //
-  // `could-not-read` is deliberately absent: a read that decided nothing must not retire a frame
-  // somebody is looking at. So are the three start outcomes — they describe a press that did not
-  // land, not a container that went away, and a frame already up is evidence enough.
-  const stale = report !== null && NOTHING_IS_SERVING.has(report.state.name)
+  // IT REPLACES A FIVE-MEMBER VETO SET WITH EXCEPTIONS WRITTEN BESIDE IT, and the shape is the
+  // point rather than the line count: a list of the states that withhold the frame has to be
+  // revisited every time the map grows, and every exception on it is one more judgement about a
+  // state whose meaning can move underneath it — which is how a list of names drifts away from
+  // the question it was answering. A rule cannot fall behind. Every state but one withholds, and
+  // none of them needs an entry anywhere to do it: the three start outcomes that used to need an
+  // exception are gone from the map entirely, and so is the second held state that needed a member.
+  //
+  // AND ONLY A VERDICT MOVES THE FRAME — the invariant this pane has always kept, restated as a
+  // rule about EVIDENCE rather than as a name on an exception list: an unreadable read must never
+  // retire a frame somebody is looking at, so the platform has to have SAID something before the
+  // pane acts on it. Two ordinary shapes say nothing, and neither of them is exotic:
+  //
+  //   `could-not-read`  a read that decided nothing at a moment when nothing had ever been
+  //                     decided — which is every surface's own first render, before its first
+  //                     poll answers. From the second reading onward the map renders the last
+  //                     settled one instead, and this arm is unreachable.
+  //   no report at all  `usePublishWorkspaceReport` CLEARS on unmount, so every hop between two
+  //                     surfaces has a window with a live address and nobody reporting.
+  //
+  // Withholding on either would unmount the host on every navigation into a running app and on
+  // every cold mount over one: a cross-origin `src` re-issued, and the citizen's form entries,
+  // scroll position and open tab thrown away. That is the one thing `AppPaneHost` exists to
+  // forbid, and it is why "no verdict" is not a carve-out but the rule's own precondition.
+  const verdict =
+    report !== null && report.state.name !== 'could-not-read' ? report.state.name : null
   // A STATUS WITH NO URL IS THE LOADING STATE, not an empty pane — see the docblock.
-  const frameIt = !stale && (address.url !== null || address.status !== null)
+  const somethingToFrame = address.url !== null || address.status !== null
+  const frameIt = somethingToFrame && (verdict === null || verdict === 'running')
 
   /**
    * MOVE FOCUS BACK TO THE RAIL, and do it by focusing the region rather than hunting for its
@@ -219,12 +240,11 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           className={frameIt ? '' : 'flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3.5'}
         >
           {!frameIt && (
-            // THE EMPTY PANE IS A NAMED REGION WITH A CARD IN IT, which is what `PreviewOff`,
-            // `NothingBuilt` and `PreviewStarting` draw — and only those three. The label is the
-            // tell: it appears on exactly the boards where the pane holds no app, because a blank
-            // half of the screen needs to say what it is for, and a running application says that
-            // itself. Drawn here rather than at the section, so it comes and goes with the
-            // emptiness it explains.
+            // THE EMPTY PANE IS A NAMED REGION WITH A CARD IN IT, which is what every state but
+            // `running` draws. The label is the tell: it appears on exactly the boards where the
+            // pane holds no app, because a blank half of the screen needs to say what it is for,
+            // and a running application says that itself. Drawn here rather than at the section,
+            // so it comes and goes with the emptiness it explains.
             <>
               {/* DECORATIVE, and it has to be now that it is inside the region: the section above
                   is already labelled "Your app", so this caption is that label a second time, and
@@ -313,8 +333,8 @@ function NoFrame({
   if (!report) return null
 
   const { state } = report
-  // See `STATE_GLYPH`: the three boards that draw an empty pane draw a mark above the headline,
-  // and the states no board covers draw none rather than borrowing one.
+  // See `STATE_GLYPH`: every board that draws an empty pane draws a mark above the headline, and
+  // `running` — the one state with no board at all — is the only entry that answers with none.
   const Glyph = STATE_GLYPH[state.name]
   return (
     <div
@@ -368,7 +388,16 @@ function NoFrame({
             again on leaving, and the headline, the detail and the note are announced too. */}
         {state.action && (
           <div className="mt-5 flex flex-wrap justify-center gap-2.5">
-            <StartAppControl action={state.action} report={report} inert={takeBack.working} />
+            {/* THE SEQUENCE GOES TO BOTH SLOTS, and the leading one needs it as much as the second.
+                It used to be handed only to `secondAction`, on the reasonable-looking assumption
+                that a take-back can only ever be the second control. The held-state merge broke
+                that assumption: when the platform cannot name the holder there is no go-to to
+                lead with, so the take-back IS `action` — and `StartAppControl` renders NOTHING at
+                all for a take-back it was given no sequence for ("no sequence in the parent, no
+                verb"). The card then named the problem and offered nothing to press, which is the
+                exact dead end the merge existed to remove, rebuilt one slot along.
+                Harmless on every other kind: only the take-back arm reads this prop. */}
+            <StartAppControl action={state.action} report={report} takeBack={takeBack} inert={takeBack.working} />
             {state.secondAction && (
               <StartAppControl
                 action={state.secondAction}

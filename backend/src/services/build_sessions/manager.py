@@ -32,8 +32,8 @@ import asyncio
 import enum
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -61,7 +61,13 @@ from src.db.models.harness_counter import HarnessCounter
 from src.db.models.project import Project
 from src.db.models.user import User
 from src.services.build_sessions.alarms import (
+    APP_FIRST_SERVE_NOT_OBSERVED_EVENT,
+    APP_FIRST_SERVED_EVENT,
+    BUILD_WORKSPACE_CLAIMED_EVENT,
+    PREVIEW_STATE_REPORTED_UNKNOWN_EVENT,
     RECOVERY_WRITE_DID_NOT_LAND_EVENT,
+    SANDBOX_TORN_DOWN_EVENT,
+    SERVING_PROOF_STAMP_REFUSED,
     WORKSPACE_LOST_WHILE_IDLE_EVENT,
 )
 from src.services.build_sessions.appdata import build_app_env, resolve_app_for_project
@@ -80,15 +86,20 @@ from src.services.build_sessions.liveness import flag_liveness_overpromise
 from src.services.build_sessions.locks import (
     DeadlineWriter,
     acquire_lock,
+    an_instant_on_the_hash,
+    clear_serving,
     clear_starting_marker,
     delete_registry,
+    elapsed_ms,
     grant_stay_of_execution,
     mark_registry_ending,
+    mark_serving,
     read_registry,
     read_registry_and_starting_marker,
     reap_lock,
     release_lock_as_holder,
     renew_lock,
+    stamp_is_proven,
     write_heartbeat,
     write_starting_marker,
 )
@@ -108,10 +119,13 @@ from src.services.build_sessions.snapshot import (
     write_recovery_copy,
     write_snapshot,
 )
+from src.services.orchestrator.constants import READINESS_POLL_S
 from src.services.redis import RedisNotConfiguredError, get_redis
 from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
+    REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_STATE_READY,
 )
@@ -346,6 +360,17 @@ _STOP_RECORD_RETENTION_SECONDS: float = _ENDED_RETENTION_SECONDS
 
 _ATTACHED_READY_BUDGET_SECONDS: float = 15.0
 _COLD_READY_BUDGET_SECONDS: float = 120.0
+
+# How long one process stays quiet about a given user's unreadable preview-state reads. Sized
+# against the POLL, not against the outage: the accelerated cadence is 3s per tab per surface, so
+# anything shorter turns one blip into a page of identical warnings, and anything much longer
+# would let a genuinely new outage go unmentioned. See `_say_the_preview_read_failed`.
+_UNKNOWN_REPORT_SILENCE_SECONDS: float = 60.0
+
+# WHICH DOOR into the one-per-user workspace a claim came through, for the claim log line. A
+# closed Literal rather than a bare `str` so a typo cannot invent a fourth arm that no alert
+# rule has ever heard of.
+_ClaimArm = Literal["relaunch", "ensure_sandbox"]
 
 
 # The end sequence's own DB session factory (it outlives the starting request). Typed as what this
@@ -600,11 +625,27 @@ class SaveState:
     dirty: bool | None
     container_head: str | None
     saved_head: str | None
-    # When the platform last autosaved this app to the recovery slot, or None if it never has.
-    # Distinct from `saved_head`, which is the user's own save: this exists so a workspace that
-    # was reclaimed while dirty can be OFFERED back ("unsaved work from 14:32") rather than
-    # silently forgotten. Offered, never substituted — the restore ladder still only ever
-    # restores the user's bundle.
+    # When the platform last wrote this app's tree to the recovery slot, or None if it never
+    # has. Distinct from `saved_head`, which is the user's own save: this exists so a workspace
+    # that was reclaimed while dirty can be OFFERED back ("unsaved work from 14:32") rather than
+    # silently forgotten.
+    #
+    # AND IT IS ALSO THE ANSWER TO "CAN THE PLATFORM PUT THIS BACK?", which is a stronger fact
+    # than the clause that used to end this comment. It said the restore ladder still only ever
+    # restores the user's bundle; that stopped being true when `newest_restore_source` landed,
+    # 1,168 lines below in this same module. EVERY automatic restore goes through it now, and it
+    # hands back the RECOVERY bundle in preference to the saved one whenever the recovery copy is
+    # the newer of the two — deliberately, to close the data-loss bug its own docstring
+    # describes. Where it does hand back the saved bundle, that bundle is either newer or holds
+    # the same tree, so a non-null instant here means one thing either way: what a restore brings
+    # back is no older than this. `restorable_presence` counts this slot for the same reason, and
+    # `SaveStateResponse.recovery_at` carries the fact — and this reasoning — onto the wire, where
+    # the rail and the exit guard read it to stop calling a fresh build's `dirty=True` a warning.
+    #
+    # RESUMPTION, NOT PROMOTION — the half of the old comment that was true stands unchanged. A
+    # recovery copy is not a VERSION: `snapshot_key` is untouched, `dirty` stays True beside a
+    # non-null instant, and nothing on this path performs the citizen's Save for them. Save stays
+    # MANUAL, and only Save produces something they can ask to come back to by name.
     recovery_at: datetime | None = None
 
 
@@ -620,6 +661,14 @@ class PreviewState:
 
     state: PreviewLifeState
     preview_url: str | None = None
+    # DIAGNOSTIC ONLY, and populated on the ALIVE arm alone: the instant the serving proof was
+    # stamped. NOTHING HERE OR ON THE WIRE MAY BRANCH ON IT — it is the same fact as `state`
+    # spelled a second time from one read, and a client computing liveness from it would be one
+    # refactor away from disagreeing with `state`. It exists so an operator can join a
+    # screenshot to the `app_first_served` log line and read WHEN, which is precisely the
+    # question nobody could answer about 2026-09-10. `None` on a pre-cutover hash: proven, with
+    # no instant to name. `PreviewStateResponse.serving_since` carries the same rule.
+    serving_since: datetime | None = None
     # SLOT_TAKEN only — whose work is in the container standing where this project's was. Also
     # populated directly from the starting marker's own payload (no registry round trip needed
     # to name the occupier) when a start, rather than a live container, is what is holding the
@@ -828,6 +877,106 @@ def _registry_serves_and_is_ready(reg: dict[str, str], app_name: str) -> bool:
     )
 
 
+# WHICH watcher won the race to see the app answer. Only the two this module can emit are
+# spelled here; `alarms.APP_FIRST_SERVED_EVENT` holds the whole vocabulary, the rest of which
+# belongs to the turn watcher and the reconciler. A closed Literal so a typo cannot mint an
+# observer that never existed.
+_ServingObserver = Literal["relaunch_wait", "relaunch_continuation"]
+
+
+async def _record_the_first_serve(
+    redis: aioredis.Redis,
+    user_id: uuid.UUID,
+    *,
+    app_name: str,
+    observer: _ServingObserver,
+    cold: bool,
+) -> None:
+    """Something watched this container's app ANSWER a request — write the proof down and say
+    so. NEVER RAISES: this is bookkeeping behind a container that is already up and already
+    handed to the citizen, exactly like the counters beside it, and a coordination-store blip
+    must not turn a working relaunch into a 500.
+
+    THE REFUSAL IS THE INTERESTING CASE. `mark_serving` answering False carries two situations
+    that only a caller can tell apart, so the discrimination is made here, once: a hash that
+    still names this app and already holds an instant is a SECOND SIGHTING — first serve wins,
+    nothing to say — while a hash that is gone, marked `ending`, or naming another container is
+    the near-miss the design is most afraid of, and it gets `SERVING_PROOF_STAMP_REFUSED`."""
+    when = datetime.now(UTC)
+    try:
+        stamped = await mark_serving(redis, user_id, app_name=app_name, when=when)
+        # Re-read either way: on a stamp it is where `created_at` comes from (so the operator
+        # is handed the window rather than two timestamps to subtract), and on a refusal it is
+        # the only thing that can say WHICH refusal this was.
+        reg = await read_registry(redis, user_id)
+    except RedisError:
+        _log.exception(
+            "serving proof could not be recorded; the reconciler's sweep is the backstop",
+            user_id=str(user_id),
+            app_name=app_name,
+        )
+        return
+    if stamped:
+        _log.info(
+            APP_FIRST_SERVED_EVENT,
+            app_name=app_name,
+            serving_since=when.isoformat(),
+            ms_since_container_created=elapsed_ms(
+                an_instant_on_the_hash(reg, REGISTRY_FIELD_CREATED_AT), when
+            ),
+            observer=observer,
+            cold=cold,
+        )
+        return
+    if reg is not None and _registry_serves_and_is_ready(reg, app_name) and stamp_is_proven(reg):
+        return  # a second sighting of a container that already carries its proof
+    _log.warning(
+        SERVING_PROOF_STAMP_REFUSED,
+        expected_app=app_name,
+        # A BOOL, and never the other project's container name: the id vocabulary in this log
+        # stays user-scoped, and naming the loser would put one of the citizen's projects into
+        # another's build trace.
+        found_app_present=bool(reg and reg.get(REGISTRY_FIELD_APP_NAME)),
+    )
+
+
+async def _last_supervisor_reading(
+    sandbox_client: SandboxClient, handle: SandboxHandle
+) -> tuple[bool | None, str]:
+    """The supervisor's final word on a wait that ended with no proof, for the give-up line.
+
+    THIS IS WHAT SEPARATES THE THREE ANSWERS an operator actually needs: a dev server that never
+    started, one that started and never finished compiling, and one that compiled and still
+    would not answer. Without it `app_first_serve_not_observed` says only "it did not work".
+
+    NEVER RAISES — it runs on a path that has already given up, so a supervisor that will not
+    answer this either simply leaves `None`/`unknown`, which is itself a reading."""
+    running: bool | None = None
+    with suppress(SandboxError):
+        running = (await sandbox_client.dev_status(handle)).running
+    # `compile_state` guarantees it never raises (a pre-endpoint image, a transport failure and
+    # a malformed body all land on UNKNOWN), so it needs no guard of its own.
+    return running, (await sandbox_client.compile_state(handle)).state.value
+
+
+@contextmanager
+def _one_relaunch_in_the_log(**fields: str) -> Iterator[None]:
+    """Bind this relaunch's correlation ids for every line written inside, then put the context
+    back exactly as it was found.
+
+    THE RESET IS NOT OPTIONAL even though a request runs in its own task: the same worker task
+    can be reused by whatever this process does next, and a `build_id` left bound would sign
+    somebody else's lines with this relaunch's identity — a correlation id that lies is worse
+    than none, because it is believed. Detached tasks created INSIDE are unaffected by the
+    reset: asyncio copied the context when they were created, which is precisely why the
+    continuation inherits these ids and keeps them after this returns."""
+    tokens = structlog.contextvars.bind_contextvars(**fields)
+    try:
+        yield
+    finally:
+        structlog.contextvars.reset_contextvars(**tokens)
+
+
 def app_name_for(app_id: uuid.UUID) -> str:
     """An ACA-compliant container name (2–32 chars, lowercase alphanumeric/hyphen,
     letter-first, ends alphanumeric), stable per app: `sbx-` + 28 hex chars of the
@@ -849,9 +998,18 @@ class RelaunchedPreview:
     app_id: uuid.UUID
     preview_url: str
     restored_from_failed_build: bool
-    # Is the dev server actually SERVING this URL yet? False only on the attach arm's fail-open
-    # path (`_ATTACHED_READY_BUDGET_SECONDS` elapsed with the app still not answering). The URL is
-    # framable either way — this says whether framing it will paint or wait.
+    # Is the dev server actually SERVING this URL yet? False on either reading that says the URL
+    # is framable with nothing painting behind it: the attach arm's readiness wait lapsing
+    # (`_ATTACHED_READY_BUDGET_SECONDS` elapsed with the app still not answering), or the app root
+    # answering with something that is not a page — a 404 while the agent has yet to write
+    # `app/page.tsx`, the measured blank-white-pane defect — which happens on EITHER arm. The URL
+    # is framable either way; this says whether framing it will paint or wait.
+    #
+    # NOT THE SAME FACT AS A PROVEN `serving_since` STAMP, and the single case that separates them
+    # is stated at the stamp site so the two cannot drift silently: when the supervisor cannot be
+    # asked whether the app is showing a page, this stays True — declining to demote a preview
+    # that may be painting — while the stamp is withheld, because a transport error is not a
+    # sighting. On every other arm they are set together or withheld together.
     ready: bool = True
 
 
@@ -1008,6 +1166,11 @@ class SessionManager:
         # "nothing was running" once the work is gone. Pruned lazily; see
         # `_prune_settled_stop_records`.
         self._stop_records: dict[tuple[uuid.UUID, uuid.UUID], _StopRecord] = {}
+        # When this process last said out loud that a user's preview-state read failed, so it
+        # says it once per outage rather than once per poll of every open tab. Monotonic, not
+        # wall-clock: a clock step must not unmute or mute the warning. Pruned on every use —
+        # see `_say_the_preview_read_failed`.
+        self._unknown_reported_at: dict[uuid.UUID, float] = {}
 
     def _start_lock_for(self, user_id: uuid.UUID) -> asyncio.Lock:
         lock = self._start_locks.get(user_id)
@@ -1134,6 +1297,7 @@ class SessionManager:
         sandbox_client: SandboxClient,
         project_id: uuid.UUID,
         *,
+        arm: _ClaimArm,
         spare_app: str | None = None,
     ) -> AsyncIterator[_LockScope]:
         """Reconcile stale state → acquire the one-per-user Redis lock → run the body
@@ -1148,6 +1312,13 @@ class SessionManager:
         predicate — it is the marker's whole payload. Required, not optional: a marker that
         could not say which project it is starting would be able to report `starting` but
         never `slot_taken`, which is the ghost this unit replaces.
+
+        `arm` NAMES THE DOOR on the `build_workspace_claimed` line, and is required for the same
+        reason: from inside here the two callers are indistinguishable, and "a citizen pressed
+        Launch" reads nothing like "a chat message allocated a workspace" to whoever is reading
+        the log. Two values, not the three the alarm's docstring lists — the standalone build
+        door was deleted with `_start_locked`, and a value nothing can emit is a value an alert
+        would wait for forever.
 
         THE TWO WAYS THE LOCK CAN DENY, and why they leave here as different exceptions.
         `acquire_lock` returning `None` now means one thing only — the lock is genuinely
@@ -1187,8 +1358,16 @@ class SessionManager:
           (see `_compensate_lock_and_container`), so every exit — success, adoption or
           failure — leaves no marker behind before its TTL would have.
         """
+        # THE CLOCK STARTS AT THE DOOR, not at `acquire_lock` below — the placement is the whole
+        # honesty of the number. `acquire_lock` never waits (it answers None on contention and
+        # this raises a 409), so timing that call alone would report ~0 forever and say nothing.
+        # What a citizen actually waits through here is the RECONCILE: tearing a stale container
+        # down is an ARM delete measured in tens of seconds. `reclaimed` on the same line says
+        # whether that is where the time went.
+        claim_started_at = time.monotonic()
+        reclaimed = False
         if not await _the_live_sandbox_is_already_the_one_we_want(redis, user_id, spare_app):
-            await reconcile_user(
+            reclaimed = await reconcile_user(
                 redis, user_id, sandbox_client, has_live_session=False, certified_dead=True
             )
         else:
@@ -1203,6 +1382,7 @@ class SessionManager:
         token = await acquire_lock(redis, user_id)
         if token is None:
             raise BuildSessionConflictError(self._active_by_user.get(user_id))
+        lock_wait_ms = int((time.monotonic() - claim_started_at) * 1000)
         scope = _LockScope(token=token)
         try:
             # From here until the scope exits, a poll of `project_preview_state` for
@@ -1214,6 +1394,26 @@ class SessionManager:
             # left that lock in place for its full 900s — every later start, relaunch and turn
             # for this user answered "already building" with nothing building.
             await write_starting_marker(redis, user_id, project_id)
+            # THE FIRST LINE OF A BUILD, and until now the only way to answer "did this citizen
+            # get a slot at all, and whose slot was it" was to infer it backwards from a later
+            # failure. `reclaimed` is the field that matters most: one of this citizen's own
+            # projects evicting another is otherwise completely invisible, and it is the thing
+            # a `serving_proof_stamp_refused` on the same user wants reading beside it.
+            #
+            # The two ids are passed EXPLICITLY even though the build's contextvars already
+            # carry them: this context manager is the shared skeleton behind both doors, and
+            # only one of them (`relaunch_preview`) binds in this module — the other's binding
+            # lives in the turn task that calls `ensure_sandbox`. A first line that cannot say
+            # whose slot this was would be worth nothing at all, so it does not depend on a
+            # binding made in another file.
+            _log.info(
+                BUILD_WORKSPACE_CLAIMED_EVENT,
+                arm=arm,
+                reclaimed=reclaimed,
+                lock_wait_ms=lock_wait_ms,
+                user_id=str(user_id),
+                project_id=str(project_id),
+            )
             yield scope
             # Clean exit — the body either released control back to us (RELEASE below) or
             # adopted the lock (a session now owns the container). Either way the start this
@@ -1971,6 +2171,37 @@ class SessionManager:
             if record.task.done() and record.requested_at < cutoff:
                 del self._stop_records[key]
 
+    def _say_the_preview_read_failed(self, user_id: uuid.UUID, project_id: uuid.UUID) -> None:
+        """Report an unreadable preview-state read — AT MOST ONCE PER USER PER SILENCE WINDOW.
+
+        RATE-LIMITED BECAUSE THE CALLER IS A BROWSER TIMER. Two surfaces poll this, in every
+        open tab, as often as every three seconds during a build; an outage that lasts a minute
+        would otherwise write hundreds of identical lines per citizen and bury the lifecycle
+        lines an operator actually needs. One line names the outage; the rest only cost money.
+
+        AND ORDINARY ANSWERS ARE DELIBERATELY NOT LOGGED AT ALL — recorded here as a decision so
+        nobody adds it later. A per-tab poll on two surfaces would drown the stream and tell an
+        operator nothing that `sandbox_registry_marked_pending`, `app_first_served` and
+        `app_serving_lost` plus their timestamps do not already reconstruct.
+
+        The window map is pruned on every call, so it cannot outgrow the set of users who are
+        currently failing — and that set is empty the moment the store comes back."""
+        now = time.monotonic()
+        for who, when in list(self._unknown_reported_at.items()):
+            if now - when >= _UNKNOWN_REPORT_SILENCE_SECONDS:
+                del self._unknown_reported_at[who]
+        # Anything the prune left behind is inside the window by construction, so presence
+        # alone is the whole test — no second comparison to get the sense of backwards.
+        if user_id in self._unknown_reported_at:
+            return
+        self._unknown_reported_at[user_id] = now
+        _log.warning(
+            PREVIEW_STATE_REPORTED_UNKNOWN_EVENT,
+            user_id=str(user_id),
+            project_id=str(project_id),
+            silence_s=_UNKNOWN_REPORT_SILENCE_SECONDS,
+        )
+
     async def project_preview_state(
         self, db: AsyncSession, user: User, project_id: uuid.UUID
     ) -> PreviewState:
@@ -1984,8 +2215,11 @@ class SessionManager:
         rows and two object-store HEADs, NONE on the alive path, and NO container call, ever."""
         # PRECEDENCE, AND THE ORDER MATTERS. An unreadable store still answers `unknown`,
         # checked first, so ambiguity never wears a confident face. A registry that serves
-        # this project and is READY still answers `alive` even with a stale marker present —
-        # a marker must never hide a running app. A marker naming THIS project answers
+        # this project, is READY and carries a SERVING PROOF still answers `alive` even with a
+        # stale marker present — a marker must never hide a running app; the same registry
+        # WITHOUT that proof answers `starting` from the same block, because a container that
+        # has been scheduled and has never answered a request is a wait, not a preview, however
+        # the markers happen to read. A marker naming THIS project answers
         # `starting`, ABOVE the never-built check below it, because a first build mints its
         # app row only once the start commits, so `app_id is None` does not yet mean nothing
         # is happening. A marker naming ANOTHER project answers `slot_taken`, named directly
@@ -2031,12 +2265,40 @@ class SessionManager:
             #
             # The store question is INDEPENDENT of the registry question and still answerable,
             # so it is still asked when there is an app to ask it about.
+            #
+            # AND THE LOG IS THE WHOLE RECORD OF THIS ONE. Nothing is drawn for UNKNOWN by
+            # design — a standing frame stays framed, a standing card stays put — so without a
+            # line here the failure is invisible from both ends at once: the citizen is told
+            # nothing, and so is the operator.
+            self._say_the_preview_read_failed(user.id, project_id)
             return PreviewState(
                 state=PreviewLifeState.UNKNOWN,
                 restorable=await restorable_presence(app_id) if app_id is not None else None,
             )
         mine = app_name_for(app_id) if app_id is not None else None
         if mine is not None and reg is not None and _registry_serves_and_is_ready(reg, mine):
+            if not stamp_is_proven(reg):
+                # THE CONTAINER EXISTS AND HAS NEVER ANSWERED A REQUEST. This is the whole
+                # citizen-visible fix: until this arm, `state=ready` — an ACA container was
+                # SCHEDULED — was reported as ALIVE with a framable URL, and on 2026-09-10 a
+                # citizen's pane spent eight seconds framing nginx's "This app isn't running
+                # right now" page while the live region announced the preview was live.
+                #
+                # WHY IT SITS HERE AND NOWHERE ELSE, three times over:
+                #  * ABOVE `restorable_presence`, so the whole pre-serve window — every 3s
+                #    accelerated poll of it — costs no object-store HEAD. Placing it after that
+                #    call would quietly move the build window onto the expensive path.
+                #  * INSIDE this block, so the app-name/state comparison happens exactly once.
+                #    Two hand-written copies of "is this mine and ready" answer differently the
+                #    first time one is updated alone.
+                #  * ABOVE the `starting` marker check below, which takes the 300s marker TTL
+                #    off the screen entirely: a container that outlives its marker without ever
+                #    serving still reads as a wait, instead of falling through to SLOT_TAKEN or
+                #    offering a Launch button in the middle of the citizen's own build.
+                #
+                # No `preview_url` and no `restorable`: STARTING's existing defaults are already
+                # the honest answer (nothing to frame, no restore offered mid-start).
+                return PreviewState(state=PreviewLifeState.STARTING)
             fqdn = reg.get(REGISTRY_FIELD_FQDN)
             # THE HOT PATH, AND IT SPENDS NOTHING ON THE STORE. `restorable` stays `None` —
             # "no claim" — because a running app renders no restore affordance for the answer
@@ -2049,6 +2311,7 @@ class SessionManager:
                 # that follows the handle's field — and it is what the cockpit frames, so
                 # getting it wrong shows a blank preview over a perfectly healthy container.
                 preview_url=settings.app_url(mine) if fqdn else None,
+                serving_since=an_instant_on_the_hash(reg, REGISTRY_FIELD_SERVING_SINCE),
             )
         if starting is not None:
             # A start is in flight for THIS user, and it was not the one just ruled ALIVE
@@ -2066,11 +2329,30 @@ class SessionManager:
                 restorable=(await restorable_presence(app_id) if app_id is not None else False),
             )
         if app_id is None:
-            # No app row, so no bundle key can exist either: `restorable=False` is a CONFIRMED
-            # absent here, not an unknown, and skipping the store call is an answer rather than
-            # an omission (the same reading `get_project` makes). Reached only once a start for
-            # THIS project has been ruled out above — see the precedence note.
-            return PreviewState(state=PreviewLifeState.NEVER_BUILT, restorable=False)
+            # NEVER BUILT — BUT ONLY IF THE WORKSPACE IS NOT SOMEBODY ELSE'S, and that ordering is
+            # the whole of this arm.
+            #
+            # This return used to sit ABOVE the slot-taken check below, which made SLOT_TAKEN
+            # structurally unreachable for a project that had never built — the project most
+            # likely to hit it. What a citizen actually got: "Describe what you want to build."
+            # over a workspace another project was holding, and because the composer rolls its
+            # bubbles back when the server refuses the start, their first message VANISHED. No
+            # message, no error, no card, nothing to press. Measured on 2026-09-10: two of three
+            # real runs, because holding one project open is the normal state of things.
+            #
+            # `restorable=False` stays a CONFIRMED absent on both paths: no app row means no
+            # bundle key can exist, so skipping the store call is an answer rather than an
+            # omission (the same reading `get_project` makes).
+            held = reg.get(REGISTRY_FIELD_APP_NAME) if reg is not None else None
+            if held is None:
+                return PreviewState(state=PreviewLifeState.NEVER_BUILT, restorable=False)
+            occupier = await _occupying_project(db, user.id, held)
+            return PreviewState(
+                state=PreviewLifeState.SLOT_TAKEN,
+                occupying_project_id=occupier.project_id if occupier else None,
+                occupying_project_name=occupier.project_name if occupier else None,
+                restorable=False,
+            )
         # Everything below is a workspace that is NOT serving this project and has no start in
         # flight — which is the only place the restore offer is rendered, so this is the one
         # place the answer earns its round trip.
@@ -2213,6 +2495,201 @@ class SessionManager:
             # this subclass and refuses rather than guess.
             raise SandboxUnreachableError(app_id) from exc
 
+    async def _retract_the_proof_and_keep_watching(
+        self,
+        sandbox_client: SandboxClient,
+        handle: SandboxHandle,
+        redis: aioredis.Redis,
+        user_id: uuid.UUID,
+        *,
+        app_name: str,
+        already_waited_s: float,
+        cold: bool,
+    ) -> None:
+        """The remedy for a relaunch holding a framable URL with NOTHING PAINTING BEHIND IT:
+        retract the standing serving proof, then keep watching for the page, detached.
+
+        ONE IMPLEMENTATION FOR BOTH WAYS IN, and that is the point rather than tidiness. Two
+        readings end here — the readiness wait lapsing, and the app root answering with something
+        that is not a page — and they want the identical outcome: keep the container, hand the
+        URL back with `ready=False`, and let the pane's labelled wait carry the seconds. While
+        those two were separate hand-written copies, the second one reached its outcome by
+        raising into the first one's handler, whose opening line re-raises on a cold relaunch —
+        so a container that had just been restored was torn down for answering 404.
+
+        RETRACTING THE PROOF IS THE ONE THING OUTSIDE A LIVE TURN THAT CAN. The container this
+        runs against may be one that HAS served, so it carries an ISO stamp nothing else would
+        ever clear (the only other clearer, the turn watcher's crash edge, exists only while a
+        turn is streaming). Without this the preview-state poll goes on reporting RUNNING and the
+        pane frames nginx's "This app isn't running right now" page — the measured defect, one
+        door down, with every card that used to cover it deleted.
+
+        IT MARKS NOTHING `ending` AND TEARS NOTHING DOWN, and that is not timidity: condemning a
+        container for a slow root GET once cost a citizen their unsaved work, as the fail-open
+        handler in `relaunch_preview` records at length. Retracting a claim costs them a card;
+        destroying a container costs them their work.
+
+        `cold` rides through to the continuation's log line only, and it is a parameter rather
+        than a constant because a RESTORED container can reach here now: a cold start whose first
+        page arrived late is exactly what an operator reading that field is looking for."""
+        with suppress(RedisError):
+            await clear_serving(redis, user_id, app_name=app_name)
+        # AND KEEP WATCHING, detached. The wait that just ended is seconds against a container
+        # that may simply be compiling a heavy route; the citizen has no patience button and this
+        # backend must not need one (decision D2). This is the front half of the five-minute
+        # reconciler backstop: same job, sooner, for the citizen who is looking at the pane right
+        # now. The `app_first_serve_not_observed` line is deliberately NOT written here — this
+        # wait is not over, it is delegated, and the continuation writes it if and only if it
+        # really gives up.
+        self._keep_watching_for_a_first_serve(
+            sandbox_client,
+            handle,
+            redis,
+            user_id,
+            app_name=app_name,
+            already_waited_s=already_waited_s,
+            cold=cold,
+        )
+
+    def _keep_watching_for_a_first_serve(
+        self,
+        sandbox_client: SandboxClient,
+        handle: SandboxHandle,
+        redis: aioredis.Redis,
+        user_id: uuid.UUID,
+        *,
+        app_name: str,
+        already_waited_s: float,
+        cold: bool,
+    ) -> None:
+        """Detach the bounded continuation and return immediately.
+
+        THE SAME SHAPE THE DEPLOY PIPELINE USES — a task that owns its own work while the client
+        polls — because the alternative is holding an HTTP request open for two more minutes
+        behind an edge that gives it twenty seconds. The strong reference into `self._tasks` is
+        what stops the loop garbage-collecting it mid-wait.
+
+        It observes and records. It never marks the registry `ending`, never tears anything
+        down, and holds no lock: the relaunch that spawned it has already released one, and a
+        watcher that could destroy a container is a watcher that can destroy the citizen's
+        unsaved work on a slow route."""
+        watcher = asyncio.create_task(
+            self._watch_for_a_first_serve(
+                sandbox_client,
+                handle,
+                redis,
+                user_id,
+                app_name=app_name,
+                already_waited_s=already_waited_s,
+                cold=cold,
+            )
+        )
+        self._tasks.add(watcher)
+        watcher.add_done_callback(self._tasks.discard)
+
+    async def _watch_for_a_first_serve(
+        self,
+        sandbox_client: SandboxClient,
+        handle: SandboxHandle,
+        redis: aioredis.Redis,
+        user_id: uuid.UUID,
+        *,
+        app_name: str,
+        already_waited_s: float,
+        cold: bool,
+    ) -> None:
+        """Keep asking whether the app has started SHOWING A PAGE, for one more cold budget, then
+        stop — either way with a line saying which. NEVER RAISES: nothing awaits this task, so
+        an escaping exception would surface only as an un-retrieved-exception warning at
+        collection time, long after the fact and with none of the context.
+
+        IT READS `shows_a_page` ITSELF, AND NEVER BORROWS `wait_ready`'s VERDICT. That borrowing
+        was this task's own defect: `wait_ready` returns on `/dev/status.ready`, which the
+        supervisor keeps fail-open on purpose (ANY response counts, 404 and 500 included), while
+        the page check that spawns this has just REFUSED to call the app ready because its root
+        has no page, and cleared the standing proof on the way. One second later the first
+        iteration wrote that proof straight back over the same 404, the poll flipped to RUNNING,
+        and the pane framed the blank container the refusal had just saved the citizen from.
+        Every other stamp site on this branch gates on `shows_a_page`; this is the fifth and it
+        does too.
+
+        WHY IT ASKS AGAIN AT ALL, given the wait it follows already ended: that wait is bounded by
+        the caller's budget — 15 seconds on an attach, or one reading taken the instant a restored
+        container answered — and `shows_a_page` describes only this moment, so a heavy dashboard
+        route compiling under 1.0 vCPU shows no page for far longer than that without anything
+        being wrong. The alternative for the citizen is a pane that waits until the five-minute
+        reconciler sweep notices. The third caller asks for a different reason: it could not reach
+        the supervisor for that one reading at all, and it wants the question asked again rather
+        than answered by a transport error.
+
+        ONE SUPERVISOR CALL PER SECOND, down from the two per iteration the borrowed
+        `wait_ready(timeout_s=1.0)` cost — it polled inside its own one-second budget and then
+        this loop slept for another. The observable cadence is unchanged; the load is halved.
+
+        BOUNDED, AND THE BOUND IS THE POINT: one cold budget, after which it stops whatever it
+        has seen. A second press of the control while this one is still watching does start a
+        second watcher, and that costs nothing — the stamp is first-serve-wins, so the loser
+        writes nothing and says nothing, and each watcher still dies on its own deadline. The
+        reconciler is what covers everything they all miss."""
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        deadline = started_at + _COLD_READY_BUDGET_SECONDS
+        try:
+            while True:
+                try:
+                    it_paints = (await sandbox_client.dev_status(handle)).shows_a_page
+                except SandboxError:
+                    # A transport failure is not a statement about the app — the supervisor may
+                    # be busy or the container mid-restart — so it costs an iteration and nothing
+                    # more, and it can never be read as a sighting: "we could not ask" has never
+                    # been the same as "we watched it paint". The deadline below is what ends
+                    # this, never one bad answer. No `SandboxNotReadyError` arm sits above this
+                    # one any more — `dev_status` does not raise it, and as a SUBCLASS it would
+                    # land here regardless, which is the correct home for it.
+                    it_paints = False
+                if it_paints:
+                    # `cold` comes from the caller rather than being assumed False here: the page
+                    # check that spawns this can now hand over a RESTORED container too, and a
+                    # cold start whose first page arrived late is exactly what an operator
+                    # reading this field is looking for.
+                    await _record_the_first_serve(
+                        redis,
+                        user_id,
+                        app_name=app_name,
+                        observer="relaunch_continuation",
+                        cold=cold,
+                    )
+                    return
+                if loop.time() >= deadline:
+                    break
+                await asyncio.sleep(READINESS_POLL_S)
+            dev_running, dev_compile = await _last_supervisor_reading(sandbox_client, handle)
+            # NOT A CLAIM THAT THE APP IS DEAD. The reconciler's sweep may still stamp this
+            # container minutes from now, and `app_first_served` with `observer=reconciler` is
+            # how that shows up. What this line says is that for this long, nothing the platform
+            # runs watched the app SHOW A PAGE — which for two of the three callers means a
+            # citizen sat in front of a wait card for the whole of it.
+            _log.warning(
+                APP_FIRST_SERVE_NOT_OBSERVED_EVENT,
+                waited_ms=int((already_waited_s + (loop.time() - started_at)) * 1000),
+                budget_ms=int((already_waited_s + _COLD_READY_BUDGET_SECONDS) * 1000),
+                arm="relaunch_continuation",
+                dev_running=dev_running,
+                dev_compile=dev_compile,
+                app_name=app_name,
+                user_id=str(user_id),
+            )
+        except asyncio.CancelledError:
+            # Shutdown. Leave everything exactly as it is — this task owns no state to unwind,
+            # and the five-minute reconciler is the backstop for the proof it did not take.
+            raise
+        except Exception:
+            _log.exception(
+                "the first-serve continuation failed; the reconciler's sweep is the backstop",
+                user_id=str(user_id),
+                app_name=app_name,
+            )
+
     async def relaunch_preview(
         self,
         db: AsyncSession,
@@ -2302,6 +2779,44 @@ class SessionManager:
           * The router's own `sandbox is None -> 503` sits ABOVE this method, so "above every
             refusal" is true within the manager and not of the endpoint.
         """
+        # ONE RELAUNCH, ONE GREP. The binding lives here, wrapping the whole implementation,
+        # and not at the router seam: asyncio copies a context at TASK CREATION, so a binding
+        # made on the request side would not reliably cover the bounded continuation the body
+        # detaches — which is exactly where the lines worth correlating are emitted. It also
+        # makes every one of the failure lines already in this file retroactively joinable,
+        # with no edit to any of them.
+        #
+        # `build_id` IS A FRESH UUIDv7 rather than anything durable: a relaunch is its own
+        # attempt at bringing a workspace up, and two presses of the same button are two
+        # stories an operator must be able to tell apart. (A turn binds its turn_id for the
+        # same reason — one identifier per attempt, never per app.) `app_id`/`app_name` are
+        # deliberately NOT bound: neither exists until `resolve_app_for_project` runs inside
+        # the lock, well after the first line is written, so the lines that have them pass
+        # them as fields instead of half the build carrying an empty binding.
+        with _one_relaunch_in_the_log(
+            build_id=str(uuid.uuid7()), user_id=str(user.id), project_id=str(project_id)
+        ):
+            return await self._relaunch_under_one_build_id(
+                db, user, project_id, sandbox_client, prefer_saved=prefer_saved
+            )
+
+    async def _relaunch_under_one_build_id(
+        self,
+        db: AsyncSession,
+        user: User,
+        project_id: uuid.UUID,
+        sandbox_client: SandboxClient,
+        *,
+        prefer_saved: bool,
+    ) -> RelaunchedPreview:
+        """The whole of `relaunch_preview` — go there for what it does and why it does it that
+        way; this half is the same code, one indent level out.
+
+        SPLIT FOR ONE REASON: the correlation binding needs a block to own, and a `with` around
+        four hundred lines of a method someone has to read is worse than a named seam that says
+        what the binding covers. Never call it directly — a relaunch that runs without a
+        `build_id` bound writes lifecycle lines nothing can join back up, which is the failure
+        this whole log model exists to end."""
         await count(HarnessCounter.APP_START_ATTEMPTED)
         async with self._start_lock_for(user.id):
             redis = get_redis()
@@ -2334,7 +2849,7 @@ class SessionManager:
                 db, user, spare_app=spare_app, sandbox_client=sandbox_client
             )
             async with self._holding_user_lock(
-                redis, user_id, sandbox_client, project_id, spare_app=spare_app
+                redis, user_id, sandbox_client, project_id, arm="relaunch", spare_app=spare_app
             ) as scope:
                 app_id = await resolve_app_for_project(db, user_id, project_id)
                 # The snapshot gate runs BEFORE the commit and the storage provision: the 404
@@ -2501,10 +3016,20 @@ class SessionManager:
                 # would land in compensation, i.e. we would destroy a container for the sin of
                 # already serving the page we came to show. `wait_ready` below is the real gate
                 # either way, and it answers from the server that is up.
-                # Flipped to False only by the attach arm's fail-open readiness path below; it
+                # Flipped to False by either reading that says the URL is framable with nothing
+                # painting behind it — the attach arm's readiness wait lapsing, or the app root
+                # answering with something that is not a page, which happens on EITHER arm. It
                 # rides out on the response so the pane can label a preview that is framable but
                 # not yet serving, instead of being told "ready" and framing a hang.
                 ready = True
+                # DID ANYTHING WATCH THIS CONTAINER ANSWER WITH A PAGE? A different fact from
+                # `ready`, and keeping them apart is a fix rather than a nuance. `ready` is what
+                # the citizen is handed; this is the only thing the registry's serving proof may
+                # be written from. They agree on every arm but one — the supervisor blip below,
+                # where the platform could not ask and must therefore neither demote a preview
+                # that may be painting nor mint a proof for a container nothing has ever watched
+                # serve.
+                something_watched_it_paint = False
                 try:
                     await sandbox_client.dev_start(scope.handle)
                 except SandboxError:
@@ -2516,6 +3041,21 @@ class SessionManager:
                         app_id=str(app_id),
                         exc_info=True,
                     )
+                # The readiness wait's own clock, for the continuation's arithmetic. The page
+                # check below can end this wait early, so the budget constant is NOT the elapsed
+                # time on that path, and a give-up line quoting it would overstate how long the
+                # citizen actually waited.
+                readiness_started_at = time.monotonic()
+                # THE WAIT AND NOTHING ELSE INSIDE THE TRY. The page check lives in the `else`
+                # arm, where a `SandboxError` from it cannot reach this handler and this handler
+                # cannot be reached by anything but a readiness TIMEOUT — the one condition its
+                # `if not attached: raise` was written for. The first version of that check
+                # raised `SandboxNotReadyError` from inside this try to reuse the handler below:
+                # `SandboxNotReadyError` SUBCLASSES `SandboxError`, so the raise had to dodge its
+                # own transport handler, and the handler it landed in re-raises on a cold
+                # relaunch — escaping `_holding_user_lock` before `scope.spare()` and letting
+                # compensation TEAR DOWN the container `_restore_or_bust` had just built. A blank
+                # pane costs the citizen a card; that cost them the restored workspace and a 503.
                 try:
                     scope.handle = await sandbox_client.wait_ready(
                         scope.handle,
@@ -2525,12 +3065,6 @@ class SessionManager:
                             else _COLD_READY_BUDGET_SECONDS
                         ),
                     )
-                    # …AND IT STOPS HERE, on the statement after the wait returns, so the reading
-                    # is the restore-and-wait interval and nothing else. Only the cold arm ever
-                    # armed it: a 15-second attach budget and a 120-second cold budget averaged
-                    # together produce a number that describes neither.
-                    if cold_started_at is not None:
-                        cold_elapsed_ms = int((time.monotonic() - cold_started_at) * 1000)
                 except SandboxNotReadyError:
                     # AMBIGUITY DENIES, AND WE PAID FOR THIS ONE IN LOST WORK.
                     #
@@ -2560,6 +3094,13 @@ class SessionManager:
                     # The COLD arm still raises. A container we just provisioned that never came up
                     # holds no unsaved work and has nothing framable to offer, so an error is the
                     # honest answer there.
+                    #
+                    # AND THAT SENTENCE IS THE WHOLE SCOPE OF THIS ARM: "never came up". A
+                    # container that DID come up and answers the root with a 404 is a different
+                    # condition entirely — it is up, it holds the tree just restored into it, and
+                    # its URL becomes framable the moment the agent writes a page. Routing that
+                    # through here destroys it. It never reaches this handler now; it is answered
+                    # in the `else` arm below, with the same remedy on both arms.
                     if not attached:
                         raise
                     ready = False
@@ -2569,6 +3110,95 @@ class SessionManager:
                         app_id=str(app_id),
                         budget_s=_ATTACHED_READY_BUDGET_SECONDS,
                     )
+                    # THE REMEDY IS SHARED WITH THE PAGE CHECK BELOW, and it is one function
+                    # so that the two arms cannot drift: retract the standing proof, keep the
+                    # container, keep watching. Every "why" behind those three lives in
+                    # `_retract_the_proof_and_keep_watching`, including the run against real
+                    # Azure that proved the alternative costs unsaved work.
+                    await self._retract_the_proof_and_keep_watching(
+                        sandbox_client,
+                        scope.handle,
+                        redis,
+                        user_id,
+                        app_name=app_name_for(app_id),
+                        already_waited_s=_ATTACHED_READY_BUDGET_SECONDS,
+                        cold=not attached,
+                    )
+                else:
+                    # …AND IT STOPS HERE, on the statement after the wait returns, so the reading
+                    # is the restore-and-wait interval and nothing else. Only the cold arm ever
+                    # armed it: a 15-second attach budget and a 120-second cold budget averaged
+                    # together produce a number that describes neither.
+                    if cold_started_at is not None:
+                        cold_elapsed_ms = int((time.monotonic() - cold_started_at) * 1000)
+                    # A PAGE, NOT MERELY AN ANSWER — one extra reading, once per press.
+                    #
+                    # `wait_ready` has just returned on `/dev/status.ready`, which the supervisor
+                    # keeps fail-open on purpose: ANY response counts, 404 and 500 included, so a
+                    # compile error cannot wedge it False and mislead the model. `shows_a_page`
+                    # asks the narrower question the FRAME has to ask — would a citizen opening
+                    # this preview right now see a page — and a root answering 404 does not.
+                    # Measured on 2026-09-10: a build framed a container whose app root was still
+                    # 404ing because the agent had not written `app/page.tsx` yet, and the citizen
+                    # got a blank white pane with no words on it.
+                    #
+                    # THREE READINGS, THREE OUTCOMES, each handled where it is taken and none of
+                    # them a `raise` into somebody else's handler.
+                    try:
+                        dev = await sandbox_client.dev_status(scope.handle)
+                    except SandboxError:
+                        # WE COULD NOT ASK — a third answer, not a quiet vote for either
+                        # neighbour, and it used to be collapsed into the wrong one. Declining to
+                        # DEMOTE is right: a supervisor blip is not evidence about the app, so
+                        # `ready` stays exactly as the wait left it and a preview that is painting
+                        # keeps its frame. But the same fail-open flag also kept `ready` True, and
+                        # `ready` was what gated the serving stamp — so one transport error minted
+                        # a proof for a container NOTHING HAS EVER WATCHED SERVE, which is the
+                        # claim the whole branch exists to make honest.
+                        # `something_watched_it_paint` therefore stays False, and the continuation
+                        # asks again once a second until it can answer; the reconciler's sweep is
+                        # the backstop under that.
+                        _log.warning(
+                            "relaunch_could_not_ask_whether_the_app_is_showing_a_page",
+                            user_id=str(user_id),
+                            app_id=str(app_id),
+                            attached=attached,
+                            exc_info=True,
+                        )
+                        self._keep_watching_for_a_first_serve(
+                            sandbox_client,
+                            scope.handle,
+                            redis,
+                            user_id,
+                            app_name=app_name_for(app_id),
+                            already_waited_s=time.monotonic() - readiness_started_at,
+                            cold=not attached,
+                        )
+                    else:
+                        something_watched_it_paint = dev.shows_a_page
+                        if not something_watched_it_paint:
+                            # THE SAME OUTCOME ON BOTH ARMS, and never the cold arm's raise. The
+                            # container is up and holds the tree; only its root has nothing to
+                            # show yet. So it keeps its life and the citizen keeps the URL, with
+                            # `ready=False` on it and the pane's labelled wait doing the talking —
+                            # the outcome the attach arm has always given this shape.
+                            ready = False
+                            _log.warning(
+                                "relaunch_root_answered_without_a_page",
+                                user_id=str(user_id),
+                                app_id=str(app_id),
+                                attached=attached,
+                                root_status=dev.root_status,
+                            )
+                            await self._retract_the_proof_and_keep_watching(
+                                sandbox_client,
+                                scope.handle,
+                                redis,
+                                user_id,
+                                app_name=app_name_for(app_id),
+                                already_waited_s=time.monotonic() - readiness_started_at,
+                                cold=not attached,
+                            )
                 # Past here the container is up, registered and serving — the same state a
                 # SUCCESSFUL relaunch leaves behind — so destroying it over a later blip is no
                 # longer a rollback (see `_LockScope.spared`). This matters more now that the
@@ -2625,10 +3255,11 @@ class SessionManager:
                 restored_from_failed_build=restored_from_failed_build and not attached,
                 ready=ready,
             )
-        # The started/reached-running ratio's numerator, and it fires ONLY on a verdict that
-        # proves a serving page. The attach arm now deliberately fails open and hands back a
-        # framable URL with `ready=False` (see the fail-open fix above); that is not a
-        # reached-running outcome, and counting it would make the ratio measure nothing.
+        # The started/reached-running ratio's numerator, and it fires on the verdict the
+        # CITIZEN got: a framable URL that nothing has told us will hang. Two readings withhold
+        # it — the attach arm's readiness wait failing open with `ready=False`, and a root that
+        # answered without a page (see both above) — because neither is a reached-running
+        # outcome, and counting them would make the ratio measure nothing.
         #
         # OUTSIDE THE PER-USER START LOCK, which is the whole reason the result is built above and
         # returned below rather than returned there. `_start_lock_for(user.id)` is the same
@@ -2639,6 +3270,29 @@ class SessionManager:
         # outside the lock like any other bookkeeping.
         if ready:
             await count(HarnessCounter.APP_START_REACHED_RUNNING, app_id=app_id)
+        # THE SERVING PROOF, AND IT IS NO LONGER THE COUNTER'S GATE. One case separates them and
+        # it is worth the second `if`: when the supervisor could not be asked whether the app is
+        # showing a page, `ready` stays True — the citizen keeps a preview that may be painting
+        # perfectly well — while this stays False, because a transport error is not a sighting
+        # and `serving_since` is the platform's claim that SOMETHING WATCHED THIS CONTAINER SERVE
+        # A PAGE. That is the whole of the daylight between them; on every other arm they move
+        # together, and anyone who widens the gap has to answer the same question here.
+        #
+        # WHAT THE CITIZEN SEES IN THAT ONE CASE, stated rather than discovered: this response
+        # carries the framable URL, and the preview-state poll answers `starting` until the
+        # continuation spawned on that path takes the proof — normally the next second, once the
+        # supervisor answers again. The five-minute reconciler is the backstop under it.
+        #
+        # `cold` is the restore arm: the attach arm reuses a container that was already
+        # up, so its stamp usually loses to a proof taken long before this press.
+        if something_watched_it_paint:
+            await _record_the_first_serve(
+                redis,
+                user_id,
+                app_name=app_name_for(app_id),
+                observer="relaunch_wait",
+                cold=cold_elapsed_ms is not None,
+            )
         if cold_elapsed_ms is not None:
             await count(HarnessCounter.APP_COLD_START_MS, value=cold_elapsed_ms, app_id=app_id)
         return relaunched
@@ -2712,7 +3366,12 @@ class SessionManager:
                 db, user, spare_app=spare_app, sandbox_client=sandbox_client
             )
             async with self._holding_user_lock(
-                redis, user_id, sandbox_client, project_id, spare_app=spare_app
+                redis,
+                user_id,
+                sandbox_client,
+                project_id,
+                arm="ensure_sandbox",
+                spare_app=spare_app,
             ) as scope:
                 app_id = await resolve_app_for_project(db, user_id, project_id)
                 await db.commit()
@@ -3286,6 +3945,14 @@ class SessionManager:
             and session.handle is not None
         )
 
+        # READ THE CONTAINER'S OWN RECORD BEFORE THE STEP THAT DELETES IT — the last chance
+        # anything has to answer "was this container ever any use to anybody". One HGETALL on a
+        # path that is already tearing down an ACA container; there is no budget to protect
+        # here, and it is guarded because a blip must not abort the end sequence.
+        reg_at_the_end: dict[str, str] | None = None
+        with suppress(RedisError):
+            reg_at_the_end = await read_registry(redis, session.user_id)
+
         # 2. Teardown → 3. holder release (LAST) → clear registry — or, on the completed
         #    path, PARDON: keep the container + registry, lease its lifetime, release the
         #    lock (see `_pardon_the_container`). Release + registry-delete run ONLY on a
@@ -3336,6 +4003,40 @@ class SessionManager:
         finally:
             self._active_by_user.pop(session.user_id, None)
             self._maybe_prune_start_lock(session.user_id)
+
+        # 3a. A CONTAINER'S LIFE ENDED, said out loud. Until this line the clean finish was
+        #     completely silent, so the log held starts with no ends and no way to tell a tidy
+        #     shutdown from a process that simply vanished.
+        #
+        #     `reason` NAMES THE DOOR, not this session's end reason: one event, four values,
+        #     across the two files that end containers, so an external rule can key on it (THE
+        #     ONE RULE in `alarms.py`). The session's own end reason is already on the terminal
+        #     `ended` frame and on the outcome row below — spelling it here a third time is how
+        #     two spellings of one fact get written.
+        #
+        #     `served` IS READ STRAIGHT OFF THE STAMP and is deliberately NOT `stamp_is_proven`:
+        #     that predicate grandfathers a pre-cutover absence as proven so a live fleet stays
+        #     framed across the deploy, which is the right answer for the SCREEN and the wrong
+        #     one for a retrospective. Here an absent stamp means nobody ever watched this app
+        #     answer, and saying otherwise would put a lie in the one field that exists to count
+        #     containers that were never any use to anybody.
+        #
+        #     ON THE PARDON ARM the container is still up — `pardoned=True` says exactly that —
+        #     so `lifetime_ms` there is how long it had lived when its session ended, not how
+        #     long it lived in total. The reaper writes the closing line for that one.
+        _log.info(
+            SANDBOX_TORN_DOWN_EVENT,
+            reason="turn_finalize",
+            pardoned=pardoned,
+            lifetime_ms=elapsed_ms(
+                an_instant_on_the_hash(reg_at_the_end, REGISTRY_FIELD_CREATED_AT),
+                datetime.now(UTC),
+            ),
+            served=bool(reg_at_the_end and reg_at_the_end.get(REGISTRY_FIELD_SERVING_SINCE)),
+            user_id=str(session.user_id),
+            app_id=str(session.app_id),
+            session_id=str(session.session_id),
+        )
 
         # 4. Emit THE terminal `ended` — the session's one and only terminal frame. It drives
         #    the derived status AND lets every SSE generator emit `[DONE]` (a bare close

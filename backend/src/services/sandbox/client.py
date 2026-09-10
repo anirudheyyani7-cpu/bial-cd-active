@@ -16,10 +16,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import secrets
+import time
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import httpx
 import structlog
@@ -38,6 +39,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -72,6 +74,18 @@ from src.services.storage import get_storage, snapshot_key
 
 _log = structlog.get_logger()
 
+# THE TWO LIFECYCLE EVENT NAMES THIS FILE EMITS ARE IMPORTED INSIDE THE METHODS THAT EMIT THEM,
+# and that is a worked-around cycle rather than a style choice. They are pinned constants in
+# `services/build_sessions/alarms.py` (an alert cannot be written against a name that exists in
+# two spellings, so it is imported, never retyped — including by tests), but that module sits
+# under a package whose `__init__` imports `appdata`, which imports `SandboxNotConfiguredError`
+# from `services/sandbox` — this very package, still half-initialised at that point. A
+# module-scope import here is therefore a hard `ImportError` at startup, not a lint smell.
+#
+# THE REAL FIX IS NOT HERE. `src/core/alarms.py` is a leaf that imports no `src.*` precisely so
+# that event names shared across packages have a home, and its own docstring says so. These two
+# names now span `services/sandbox/` and `services/build_sessions/`, so they belong there; once
+# they move, both deferred imports below become ordinary module-scope ones and this note goes.
 _COMPILE_VALUES: Final = frozenset(m.value for m in CompileState)
 
 # Caddy routes `/_sup/*` to the supervisor (stripping the prefix); every call the
@@ -130,6 +144,12 @@ _SUPERVISOR_TOKEN_BYTES: Final = 32
 # a control-plane restart (`_recover_token`), so the two sites must never drift apart.
 _SUPERVISOR_TOKEN_ENV: Final = "SUPERVISOR_TOKEN"
 _TOKEN_REF_BYTES: Final = 16
+
+# WHICH OF THE TWO BIRTHS a container had, carried only so the create notice can say. A
+# `Literal` rather than a bare `str` because the value is a log FIELD an operator filters on,
+# and a second spelling of either arm is invisible until the day someone greps for the one that
+# stopped matching — the same reasoning that pins the event names themselves.
+_BirthArm = Literal["provision_new", "restore_from_snapshot"]
 
 # Capped exponential backoff for transient ACA provisioning errors.
 _ACA_MAX_ATTEMPTS: Final = 4
@@ -442,11 +462,16 @@ class AcaSandboxClient(SandboxClient):
             # `exit_code` is absent on pre-exit_code supervisor images — `.get` keeps the
             # client compatible with a sandbox provisioned before the field shipped.
             raw_exit = data.get("exit_code")
+            # `root_status` is absent on a supervisor image that predates it, and `.get` is what
+            # keeps this client able to talk to one. An absent value reads as "this container
+            # cannot say", never as "the root answered badly" — see `DevStatus.root_status`.
+            raw_root = data.get("root_status")
             return DevStatus(
                 running=bool(data["running"]),
                 ready=bool(data["ready"]),
                 port=int(data["port"]),
                 exit_code=None if raw_exit is None else int(raw_exit),
+                root_status=None if raw_root is None else int(raw_root),
             )
         except (KeyError, TypeError, ValueError) as exc:
             # A malformed 200 body must stay inside the SandboxError taxonomy: every best-effort
@@ -633,7 +658,13 @@ class AcaSandboxClient(SandboxClient):
         `preview_stay_until` is the field that matters: a stay left behind by the last
         occupant would be INHERITED by this container, and the sweep would then spare it for
         the rest of that lease if its process died. A freshly written registry therefore
-        carries NO stay, always."""
+        carries NO stay, always.
+
+        THE CONTAINER IS SCHEDULED HERE, NOT SERVING, and the record now says so out loud:
+        `serving_since` is seeded with the empty sentinel, and only an observer that watched
+        this app answer a request may replace it (`build_sessions/locks.py::mark_serving`).
+        The platform used to treat this instant as "the app is running"; that is the defect
+        the field exists to end."""
         key = registry_key(user_uuid)
         await get_redis().hset(
             key,
@@ -643,9 +674,32 @@ class AcaSandboxClient(SandboxClient):
                 REGISTRY_FIELD_TOKEN_REF: token_ref,
                 REGISTRY_FIELD_CREATED_AT: datetime.now(UTC).isoformat(),
                 REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+                # THE SENTINEL BELONGS IN THE MAPPING AND NOWHERE ELSE. Do not "tidy" it into
+                # the `hdel` beside `preview_stay_until` — that line runs SECOND, so it would
+                # delete what this write just put there, and an ABSENT `serving_since` is read
+                # as PRE-CUTOVER, which the rollout grandfathers as PROVEN. Every new container
+                # would then be reported as running the moment it was scheduled: the exact bug
+                # this field was added to fix, shipped green and silent.
+                #
+                # The mapping already disowns an inherited value for free — it is a MERGE, so a
+                # previous occupant's stamp is overwritten by this `""` rather than surviving,
+                # which is the same property the `preview_stay_until` paragraph above relies on.
+                # `serving_since` only needs the `hdel` treatment if it is NOT written here.
+                REGISTRY_FIELD_SERVING_SINCE: "",
             },
         )
         await get_redis().hdel(key, REGISTRY_FIELD_PREVIEW_STAY_UNTIL)
+        # Deferred import — see the cycle note at the top of this module.
+        from src.services.build_sessions.alarms import SANDBOX_REGISTRY_MARKED_PENDING_EVENT
+
+        # THE NAME IS THE POINT: this line says SCHEDULED, in those words, and conspicuously
+        # does not say serving. Its absence is why the platform could claim a container was
+        # running from this instant onward and leave no line anyone could catch it on. The
+        # distance from here to `app_first_served` is the window a citizen spends looking at a
+        # pane that used to claim otherwise — eight seconds, on the 2026-09-10 measurement.
+        # The sentinel is logged verbatim rather than implied by the event name, so the reading
+        # is on the record.
+        _log.info(SANDBOX_REGISTRY_MARKED_PENDING_EVENT, app_name=app_name, serving_since="")
 
     async def _read_registry(self, user_uuid: uuid.UUID) -> dict[str, str] | None:
         """Read the sandbox record, falling back to the legacy key and migrating what it finds.
@@ -667,7 +721,11 @@ class AcaSandboxClient(SandboxClient):
         SINGLE-KEY COMMANDS ONLY, and the legacy key is NOT deleted on read.
         `locks._adopt_a_pre_cutover_record` mirrors this field for field and carries the reasoning
         for both constraints; the two are separate implementations because `services/sandbox/`
-        must not import `services/build_sessions/`."""
+        must not import `services/build_sessions/`.
+
+        ONE FIELD IS ADDED RATHER THAN COPIED — the serving proof, which a legacy record cannot
+        carry. The mirror adds it too, and for the reason spelled out on the write below; the
+        two must agree exactly or `test_key_migration.py` fails."""
         raw = await get_redis().hgetall(legacy_registry_key(user_uuid))
         if not raw:
             return None
@@ -679,11 +737,41 @@ class AcaSandboxClient(SandboxClient):
             current = await get_redis().hgetall(registry_key(user_uuid))
             return {str(k): str(v) for k, v in current.items()} if current else None
 
-        # Inline comprehension, not a `dict[str, str]` variable: redis-py types `mapping` as
-        # `Mapping[FieldT, EncodableT]` whose KEY parameter is invariant, so a named
-        # `dict[str, str]` fails every type gate while the identical inline literal passes.
+        inherited = {str(k): str(v) for k, v in raw.items()}
+
+        # THE SERVING PROOF IS WRITTEN EXPLICITLY, and that is load-bearing rather than tidy. A
+        # verbatim copy would carry no `serving_since`, and an adoption can land at ANY time — a
+        # pre-cutover container attached months from now still arrives here — so "absent can only
+        # mean pre-cutover" would never become true, and the grandfather arm that reads absence
+        # as PROVEN could never be safely retired. Writing a real instant is precisely what makes
+        # absence impossible on any record written after the cutover.
+        #
+        # The instant is this record's OWN `created_at`, and PROVEN is the correct reading for
+        # it: the container was scheduled before the stamp existed, and it is very likely serving
+        # a citizen at this moment. The alternative — the `""` sentinel — would retire a live
+        # preview on the spot, which is the single thing the grandfather arm exists to prevent.
+        first_served_at = inherited.get(REGISTRY_FIELD_CREATED_AT, "")
+        if not first_served_at:
+            # A truncated legacy hash: no birthday to inherit. Falling back to NOW keeps the
+            # PROVEN reading without inventing a history — the instant recorded is simply the
+            # earliest this platform can honestly claim to have known the container was there.
+            _log.warning(
+                "adopting a legacy registry record with no created_at; stamping its serving "
+                "proof at the adoption instant instead",
+                user_id=str(user_uuid),
+            )
+            first_served_at = datetime.now(UTC).isoformat()
+
+        # Inline comprehension, not the `inherited` variable a reader would reach for first (nor
+        # any other `dict[str, str]`): redis-py types `mapping` as `Mapping[FieldT, EncodableT]`
+        # whose KEY parameter is invariant, so a named `dict[str, str]` fails every type gate —
+        # spread into the literal as well — while the identical inline literal passes.
         await get_redis().hset(
-            registry_key(user_uuid), mapping={str(k): str(v) for k, v in raw.items()}
+            registry_key(user_uuid),
+            mapping={
+                **{str(k): str(v) for k, v in raw.items()},
+                REGISTRY_FIELD_SERVING_SINCE: first_served_at,
+            },
         )
         _log.info(
             "sandbox_registry_migrated_to_the_environment_namespace",
@@ -693,7 +781,10 @@ class AcaSandboxClient(SandboxClient):
                 "key is left for _delete_registry, never removed on read"
             ),
         )
-        return {str(k): str(v) for k, v in raw.items()}
+        # The serving proof goes back to the caller, not just into the hash: it is exactly a
+        # field consumers branch on, and a caller handed a record whose stamp it cannot see
+        # would have to re-read the key to learn what this write just put there.
+        return inherited | {REGISTRY_FIELD_SERVING_SINCE: first_served_at}
 
     async def _delete_registry(self, user_uuid: uuid.UUID) -> None:
         """Clear the record under BOTH prefixes — the only place the legacy key is removed, since
@@ -753,13 +844,23 @@ class AcaSandboxClient(SandboxClient):
         return True
 
     async def _create_with_retry(
-        self, app_name: str, env: dict[str, str], tags: dict[str, str]
+        self, app_name: str, env: dict[str, str], tags: dict[str, str], *, arm: _BirthArm
     ) -> str:
+        """Create the ACA container, retrying the transient failures. `arm` is carried for the
+        success notice below and nothing else — the two births are otherwise identical here.
+
+        THE ARM LAYER USED TO BE SILENT ON SUCCESS, so the most expensive step of a build left
+        no trace of how long it took or how many attempts it cost; the terminal failure below
+        still speaks only by raising, which its caller is what turns into a citizen-visible
+        answer. The notice is emitted HERE rather than at the call site because this is the only
+        scope that can see the attempt count and time the whole ladder, backoff sleeps
+        included."""
+        started = time.monotonic()
         delay = _ACA_RETRY_START_SECONDS
         last: Exception | None = None
         for attempt in range(_ACA_MAX_ATTEMPTS):
             try:
-                return await self._aca.create_app(name=app_name, env=env, tags=tags)
+                fqdn = await self._aca.create_app(name=app_name, env=env, tags=tags)
             except AcaTransientError as exc:
                 last = exc
                 if attempt >= _ACA_MAX_ATTEMPTS - 1:
@@ -769,17 +870,37 @@ class AcaSandboxClient(SandboxClient):
             except AcaError as exc:
                 last = exc
                 break
+            else:
+                # Deferred import — see the cycle note at the top of this module.
+                from src.services.build_sessions.alarms import SANDBOX_CONTAINER_CREATED_EVENT
+
+                # `fqdn_present` is the BOOL and not the FQDN: its presence is the only bit
+                # anyone reads off a create, and a half-formed ARM reply is not worth the line
+                # width. `attempts` is 1-based so the number reads as "it took three goes",
+                # not as an index.
+                _log.info(
+                    SANDBOX_CONTAINER_CREATED_EVENT,
+                    arm=arm,
+                    create_ms=int((time.monotonic() - started) * 1000),
+                    attempts=attempt + 1,
+                    fqdn_present=bool(fqdn),
+                )
+                return fqdn
         # Terminal after the container may partially exist: self-clean any half-created
         # revision (idempotent) so nothing invisible-to-the-reaper leaks, then raise.
         await self._safe_teardown(app_name)
         raise SandboxError("ACA container provisioning failed") from last
 
     async def _provision_container(
-        self, user_uuid: uuid.UUID, app_name: str, app_env: dict[str, str]
+        self, user_uuid: uuid.UUID, app_name: str, app_env: dict[str, str], *, arm: _BirthArm
     ) -> SandboxHandle:
         """Create the container, write the registry hash at container-create (before
         any fallible post-create step, so a mid-provision death is reaper-visible), and
-        return a `ready=False` handle. Self-cleans on a post-create failure."""
+        return a `ready=False` handle. Self-cleans on a post-create failure.
+
+        `arm` names WHICH birth this is, for the create notice. It is a `Literal` and not a
+        bare `str` so a second spelling of either value is a type error rather than a field
+        that quietly stops matching in the log — the same discipline the event names get."""
         token = secrets.token_urlsafe(_SUPERVISOR_TOKEN_BYTES)
         # The supervisor bearer lives ONLY in the container env (the supervisor keeps it out of
         # the scrubbed child env) and in-process; Redis stores a token_ref, never the token.
@@ -803,7 +924,7 @@ class AcaSandboxClient(SandboxClient):
         # upstream is broken, which is worth failing loudly on rather than provisioning an
         # anonymous container to paper over.
         tags = sandbox_tags(user_id=user_uuid, app_id=uuid.UUID(app_env["BIAL_APP_ID"]))
-        fqdn = await self._create_with_retry(app_name, env, tags)
+        fqdn = await self._create_with_retry(app_name, env, tags, arm=arm)
         token_ref = self._register_token(token)
         self._app_owners[app_name] = user_uuid
         try:
@@ -833,7 +954,9 @@ class AcaSandboxClient(SandboxClient):
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
     ) -> SandboxHandle:
-        handle = await self._provision_container(uuid.UUID(user_id), app_name, app_env)
+        handle = await self._provision_container(
+            uuid.UUID(user_id), app_name, app_env, arm="provision_new"
+        )
         await _make_it_a_repo(self, handle)
         return handle
 
@@ -984,7 +1107,9 @@ class AcaSandboxClient(SandboxClient):
                     "cannot restore: the existing container could not be torn down, and "
                     "provisioning over it would orphan it"
                 )
-        handle = await self._provision_container(user_uuid, app_name, app_env)
+        handle = await self._provision_container(
+            user_uuid, app_name, app_env, arm="restore_from_snapshot"
+        )
         try:
             await self._restore_snapshot_into(handle, bundle)
         except Exception:

@@ -111,7 +111,10 @@ function Workspace({ project = PROJECT }: { project?: Project } = {}) {
   )
 }
 
-const composer = () => screen.getByPlaceholderText(/Describe the change you need/i)
+// THE PLAN PLACEHOLDER, because the rail's kind picker now defaults to Plan (2026-09-10).
+// The hand-over this file is about is identical on either kind — what changed is only which
+// wording the untouched picker is showing when the citizen starts typing.
+const composer = () => screen.getByPlaceholderText(/Describe what you have in mind/i)
 const send = () => screen.getByTestId('composer-send')
 const where = () => screen.getByTestId('where').textContent ?? ''
 const type = (text: string) => fireEvent.change(composer(), { target: { value: text } })
@@ -221,7 +224,7 @@ describe('a project with nothing built yet — the first message anybody sends',
     fireEvent.click(send())
 
     await waitFor(() => expect(screen.getByTestId('chat-opened')).toBeTruthy())
-    expect(where()).toMatch(/^\/chat\/[0-9a-f-]+\?projectId=pB&kind=build$/)
+    expect(where()).toMatch(/^\/chat\/[0-9a-f-]+\?projectId=pB&kind=plan$/)
     // …and nothing told them their message was lost. Paired with the assertion above, so an
     // absent alert cannot pass by the screen having failed to render at all.
     expect(screen.queryAllByRole('alert')).toHaveLength(0)
@@ -313,7 +316,7 @@ describe('transferring', () => {
     expect(api.handOverWorkspace.mock.calls[0]?.[0]).toBe('pA')
     // ONE chat, not two: the first attempt was refused before it navigated.
     expect(screen.getAllByTestId('chat-opened')).toHaveLength(1)
-    expect(where()).toMatch(/^\/chat\/[0-9a-f-]+\?projectId=pB&kind=build$/)
+    expect(where()).toMatch(/^\/chat\/[0-9a-f-]+\?projectId=pB&kind=plan$/)
   })
 
   it('★ the order is stop-then-start-then-open, never start-then-ask', async () => {

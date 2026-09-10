@@ -80,6 +80,30 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(container.querySelectorAll('li')).toHaveLength(2)
   })
 
+  it('★ the viewport FOLLOWS the stream — it is not anchored to the top of each turn', async () => {
+    // DEFECT E4. `turnAnchor="top"` pins each new user message near the top for a focused read,
+    // and the library derives `autoScroll = turnAnchor !== "top"` from it — so choosing the top
+    // anchor also switched continuous follow OFF, and suppressed the resize-driven follow for the
+    // whole duration of a run. The one positioning scroll happened, the reply then grew past the
+    // fold unfollowed, `isAtBottom` correctly went false, and the return-to-latest control offered
+    // itself on essentially every build with the reader never having scrolled anywhere.
+    //
+    // ASSERTED ON THE SOURCE, and the reason is worth stating rather than hiding: the behaviour
+    // this pins is SCROLLING, and jsdom has no layout — every element reports zero height, so a
+    // test that "scrolled" here would prove nothing about a browser. The real proof is a real
+    // browser, run against a 77-message transcript, which opens 0px from the bottom with no
+    // control showing (docs/debug/screenshots-2026-09-09/02-long-transcript-on-open.png). This
+    // assertion exists so the prop cannot be flipped back silently between such runs.
+    //
+    // Mutation check: set `turnAnchor="top"` in thread.tsx and this goes red.
+    const source = (await import('../../assistant-ui/thread?raw')).default as string
+    // Comments stripped first: the docblock beside the prop QUOTES `turnAnchor="top"` while
+    // explaining why it is wrong, so a naive negative match reads the explanation as the code.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    expect(code).toMatch(/<ThreadPrimitive\.Viewport\s+turnAnchor="bottom"/)
+    expect(code).not.toMatch(/turnAnchor="top"/)
+  })
+
   it('the viewport is the ONLY scroll container in the thread', () => {
     // The old surface nested five scroll containers (ChatPage plus BuilderPage's own); this
     // asserts the new one adds exactly one, by querying the class rather than trusting the

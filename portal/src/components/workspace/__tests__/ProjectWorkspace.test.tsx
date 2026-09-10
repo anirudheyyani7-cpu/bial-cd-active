@@ -332,6 +332,47 @@ describe('★ the compile verdict, gated on liveness', () => {
   /** The pane's permanent live region, which is what the pane ANNOUNCES through. */
   const spoken = () => screen.getAllByRole('status').map((r) => r.textContent ?? '').join(' | ')
 
+  it('★ THE COVER RE-CHECKS ON THE POLL, not once per visit to this screen', async () => {
+    // DEFECT E2, AND THE ONE FIX ON THIS BRANCH THAT SHIPPED WITHOUT A TEST. The compile read was
+    // keyed so it ran once per live workspace: a citizen watching a build sat under "Getting your
+    // app ready…" until they navigated away and back, because nothing on this screen ever asked a
+    // second time. `readTick` is the fix — the workspace poll now signals every completed read, so
+    // the cover re-derives on the poll's own cadence.
+    //
+    // NAVIGATION IS DELIBERATELY NOT USED HERE. The sibling test above gets its second read by
+    // going to chat and back, which REMOUNTS — and a remount re-reads whatever the keying is, so a
+    // test written that way passes with the fix reverted. This one keeps the component mounted and
+    // drives a second poll through the hook's own focus listener, which is the only shape that can
+    // tell "re-reads on a tick" apart from "re-reads on a mount".
+    //
+    // Mutation check: drop `workspace.readTick` from the compile effect's dependency array in
+    // ProjectWorkspace and this goes red — the second read never happens and the pane keeps
+    // showing the stale verdict.
+    const patient = { timeout: 5000 }
+    alive()
+    api.fetchCompileState.mockResolvedValue('unknown')
+    render(<Workspace />)
+    await waitFor(() => expect(api.fetchCompileState).toHaveBeenCalled(), patient)
+    const readsBefore = api.fetchCompileState.mock.calls.length
+
+    // The build finishes badly while the citizen is still sitting on this screen.
+    api.fetchCompileState.mockResolvedValue('failed')
+    fireEvent(window, new Event('focus'))
+
+    await waitFor(
+      () => expect(api.fetchCompileState.mock.calls.length).toBeGreaterThan(readsBefore),
+      patient,
+    )
+    // …and the new verdict actually reaches the screen, which is the part a citizen experiences.
+    await waitFor(
+      () => expect(screen.getAllByText(/isn’t running right now/i).length).toBeGreaterThan(0),
+      patient,
+    )
+    // LIVENESS: the same app is still framed at the same address, so this is one mounted pane
+    // changing its mind — not a remount that would have re-read under any keying at all.
+    expect(frame()?.getAttribute('src')).toBe(APP_URL)
+  })
+
   it('★ a build that failed to compile is NAMED, in the pane and in the live region', async () => {
     // WHAT THIS ADDS, AND WHAT IT DOES NOT. The sentence already existed — one plain sentence with
     // one route back into the chat, already selected when the verdict is `failed`. There is no

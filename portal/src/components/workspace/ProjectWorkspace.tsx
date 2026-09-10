@@ -146,9 +146,22 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       setCompileState(null)
       return
     }
-    // ONE READ PER LIVE WORKSPACE, not a timer. No turn runs on this screen, so nothing here can
-    // change what the app compiles to; a poll would spend a container call per tick to hear the
-    // same answer. A start that brings a new app up changes `framedUrl`, which is what re-asks.
+    // ONE READ PER POLL TICK, riding the workspace poll's own cadence rather than a timer of its
+    // own — `workspace.readTick` in the deps is the whole mechanism.
+    //
+    // IT USED TO BE ONE READ PER MOUNT, and the reasoning was that no turn runs on this screen so
+    // nothing could change what the app compiles to. That premise is false: the app compiles its
+    // routes ON DEMAND, so merely opening the page can start a compile the read then catches
+    // mid-flight. `building` raises a cover over a working app (`LivePreview`), the cover comes
+    // down only on an affirmative `clean`, and with a single read there was never a second answer
+    // to bring it down — the pane spun for the life of the tab over an app that had finished
+    // loading underneath it, and only a reload cleared it. Reported from production as needing
+    // four reloads to see the app.
+    //
+    // The chat surface never had this: it re-reads the same verdict on every background tick and
+    // self-corrects within one cadence. This is that, and nothing more. The read is cheap by
+    // construction (one in-memory value; it never touches the dev server), and the `!alive ||
+    // !framedUrl` guard above still keeps it off entirely when there is nothing to ask about.
     let live = true
     fetchCompileState(project.id)
       // IN FRONT OF THE HANDLER, not after it. Behind it, the same `.catch` that covers the
@@ -166,7 +179,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     return () => {
       live = false
     }
-  }, [project.id, alive, framedUrl])
+  }, [project.id, alive, framedUrl, workspace.readTick])
 
   const onReclaimRefusal = useCallback((blocked: ReclaimBlocked, retry: () => Promise<void>) => {
     // FIRST REFUSAL WINS. The dialog must not change under the person reading it: they read one

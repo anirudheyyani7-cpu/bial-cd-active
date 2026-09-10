@@ -17,6 +17,7 @@ import MessageContent from './MessageContent'
 import AttachmentChips from '../AttachmentChips'
 import ActivityGroup, { InterruptedMessagesContext, GroupSealedContext } from './ActivityGroup'
 import ActivityRow from './ActivityRow'
+import { WaitingLine } from '../ui/Waiting'
 
 export interface ChatThreadProps {
   /**
@@ -44,14 +45,27 @@ const TextPart: ThreadComponents['TextPart'] = ({ text, isUser }) => (
 /**
  * THE WORKING STATUS — status only, never the reasoning content (too technical here;
  * `useMessagePartReasoning` unused): a narrow exception to no-indicator-without-tools,
- * driven by the model's real reasoning signal, not TURN STATUS (once shown on every
+ * driven by the server's `working` flag, not TURN STATUS (once shown on every
  * message) — gone the instant writing or a call starts. ALSO APPEARS ON A TOOL-RUNNING
  * TURN: grouping is HIERARCHICAL, `reasoning` and `tool-call` sharing
  * `group-chainOfThought` but rendering separate children, so a build shows status first.
+ *
+ * IT CARRIES A CLOCK NOW, AND THAT IS THE WHOLE POINT. A single static line does not read as
+ * "the machine is working"; it reads as the last thing that happened before everything stopped.
+ * The reported symptom was exactly that — a citizen watching a build with no way to tell a
+ * thinking model from a hung one. `WaitingLine` is the primitive the rest of the portal already
+ * waits with: a glyph that spins under motion and becomes a static clock face under
+ * `prefers-reduced-motion`, plus a live elapsed count once the wait outlives five seconds. The
+ * number is what proves liveness without motion, and past five seconds it is the only question
+ * the person in front of it has.
+ *
+ * The label stays deliberately plain. The platform can see THAT the model has the floor — it
+ * cannot see what the model is thinking about, and the reasoning text is withheld from the
+ * browser by design at three separate layers. So the line says the true thing and stops.
  */
 const ReasoningGroup: ThreadComponents['ReasoningGroup'] = () => (
   <p data-testid="working-status" className="my-1 text-xs text-neutral">
-    Working on your app
+    <WaitingLine label="Working on your app" active />
   </p>
 )
 

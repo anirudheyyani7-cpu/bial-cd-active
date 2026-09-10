@@ -51,6 +51,7 @@ from src.api.v1.conversations.schemas import (
     TextDeltaFrame,
     TurnStepPart,
     TurnTextPart,
+    WorkingFrame,
 )
 from src.config import settings
 from src.core.integrity_types import BaselineIdentity
@@ -2396,8 +2397,18 @@ async def test_a_long_operation_gets_a_status_line_refreshed_until_it_completes(
     # THE LINE CLEARS THE MOMENT THE OPERATION COMPLETES — the plain label is back, and the
     # narrator has stopped talking.
     engine._on_event(state, _returned("run_command", "c1"))
-    finished = state.ring[-1]
-    assert isinstance(finished, StepFrame)
+    # THE LAST STEP FRAME, not the last frame. A `working` frame now follows the result — the tool
+    # has come back and nothing else is pending, so the model has the floor and the transcript says
+    # so rather than going quiet. That frame is the subject of
+    # `test_a_step_takes_the_working_status_down`; what this test is about is the step's own
+    # label, so it asks for the step.
+    finished = next(f for f in reversed(state.ring) if isinstance(f, StepFrame))
+    # NOT `assert isinstance(finished, StepFrame)`, which is what stood here and could not fail:
+    # the generator above already filters on that exact predicate, so the assertion restated its
+    # own selection criterion. If no step frame existed at all the `next` raises StopIteration and
+    # the test errors — the isinstance added nothing on either path. What is worth asserting is the
+    # claim the comment above actually makes, so it is asserted instead.
+    assert isinstance(state.ring[-1], WorkingFrame) and state.ring[-1].working
     assert finished.phase == "finished" and finished.item.state == "ok"
     assert finished.item.label == announced
     settled = len(state.ring)

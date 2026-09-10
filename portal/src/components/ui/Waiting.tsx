@@ -142,9 +142,13 @@ export interface WaitingLineProps {
 /**
  * Glyph, sentence and — once the wait has earned it — a live elapsed count.
  *
- * NO `role="status"` OF ITS OWN. Every caller today already sits inside a polite region it owns
- * (`ReclaimWorkspaceDialog`'s step line, `SaveControl`'s wait box), and nesting a second one is
- * how a sentence gets announced twice. The caller keeps the region; this fills it.
+ * NO `role="status"` OF ITS OWN, and the reason is now two reasons. Two callers sit inside a
+ * polite region they own (`ReclaimWorkspaceDialog`'s step line, `SaveControl`'s wait box), where
+ * nesting a second region is how a sentence gets announced twice. The third —
+ * `ChatThread`'s `ReasoningGroup` — sits inside NO region at all, deliberately: the transcript's
+ * announcing is `Announcer`'s job, driven off the turn-level running flag, so a region here would
+ * announce the same turn a second time and once more per working window. Either way the rule
+ * holds: this component draws, something else speaks.
  *
  * The seconds are `tabular-nums` so the line does not reflow on every tick — a sentence that
  * jitters once a second is its own kind of broken.

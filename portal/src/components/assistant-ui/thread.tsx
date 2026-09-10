@@ -117,8 +117,19 @@ const ThreadRoot: FC = () => {
 
   return (
     <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col bg-transparent">
+      {/* `bottom`, and the choice is load-bearing rather than a default being spelled out.
+          `turnAnchor="top"` pins each new user message near the top for a focused read — and it
+          also makes the library default `autoScroll` to false (`autoScroll = turnAnchor !== "top"`),
+          then suppresses the resize-driven follow for the WHOLE duration of a run while an active
+          top anchor exists. So the one positioning scroll happened, the reply grew past the fold
+          unfollowed, `isAtBottom` correctly went false, and `ScrollToLatest` offered "jump to it"
+          on essentially every build — with the reader never having scrolled anywhere. Continuous
+          follow and a top anchor are mutually exclusive by the library's own design, so a chat
+          whose defining moment is a long reply arriving while the citizen watches takes `bottom`.
+          The follow-unless-scrolled-up behaviour the pane needs is then the library's, already
+          correct, including re-arming when the reader returns to within 1px of the bottom. */}
       <ThreadPrimitive.Viewport
-        turnAnchor="top"
+        turnAnchor="bottom"
         data-testid="thread-viewport"
         className="relative flex min-h-0 flex-1 flex-col overflow-y-auto scroll-smooth"
       >

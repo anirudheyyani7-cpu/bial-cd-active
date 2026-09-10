@@ -64,6 +64,7 @@ from src.services.build_sessions.alarms import (
     RECOVERY_WRITE_DID_NOT_LAND_EVENT,
     WORKSPACE_LOST_WHILE_IDLE_EVENT,
 )
+from src.services.build_sessions.appconnector_env import build_connector_env
 from src.services.build_sessions.appdata import build_app_env, resolve_app_for_project
 from src.services.build_sessions.appdb_env import provision_app_database
 from src.services.build_sessions.appstorage import provision_app_storage
@@ -108,6 +109,7 @@ from src.services.build_sessions.snapshot import (
     write_recovery_copy,
     write_snapshot,
 )
+from src.services.lake.copy import schedule_window_copy
 from src.services.redis import RedisNotConfiguredError, get_redis
 from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
@@ -2425,8 +2427,9 @@ class SessionManager:
                     # THE COLD CLOCK STARTS HERE — see `cold_started_at` above for why this
                     # instant and not function entry.
                     cold_started_at = time.monotonic()
-                    # The FIVE injected vars (the two always-present BIAL_* + the two blob
-                    # coordinates with a freshly rotated SAS + the per-project DSN), exactly as
+                    # The injected vars — the two always-present BIAL_*, the two blob
+                    # coordinates with a freshly rotated SAS, the per-project DSN, and (only for
+                    # an approved, switched-on connector) the lake's two coordinates — exactly as
                     # a start's birth arm builds them. Deliberately written twice — this must
                     # NOT be unified with `_restore_or_provision` (see the docstring above), so
                     # a var added to only one of the two sites is a silent half-fix. Built only
@@ -2439,6 +2442,7 @@ class SessionManager:
                         **build_app_env(app_id),
                         **await provision_app_storage(app_id),
                         **await provision_app_database(db, project_id),
+                        **await build_connector_env(db, user_id=user_id, project_id=project_id),
                     }
                     # `_restore_or_bust` re-raises `StorageNotFoundError` (a bundle that
                     # vanished between head-check and pull) — the same 404 bucket.
@@ -2458,6 +2462,12 @@ class SessionManager:
                         )
                     except StorageNotFoundError as exc:
                         raise NoSnapshotToRelaunchError(app_id) from exc
+                    # A BIRTH, so the connector data-plane copy fires here. Detached and
+                    # unawaited: nothing on the platform reads what it writes — a generated app
+                    # reads the lake directly, with its own identity — so the citizen must never
+                    # wait on it and must never lose a relaunch to it. It answers "no lake", "not
+                    # switched on", "not approved" and "already held" for itself, quietly.
+                    schedule_window_copy(user_id, project_id)
                 # THE RESTORE ARM'S LEASE STARTS HERE, before the wait — and ONLY the restore
                 # arm's. `_restore_or_bust` has just created the container AND written its
                 # registry hash, so from this instant the sweep can see a user whose state
@@ -2723,6 +2733,11 @@ class SessionManager:
                 env = {
                     **build_app_env(app_id),
                     **await provision_app_database(db, project_id),
+                    # The connector coordinates, and — because the sandbox client derives the
+                    # managed identity from their presence — the grant that makes them usable.
+                    # `{}` unless a lake is configured, the connector is switched on for this
+                    # project, and its owner's access has been approved.
+                    **await build_connector_env(db, user_id=user_id, project_id=project_id),
                 }
                 # `take` records the handle AND spares it when this was the attach arm. THE
                 # ATTACH ARM IS THE STEADY STATE HERE: every Write message after the first
@@ -2732,6 +2747,12 @@ class SessionManager:
                 resolved = await self._resolve_sandbox(
                     sandbox_client, user_id, app_id, env, announce=announce
                 )
+                # BIRTH ONLY. `_resolve_sandbox` reports its arm, and the attach arm is the
+                # steady state here — every Write message after the first reuses the running
+                # container. Firing on attach would list the lake once per message for a copy
+                # nobody reads. Detached and unawaited, for the reason the relaunch arm gives.
+                if not resolved.attached:
+                    schedule_window_copy(user_id, project_id)
                 handle = scope.take(resolved)
                 # Inside the protected region, before adopt: a `write_heartbeat` RedisError
                 # out here would orphan `_active_by_user[user_id]` forever and leak the

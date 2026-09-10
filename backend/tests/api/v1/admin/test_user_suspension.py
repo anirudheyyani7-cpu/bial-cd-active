@@ -12,6 +12,7 @@ both actions are audited.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -185,7 +186,11 @@ async def test_login_callback_blocks_suspended_user(app, client, db_session) -> 
 
     resp = await client.get("/v1/auth/callback")
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{settings.FRONTEND_URL}/login?authError=account_suspended"
+    # The bounce carries the attempt's correlation id (`&ref=`), which is random per
+    # request — assert the stable half exactly and the id for shape.
+    base, sep, ref = resp.headers["location"].partition("&ref=")
+    assert base == f"{settings.FRONTEND_URL}/login?authError=account_suspended"
+    assert sep and re.fullmatch(r"[0-9a-f]{8}", ref)
     assert resp.headers.get_list("set-cookie") == []  # no session minted
     # No refresh family was issued for the refused sign-in.
     families = await db_session.scalar(

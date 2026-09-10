@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { Zap, Shield, Cloud } from 'lucide-react'
 import BIALLogo from '../components/BIALLogo'
@@ -54,11 +54,25 @@ const AUTH_ERROR_BANNERS: Record<string, string> = {
 }
 const GENERIC_AUTH_ERROR = 'Sign-in failed. Please try again.'
 
+// The callback's correlation id (`&ref=`), echoed under the banner so a user's screenshot
+// names the exact server log line for their attempt. Shape-checked before it is rendered:
+// ?ref is attacker-chosen text on the one route that needs no session, so a crafted link
+// could otherwise drop arbitrary copy ("call 1800-…") inside the official-looking notice.
+// This is the same closed-vocabulary discipline the AUTH_ERROR_BANNERS lookup uses.
+// Must stay in step with the backend's `secrets.token_hex(4)` (api/v1/auth/router.py).
+const AUTH_ERROR_REF_PATTERN = /^[0-9a-f]{8}$/
+
 export default function LoginPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
   const [notice, setNotice] = useState('')
+  const [noticeRef, setNoticeRef] = useState('')
+  // The banner is resolved EXACTLY once per mount. Consuming ?authError below re-runs this
+  // effect with a clean query string, and without this latch the second pass would fall
+  // through past the (now absent) authError and overwrite the failure banner with a signout
+  // reason — or with nothing at all.
+  const bannerResolved = useRef(false)
 
   // Forward an ALREADY-authenticated visitor into the app instead of dead-ending
   // on the sign-in screen. A successful Microsoft sign-in lands the browser on the
@@ -90,11 +104,25 @@ export default function LoginPage() {
   // portal/src, that white-screens the sign-in page for anyone who clicks a
   // crafted link — no auth required, since /login is the unauthenticated route.
   useEffect(() => {
+    if (bannerResolved.current) return
+    bannerResolved.current = true
     const authError = searchParams.get('authError')
     if (authError) {
       setNotice(
         Object.hasOwn(AUTH_ERROR_BANNERS, authError) ? AUTH_ERROR_BANNERS[authError] : GENERIC_AUTH_ERROR,
       )
+      const ref = searchParams.get('ref') ?? ''
+      setNoticeRef(AUTH_ERROR_REF_PATTERN.test(ref) ? ref : '')
+      // CONSUME the params — the banner is one-time, and until this landed it was not:
+      // ?authError stayed in the address bar, so reload, hard reload and close-and-reopen
+      // (Chrome restores the tab's URL) all re-rendered "Sign-in failed" forever, with no
+      // way for the user to clear it. consumeSignoutReason() below has always deleted its
+      // key after reading; this is the same contract for the query-param path. `replace`
+      // so Back does not walk the user straight back into the failure URL.
+      const cleaned = new URLSearchParams(searchParams)
+      cleaned.delete('authError')
+      cleaned.delete('ref')
+      setSearchParams(cleaned, { replace: true })
       return
     }
     // A failed sign-out's warning (see Navbar's handleLogout) arrives as router
@@ -107,7 +135,7 @@ export default function LoginPage() {
     }
     const reason = consumeSignoutReason()
     if (reason && Object.hasOwn(SIGNOUT_BANNERS, reason)) setNotice(SIGNOUT_BANNERS[reason])
-  }, [searchParams, location.state])
+  }, [searchParams, setSearchParams, location.state])
 
   // Full-page navigation to the FastAPI control-plane, which runs the OIDC
   // Authorization-Code + PKCE flow and redirects back to the app (or here with
@@ -192,6 +220,11 @@ export default function LoginPage() {
               className="mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm"
             >
               {notice}
+              {noticeRef && (
+                <span data-testid="login-notice-ref" className="block mt-1 text-xs opacity-75">
+                  Reference: {noticeRef}
+                </span>
+              )}
             </div>
           )}
 

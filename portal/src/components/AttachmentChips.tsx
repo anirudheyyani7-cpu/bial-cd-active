@@ -51,6 +51,31 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
     }
   }, [att.attachmentId, isPdf, isFile])
 
+  // ★ FIRST, BEFORE EVERY FORMAT BRANCH (#214 R23b). It used to sit below them, and both
+  // the file and PDF chips return above it — so `setMissing(true)` set state, the component
+  // re-rendered, the early return fired again, and this was never reached. The press was
+  // still absorbed in silence for exactly the two formats the branches handle, which is the
+  // one thing a control must never do and the defect the state was added to fix.
+  if (missing) {
+    // R23b/R23c. It said only "attachment unavailable", with no name and no next step, and it
+    // announced nothing — a chip that changes under a citizen's press without the page changing
+    // is a change assistive technology has no other way to notice. `role="status"` is what
+    // carries it; `aria-live="polite"` waits for a pause rather than interrupting.
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-[11px] opacity-70"
+      >
+        <ImageOff size={12} className="flex-shrink-0" />
+        <span className="truncate max-w-[14rem]">
+          {att.name ? `${att.name} is no longer available` : 'This attachment is no longer available'}
+          {' — attach it again to use it.'}
+        </span>
+      </span>
+    )
+  }
+
   if (isFile) {
     // THE CODE LANE RETURNS THE FILE (#214 R23b). A spreadsheet, document or deck cannot be
     // rendered in a browser without a converter this platform does not host, so pressing the chip
@@ -106,25 +131,6 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
     )
   }
 
-  if (missing) {
-    // R23b/R23c. It said only "attachment unavailable", with no name and no next step, and it
-    // announced nothing — a chip that changes under a citizen's press without the page changing
-    // is a change assistive technology has no other way to notice. `role="status"` is what
-    // carries it; `aria-live="polite"` waits for a pause rather than interrupting.
-    return (
-      <span
-        role="status"
-        aria-live="polite"
-        className="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-[11px] opacity-70"
-      >
-        <ImageOff size={12} className="flex-shrink-0" />
-        <span className="truncate max-w-[14rem]">
-          {att.name ? `${att.name} is no longer available` : 'This attachment is no longer available'}
-          {' — attach it again to use it.'}
-        </span>
-      </span>
-    )
-  }
 
   return (
     <>

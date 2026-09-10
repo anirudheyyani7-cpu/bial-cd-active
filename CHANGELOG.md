@@ -10,6 +10,64 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
+## [1.7.0-beta.12] - 2026-09-10
+
+The white preview pane, reported from production on 2026-09-10: pressing Build showed a blank white
+rectangle where the app should be, while every status on the screen said the app was fine. Cut as a
+hotfix.
+
+### Fixed
+
+- **The preview pane no longer shows a blank white rectangle while an app builds or opens.** Every
+  check the platform had was made from inside the container, where the app answers on its own
+  loopback. The person reaches it through the gateway and the ingress, and a failure on that hop
+  loads in the frame exactly like a page does, so the pane could be told to show an app that had
+  nothing behind it. The page itself now reports, from inside the browser, when it has something on
+  screen, and the pane reveals the app only on that word. Until then it shows a labelled wait; if
+  the page never reports, the pane says so instead of showing nothing; and a page that goes blank
+  after it appeared is asked again every fifteen seconds and covered again. Apps started on an
+  older sandbox image show the waiting card until they are relaunched.
+- **"Putting the latest change together…" appears again while a change compiles.** The dev
+  server's own connection handshake was read as unreadable traffic on every container, so the
+  compile signal never settled, the cover never rose, and an alarm fired against healthy sandboxes.
+  The handshake is now recognised for what it is; a genuinely unknown message still raises the
+  alarm.
+- **Reopening an app no longer removes the workspace it just restored.** The page check could fail
+  on the cold path before the workspace lock was handed back, and the recovery routine then tore
+  down the container it had just brought up: a 503 over the citizen's workspace.
+- **The pane is no longer told to frame a page the platform had just declined to vouch for.** Two
+  lines of the same code disagreed about whether the app was serving; they now read one fact.
+- **An app is reported as running only once something has watched it serve a page.** It used to be
+  reported the moment its container was scheduled, so a healthy build framed the "This app isn't
+  running right now" page for eight seconds and told screen-reader users the preview was live over
+  the top of it. A root that answers without a page, such as the 404 before the first page is
+  written, does not count either. A project that has never built now also says when its workspace
+  is held by another project, instead of inviting a message the server would refuse.
+- **A freshly built app the platform can put back no longer warns about unsaved changes.** The
+  rail, the exit dialog and the browser's leave-page prompt each read the "no saved version" flag
+  alone, and warned about work the platform could restore at any moment. The rail now says "Your
+  work is safe. Save it to keep a version you can come back to." and the exit guards stand down;
+  Save stays manual.
+
+### Changed
+
+- **A new chat is a Plan chat by default.** A first prompt is usually a rough description rather
+  than a brief; you now get a plan to read and a "Build this plan" button. Build is one click away
+  and unchanged.
+- **The preview pane has fewer states, and one author owns the words.** Ten states become six:
+  fetch facts that changed nothing for the citizen become the ordinary wait, a refused start is a
+  note on the saved card carrying the server's own sentence, and a held workspace always offers its
+  take-back control.
+- **The sandbox image carries a platform-owned `instrumentation-client.ts`** and keeps it out of
+  every workspace snapshot, so a platform fix reaches the next launch. Deploying this release means
+  pushing the sandbox image, pointing `SANDBOX__IMAGE_REF` at it, restarting the backend, and
+  rebuilding the portal.
+- **The backend log records the build lifecycle under one correlation id,** including how long an
+  app took to first serve after its container was created, and the root status that decides whether
+  the page proof is in force.
+- **Model calls no longer send a sampling setting the deployed model strips and warns about on
+  every call.**
+
 ## [1.7.0-beta.11] - 2026-09-10
 
 Eleven defects reported from production on 2026-09-09 and 2026-09-10, traced from the backend log

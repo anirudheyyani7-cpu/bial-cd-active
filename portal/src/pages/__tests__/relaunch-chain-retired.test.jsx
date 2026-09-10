@@ -24,7 +24,7 @@
  * container the server is still serving (`AppPaneHost.tsx` has the failure mode at length).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
 import LivePreview from '../../components/LivePreview'
 
 const h = vi.hoisted(() => ({
@@ -74,6 +74,9 @@ import { BuildSessionAlreadyActiveError } from '../../utils/buildSessionApi'
 
 const SANDBOX_URL = 'https://app-xyz.example.azurecontainerapps.io/'
 const SANDBOX_URL_2 = 'https://app-abc.example.azurecontainerapps.io/'
+// The origin the beacon must claim to be believed — derived, never hand-typed, so a change to
+// SANDBOX_URL can't quietly drift out of step with what `vouch()` below sends as `e.origin`.
+const SANDBOX_ORIGIN = new URL(SANDBOX_URL).origin
 const CHAT_ID = 'build-X'
 
 /**
@@ -89,6 +92,23 @@ const deps = () => ({ client: client(), eventSourceFactory: () => new FakeEventS
 
 /** The device card that carries the reveal's opacity — the handle every frame assertion uses. */
 const card = (container) => container.querySelector('[data-testid="device-card"]')
+
+/** The framed document vouching for itself — `bial:app-mounted`, sent from the CURRENT iframe's
+ *  own window at the sandbox origin. This is the only thing that reveals the card now: `load`
+ *  fires for a bodyless 502 exactly as it does for a real page, so a frame scenario that still
+ *  revealed on `load` alone would pass over the one failure this mechanism exists to catch.
+ *  `path` MUST be present — `isMountedBeaconFor` rejects a beacon without one — so this always
+ *  sends `'/'`; the sandbox root's framed path strips to `''`, which every reported path matches. */
+function vouch(container) {
+  const iframe = container.querySelector('iframe')
+  act(() => {
+    window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'bial:app-mounted', path: '/' },
+      origin: SANDBOX_ORIGIN,
+      source: iframe.contentWindow,
+    }))
+  })
+}
 
 /** The banner this unit deletes, found by its rendered copy, not by a testid.
  *
@@ -193,9 +213,18 @@ describe('frame survival — the case where an unmount kills a live container', 
     expect(container.textContent).toMatch(/opening your app/i)
   })
 
-  it('…and the framed document’s own load still resolves that wait', () => {
+  it('…and the framed document’s own beacon resolves that wait — its `load` alone does not', () => {
     const { container } = framedAndPardoned()
-    fireEvent.load(container.querySelector('iframe'))
+    const iframe = container.querySelector('iframe')
+
+    // `load` fires for a bodyless 502 exactly as it does for a real page — the whole reason this
+    // pane stopped trusting it. Mutant that puts `frameLoaded` back into `revealed` goes red here:
+    // the card would flip to opacity-100 on this `load` alone, with no beacon in sight.
+    fireEvent.load(iframe)
+    expect(card(container).className).toMatch(/opacity-0/)
+    expect(container.textContent).toMatch(/opening your app/i)
+
+    vouch(container)
     expect(card(container).className).toMatch(/opacity-100/)
     expect(container.textContent).not.toMatch(/opening your app/i)
   })
@@ -207,7 +236,7 @@ describe('the reload nonce is a turn-end edge, and nothing else', () => {
       <LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />,
     )
     const before = container.querySelector('iframe')
-    fireEvent.load(before)
+    vouch(container)
     expect(card(container).className).toMatch(/opacity-100/)
 
     // The edge: a turn that was running OVER a live preview just ended.
@@ -215,10 +244,10 @@ describe('the reload nonce is a turn-end edge, and nothing else', () => {
     const after = container.querySelector('iframe')
     expect(after).toBeTruthy()
     expect(after).not.toBe(before) // remounted — the frame key changed
-    expect(card(container).className).toMatch(/opacity-0/) // and re-gated on the new load
+    expect(card(container).className).toMatch(/opacity-0/) // and re-gated for the new frame
 
     // EXACTLY ONCE: another render at the same (false) value must not remount again.
-    fireEvent.load(after)
+    vouch(container)
     expect(card(container).className).toMatch(/opacity-100/)
     rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating={false} />)
     expect(container.querySelector('iframe')).toBe(after)
@@ -234,7 +263,7 @@ describe('the reload nonce is a turn-end edge, and nothing else', () => {
       <LivePreview previewUrl={SANDBOX_URL} status="ready" iterating={false} />,
     )
     const onMount = container.querySelector('iframe')
-    fireEvent.load(onMount)
+    vouch(container)
     expect(card(container).className).toMatch(/opacity-100/)
 
     rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />)
@@ -261,10 +290,12 @@ describe('the ordinary states the pane still has to render', () => {
     expect(container.textContent).toMatch(/setting up your sandbox/i)
   })
 
-  it('a new URL mid-session re-gates the reveal on the new frame’s own load', () => {
+  it('a new URL mid-session re-gates the reveal on the new frame’s own beacon', () => {
     const { container, rerender } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
-    fireEvent.load(container.querySelector('iframe'))
+    vouch(container)
     expect(card(container).className).toMatch(/opacity-100/)
+    // The old key's vouch must not carry over to the new one — mutant that keys `vouchedKey` on
+    // the bare URL rather than the full frame key goes red here, staying revealed across the swap.
     rerender(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
     expect(card(container).className).toMatch(/opacity-0/)
   })

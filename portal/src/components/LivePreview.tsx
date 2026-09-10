@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { BusyGlyph } from './ui/Waiting'
 import type { BuildSessionStatus } from '../utils/buildSessionTypes'
 import type { PreviewLifeState } from '../utils/buildSessionApi'
 import type { CompileState } from '../utils/compileState'
+import { isRecord } from '../utils/apiError'
 
 // Device-card widths drive the preview's REAL rendered pixel width (an inline style on
 // the wrapper, not a Tailwind max-width class) so the framed cross-origin doc's own media
@@ -22,22 +23,88 @@ import type { CompileState } from '../utils/compileState'
 // keeping a second copy that could disagree about what "Tablet" means.
 import { DEVICES, type DeviceName } from './workspace/devices'
 
-// Bound the wait for the framed document's own `load`. The reveal itself is gated on that
-// event and nothing else (see `loadedUrl` below); this cap exists only so a frame that NEVER
-// loads still resolves to a labelled state instead of an eternal spinner — bound it, then say
-// what happened. The number is timing a first Turbopack route compile measured at 5-7s on a cold
-// sandbox, plus whatever a server-rendered root route spends on the per-project database. 20s
-// sits well past both, so reaching this cap means something is genuinely wrong.
+// THE REVEAL RESTS ON THE FRAMED DOCUMENT VOUCHING FOR ITSELF, AND ON NOTHING ELSE.
 //
-// AND IT IS NOW THE ONLY THING IN THE PLATFORM WATCHING THE CITIZEN'S OWN WIRE, which is why it
-// survived a change that deleted every other card in this file. The serving proof the ALIVE
-// reading now rests on is a loopback GET to 127.0.0.1:3000 INSIDE the container; the browser
-// reaches the same app through portal nginx → a variable `proxy_pass` → the ACA FQDN, via a
-// resolver with `valid=30s` (`portal/nginx.conf:243, 364`). A dev server answering locally can
-// still be @app_gone through the router for up to another 30 seconds — so "the platform watched
-// it answer" and "this browser can fetch it" are two different facts, and this timer is the one
-// that observes the second. Do not delete it on the strength of the stamp.
+// Every signal the platform can measure is taken on the wrong side of the network: the serving
+// proof the ALIVE reading rests on is a loopback GET to 127.0.0.1:3000 INSIDE the container,
+// while the browser reaches the same app through the portal edge → the ACA ingress, where a 502
+// with an empty body loads in the frame exactly as a page does. Measured on 2026-09-10: the
+// public address answered `502` with zero bytes while the control plane had already stamped the
+// app as served — and `load` fired, because `load` fires for a 502 too. So `load` is not
+// evidence, and neither is any status the pane is handed. The only thing that can say "a
+// document of this app is showing something in the citizen's browser" is that document, and it
+// does: the template's platform-owned `instrumentation-client.ts` posts `bial:app-mounted` to
+// this window once its body holds visible content, and answers a `bial:ping` with the same
+// message — or with `bial:app-painting` when it is alive and has nothing to show yet. The pane
+// reveals on `bial:app-mounted` and never on a timer, a status, or a `load`.
+//
+// WHAT THE BEACON CLAIMS, AND WHAT IT DOES NOT. That this app's script ran in the frame (a 502
+// ships none) and reported the page not blank. Not that the app works — a page whose code fails
+// after it painted has still been seen — and not which route painted: Next's own 404 inside the
+// root layout is a page with words on it, and it vouches. The compile verdict and the client-error
+// relay carry the health question; this signal carries only "there is something to look at". And
+// it is a CLAIM, made by a script in the framed document: the platform-owned file is the one
+// meant to make it, and the model is told never to post it itself — approach (A) makes the app
+// the witness, and that is the accepted trade.
+//
+// THE WAIT SERVES THAT ONE RULE, and nothing in it reveals anything:
+//   FRAME_LOAD_CAP_MS     how long a frame may go without even a `load` before it is asked.
+//   VOUCH_AFTER_LOAD_MS   how long a frame that loaded may stay silent before it is asked.
+//   PINGS_BEFORE_RELOAD   ASKING COMES BEFORE RE-REQUESTING. A silent document is pinged first,
+//                         because a re-request tears down the very hydration that produces the
+//                         beacon; only a document that ignores its pings is fetched again — which
+//                         is the bodyless 502 (nothing in it can answer), and that one closes on
+//                         its own once the ingress catches up.
+//   ALIVE_PINGS_BEFORE_STALL
+//                         A document that answers an ask with "painting" is ALIVE for that ask
+//                         and is asked again instead of fetched again — up to this many times in
+//                         one uncovered stretch, then labelled; its own beacon still reveals it
+//                         whenever it finally shows something. The mark is spent by the expiry
+//                         that reads it: a document must answer EVERY ask to stay alive, so one
+//                         reply from a page that then died buys it nothing past the next ask.
+//   HEARTBEAT_MS          A revealed frame is still asked, slowly. A page can go blank after it
+//                         painted (a client-side route to nothing) with no `load` for the pane
+//                         to see; its "painting" answer to a heartbeat takes the reveal back.
+//   VOUCH_RETRY_LIMIT     re-requests per ADDRESS — never per turn. A container whose image
+//                         predates the beacon never answers, and this is what it costs: three
+//                         fetches of its app, then the labelled stall card; a turn edge afterwards
+//                         costs one fetch and two pings, never a fresh budget.
 const FRAME_LOAD_CAP_MS = 20000
+const VOUCH_AFTER_LOAD_MS = 5000
+const PINGS_BEFORE_RELOAD = 2
+const ALIVE_PINGS_BEFORE_STALL = 12
+const VOUCH_RETRY_LIMIT = 3
+const HEARTBEAT_MS = 15000
+
+// THE WIRE, matched by value on both sides (`sandbox/template/instrumentation-client.ts`).
+const MOUNTED_TYPE = 'bial:app-mounted'
+const PAINTING_TYPE = 'bial:app-painting'
+const PING_TYPE = 'bial:ping'
+
+// The path an address frames, without its trailing slash, for the identity half of the beacon
+// check below. Malformed fails closed to null, exactly as `originOf` does.
+function framedPathOf(url: string | null): string | null {
+  try {
+    if (!url) return null
+    return new URL(url).pathname.replace(/\/+$/, '')
+  } catch {
+    return null
+  }
+}
+
+/** Is this inbound frame message the document at `framedPath` speaking for itself, with this
+ *  `type`? Shape and identity — provenance (origin and window) is the listener's job and is
+ *  checked first. Every generated app shares one origin, so the window check alone says "an app";
+ *  the path the message reports is what says "the app at this address", and a frame that
+ *  navigated itself to another app reports that app's path and is not revealed as this one. An
+ *  address framed at the origin's root (framed path `''`) accepts any path — there is nothing to
+ *  discriminate under it, and that is the shape the origin check alone already covers. */
+function isFrameReportFor(data: unknown, type: string, framedPath: string | null): boolean {
+  if (!isRecord(data) || data.type !== type) return false
+  if (framedPath === null || typeof data.path !== 'string') return false
+  const reported = data.path.replace(/\/+$/, '')
+  return reported === framedPath || reported.startsWith(`${framedPath}/`)
+}
 
 // The scheme://host[:port] of an absolute preview URL, or null if unset/malformed. Used to
 // VALIDATE inbound postMessage origins. A malformed value fails closed (null → no frame
@@ -311,12 +378,26 @@ export interface LivePreviewProps {
   // which is every app built before this shipped), and it HOLDS the cover rather than clearing
   // it. `null` = nothing has been reported on this turn at all, which is the pre-signal state
   // and behaves exactly as this pane did before the cover existed.
+  //
+  // NEITHER OF THOSE TWO IS A LICENCE TO REVEAL ANY MORE, and that is the 2026-09-10 change. While
+  // a turn is running they DENY the reveal outright rather than merely holding whatever is already
+  // up — holding is only fail-closed when something is showing to hold, and on a first build
+  // nothing is. `unknown` was this signal's answer for the whole of the run in which a citizen
+  // watched a blank white rectangle, so "the signal said nothing" can no longer be the entire
+  // basis on which this pane shows a frame.
   compileState?: CompileState | null
-  // Is a turn running on this project RIGHT NOW? It decides which of the cover's two sentences is
-  // true — a wait that describes work nobody is doing is a progress state that never ends — and
-  // nothing else. It deliberately does NOT decide whether to cover:
+  // Is a turn running on this project RIGHT NOW? Two jobs, and the second one is new.
+  //
+  // IT PICKS WHICH OF THE COVER'S SENTENCES IS TRUE — a wait that describes work nobody is doing
+  // is a progress state that never ends.
+  //
+  // AND IT NOW RAISES THE COVER, IN ONE DIRECTION ONLY. A running turn with no `clean` verdict is
+  // covered, because nothing vouches for a document served out of an app that is being rewritten
+  // as the citizen watches (see `flyingBlind`). What this prop still cannot do is LOWER a cover:
   // an app that is broken is just as broken between turns, and the error screen behind the cover
-  // does not become safe to show because the build stopped.
+  // does not become safe to show because the build stopped. The note that used to sit here said
+  // this prop "deliberately does NOT decide whether to cover" — written while the compile signal
+  // was assumed to work. On 2026-09-10 it did not work, and the entire cover went down with it.
   turnRunning?: boolean
   // The idle probe found this app's workspace reverted. It outranks every other cover sentence
   // because it is the only one that is a fact about what is IN THE FRAME rather than about a
@@ -339,11 +420,16 @@ export interface LivePreviewProps {
   // and a throwing callback is swallowed rather than allowed to take the pane down. Fires at most
   // once per FRAME KEY, the same discipline the load and stall verdicts follow.
   //
-  // WHAT IT DOES NOT PROMISE, so a counter built on it is read correctly: that the app WORKS. A
-  // cross-origin `load` fires for a 500 exactly as for a 200, and this pane deliberately reveals
-  // an un-verdicted frame rather than leave every pre-compile-endpoint container permanently
-  // blank (see `covered` above). So this fires when the citizen is looking at their app, not when
-  // the app is known good — the wait is what it measures, and a broken app ends a wait too.
+  // WHAT IT DOES NOT PROMISE, so a counter built on it is read correctly: that the app WORKS. The
+  // reveal means the framed document itself reported that it is showing something; a page whose
+  // own code then crashes, or one that renders the wrong thing, has still been SEEN. So this fires
+  // when the citizen is looking at their app, not when the app is known good — the wait is what
+  // it measures, and a broken app ends a wait too.
+  //
+  // WHAT IT NEVER FIRES FOR is a document nothing vouched for — a `load` with no beacon behind it.
+  // That stop-clock used to be stopped by a blank white rectangle, so the one number meant to say
+  // "this is how long until the citizen saw their app" was reporting the fastest views of the day
+  // for exactly the runs in which they saw nothing at all.
   onRevealed?: () => void
 }
 
@@ -412,11 +498,63 @@ export default function LivePreview({
   //
   // The forwarded payload feeds the browser client-error arm of self-heal: passing this gate
   // proves only WHERE the bytes came from, so the receiver narrows their shape downstream.
+  // THE FRAMED DOCUMENT'S OWN VERDICTS — declared here, above the listener that writes one of
+  // them; derived into booleans further down, where the frame key they are compared against
+  // exists. See the block above `frameLoaded` for what each one means. `loadedKey` and
+  // `vouchedKey` are mirrored in refs for the two places that must read them at EVENT time — a
+  // timer deciding whether to re-request, and a `load` deciding whether it is a reload — where a
+  // value captured at render can be a paint behind the truth.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const [vouchedKey, setVouchedKey] = useState<string | null>(null)
+  const [stalledKey, setStalledKey] = useState<string | null>(null)
+  const loadedKeyRef = useRef<string | null>(null)
+  const vouchedKeyRef = useRef<string | null>(null)
+  // The key of a document that answered a ping with "painting": alive, not yet showing anything.
+  // Read only at event time, so a ref.
+  const aliveKeyRef = useRef<string | null>(null)
+  // The path this pane frames, for the identity half of the beacon check — a ref for the same
+  // reason `previewOriginRef` is one.
+  const framedPathRef = useRef(framedPathOf(previewUrl))
+  framedPathRef.current = framedPathOf(previewUrl)
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (!previewOriginRef.current || e.origin !== previewOriginRef.current) return
-      const frameWindow = frameRef.current?.contentWindow
-      if (!frameWindow || e.source !== frameWindow) return
+      const frame = frameRef.current
+      const frameWindow = frame?.contentWindow
+      if (!frame || !frameWindow || e.source !== frameWindow) return
+      // THE BEACON, consumed here and forwarded nowhere: it is this pane's evidence, not a report.
+      // It is recorded against the key of the element that SENT it — read off the committed DOM,
+      // never off a value computed in render, which can run a key ahead of the iframe that is
+      // actually on screen — so a late beacon from a document on its way out vouches for that
+      // document and never for its successor.
+      if (isFrameReportFor(e.data, MOUNTED_TYPE, framedPathRef.current)) {
+        const sentBy = frame.getAttribute('data-frame-key')
+        vouchedKeyRef.current = sentBy
+        // A vouch settles every question the wait was asking, and refunds the asking budgets: a
+        // page that blanks and repaints more than once must be asked afresh each time, not
+        // stall-carded on the second blank because the first one spent its asks.
+        aliveKeyRef.current = null
+        pingsRef.current = 0
+        alivePingsRef.current = 0
+        setVouchedKey(sentBy)
+        return
+      }
+      // "ALIVE, NOTHING TO SHOW YET" — the answer to a ping from a document that is still painting.
+      // Not a reveal; it only tells the wait below that this document must be asked again rather
+      // than fetched again, which is the difference between a slow page being waited for and a
+      // slow page being torn down three times and labelled.
+      if (isFrameReportFor(e.data, PAINTING_TYPE, framedPathRef.current)) {
+        const sentBy = frame.getAttribute('data-frame-key')
+        aliveKeyRef.current = sentBy
+        // …AND A REVEALED FRAME THAT SAYS SO HAS GONE BLANK: the heartbeat asked, and the answer
+        // is that there is nothing to see any more. The reveal is taken back and the ordinary
+        // wait — asking, then labelling — takes over from here.
+        if (sentBy !== null && vouchedKeyRef.current === sentBy) {
+          vouchedKeyRef.current = null
+          setVouchedKey((current) => (current === sentBy ? null : current))
+        }
+        return
+      }
       onFrameMessageRef.current?.(e.data)
     }
     window.addEventListener('message', onMsg)
@@ -473,21 +611,20 @@ export default function LivePreview({
   const showReconnecting = frameContext && reconnecting && !starting
   const showFrame = frameContext && !reconnecting && !starting
 
-  // The reveal is gated on the framed document's own `load`, never on a timer. A timer can
-  // only prove that time passed; `load` is the only signal the browser gives us that something
-  // actually arrived in the frame.
+  // The reveal is gated on the framed document vouching for itself, never on a timer and never on
+  // `load` — see the top of this file. A timer can only prove that time passed; `load` proves a
+  // response arrived, and a bodyless 502 is a response.
   //
-  // Both verdicts are recorded PER SRC rather than as bare booleans, because a stale verdict is a
-  // lie about the frame the citizen is currently looking at: a fresh `preview_ready` re-gates the
-  // reveal by construction, and a relaunch after the cap returns to the honest wait instead of
-  // opening into a 20-second-old complaint about a frame that no longer exists. (That second one
-  // was caught in a browser, not in a test — jsdom will happily agree with whatever the state
-  // machine says.)
+  // Every verdict is recorded PER FRAME KEY rather than as a bare boolean, because a stale verdict
+  // is a lie about the frame the citizen is currently looking at: a fresh `preview_ready` re-gates
+  // the reveal by construction, and a relaunch after the stall returns to the honest wait instead
+  // of opening into a stale complaint about a frame that no longer exists. (That second one was
+  // caught in a browser, not in a test — jsdom will happily agree with whatever the state machine
+  // says.)
   //
-  // Note what a reveal does and does NOT claim: `load` fires for a 500 exactly as it does for a
-  // 200 and this pane cannot read a cross-origin status code, so revealing means "a document
-  // arrived", never "the app is healthy". Whatever ends up rendering over a framed-but-broken app
-  // hangs off a health signal from the server, not off this flag.
+  // Note what a reveal does and does NOT claim: the beacon says the document showed something in
+  // this browser, never that the app is healthy. Whatever ends up rendering over a framed-but-broken app hangs off a
+  // health signal from the server, not off this flag.
   // …but `previewUrl` alone is NOT a sufficient identity for the frame. Attaching to a container
   // that is already up makes "same container, same FQDN, same URL" the common case, so a repair
   // turn ends with `previewUrl` byte-identical to what it was before: React sees the same key,
@@ -503,6 +640,18 @@ export default function LivePreview({
   // repair case and nothing else. A timer would reload an idle pane; a status tick would reload
   // on every poll and leak the HMR socket the frame's `key` comment rightly protects.
   const [autoReloadNonce, setAutoReloadNonce] = useState(0)
+  // Re-requests spent on a document that ignored its pings (the vouch wait below), counted per
+  // ADDRESS and reset by exactly two things: a new URL and the citizen's own Reload. NOT by the
+  // platform's turn edges below — `iterating` falls after any four-second gap in the stream, so
+  // a reset there would hand a document that never answers a fresh budget several times per turn,
+  // and the bound on this counter would bound nothing. Pings are counted per KEY beside it and
+  // reset with the verdicts. Refs, because a count must not render.
+  const vouchRetriesRef = useRef(0)
+  const pingsRef = useRef(0)
+  const alivePingsRef = useRef(0)
+  useEffect(() => {
+    vouchRetriesRef.current = 0
+  }, [previewUrl, externalReloadNonce])
   const wasIterating = useRef(false)
   useEffect(() => {
     if (wasIterating.current && !iterating && previewUrl) setAutoReloadNonce((n) => n + 1)
@@ -557,8 +706,50 @@ export default function LivePreview({
   // platform cannot detect (a dev server restarted, an HMR socket that died quietly). Either one
   // moving changes the key; neither can reset the other, which a single shared counter would.
   const frameKey = previewUrl ? `${previewUrl}#${autoReloadNonce}.${externalReloadNonce}` : null
+  // EVERY VERDICT IS FORGOTTEN THE MOMENT THE KEY CHANGES, in the same render and before anything
+  // paints. The key is a function of the address and two counters, so it can RECUR: this pane
+  // survives a navigation from app A to app B and back, and A's key comes back byte-identical
+  // while A's iframe is a brand-new element that has fetched nothing. A vouch remembered from the
+  // first visit would reveal that empty element on its first paint. Done as a render-time
+  // derivation (React re-renders before committing) rather than as an effect, which would paint
+  // the stale reveal for one frame first. The refs follow the state so a timer that fires in the
+  // render-to-commit gap cannot mistake the old visit's vouch for this one's.
+  const [keyOfTheseVerdicts, setKeyOfTheseVerdicts] = useState(frameKey)
+  if (keyOfTheseVerdicts !== frameKey) {
+    setKeyOfTheseVerdicts(frameKey)
+    setLoadedKey(null)
+    setVouchedKey(null)
+    setStalledKey(null)
+    loadedKeyRef.current = null
+    vouchedKeyRef.current = null
+    aliveKeyRef.current = null
+    pingsRef.current = 0
+    alivePingsRef.current = 0
+  }
 
-  const [covered, setCovered] = useState(false)
+  // THE FRAMED DOCUMENT'S OWN VERDICTS, all three keyed on the FRAME KEY rather than the URL:
+  // keyed on the URL they survived a remount, so a reload that hung would have kept the stale
+  // document revealed and unlabelled forever. The reveal must be re-earned by whichever document
+  // is in the frame now, and only that document can earn it.
+  //
+  //   loaded    the browser finished fetching SOMETHING at this key. Not evidence — a 502 fires
+  //             it too — but it starts the shorter vouch wait and sends the ping.
+  //   vouched   the document posted `bial:app-mounted`: it is showing something in this browser.
+  //             THE ONLY REVEAL SIGNAL IN THIS FILE.
+  //   stalled   the re-requests ran out with no vouch, so the wait is labelled as slow.
+  const frameLoaded = showFrame && loadedKey === frameKey
+  const frameVouched = showFrame && vouchedKey === frameKey
+  const frameStalled = showFrame && !frameVouched && stalledKey === frameKey
+
+  // THE COMPILE VERDICT'S HALF OF THE COVER, and only that half. `covered` below is what every
+  // other line in this file reads; this state is split out of it so the fail-closed arm added
+  // there can never be written back INTO the verdict and then lost the next time the container
+  // reports. A signal that failed must not be able to erase the fact that it failed.
+  // WHICH verdict raised it, not merely whether one did: `building` is transient by nature (a
+  // compile takes seconds), `failed` is a state, and the two are treated differently below when
+  // the signal that raised them goes dark.
+  const [verdictCover, setVerdictCover] = useState<'building' | 'failed' | null>(null)
+  const coveredByVerdict = verdictCover !== null
   // Which app the current verdict describes. A ref rather than state because it must not itself
   // cause a render — it exists only to tell "a new verdict about the same app" from "the same
   // verdict about a new app".
@@ -577,13 +768,102 @@ export default function LivePreview({
   // `null` change nothing for an app we are already covering. They only uncover on a genuinely
   // NEW app, which we have learned nothing about yet — and nothing is exposed in that gap, since
   // a new url remounts the frame and the frame-load wait owns the screen until the first report.
+  // …AND THE CITIZEN'S OWN RELOAD IS A GENUINE ESCAPE HATCH: it fetches a new document, and the
+  // verdict about the old one does not get to pre-judge it. The next report re-raises the cover if
+  // the compile is still broken.
+  //
+  // …AND THE CITIZEN'S OWN RELOAD IS FOLDED INTO THIS ONE DERIVATION, NOT WRITTEN FROM A SECOND
+  // EFFECT. A Reload fetches a new document, so a verdict nobody can re-confirm does not get to
+  // pre-judge it — but a verdict that IS standing (`building`, `failed`) is re-applied on the very
+  // same render, because this effect re-derives from scratch. A second writer keyed on the nonce
+  // alone would clear the cover and never see it re-raised: the standing value is Object.is-equal
+  // to itself, so the verdict effect would not run again — the exact hole the two-effects note
+  // above records.
+  const lastReloadRef = useRef(externalReloadNonce)
   useEffect(() => {
     const sameApp = coveredUrlRef.current === previewUrl
     coveredUrlRef.current = previewUrl
-    if (compileState === 'building' || compileState === 'failed') setCovered(true)
-    else if (compileState === 'clean') setCovered(false)
-    else if (!sameApp) setCovered(false)
-  }, [previewUrl, compileState])
+    const reloaded = lastReloadRef.current !== externalReloadNonce
+    lastReloadRef.current = externalReloadNonce
+    if (compileState === 'building' || compileState === 'failed') setVerdictCover(compileState)
+    else if (compileState === 'clean') setVerdictCover(null)
+    else if (!sameApp || reloaded) setVerdictCover(null)
+  }, [previewUrl, compileState, externalReloadNonce])
+
+  // WHY THE COVER NO LONGER TRUSTS A SINGLE SIGNAL.
+  //
+  // THE INCIDENT, NAMED SO NOBODY HAS TO GUESS WHAT THIS COSTS. On 2026-09-10 the owner watched
+  // this pane twice, on two consecutive builds, show a COMPLETELY BLANK WHITE RECTANGLE — no app,
+  // no loading state, no words — while the chat beside it said "Working on your app" and the
+  // workspace called the preview live. The backend log has the whole chain: the container started
+  // at 13:44:06 and the pane framed it 7,020ms later, which is inside a fresh Next.js app's very
+  // first route compile, so the document that arrived was empty. Nothing covered it, because the
+  // cover was derived from `compileState` ALONE and `compileState` was `unknown` for the entire
+  // run — the control plane could not read that container's HMR socket at all
+  // (`compile_signal_protocol_drift reason=no_recognised_frame`; the deployed supervisor image
+  // predated the frame shape the reader expects). One signal was unavailable, and the pane
+  // answered by confidently presenting a blank rectangle as the citizen's app.
+  //
+  // SO AMBIGUITY DENIES. Deriving `covered` from the verdict alone made "no verdict" mean "show
+  // the bare frame, confidently" — the same fail-open mistake as `/dev/status.ready` counting a
+  // 404 as an answer. A frame is not shown bare unless something POSITIVE says there is a document
+  // worth showing, and there are exactly two things that can say it:
+  //
+  //   · `compileState === 'clean'` — the platform asked the container what it compiled and got an
+  //     answer. Evidence outright, and the only kind of it that works mid-turn.
+  //   · NO TURN RUNNING — whatever is in the frame is then the app as it stands, and the citizen
+  //     is entitled to look at it. This arm is what stops the fix becoming a wait card that never
+  //     resolves for the whole fleet whose image predates the compile signal, which would be a
+  //     worse failure than the one being fixed: a blank pane at least ends when you reload.
+  //
+  // `frameLoaded` IS NOT EVIDENCE ON ITS OWN, and this file already records why: a blank 502 from
+  // the in-container proxy fires `load` exactly as a 200 does. That is not a hypothetical here —
+  // it is precisely what fired at 13:44:12.
+  //
+  // A RUNNING TURN WITH NO CLEAN VERDICT IS THEREFORE COVERED, which is the reported case and
+  // nothing more exotic than it: the app is being written right now, so the document in the frame
+  // is at best a snapshot of a half-written app and at worst — as it was that morning — nothing at
+  // all. The price is paid by a citizen whose container is too old to report: their working app
+  // sits behind a wait card for the length of a turn. That trade is deliberate. A wait card ends
+  // when the turn does; a white rectangle ends when the person gives up on the product.
+  //
+  // AND IT COMES OFF ON ITS OWN, WITHOUT A RELOAD. `turnRunning` falling clears this arm in the
+  // same render, and the auto-reload nonce above re-requests the document on exactly that edge (a
+  // turn ending over a live preview, or provisioning/building → ready), so the first paint after a
+  // build is a FRESH document rather than the stale one this cover was hiding.
+  //
+  // DO NOT "SIMPLIFY" THIS BACK TO READING `compileState` ALONE. That single-signal version is the
+  // one that failed in front of the owner, twice, and it fails SILENTLY: a supervisor can always
+  // be older than the control plane, a socket can always drop, a connect can always land on a
+  // protocol it does not recognise — and every one of those reads as `unknown`. This predicate
+  // has to keep standing when the compile signal is wrong, absent, or lying.
+  // AND IT IS `showFrame`, NOT `frameLoaded`, THAT ARMS THIS — the correction that closed the
+  // last hole. Gating on `frameLoaded` left the worst case uncovered: a frame that never finishes
+  // loading is neither loaded nor covered, so the citizen watches the EMPTY IFRAME AREA, which is
+  // the same white rectangle by another route. Measured on 2026-09-10 against a real build: the
+  // app root answered `502` with a zero-byte body, `load` had not fired, and the pane showed bare
+  // white with the build eight steps in. A document nothing vouches for should be hidden from the
+  // moment we decide to frame it, not from the moment it happens to finish arriving.
+  const documentIsVouchedFor = compileState === 'clean' || !turnRunning
+  const flyingBlind = showFrame && !documentIsVouchedFor
+  // AND A `building` COVER LOSES TO A VOUCHED DOCUMENT ONCE ITS READER HAS GONE DARK. The verdict
+  // latches on `building`/`failed` and only an affirmative `clean` clears it — right while the
+  // signal is alive, and a permanent lie once it is not: the compile reader drifting to `unknown`
+  // after a `building` is exactly the fleet-wide failure the handoff records twice, and under it a
+  // page the citizen's own browser has reported as showing sat behind "Putting this page
+  // together…" with no stall card, no escalation and no way out. A compile takes seconds, so a
+  // reader that reported one and then could not decide has almost certainly missed its end, and
+  // the document's own word is the better evidence. NARROWLY, and each limit is deliberate:
+  //   · only a `building` cover yields. `failed` is a state, not a moment, and a vouch earned
+  //     before the broken change must never be what takes its cover down — only `clean`, a new
+  //     app, or the citizen's Reload does that.
+  //   · only an ANSWERED read that could not decide (`unknown`) counts as dark. `null` is this
+  //     pane's own "nothing reported", which every other line here treats as no evidence at all.
+  //   · mid-turn `flyingBlind` still covers regardless.
+  const verdictHasGoneDark = compileState === 'unknown'
+  const covered =
+    (coveredByVerdict && !(verdictCover === 'building' && verdictHasGoneDark && frameVouched)) ||
+    flyingBlind
 
   // The cover only exists over a frame. Everything above it in the precedence chain — which is now
   // just the reconnecting cover, the other three having been the workspace verdicts this file gave
@@ -598,11 +878,16 @@ export default function LivePreview({
 
   // …and the escalation, exactly once.
   //
-  // Armed off `covered` — the VERDICT — rather than off `showCover`, which folds in the frame and
-  // reconnect context. The citizen is being told how long their CHANGE has been coming together,
-  // and that clock does not restart because a dev-server blip briefly put the reconnecting card
-  // in front of the cover. Off `showCover` it did: a flicker reset the countdown mid-wait, so a
-  // genuinely slow build could keep resetting to the shorter wording forever.
+  // Armed off `covered` — THE REASON TO COVER — rather than off `showCover`, which folds in the
+  // frame and reconnect context. The citizen is being told how long their CHANGE has been coming
+  // together, and that clock does not restart because a dev-server blip briefly put the
+  // reconnecting card in front of the cover. Off `showCover` it did: a flicker reset the countdown
+  // mid-wait, so a genuinely slow build could keep resetting to the shorter wording forever.
+  //
+  // AND IT ARMS FOR THE FAIL-CLOSED ARM TOO, which is the change and is deliberate: a cover raised
+  // because nothing vouches for the document (`flyingBlind`) is a wait exactly like the others,
+  // and it is in fact the longest of them — a first build with no compile signal is the case that
+  // most needs the escalated sentence rather than twenty seconds of the same one.
   const [holdingSlow, setHoldingSlow] = useState(false)
   useEffect(() => {
     // SCOPED TO THE TURN AS WELL AS TO THE COVER, and the turn half is what makes it honest.
@@ -642,38 +927,104 @@ export default function LivePreview({
         ? IDLE_BROKEN_TEXT
         : IDLE_BUSY_TEXT
 
-  const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
-  const [stalledUrl, setStalledUrl] = useState<string | null>(null)
-  // Both verdicts track the FRAME KEY, not the URL. Keyed on the URL they survived a remount, so
-  // a reload that hung would have kept the stale document revealed and unlabelled forever — the
-  // reveal must be re-earned by whichever document is actually in the frame now.
-  const frameLoaded = showFrame && loadedUrl === frameKey
-  const frameStalled = showFrame && !frameLoaded && stalledUrl === frameKey
+  // THE PING: ask the document in the frame to vouch. Refs only, so the one function serves the
+  // `load` handler, the wait's timer and the heartbeat without any of them capturing a stale frame.
+  const pingFrame = useCallback((): void => {
+    const target = frameRef.current?.contentWindow
+    const origin = previewOriginRef.current
+    if (!target || !origin) return
+    try {
+      target.postMessage({ type: PING_TYPE }, origin)
+    } catch {
+      // A detached or mid-navigation window. The spontaneous beacon still arrives on its own.
+    }
+  }, [])
+  // Bumped by the wait each time it asks, so the wait re-arms for the answer.
+  const [askedAgain, setAskedAgain] = useState(0)
+
+  // THE VOUCH WAIT. A frame that has not vouched is ASKED first, re-requested only if it ignores
+  // the asking, and labelled once the re-requests run out — see the timers at the top of this
+  // file. Nothing in here reveals. The timer re-reads the vouch at fire time: a beacon that lands
+  // a paint before the deadline must not have the document that sent it torn down underneath it.
   useEffect(() => {
     if (!showFrame) {
-      // The frame is coming down (a crash, a teardown). Forget both verdicts: when it comes back
-      // it is a brand-new element that has to earn its reveal again.
-      setLoadedUrl(null)
-      setStalledUrl(null)
+      // The frame is coming down (a crash, a teardown). Forget every verdict and the asking
+      // budget: whatever comes back is a brand-new element that has to earn its reveal again. The
+      // RE-REQUEST budget stays — it belongs to the address, and a dev server that flaps must not
+      // buy a container that can never answer three more fetches per flap.
+      setLoadedKey(null)
+      setVouchedKey(null)
+      setStalledKey(null)
+      loadedKeyRef.current = null
+      vouchedKeyRef.current = null
+      aliveKeyRef.current = null
+      pingsRef.current = 0
+      alivePingsRef.current = 0
       return
     }
-    if (frameLoaded) return
-    // Do not count the wait while the cover is up. The cap exists to label a frame that never
-    // loaded for no visible reason; under the cover we know exactly why it has not loaded, and
-    // the card this timer arms tells the citizen to relaunch — advice that is wrong mid-build.
-    // Worse, a timer left running lands the instant the cover clears, so the pane would answer a
-    // successful recovery with "your app is taking longer than usual". Any verdict earned while
-    // covered is dropped, and the wait restarts from the uncover.
+    // Do not count the wait while the cover is up. Under the cover we know exactly why the
+    // document has not vouched (the app is compiling, or it failed to, or a turn is rewriting it),
+    // and asking again would only get the same silence; worse, a timer left running lands the
+    // instant the cover clears, so the pane would answer a recovery with "taking longer than
+    // usual". Any progress made while covered is dropped — the stall verdict AND the asking
+    // budget — so the wait restarts honestly from the uncover: asked again first, never fetched
+    // again first.
     if (showCover) {
-      setStalledUrl(null)
+      setStalledKey(null)
+      pingsRef.current = 0
+      alivePingsRef.current = 0
+      aliveKeyRef.current = null
       return
     }
-    const t = setTimeout(() => setStalledUrl(frameKey), FRAME_LOAD_CAP_MS)
+    if (frameVouched) {
+      // THE HEARTBEAT. A revealed page can go blank with no `load` for the pane to see; asked
+      // slowly, it says "painting" and the listener above takes the reveal back. Nothing here
+      // reveals, and a page that has nothing to add says nothing.
+      const beat = setTimeout(() => {
+        pingFrame()
+        setAskedAgain((n) => n + 1)
+      }, HEARTBEAT_MS)
+      return () => clearTimeout(beat)
+    }
+    if (frameStalled) return
+    const wait = frameLoaded ? VOUCH_AFTER_LOAD_MS : FRAME_LOAD_CAP_MS
+    const t = setTimeout(() => {
+      if (vouchedKeyRef.current === frameKey) return
+      if (aliveKeyRef.current === frameKey) {
+        // Alive at the last ask: ask again, never fetch again — and spend the mark, so the answer
+        // to THIS ask is what keeps it alive. Bounded to the label; the document's own beacon
+        // still reveals it after that.
+        aliveKeyRef.current = null
+        if (alivePingsRef.current < ALIVE_PINGS_BEFORE_STALL) {
+          alivePingsRef.current += 1
+          pingFrame()
+          setAskedAgain((n) => n + 1)
+          return
+        }
+        setStalledKey(frameKey)
+        return
+      }
+      // CHARGED FOR THE ATTEMPT, not the delivery: a ping that could not leave (no window, no
+      // origin, a throwing post) must still move this wait toward its label, or a frame nothing
+      // can reach would be asked forever and never once called slow.
+      if (pingsRef.current < PINGS_BEFORE_RELOAD) {
+        pingsRef.current += 1
+        pingFrame()
+        setAskedAgain((n) => n + 1)
+        return
+      }
+      if (vouchRetriesRef.current < VOUCH_RETRY_LIMIT) {
+        vouchRetriesRef.current += 1
+        setAutoReloadNonce((n) => n + 1)
+        return
+      }
+      setStalledKey(frameKey)
+    }, wait)
     return () => clearTimeout(t)
-  }, [showFrame, frameKey, frameLoaded, showCover])
+  }, [showFrame, frameKey, frameLoaded, frameVouched, frameStalled, showCover, askedAgain, pingFrame])
 
-  // ONE honest wait, running from "no URL yet" all the way to the framed document's own
-  // `load`. It used to be destroyed the instant `previewUrl` arrived, which is precisely when the
+  // ONE honest wait, running from "no URL yet" all the way to the framed document vouching for
+  // itself. It used to be destroyed the instant `previewUrl` arrived, which is precisely when the
   // 5-7s first-route compile begins: the spinner vanished and left an unlabelled blank white card
   // at the exact moment the citizen had been told their app was ready.
 
@@ -689,46 +1040,55 @@ export default function LivePreview({
   // Deliberately NOT tied to the frame's lifecycle. A remount does not reset this: the container
   // re-reports within a poll, and clearing on remount would mean a frame swap silently uncovers
   // a broken app for a second. The verdict is about the APP, not about this DOM node.
-
-  // THE REVEAL, AND WHAT IT IS NOT ALLOWED TO REST ON. `load` is not evidence that the app
-  // works: it fires for a 500 exactly as it does for a 200, this pane cannot read a cross-origin
-  // status, and the in-container proxy emits its handle-block headers even on the 502 it returns
-  // when the dev server is down — so `load` fires on that too. Pairing it with the compile verdict
-  // is what makes the reveal mean something, and the verdict is evaluated continuously through the
-  // build rather than claimed once per turn.
   //
-  // TWO PROPERTIES FALL OUT OF `!covered` THAT ARE WORTH NAMING. A verdict that flips to failed
-  // after a reveal RETRACTS it — the app goes back to hidden and the cover explains — and an
-  // UNKNOWN verdict does not, because `covered` holds on unknown rather than moving.
+  // ALL OF WHICH DESCRIBES `coveredByVerdict`, WHICH IS NOW HALF OF THE COVER. Every word above
+  // stays true and none of it was enough: holding on `unknown` is fail-closed only while something
+  // is showing to hold, and during a first build nothing is — so holding resolved to revealing.
+  // The other half is `flyingBlind`; see the long block above `covered`, and the incident it names.
+
+  // THE REVEAL, AND THE ONE THING IT RESTS ON. `frameVouched` is the framed document's own word
+  // that it is showing something in this browser — the beacon described at the top of this file.
+  // `load` is not in this expression and must never return to it: it fires for a 500 exactly as
+  // for a 200, this pane cannot read a cross-origin status, and the in-container proxy emits its
+  // handle-block headers even on the 502 it returns when the dev server is down. Three predicates
+  // over the signals this pane is HANDED were tried on 2026-09-10 and each traded one fail-open
+  // for another; the document is the only witness on the right side of the network.
+  //
+  // `!covered` is the other half, and two properties fall out of it worth naming: a verdict that
+  // flips to failed after a reveal RETRACTS it — the app goes back to hidden and the cover
+  // explains — and an UNKNOWN verdict does not, because `covered` holds on unknown rather than
+  // moving.
   //
   // This unit controls opacity and nothing else: it renders no overlay, and every visible surface
   // above the frame belongs to the cover.
   //
-  // WHAT THIS DOES NOT CLOSE, stated rather than left to be discovered. `covered` moves on
-  // `building`/`failed`/`clean` and HOLDS on `unknown` and on `null` — so where no compile
-  // verdict has ever been reported, the load still reveals on its own, exactly as it did before
-  // this unit. That is every container running an image older than the compile endpoint, and the
-  // opening moments of every turn. It is a deliberate compatibility concession and not an
-  // oversight: gating on a POSITIVE verdict would leave the whole existing fleet's preview
-  // permanently blank, which is a worse failure than the one being fixed. The signal reaches an
-  // app on its next provision or restore, and the reveal gets teeth at the same moment the cover
-  // does — the same trade the cover already documents.
-  const revealed = frameLoaded && !covered
+  // WHAT THIS COSTS, stated rather than left to be discovered: a container running an image older
+  // than the beacon never vouches. Its app is asked twice, fetched again up to three times
+  // (VOUCH_RETRY_LIMIT, per address — a turn edge afterwards costs one fetch and two pings, never
+  // a fresh budget), and then sits behind the labelled stall card until it is next launched — the
+  // beacon rides the image and reaches every app on its next provision or restore. That is the
+  // trade the owner chose over a fourth guess: a labelled wait that ends on the next launch,
+  // never a white rectangle presented as the citizen's app.
+  const revealed = frameVouched && !covered
+  // …and whether the citizen can actually SEE it, which `revealed` alone is not: `showCover`
+  // folds in the reversion cover, and a reverted workspace draws its card over a frame the compile
+  // verdict has no quarrel with. ONE expression for the two consumers that must agree — the
+  // attribute the harness reads and the stop-clock below — so they cannot drift apart.
+  const seenByCitizen = revealed && !workspaceLost
   // Announce that reveal ONCE per document. Keyed on the frame key rather than on `revealed`
   // alone, because a verdict that flips to failed RETRACTS the reveal and a later re-reveal of
   // the same document is not a second first-view. A reload (a new nonce, so a new key) does
   // announce again; the caller's own mark is idempotent, so the two guards agree rather than
   // either one having to be perfect.
   //
-  // AND IT CHECKS `workspaceLost` SEPARATELY, because `revealed` is NOT "the cover is down".
+  // AND IT READS `seenByCitizen`, NOT `revealed`, because `revealed` is NOT "the cover is down".
   // `showCover` is `covered || workspaceLost` while `revealed` reads only `covered`, so a
   // confirmed reversion leaves the frame at full opacity UNDER a cover that says the document in
-  // it is not the citizen's app — visually correct (the cover is on top) and, without this term, a
-  // reported first view of an app the citizen cannot see. `revealed` already implies `!covered`,
-  // so this is the only case the two expressions disagree on.
+  // it is not the citizen's app — visually correct (the cover is on top) and, read naively, a
+  // reported first view of an app the citizen cannot see.
   const announcedRevealOf = useRef<string | null>(null)
   useEffect(() => {
-    if (!revealed || workspaceLost || !frameKey) return
+    if (!seenByCitizen || !frameKey) return
     if (announcedRevealOf.current === frameKey) return
     announcedRevealOf.current = frameKey
     try {
@@ -739,8 +1099,8 @@ export default function LivePreview({
       // white-screen the builder — a measurement failing the thing it measures, which is the one
       // outcome this whole surface is built to avoid.
     }
-  }, [revealed, workspaceLost, frameKey, onRevealed])
-  const framePending = showFrame && !frameLoaded && !frameStalled
+  }, [seenByCitizen, frameKey, onRevealed])
+  const framePending = showFrame && !frameVouched && !frameStalled
   // `starting` joins the wait WITHOUT a `status` term, deliberately. The other two arms both key
   // on the build lifecycle, and a relaunch has no build lifecycle at all — it carries the status
   // of the turn that ended, so any `provisioning`/`building` test would exclude the one case that
@@ -813,6 +1173,31 @@ export default function LivePreview({
                 ? 'Your app preview is live'
                 : ''
 
+  // What a `load` means here: something finished arriving at this key. The FIRST load of a key
+  // records itself and asks — the ping — and takes nothing back, because a page's beacon
+  // routinely beats its own `load` (hydration finishes while an image or a font is still
+  // arriving) and a vouch already in hand is not in question. A SECOND load at the same key is a
+  // different document: the page reloaded itself from the inside (a dev-server restart does this)
+  // and the pane saw only the `load`, so the vouch is taken back on the spot and the new document
+  // is asked to earn it — the moment a bodyless 502 lands in a frame that had vouched is covered,
+  // not revealed. Read off the ref, not the render: two loads can land inside one paint.
+  const onFrameLoad = () => {
+    const reloaded = loadedKeyRef.current === frameKey
+    loadedKeyRef.current = frameKey
+    setLoadedKey(frameKey)
+    if (reloaded) {
+      // A NEW DOCUMENT, so a new wait: the asking budget and the clock belong to the document that
+      // is being asked, and the one that just replaced itself has not been asked at all yet.
+      vouchedKeyRef.current = null
+      aliveKeyRef.current = null
+      pingsRef.current = 0
+      alivePingsRef.current = 0
+      setVouchedKey((current) => (current === frameKey ? null : current))
+      setAskedAgain((n) => n + 1)
+    }
+    pingFrame()
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* NO TOOLBAR ROW HERE: the boards draw ONE row for the whole workspace, under the navbar
@@ -868,6 +1253,12 @@ export default function LivePreview({
             // content width being exactly the device pixel width, with nothing to subtract.
             <div
               data-testid="device-card"
+              /* THE REVEAL, WRITTEN WHERE IT CAN BE SEEN. Opacity is a class; a probe reading the
+                 composed screen needs a fact, and "can the citizen see this frame" is the fact the
+                 2026-09-10 harness could not ask — it read the framed document directly and counted
+                 a blank one under the wait as a blank one on screen. `seenByCitizen`, not
+                 `revealed`: the reversion cover hides a frame `revealed` would call visible. */
+              data-revealed={seenByCitizen ? 'true' : 'false'}
               style={{ width: DEVICES[device].width ? `${DEVICES[device].width}px` : '100%' }}
               // `width` is deliberately EXCLUDED from the transition (no `transition-all`, no
               // `transition-[width]`): animating layout width genuinely resizes the cross-origin
@@ -878,8 +1269,8 @@ export default function LivePreview({
               // makes the box snap to its target width in one paint; still visually smooth.
               // `opacity` IS in the transition (it is paint-only, so it costs the framed document
               // nothing) — that is the fade, and until it runs the card is opacity-0 with the
-              // labelled wait sitting over it. Hidden, not unmounted: an iframe that never mounts
-              // never loads, and `load` is the only thing that reveals it.
+              // labelled wait sitting over it. Hidden, not unmounted: the frame must be mounted for
+              // its document to run at all, and only that document's beacon reveals it.
               className={`shrink-0 mx-auto h-full transition-[box-shadow,border-radius,opacity] duration-300 rounded-xl overflow-hidden shadow-lg bg-white relative ${revealed ? 'opacity-100' : 'opacity-0'}`}
             >
               {/* THE THREE CHIPS THAT USED TO SIT HERE ARE GONE.
@@ -928,9 +1319,9 @@ export default function LivePreview({
                    pane nulls it on its own — which is the fail-closed state, not a gap. */
                 ref={frameRef}
                 src={previewUrl}
-                /* The ONLY thing that reveals this frame. Recording the KEY rather than a
-                   bare `true` is what makes the next load re-gate itself. */
-                onLoad={() => setLoadedUrl(frameKey)}
+                /* NOT the reveal — see `onFrameLoad`: it records the load against the KEY, sends
+                   the ping, and starts the clock on a document that had vouched before. */
+                onLoad={onFrameLoad}
                 className="w-full h-full border-0"
                 title="App Preview"
                 /* FROZEN: the preview is a genuinely CROSS-ORIGIN sandbox frame (the sandbox's
@@ -968,10 +1359,11 @@ export default function LivePreview({
 
         {showLoading && !showCover && <BouncingWait>{loadingText}</BouncingWait>}
 
-        {/* The bounded degradation: the frame never loaded, so say so and offer a way out,
-            while leaving it MOUNTED underneath. Unmounting it would make the timeout permanent by
-            construction (the `load` it is waiting for could never arrive), so this says "slow",
-            not "dead" — a load that lands after FRAME_LOAD_CAP_MS still wins and reveals. */}
+        {/* The bounded degradation: the document never vouched, through every re-request, so say
+            so — while leaving the frame MOUNTED underneath. Unmounting it would make the stall
+            permanent by construction (the beacon it is waiting for could never arrive), so this
+            says "slow", not "dead" — a beacon that lands after the re-requests ran out still wins
+            and reveals. */}
         {/* …and this degraded twin loses to the cover for the same reason the wait above does:
             when the cover is up we KNOW why the frame has not loaded (the app is compiling, or
             it failed to), and this card's "relaunch it" advice would be wrong. Two waits never

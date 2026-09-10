@@ -1,0 +1,10 @@
+# Git excludes the SANDBOX IMAGE applies to every workspace repository it hosts, installed as the
+# system-wide `core.excludesFile` by Dockerfile.sandbox. Anything listed here never enters a
+# workspace snapshot, whichever `.gitignore` the workspace itself carries — so a platform-owned
+# file baked into the image is never overlaid by a restore, and a fix shipped in a new image
+# reaches every app on its next launch. (The template's own `.gitignore` cannot do this job: it is
+# tracked in the snapshot, so a restore of an older bundle brings back an older copy of it.)
+#
+# Do NOT list files the app's deploy pipeline needs from the snapshot (`backend/src/services/deploy`
+# collects the bundle) — only files the platform bakes and serves itself.
+/instrumentation-client.ts

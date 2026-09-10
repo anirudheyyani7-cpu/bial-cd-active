@@ -35,17 +35,33 @@ This is the one event that separates "the protocol moved upstream" from "the soc
 Defensive parsing — ignore unknown frame verbs, never assume a field is present — is what keeps
 a bundler upgrade from crashing the consumer, and is EXACTLY what would make a rename silent:
 the consumer would receive frames forever and understand none of them, while the platform
-reported a healthy app. The dev server sends its current state within milliseconds of a
-connect, so silence after a successful connect has no innocent explanation.
+reported a healthy app.
+
+THIS DOC USED TO CLAIM "the dev server sends its current state within milliseconds of a connect,
+so silence after a successful connect has no innocent explanation". THAT WAS MEASURED FALSE on
+2026-09-10, and the correction is kept here rather than quietly deleted because the sentence is
+what made a whole day of false alarms look like a real one. There IS an innocent explanation:
+on `next@16.3.1` the `sync` frame — the only connect-burst frame that carries a compile state —
+is emitted behind an untimed `fetch('https://registry.npmjs.org/-/package/next/dist-tags')` made
+from INSIDE the sandbox, memoised per dev-server process, so the supervisor's consumer is the one
+client per container that ever pays it. Slow DNS, a throttled container, or blackholed egress
+pushed that past the canary's window and this alarm fired against perfectly healthy dev servers,
+always at `connect_generation=1`. The supervisor now distinguishes a verb it KNOWS which carries
+no compile state (the `turbopack-connected` / `isrManifest` handshake) from a frame it cannot
+read at all, and only the latter arms the canary — so a firing here once again means what this
+doc says it means. A supervisor baked BEFORE that fix still false-alarms exactly once per
+container: check the image tag before chasing a rename.
 
 Fields: `app_name`, `connect_generation`, `reason`. Raised at most once per successful connect
 (the generation is what makes that possible) rather than once per poll.
 
 WHAT TO DO: the frame verbs this consumer understands are `building` / `built` / `sync`, read
-from `action` or `type`, in `sandbox/supervisor/app.py::_derive_compile`. Capture a few frames
-from a live container's `/_next/webpack-hmr` and add the new verb there. Until that ships the
-platform reports `UNKNOWN`, the preview cover holds rather than clearing, and no user sees a
-framework error screen — degraded, not broken."""
+from `action` or `type`, in `sandbox/supervisor/app.py::_derive_compile` — alongside
+`_HMR_STATELESS_VERBS` there, the verbs it knows and expects no state from. Capture a few frames
+from a live container's `/_next/hmr` (the path moved off `/_next/webpack-hmr` with Turbopack) and
+add the new verb to whichever of the two it belongs in. Until that ships the platform reports
+`UNKNOWN`, the preview cover holds rather than clearing, and no user sees a framework error
+screen — degraded, not broken."""
 
 
 RECOVERY_WRITE_DID_NOT_LAND_EVENT: Final = "recovery_write_did_not_land"

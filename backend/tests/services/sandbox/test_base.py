@@ -170,6 +170,22 @@ def test_a_redirect_off_the_root_is_still_a_page() -> None:
     assert _dev(root_status=399).shows_a_page is True
 
 
+def test_the_line_is_drawn_between_399_and_400() -> None:
+    """★ THE OFF-BY-ONE, pinned as an adjacent pair because that is the only way it is pinned.
+    399 above and 404 below leave `< 400` and `<= 400` indistinguishable — the mutant survives the
+    entire suite, and what it buys is a 400 Bad Request framed as a live preview: a page with no
+    words on it, the same thing the citizen saw on 2026-09-10 and the same thing this predicate
+    exists to refuse.
+
+    400 is not a hypothetical status for an app root either. Agent-written middleware that
+    rejects the request, or a route handler validating a search param, answers exactly one.
+
+    Mutation check: `self.root_status < 400` -> `<= 400` and the second assertion here goes red
+    while every other test in this file stays green."""
+    assert _dev(root_status=399).shows_a_page is True
+    assert _dev(root_status=400).shows_a_page is False
+
+
 def test_a_ready_dev_server_with_nothing_to_show_is_not_a_page() -> None:
     """★ THE MEASURED DEFECT. `ready` is True and the root is 404 — the exact shape of a build
     between the dev server binding and the first route existing."""

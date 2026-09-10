@@ -4,6 +4,7 @@ fresh, READY sandbox (cookie auth + CSRF, owner-scoping, no build slot taken).""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from pydantic import SecretStr
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import src.services.build_sessions.manager as manager_mod
 from src.api.v1.build_sessions.deps import (
     sandbox_dependency,
     sandbox_or_none_dependency,
@@ -28,7 +30,7 @@ from src.db.models.conversation import ChatKind
 from src.db.models.harness_counter import HarnessCount, HarnessCounter
 from src.services.build_sessions.appdata import resolve_app_for_project
 from src.services.build_sessions.locks import lock_is_held
-from src.services.build_sessions.manager import app_name_for
+from src.services.build_sessions.manager import SessionManager, app_name_for
 from src.services.build_sessions.outcome import write_build_outcome
 from src.services.redis import (
     BUILD_COORDINATION_UNAVAILABLE_MSG,
@@ -378,6 +380,13 @@ class SupervisorScript:
         self.dev_start_status = 200
         self.dev_running = True
         self.dev_ready = True
+        # WHAT THE APP ROOT ANSWERED, and it is absent from the body by default rather than
+        # present-and-null: that is the wire shape of a supervisor image built before the field
+        # existed, which the control plane grandfathers as PROVEN. Leaving it out is therefore
+        # the reading every test in this file was written under, and it keeps the rollout arm
+        # exercised on this lane instead of only in `test_base.py`. A test scripting the
+        # page-less reading sets it to 404 and says so.
+        self.root_status: int | None = None
         self.paths: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -394,10 +403,14 @@ class SupervisorScript:
                 return httpx.Response(self.dev_start_status, json={"detail": "already serving"})
             return httpx.Response(200, json={"pid": 4321})
         if path == "/dev/status":
-            return httpx.Response(
-                200,
-                json={"running": self.dev_running, "ready": self.dev_ready, "port": 3000},
-            )
+            body: dict[str, object] = {
+                "running": self.dev_running,
+                "ready": self.dev_ready,
+                "port": 3000,
+            }
+            if self.root_status is not None:
+                body["root_status"] = self.root_status
+            return httpx.Response(200, json=body)
         return httpx.Response(404, json={"detail": path})
 
 
@@ -580,6 +593,61 @@ async def test_an_unowned_server_409_after_attach_still_returns_200_and_deletes_
     assert resp.status_code == 200
     assert aca_wire.aca.delete_calls == []
     assert aca_wire.aca.create_calls == [app_name_for(app_id)]
+
+
+async def _drain_the_watchers(manager: SessionManager) -> None:
+    """Run the detached first-serve continuation to completion.
+
+    Duplicated from `test_preview_state.py` rather than shared through the package conftest, and
+    deliberately: this lane's assertions are ACA call counts, so what the continuation must not
+    do here — issue a delete of its own — is a claim about this file's fixtures and belongs
+    beside them."""
+    for task in list(manager._tasks):
+        with contextlib.suppress(Exception):
+            await task
+
+
+async def test_a_cold_relaunch_whose_root_shows_no_page_deletes_nothing_from_aca(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis,
+    fake_storage,
+    aca_wire,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ THE REGRESSION, PINNED WHERE DESTRUCTION IS ACTUALLY OBSERVABLE. A 200 from this route
+    says nothing about whether a container was destroyed — `restore_from_snapshot` issues its own
+    teardown from INSIDE the client, so only the recording control plane can see it. This is the
+    composition in which "the container survived" is a falsifiable claim.
+
+    The shape: a cold relaunch restores the citizen's tree, the dev server comes up, and the app
+    root answers 404 because the agent has not written `app/page.tsx` yet. The container is up and
+    holds the work. The first version of the page check answered that by raising
+    `SandboxNotReadyError` into the readiness handler, which re-raises on the cold arm — the raise
+    escaped the lock scope before `scope.spare()`, compensation tore down the container that had
+    just been built, and the citizen got a 503 over their own workspace.
+
+    Mutation-check: raise `SandboxNotReadyError` from the page-less arm instead of retracting, and
+    this goes red on the status code with a delete recorded against the app it just created."""
+    monkeypatch.setattr(manager_mod, "_COLD_READY_BUDGET_SECONDS", 0.0)
+    monkeypatch.setattr(manager_mod, "READINESS_POLL_S", 0)
+    user, project = await _user_project(db_session, "rl-no-page@rvaiglobal.com")
+    app_id = await _seed_snapshot(db_session, user, project, fake_storage)
+    # `ready` stays TRUE alongside it, and that pairing is the whole point: the supervisor's
+    # readiness is fail-open by its own design, so a 404 root is a READY dev server with nothing
+    # to show. Script them apart and the two questions collapse into one.
+    aca_wire.sup.root_status = 404
+
+    resp = await _relaunch(client, user, project)
+
+    assert resp.status_code == 200, "the citizen got an error over a container that is up"
+    assert resp.json()["ready"] is False, "a 404 root was reported as a running app"
+    assert resp.json()["previewUrl"], "the URL is framable the moment a page exists"
+    assert aca_wire.aca.delete_calls == [], "the restored container was destroyed over a 404"
+    assert aca_wire.aca.create_calls == [app_name_for(app_id)], "guard the premise: it was cold"
+
+    await _drain_the_watchers(aca_wire.manager)
+    assert aca_wire.aca.delete_calls == [], "the continuation is an observer, never an executioner"
 
 
 # --- the release route, and the refusal it exists to resolve -------------------------

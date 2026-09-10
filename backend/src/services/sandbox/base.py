@@ -470,7 +470,17 @@ class CompileReport:
     def protocol_drifted(self) -> bool:
         """A SUCCESSFUL connect that produced no frame this client recognises — the one
         reading that means the upstream protocol moved, as opposed to the socket being down.
-        Named here so no call site re-derives it from the reason string."""
+        Named here so no call site re-derives it from the reason string.
+
+        THE SUPERVISOR IS THE ONE THAT DECIDES THIS, and it ships baked into the sandbox image on
+        a different clock from this process — so read a firing against the image tag before
+        reading it as a rename. A supervisor baked before 2026-09-10 counted the Turbopack
+        handshake frames (`turbopack-connected`, `isrManifest`) as unreadable traffic and raised
+        this once per container, always at `connect_generation == 1`, against a dev server that
+        was merely slow to reach its first `sync`. That is a FALSE positive with a known shape, not
+        a reason to soften the check: nothing here is loosened to hide it, because a platform that
+        stops saying it cannot read the signal, while it still cannot read it, is worse than the
+        noise. Re-bake the image; the alarm then means what it says again."""
         return self.state is CompileState.UNKNOWN and self.reason == _DRIFT_REASON
 
     @property

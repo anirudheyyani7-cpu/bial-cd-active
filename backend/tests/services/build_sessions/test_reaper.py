@@ -8,6 +8,7 @@ import ast
 import base64
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -1066,7 +1067,12 @@ class _ProbeableClient(FakeSandboxClient):
     that must change nothing."""
 
     def __init__(
-        self, *, running: bool = True, ready: bool = True, reachable: bool = True
+        self,
+        *,
+        running: bool = True,
+        ready: bool = True,
+        reachable: bool = True,
+        root_status: int | None = None,
     ) -> None:
         super().__init__()
         self.attached_as: list[str] = []
@@ -1076,6 +1082,19 @@ class _ProbeableClient(FakeSandboxClient):
             port=3000,
             # 137 is the OOM killer's signature, and the field is what `app_serving_lost` carries.
             exit_code=None if running else 137,
+            # `None` BY DEFAULT, AND THAT IS THE READING EVERY TEST ABOVE WAS WRITTEN UNDER — not
+            # a neutral placeholder. `shows_a_page` grandfathers an absent `root_status` as a page
+            # (a sandbox image built before the field cannot answer, and refusing to frame the
+            # whole existing fleet is worse than the window it would close), so leaving this out
+            # keeps `shows_a_page` exactly equal to `ready` and every assertion in this section
+            # goes on asserting what it asserted.
+            #
+            # AND THAT EQUALITY IS PRECISELY WHY THE KNOB HAD TO EXIST. While it did not, no
+            # reading in this file could tell the sweep's page gate apart from the fail-open
+            # `ready` it replaced — the gate could be reverted to `if not status.ready` and all
+            # 65 tests here stayed green. A test that means the page-less reading now says
+            # `root_status=404` out loud.
+            root_status=root_status,
         )
         if reachable:
             self.attach_handle = SandboxHandle(
@@ -1137,6 +1156,47 @@ async def test_a_container_that_still_answers_nothing_is_not_therefore_reapable(
     assert client.torn_down == []
     assert await _stamp(fake_redis, USER) == ""
     assert await locks.read_registry(fake_redis, USER) is not None
+
+
+async def test_the_sweep_will_not_stamp_a_root_that_answers_without_a_page(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE BACKSTOP HOLDS THE SAME BAR AS EVERY OTHER OBSERVER, and nothing in this file said
+    so until this test did. The dev server is up and answering on every probe — `ready` is True —
+    and the app root is 404ing because the agent has not written `app/page.tsx` yet. That is not
+    a serve, and a proof minted here is worse than one minted anywhere else: the four in-turn
+    observers all refuse this reading, so a sweep that accepted it would quietly overturn their
+    refusal five minutes later, on a container nothing has ever watched paint. The citizen's pane
+    flips to RUNNING and frames the blank white document measured on 2026-09-10.
+
+    THE SECOND HALF IS NOT DECORATION. An absence assertion goes green just as readily when the
+    stamp arm is dead as when it correctly declined — and the arm really can be dead here, since
+    the age gate, the `ready` state and the empty sentinel all have to line up before a probe is
+    taken at all. Flipping the same container's root to 200 and sweeping again proves the sweep
+    was live the whole time and was refusing this reading specifically.
+
+    Mutation check: revert the gate to `if not status.ready:` and the first half goes red. That
+    mutant survived all 65 tests in this file before this one existed."""
+    await _seed(fake_redis, USER, serving_since="")
+    client = _ProbeableClient(root_status=404)
+
+    reaped = await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False)
+
+    assert reaped is False, "an observation must never become a verdict"
+    assert client.torn_down == [], (
+        "a container with nothing to show yet is not a container to destroy"
+    )
+    assert await _stamp(fake_redis, USER) == "", "a 404 at the root was recorded as a serve"
+
+    # The agent writes the page. Same container, same registry record, same sweep — the stamp arm
+    # is still open because the sentinel is still empty, and only the reading has changed.
+    client.scripted = replace(client.scripted, root_status=200)
+
+    assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
+    stamped = await _stamp(fake_redis, USER)
+    assert stamped is not None and stamped != "", (
+        "the sweep's stamp arm was never live, so the refusal above proved nothing"
+    )
 
 
 async def test_a_container_the_sweep_has_already_condemned_is_never_asked_anything(

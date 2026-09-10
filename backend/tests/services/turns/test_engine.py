@@ -61,7 +61,6 @@ from src.services.orchestrator.constants import (
     CACHE_TTL,
     MAX_OUTPUT_TOKENS,
     PLAN_EFFORT,
-    TEMPERATURE,
 )
 from src.services.sandbox.config import SandboxConfig
 from src.services.turns import engine as engine_module
@@ -1726,21 +1725,35 @@ def test_the_deployed_model_takes_adaptive_thinking_and_refuses_a_budget() -> No
     # THE WHOLE SETTINGS OBJECT THE CHAT RUN BUILDS, not a reduced one: what is being asked is
     # whether the combination this code sends survives, and a combination is exactly the kind of
     # thing that can be individually valid and jointly refused.
-    with warnings.catch_warnings():
-        # This model's profile also strips sampling settings — `temperature` is dropped and a
-        # UserWarning is raised saying so. Silenced rather than asserted: it is the library's
-        # policy about a knob, and pinning it here would turn a profile
-        # change into a red test about reasoning.
-        warnings.simplefilter("ignore", UserWarning)
-        prepared, _ = model.prepare_request(
+    # ★ AND NOTHING IS SILENCED HERE ANY MORE. This block used to wrap the call in
+    # `warnings.simplefilter("ignore", UserWarning)` because the settings carried `temperature`,
+    # which this model's profile strips while raising `UserWarning: Sampling parameters
+    # ['temperature'] are not supported`. Silencing it in the test left it firing in PRODUCTION,
+    # once per model step, and the constant's promise of deterministic generation was never in
+    # force. The knob is gone from the settings, so the warning has no source — and turning the
+    # filter off is what keeps it that way: re-add a sampling setting and `-W error` makes this
+    # test the thing that notices.
+    prepared, _ = model.prepare_request(
+        AnthropicModelSettings(
+            max_tokens=MAX_OUTPUT_TOKENS,
+            anthropic_thinking=ADAPTIVE_THINKING,
+            anthropic_effort=PLAN_EFFORT,
+        ),
+        params,
+    )
+    # THE SETTINGS THIS DEPLOYMENT SENDS RAISE NOTHING, asserted rather than assumed.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model.prepare_request(
             AnthropicModelSettings(
                 max_tokens=MAX_OUTPUT_TOKENS,
-                temperature=TEMPERATURE,
                 anthropic_thinking=ADAPTIVE_THINKING,
                 anthropic_effort=PLAN_EFFORT,
             ),
             params,
         )
+    assert [str(w.message) for w in caught] == [], "the settings this deployment sends now warn"
+
     # WHAT ASKS FOR REASONING SURVIVES, both halves of it: adaptive thinking is what turns it on
     # at all, and the effort is what decides how much.
     assert prepared is not None

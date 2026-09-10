@@ -625,11 +625,27 @@ class SaveState:
     dirty: bool | None
     container_head: str | None
     saved_head: str | None
-    # When the platform last autosaved this app to the recovery slot, or None if it never has.
-    # Distinct from `saved_head`, which is the user's own save: this exists so a workspace that
-    # was reclaimed while dirty can be OFFERED back ("unsaved work from 14:32") rather than
-    # silently forgotten. Offered, never substituted — the restore ladder still only ever
-    # restores the user's bundle.
+    # When the platform last wrote this app's tree to the recovery slot, or None if it never
+    # has. Distinct from `saved_head`, which is the user's own save: this exists so a workspace
+    # that was reclaimed while dirty can be OFFERED back ("unsaved work from 14:32") rather than
+    # silently forgotten.
+    #
+    # AND IT IS ALSO THE ANSWER TO "CAN THE PLATFORM PUT THIS BACK?", which is a stronger fact
+    # than the clause that used to end this comment. It said the restore ladder still only ever
+    # restores the user's bundle; that stopped being true when `newest_restore_source` landed,
+    # 1,168 lines below in this same module. EVERY automatic restore goes through it now, and it
+    # hands back the RECOVERY bundle in preference to the saved one whenever the recovery copy is
+    # the newer of the two — deliberately, to close the data-loss bug its own docstring
+    # describes. Where it does hand back the saved bundle, that bundle is either newer or holds
+    # the same tree, so a non-null instant here means one thing either way: what a restore brings
+    # back is no older than this. `restorable_presence` counts this slot for the same reason, and
+    # `SaveStateResponse.recovery_at` carries the fact — and this reasoning — onto the wire, where
+    # the rail and the exit guard read it to stop calling a fresh build's `dirty=True` a warning.
+    #
+    # RESUMPTION, NOT PROMOTION — the half of the old comment that was true stands unchanged. A
+    # recovery copy is not a VERSION: `snapshot_key` is untouched, `dirty` stays True beside a
+    # non-null instant, and nothing on this path performs the citizen's Save for them. Save stays
+    # MANUAL, and only Save produces something they can ask to come back to by name.
     recovery_at: datetime | None = None
 
 
@@ -982,16 +998,18 @@ class RelaunchedPreview:
     app_id: uuid.UUID
     preview_url: str
     restored_from_failed_build: bool
-    # Is the dev server actually SERVING this URL yet? False only on the attach arm's fail-open
-    # path (`_ATTACHED_READY_BUDGET_SECONDS` elapsed with the app still not answering). The URL is
-    # framable either way — this says whether framing it will paint or wait.
+    # Is the dev server actually SERVING this URL yet? False on either reading that says the URL
+    # is framable with nothing painting behind it: the attach arm's readiness wait lapsing
+    # (`_ATTACHED_READY_BUDGET_SECONDS` elapsed with the app still not answering), or the app root
+    # answering with something that is not a page — a 404 while the agent has yet to write
+    # `app/page.tsx`, the measured blank-white-pane defect — which happens on EITHER arm. The URL
+    # is framable either way; this says whether framing it will paint or wait.
     #
-    # DEFINITIONALLY THE SAME FACT AS A PROVEN `serving_since` STAMP — said here and again at the
-    # stamp site so the two cannot drift. `wait_ready` returning without `SandboxNotReadyError`
-    # is what sets this True, and that IDENTICAL success arm is where `relaunch_preview` stamps
-    # the registry. Make one of them conditional and the other has to change in the same commit,
-    # or this flag says "ready" while the preview-state poll answers `starting` about the very
-    # same container.
+    # NOT THE SAME FACT AS A PROVEN `serving_since` STAMP, and the single case that separates them
+    # is stated at the stamp site so the two cannot drift silently: when the supervisor cannot be
+    # asked whether the app is showing a page, this stays True — declining to demote a preview
+    # that may be painting — while the stamp is withheld, because a transport error is not a
+    # sighting. On every other arm they are set together or withheld together.
     ready: bool = True
 
 
@@ -2477,6 +2495,62 @@ class SessionManager:
             # this subclass and refuses rather than guess.
             raise SandboxUnreachableError(app_id) from exc
 
+    async def _retract_the_proof_and_keep_watching(
+        self,
+        sandbox_client: SandboxClient,
+        handle: SandboxHandle,
+        redis: aioredis.Redis,
+        user_id: uuid.UUID,
+        *,
+        app_name: str,
+        already_waited_s: float,
+        cold: bool,
+    ) -> None:
+        """The remedy for a relaunch holding a framable URL with NOTHING PAINTING BEHIND IT:
+        retract the standing serving proof, then keep watching for the page, detached.
+
+        ONE IMPLEMENTATION FOR BOTH WAYS IN, and that is the point rather than tidiness. Two
+        readings end here — the readiness wait lapsing, and the app root answering with something
+        that is not a page — and they want the identical outcome: keep the container, hand the
+        URL back with `ready=False`, and let the pane's labelled wait carry the seconds. While
+        those two were separate hand-written copies, the second one reached its outcome by
+        raising into the first one's handler, whose opening line re-raises on a cold relaunch —
+        so a container that had just been restored was torn down for answering 404.
+
+        RETRACTING THE PROOF IS THE ONE THING OUTSIDE A LIVE TURN THAT CAN. The container this
+        runs against may be one that HAS served, so it carries an ISO stamp nothing else would
+        ever clear (the only other clearer, the turn watcher's crash edge, exists only while a
+        turn is streaming). Without this the preview-state poll goes on reporting RUNNING and the
+        pane frames nginx's "This app isn't running right now" page — the measured defect, one
+        door down, with every card that used to cover it deleted.
+
+        IT MARKS NOTHING `ending` AND TEARS NOTHING DOWN, and that is not timidity: condemning a
+        container for a slow root GET once cost a citizen their unsaved work, as the fail-open
+        handler in `relaunch_preview` records at length. Retracting a claim costs them a card;
+        destroying a container costs them their work.
+
+        `cold` rides through to the continuation's log line only, and it is a parameter rather
+        than a constant because a RESTORED container can reach here now: a cold start whose first
+        page arrived late is exactly what an operator reading that field is looking for."""
+        with suppress(RedisError):
+            await clear_serving(redis, user_id, app_name=app_name)
+        # AND KEEP WATCHING, detached. The wait that just ended is seconds against a container
+        # that may simply be compiling a heavy route; the citizen has no patience button and this
+        # backend must not need one (decision D2). This is the front half of the five-minute
+        # reconciler backstop: same job, sooner, for the citizen who is looking at the pane right
+        # now. The `app_first_serve_not_observed` line is deliberately NOT written here — this
+        # wait is not over, it is delegated, and the continuation writes it if and only if it
+        # really gives up.
+        self._keep_watching_for_a_first_serve(
+            sandbox_client,
+            handle,
+            redis,
+            user_id,
+            app_name=app_name,
+            already_waited_s=already_waited_s,
+            cold=cold,
+        )
+
     def _keep_watching_for_a_first_serve(
         self,
         sandbox_client: SandboxClient,
@@ -2486,6 +2560,7 @@ class SessionManager:
         *,
         app_name: str,
         already_waited_s: float,
+        cold: bool,
     ) -> None:
         """Detach the bounded continuation and return immediately.
 
@@ -2506,6 +2581,7 @@ class SessionManager:
                 user_id,
                 app_name=app_name,
                 already_waited_s=already_waited_s,
+                cold=cold,
             )
         )
         self._tasks.add(watcher)
@@ -2520,17 +2596,35 @@ class SessionManager:
         *,
         app_name: str,
         already_waited_s: float,
+        cold: bool,
     ) -> None:
-        """Keep asking whether the app has started answering, for one more cold budget, then
+        """Keep asking whether the app has started SHOWING A PAGE, for one more cold budget, then
         stop — either way with a line saying which. NEVER RAISES: nothing awaits this task, so
         an escaping exception would surface only as an un-retrieved-exception warning at
         collection time, long after the fact and with none of the context.
 
-        WHY IT ASKS AGAIN AT ALL, given the wait it follows already lapsed: that wait was the
-        15-second ATTACH budget, and the readiness signal means "a request to the app root
-        actually succeeded" — so a heavy dashboard route compiling under 1.0 vCPU reports
-        un-ready for far longer than that without anything being wrong. The alternative for the
-        citizen is a pane that waits until the five-minute reconciler sweep notices.
+        IT READS `shows_a_page` ITSELF, AND NEVER BORROWS `wait_ready`'s VERDICT. That borrowing
+        was this task's own defect: `wait_ready` returns on `/dev/status.ready`, which the
+        supervisor keeps fail-open on purpose (ANY response counts, 404 and 500 included), while
+        the page check that spawns this has just REFUSED to call the app ready because its root
+        has no page, and cleared the standing proof on the way. One second later the first
+        iteration wrote that proof straight back over the same 404, the poll flipped to RUNNING,
+        and the pane framed the blank container the refusal had just saved the citizen from.
+        Every other stamp site on this branch gates on `shows_a_page`; this is the fifth and it
+        does too.
+
+        WHY IT ASKS AGAIN AT ALL, given the wait it follows already ended: that wait is bounded by
+        the caller's budget — 15 seconds on an attach, or one reading taken the instant a restored
+        container answered — and `shows_a_page` describes only this moment, so a heavy dashboard
+        route compiling under 1.0 vCPU shows no page for far longer than that without anything
+        being wrong. The alternative for the citizen is a pane that waits until the five-minute
+        reconciler sweep notices. The third caller asks for a different reason: it could not reach
+        the supervisor for that one reading at all, and it wants the question asked again rather
+        than answered by a transport error.
+
+        ONE SUPERVISOR CALL PER SECOND, down from the two per iteration the borrowed
+        `wait_ready(timeout_s=1.0)` cost — it polled inside its own one-second budget and then
+        this loop slept for another. The observable cadence is unchanged; the load is halved.
 
         BOUNDED, AND THE BOUND IS THE POINT: one cold budget, after which it stops whatever it
         has seen. A second press of the control while this one is still watching does start a
@@ -2543,24 +2637,27 @@ class SessionManager:
         try:
             while True:
                 try:
-                    await sandbox_client.wait_ready(handle, timeout_s=READINESS_POLL_S)
-                except SandboxNotReadyError:
-                    pass
+                    it_paints = (await sandbox_client.dev_status(handle)).shows_a_page
                 except SandboxError:
                     # A transport failure is not a statement about the app — the supervisor may
-                    # be busy or the container mid-restart — so it costs an iteration and
-                    # nothing more. The deadline below is what ends this, never one bad answer.
-                    pass
-                else:
-                    # `cold=False` is true by construction, not by assumption: only the ATTACH
-                    # arm fails open, and an attach reuses a container that was already up. The
-                    # cold arm still raises, so nothing on a cold start ever reaches here.
+                    # be busy or the container mid-restart — so it costs an iteration and nothing
+                    # more, and it can never be read as a sighting: "we could not ask" has never
+                    # been the same as "we watched it paint". The deadline below is what ends
+                    # this, never one bad answer. No `SandboxNotReadyError` arm sits above this
+                    # one any more — `dev_status` does not raise it, and as a SUBCLASS it would
+                    # land here regardless, which is the correct home for it.
+                    it_paints = False
+                if it_paints:
+                    # `cold` comes from the caller rather than being assumed False here: the page
+                    # check that spawns this can now hand over a RESTORED container too, and a
+                    # cold start whose first page arrived late is exactly what an operator
+                    # reading this field is looking for.
                     await _record_the_first_serve(
                         redis,
                         user_id,
                         app_name=app_name,
                         observer="relaunch_continuation",
-                        cold=False,
+                        cold=cold,
                     )
                     return
                 if loop.time() >= deadline:
@@ -2569,8 +2666,9 @@ class SessionManager:
             dev_running, dev_compile = await _last_supervisor_reading(sandbox_client, handle)
             # NOT A CLAIM THAT THE APP IS DEAD. The reconciler's sweep may still stamp this
             # container minutes from now, and `app_first_served` with `observer=reconciler` is
-            # how that shows up. What this line says is that a citizen watched a wait card for
-            # this long and nothing the platform runs saw the app answer.
+            # how that shows up. What this line says is that for this long, nothing the platform
+            # runs watched the app SHOW A PAGE — which for two of the three callers means a
+            # citizen sat in front of a wait card for the whole of it.
             _log.warning(
                 APP_FIRST_SERVE_NOT_OBSERVED_EVENT,
                 waited_ms=int((already_waited_s + (loop.time() - started_at)) * 1000),
@@ -2918,10 +3016,20 @@ class SessionManager:
                 # would land in compensation, i.e. we would destroy a container for the sin of
                 # already serving the page we came to show. `wait_ready` below is the real gate
                 # either way, and it answers from the server that is up.
-                # Flipped to False only by the attach arm's fail-open readiness path below; it
+                # Flipped to False by either reading that says the URL is framable with nothing
+                # painting behind it — the attach arm's readiness wait lapsing, or the app root
+                # answering with something that is not a page, which happens on EITHER arm. It
                 # rides out on the response so the pane can label a preview that is framable but
                 # not yet serving, instead of being told "ready" and framing a hang.
                 ready = True
+                # DID ANYTHING WATCH THIS CONTAINER ANSWER WITH A PAGE? A different fact from
+                # `ready`, and keeping them apart is a fix rather than a nuance. `ready` is what
+                # the citizen is handed; this is the only thing the registry's serving proof may
+                # be written from. They agree on every arm but one — the supervisor blip below,
+                # where the platform could not ask and must therefore neither demote a preview
+                # that may be painting nor mint a proof for a container nothing has ever watched
+                # serve.
+                something_watched_it_paint = False
                 try:
                     await sandbox_client.dev_start(scope.handle)
                 except SandboxError:
@@ -2933,6 +3041,21 @@ class SessionManager:
                         app_id=str(app_id),
                         exc_info=True,
                     )
+                # The readiness wait's own clock, for the continuation's arithmetic. The page
+                # check below can end this wait early, so the budget constant is NOT the elapsed
+                # time on that path, and a give-up line quoting it would overstate how long the
+                # citizen actually waited.
+                readiness_started_at = time.monotonic()
+                # THE WAIT AND NOTHING ELSE INSIDE THE TRY. The page check lives in the `else`
+                # arm, where a `SandboxError` from it cannot reach this handler and this handler
+                # cannot be reached by anything but a readiness TIMEOUT — the one condition its
+                # `if not attached: raise` was written for. The first version of that check
+                # raised `SandboxNotReadyError` from inside this try to reuse the handler below:
+                # `SandboxNotReadyError` SUBCLASSES `SandboxError`, so the raise had to dodge its
+                # own transport handler, and the handler it landed in re-raises on a cold
+                # relaunch — escaping `_holding_user_lock` before `scope.spare()` and letting
+                # compensation TEAR DOWN the container `_restore_or_bust` had just built. A blank
+                # pane costs the citizen a card; that cost them the restored workspace and a 503.
                 try:
                     scope.handle = await sandbox_client.wait_ready(
                         scope.handle,
@@ -2942,41 +3065,6 @@ class SessionManager:
                             else _COLD_READY_BUDGET_SECONDS
                         ),
                     )
-                    # …AND IT STOPS HERE, on the statement after the wait returns, so the reading
-                    # is the restore-and-wait interval and nothing else. Only the cold arm ever
-                    # armed it: a 15-second attach budget and a 120-second cold budget averaged
-                    # together produce a number that describes neither.
-                    if cold_started_at is not None:
-                        cold_elapsed_ms = int((time.monotonic() - cold_started_at) * 1000)
-                    # A PAGE, NOT MERELY AN ANSWER — one extra reading, once per press.
-                    #
-                    # `wait_ready` returns on `/dev/status.ready`, which the supervisor keeps
-                    # fail-open on purpose: ANY response counts, 404 and 500 included, so a
-                    # compile error cannot wedge it False and mislead the model. This field's own
-                    # contract is narrower and is quoted from its declaration — "whether framing
-                    # it will paint or wait" — and a root answering 404 does not paint. Measured
-                    # on 2026-09-10: a build framed a container whose app root was still 404ing
-                    # because the agent had not written `app/page.tsx` yet, and the citizen got a
-                    # blank white pane with no words on it.
-                    #
-                    # RAISED RATHER THAN HANDLED SEPARATELY, so this joins the fail-open arm
-                    # below instead of growing a second one: the situation is identical (framable
-                    # URL, nothing painting yet) and the pane's labelled wait is already the right
-                    # answer for it. A transport blip is NOT this — `dev_status` raising
-                    # `SandboxError` leaves `ready` alone, because "we could not ask" has never
-                    # been the same as "we asked and there is no page".
-                    # THE RAISE SITS OUTSIDE THE TRY, and that is load-bearing rather than tidy:
-                    # `SandboxNotReadyError` SUBCLASSES `SandboxError`, so raising it inside would
-                    # be caught by this very handler and the whole check would become a silent
-                    # no-op that ships green.
-                    try:
-                        page_is_up = (await sandbox_client.dev_status(scope.handle)).shows_a_page
-                    except SandboxError:
-                        # "We could not ask" has never been the same as "we asked and there is no
-                        # page". A supervisor blip must not demote a preview that is painting.
-                        page_is_up = True
-                    if not page_is_up:
-                        raise SandboxNotReadyError("the app root answered, but not with a page")
                 except SandboxNotReadyError:
                     # AMBIGUITY DENIES, AND WE PAID FOR THIS ONE IN LOST WORK.
                     #
@@ -3006,6 +3094,13 @@ class SessionManager:
                     # The COLD arm still raises. A container we just provisioned that never came up
                     # holds no unsaved work and has nothing framable to offer, so an error is the
                     # honest answer there.
+                    #
+                    # AND THAT SENTENCE IS THE WHOLE SCOPE OF THIS ARM: "never came up". A
+                    # container that DID come up and answers the root with a 404 is a different
+                    # condition entirely — it is up, it holds the tree just restored into it, and
+                    # its URL becomes framable the moment the agent writes a page. Routing that
+                    # through here destroys it. It never reaches this handler now; it is answered
+                    # in the `else` arm below, with the same remedy on both arms.
                     if not attached:
                         raise
                     ready = False
@@ -3015,38 +3110,95 @@ class SessionManager:
                         app_id=str(app_id),
                         budget_s=_ATTACHED_READY_BUDGET_SECONDS,
                     )
-                    # RETRACT THE STANDING PROOF — the one place outside a live turn that
-                    # can. This arm has JUST WATCHED A ROOT GET FAIL against a container it
-                    # attached to, which is real evidence the app is not answering; and the
-                    # container it attached to is one that HAS served, so it carries an ISO
-                    # stamp that nothing else would ever clear (the only other clearer, the
-                    # turn watcher's crash edge, exists only while a turn is streaming).
-                    # Without this the pane goes on reporting RUNNING and frames nginx's
-                    # "This app isn't running right now" page — the measured defect, one
-                    # door down, with every card that used to cover it deleted.
-                    #
-                    # IT MARKS NOTHING `ending` AND TEARS NOTHING DOWN, and that is not
-                    # timidity: the comment above records that condemning a container for a
-                    # slow root GET once cost a citizen their unsaved work. Retracting a
-                    # claim costs them a card; destroying a container costs them their work.
-                    with suppress(RedisError):
-                        await clear_serving(redis, user_id, app_name=app_name_for(app_id))
-                    # AND KEEP WATCHING, detached. The wait that just lapsed is 15 seconds
-                    # against a container that may simply be compiling a heavy route; the
-                    # citizen has no patience button and this backend must not need one
-                    # (decision D2). This is the front half of the five-minute reconciler
-                    # backstop: same job, sooner, for the citizen who is looking at the pane
-                    # right now. The `app_first_serve_not_observed` line is deliberately NOT
-                    # written here — this wait is not over, it is delegated, and the
-                    # continuation writes it if and only if it really gives up.
-                    self._keep_watching_for_a_first_serve(
+                    # THE REMEDY IS SHARED WITH THE PAGE CHECK BELOW, and it is one function
+                    # so that the two arms cannot drift: retract the standing proof, keep the
+                    # container, keep watching. Every "why" behind those three lives in
+                    # `_retract_the_proof_and_keep_watching`, including the run against real
+                    # Azure that proved the alternative costs unsaved work.
+                    await self._retract_the_proof_and_keep_watching(
                         sandbox_client,
                         scope.handle,
                         redis,
                         user_id,
                         app_name=app_name_for(app_id),
                         already_waited_s=_ATTACHED_READY_BUDGET_SECONDS,
+                        cold=not attached,
                     )
+                else:
+                    # …AND IT STOPS HERE, on the statement after the wait returns, so the reading
+                    # is the restore-and-wait interval and nothing else. Only the cold arm ever
+                    # armed it: a 15-second attach budget and a 120-second cold budget averaged
+                    # together produce a number that describes neither.
+                    if cold_started_at is not None:
+                        cold_elapsed_ms = int((time.monotonic() - cold_started_at) * 1000)
+                    # A PAGE, NOT MERELY AN ANSWER — one extra reading, once per press.
+                    #
+                    # `wait_ready` has just returned on `/dev/status.ready`, which the supervisor
+                    # keeps fail-open on purpose: ANY response counts, 404 and 500 included, so a
+                    # compile error cannot wedge it False and mislead the model. `shows_a_page`
+                    # asks the narrower question the FRAME has to ask — would a citizen opening
+                    # this preview right now see a page — and a root answering 404 does not.
+                    # Measured on 2026-09-10: a build framed a container whose app root was still
+                    # 404ing because the agent had not written `app/page.tsx` yet, and the citizen
+                    # got a blank white pane with no words on it.
+                    #
+                    # THREE READINGS, THREE OUTCOMES, each handled where it is taken and none of
+                    # them a `raise` into somebody else's handler.
+                    try:
+                        dev = await sandbox_client.dev_status(scope.handle)
+                    except SandboxError:
+                        # WE COULD NOT ASK — a third answer, not a quiet vote for either
+                        # neighbour, and it used to be collapsed into the wrong one. Declining to
+                        # DEMOTE is right: a supervisor blip is not evidence about the app, so
+                        # `ready` stays exactly as the wait left it and a preview that is painting
+                        # keeps its frame. But the same fail-open flag also kept `ready` True, and
+                        # `ready` was what gated the serving stamp — so one transport error minted
+                        # a proof for a container NOTHING HAS EVER WATCHED SERVE, which is the
+                        # claim the whole branch exists to make honest.
+                        # `something_watched_it_paint` therefore stays False, and the continuation
+                        # asks again once a second until it can answer; the reconciler's sweep is
+                        # the backstop under that.
+                        _log.warning(
+                            "relaunch_could_not_ask_whether_the_app_is_showing_a_page",
+                            user_id=str(user_id),
+                            app_id=str(app_id),
+                            attached=attached,
+                            exc_info=True,
+                        )
+                        self._keep_watching_for_a_first_serve(
+                            sandbox_client,
+                            scope.handle,
+                            redis,
+                            user_id,
+                            app_name=app_name_for(app_id),
+                            already_waited_s=time.monotonic() - readiness_started_at,
+                            cold=not attached,
+                        )
+                    else:
+                        something_watched_it_paint = dev.shows_a_page
+                        if not something_watched_it_paint:
+                            # THE SAME OUTCOME ON BOTH ARMS, and never the cold arm's raise. The
+                            # container is up and holds the tree; only its root has nothing to
+                            # show yet. So it keeps its life and the citizen keeps the URL, with
+                            # `ready=False` on it and the pane's labelled wait doing the talking —
+                            # the outcome the attach arm has always given this shape.
+                            ready = False
+                            _log.warning(
+                                "relaunch_root_answered_without_a_page",
+                                user_id=str(user_id),
+                                app_id=str(app_id),
+                                attached=attached,
+                                root_status=dev.root_status,
+                            )
+                            await self._retract_the_proof_and_keep_watching(
+                                sandbox_client,
+                                scope.handle,
+                                redis,
+                                user_id,
+                                app_name=app_name_for(app_id),
+                                already_waited_s=time.monotonic() - readiness_started_at,
+                                cold=not attached,
+                            )
                 # Past here the container is up, registered and serving — the same state a
                 # SUCCESSFUL relaunch leaves behind — so destroying it over a later blip is no
                 # longer a rollback (see `_LockScope.spared`). This matters more now that the
@@ -3103,10 +3255,11 @@ class SessionManager:
                 restored_from_failed_build=restored_from_failed_build and not attached,
                 ready=ready,
             )
-        # The started/reached-running ratio's numerator, and it fires ONLY on a verdict that
-        # proves a serving page. The attach arm now deliberately fails open and hands back a
-        # framable URL with `ready=False` (see the fail-open fix above); that is not a
-        # reached-running outcome, and counting it would make the ratio measure nothing.
+        # The started/reached-running ratio's numerator, and it fires on the verdict the
+        # CITIZEN got: a framable URL that nothing has told us will hang. Two readings withhold
+        # it — the attach arm's readiness wait failing open with `ready=False`, and a root that
+        # answered without a page (see both above) — because neither is a reached-running
+        # outcome, and counting them would make the ratio measure nothing.
         #
         # OUTSIDE THE PER-USER START LOCK, which is the whole reason the result is built above and
         # returned below rather than returned there. `_start_lock_for(user.id)` is the same
@@ -3117,19 +3270,22 @@ class SessionManager:
         # outside the lock like any other bookkeeping.
         if ready:
             await count(HarnessCounter.APP_START_REACHED_RUNNING, app_id=app_id)
-            # THE SERVING PROOF, TAKEN ON THE SAME VERDICT AS THE COUNTER. `wait_ready`
-            # returning without `SandboxNotReadyError` means the supervisor watched a
-            # request to the app root actually succeed — that IS the proof, and it is
-            # already what set `ready` above.
-            #
-            # SO `RelaunchedPreview.ready` AND A PROVEN STAMP ARE DEFINITIONALLY THE SAME
-            # FACT, set on the identical success arm — said here and again on that field so
-            # the two cannot drift. Anyone who makes one of them conditional has to make the
-            # other conditional in the same commit, or this response says "ready" while the
-            # preview-state poll goes on answering `starting` about the same container.
-            #
-            # `cold` is the restore arm: the attach arm reuses a container that was already
-            # up, so its stamp usually loses to a proof taken long before this press.
+        # THE SERVING PROOF, AND IT IS NO LONGER THE COUNTER'S GATE. One case separates them and
+        # it is worth the second `if`: when the supervisor could not be asked whether the app is
+        # showing a page, `ready` stays True — the citizen keeps a preview that may be painting
+        # perfectly well — while this stays False, because a transport error is not a sighting
+        # and `serving_since` is the platform's claim that SOMETHING WATCHED THIS CONTAINER SERVE
+        # A PAGE. That is the whole of the daylight between them; on every other arm they move
+        # together, and anyone who widens the gap has to answer the same question here.
+        #
+        # WHAT THE CITIZEN SEES IN THAT ONE CASE, stated rather than discovered: this response
+        # carries the framable URL, and the preview-state poll answers `starting` until the
+        # continuation spawned on that path takes the proof — normally the next second, once the
+        # supervisor answers again. The five-minute reconciler is the backstop under it.
+        #
+        # `cold` is the restore arm: the attach arm reuses a container that was already
+        # up, so its stamp usually loses to a proof taken long before this press.
+        if something_watched_it_paint:
             await _record_the_first_serve(
                 redis,
                 user_id,

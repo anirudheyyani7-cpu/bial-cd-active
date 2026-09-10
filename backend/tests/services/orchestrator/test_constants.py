@@ -14,7 +14,6 @@ def test_frozen_budgets_are_in_module_not_config() -> None:
     assert constants.MODEL_TURN_CEILING > 0
     assert constants.TYPECHECK_CMD == ("npx", "tsc", "--noEmit")
     assert constants.EXEC_TIMEOUT_S < 900  # within the supervisor contract's hard exec cap
-    assert constants.TEMPERATURE == 0.0
 
 
 def test_cache_ttl_is_the_one_hour_tier() -> None:

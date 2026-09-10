@@ -585,9 +585,28 @@ class SaveStateResponse(CamelModel):
     app_id: str | None = None
     dirty: bool | None = None
     container_head: str | None = None
-    # When the platform last autosaved. Lets the UI offer unsaved work back after a reclaim
-    # instead of quietly forgetting it. Never a substitute for the user's own save —
-    # `savedHead` is still the only thing a relaunch restores.
+    # When the platform last wrote this app's tree to the recovery slot, or None if it never has
+    # (also None when the store would not answer — an offer nobody can honour is one this does
+    # not make). Lets the UI offer unsaved work back after a reclaim instead of quietly
+    # forgetting it.
+    #
+    # AND IT IS THE ANSWER TO "CAN THE PLATFORM PUT THIS BACK?", which is a stronger fact than
+    # this comment used to claim. It said `savedHead` was the only thing a relaunch restores;
+    # that stopped being true when `SessionManager.newest_restore_source` landed. Every
+    # automatic restore now goes through it, and it hands back the RECOVERY bundle in preference
+    # to the saved one — deliberately, to close the data-loss bug its own docstring describes,
+    # where a reclaimed container was rebuilt from the last SAVED tree and everything done after
+    # that Save then existed nowhere. Where it does hand back the saved one, that bundle is the
+    # newer of the two or holds the same tree, so a non-null instant here means the same thing
+    # either way: what comes back is no older than this. A client may say so, and may stop
+    # treating a bare `dirty: true` as work about to be lost — the state a citizen is in the
+    # moment a build finishes, having saved nothing because there was nothing yet to save.
+    #
+    # STILL NEVER A SUBSTITUTE FOR THE USER'S OWN SAVE, and that distinction is the whole point:
+    # RESUMPTION, NOT PROMOTION. `snapshot_key` is untouched, `dirty` stays true, and nothing on
+    # this path creates a VERSION — only the citizen's own Save does, and Save stays manual. A
+    # recovery copy is what the platform can resume from; `savedHead` is what its owner chose to
+    # keep, and only that one is a thing they can ask to come back to.
     recovery_at: datetime | None = None
     saved_head: str | None = None
 

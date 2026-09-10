@@ -386,6 +386,43 @@ class DevStatus:
     ready: bool
     port: int
     exit_code: int | None = None
+    #: THE STATUS THE APP ROOT ANSWERED WITH, or `None` when nothing answered — and also `None`
+    #: from a supervisor image that predates the field, which is why it is optional and defaulted
+    #: rather than required.
+    #:
+    #: `ready` AND THIS ARE NOT THE SAME QUESTION. `ready` is fail-open by the supervisor's own
+    #: design: ANY response counts, 4xx and 5xx included, so that a compile error cannot wedge it
+    #: False and mislead the model. For the citizen's PREVIEW that is too generous — a dev server
+    #: answering 404 because the agent has not written `app/page.tsx` yet is "ready" and has
+    #: nothing to show, and framing it is how a blank document ends up under a live-preview label.
+    #: Anything that decides whether to FRAME must read this; anything asking "is the dev server
+    #: alive at all" should go on reading `ready`.
+    root_status: int | None = None
+
+    @property
+    def shows_a_page(self) -> bool:
+        """Would a citizen opening this preview right now see a PAGE?
+
+        THE QUESTION THE FRAME MUST ASK, and it is not `ready`. `ready` is the supervisor's
+        fail-open "something answered on the dev port", which counts a 404 and a 500 on purpose so
+        that a compile error cannot wedge it False and mislead the model. A build spends the
+        seconds between the dev server binding and the agent writing `app/page.tsx` answering 404s
+        — genuinely ready, with nothing to show — and framing that window is how a blank document
+        ends up on screen under a live-preview label. Measured on 2026-09-10: the app root was
+        still 404ing while the agent said "Now the app pages", and the pane framed it.
+
+        `None` READS AS TODAY'S BEHAVIOUR, deliberately. A supervisor image built before
+        `root_status` existed cannot answer this, and treating "cannot say" as "no page" would
+        refuse to frame every container in the existing fleet — a false negative at fleet scale,
+        which is worse than the window it would close. It self-expires: containers turn over, and
+        from the next sandbox image onward the field is always present.
+
+        A 3xx COUNTS. A redirect off the root is the app choosing where its first page lives, and
+        the browser will follow it; only 4xx and 5xx mean the citizen gets nothing.
+        """
+        if not self.ready:
+            return False
+        return self.root_status is None or self.root_status < 400
 
 
 @dataclass(frozen=True)

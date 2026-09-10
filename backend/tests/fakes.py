@@ -45,6 +45,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -207,7 +208,14 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
     writes the registry hash at container-create, for BOTH `provision_new` and
     `restore_from_snapshot` (`services/sandbox/client.py`). Load-bearing: `grant_stay_of_execution`
     is guarded on this hash EXISTING, so skipping it makes every lease assertion silently
-    vacuous, and an undiscoverable registry is a container nobody can reap."""
+    vacuous, and an undiscoverable registry is a container nobody can reap.
+
+    THE SERVING SENTINEL IS PART OF THAT CONTRACT, and leaving it out would be the same class of
+    omission one field further in. An absent `serving_since` is the PRE-CUTOVER reading, which
+    the rollout grandfathers as PROVEN — so a fake that skipped it would hand every test in this
+    suite a brand-new container the platform reports as ALREADY RUNNING, and the "created but
+    never served" arm would be unreachable from any test that provisions through this double.
+    Green, and blind to the whole change."""
     await get_redis().hset(
         registry_key(uuid.UUID(user_id)),
         mapping={
@@ -217,6 +225,9 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
             REGISTRY_FIELD_TOKEN_REF: f"ref-{handle.app_name}",
             REGISTRY_FIELD_CREATED_AT: datetime.now(UTC).isoformat(),
             REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+            # Scheduled, not serving. Only an observer that watched this app answer a request
+            # may replace it (`build_sessions/locks.py::mark_serving`).
+            REGISTRY_FIELD_SERVING_SINCE: "",
         },
     )
 

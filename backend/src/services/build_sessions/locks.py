@@ -9,8 +9,10 @@ same-user racing acquire. The lock fails CLOSED: any Redis error on acquire deni
 
 REDIS-ERROR POLICY: only `acquire_lock` catches `RedisError` (to retype it as
 `LockUnavailableError`); every other primitive lets it propagate, deliberately. Answer-bearing
-primitives (`lock_is_held`, `read_registry`, `renew_lock`) must never swallow — that would
-fabricate a certain answer from an ambiguous store. `mark_registry_ending` returns nothing to
+primitives (`lock_is_held`, `read_registry`, `renew_lock`, `mark_serving`) must never swallow —
+that would fabricate a certain answer from an ambiguous store; a swallowed `mark_serving` error
+in particular would report "the stamp was refused" for a store that never answered, and its
+caller raises an alarm on exactly that. `mark_registry_ending` returns nothing to
 fabricate; it is an ordering guard, and its failure must abort the reaper sequence rather than
 let it delete a container a racing `attach_existing` still believes is ready.
 `release_lock_as_holder` and `write_heartbeat` look like they want a guard; they don't —
@@ -54,6 +56,7 @@ from src.api.v1.build_sessions.schemas import (
 )
 from src.services.redis import (
     REGISTRY_STATE_ENDING,
+    REGISTRY_STATE_READY,
     heartbeat_key,
     lease_key,
     legacy_registry_key,
@@ -62,7 +65,10 @@ from src.services.redis import (
 )
 from src.services.redis.keys import (
     REGISTRY_FIELD_ADOPTED_FROM_LEGACY,
+    REGISTRY_FIELD_APP_NAME,
+    REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_STAY_WRITER,
     starting_key,
@@ -487,11 +493,185 @@ async def stay_of_execution_is_current(redis: aioredis.Redis, user_uuid: uuid.UU
     return deadline > now
 
 
+# --- the serving proof --------------------------------------------------------
+# ANOTHER FIELD ON THE REGISTRY HASH, and the only one that means the app ANSWERED something.
+# `state == ready` says a container was scheduled; this says something watched it serve, and the
+# preview pane is allowed to say "your app is running" off this field and nothing else. Both
+# writes below are compare-and-sets against the very hash they stamp, for the reason spelled out
+# on the first script.
+
+# Stamp `serving_since`, but only if this hash still names the container the observer watched, is
+# still `ready`, and has never been stamped. Three reads and a write, atomic (a Redis Lua script
+# runs single-threaded, so nothing interleaves).
+#
+# WHY A COMPARE-AND-SET AND NOT `redis.exists()` + `HSETNX`. The registry key is
+# `registry:{user_id}` — per USER, not per container — and it SURVIVES a container swap: when the
+# one-per-user slot flips to another of this citizen's projects, the same key is rewritten in
+# place. So `exists()` is true for the REPLACEMENT container just as it was for the original, and
+# a slow observer returning after the flip would stamp "serving" onto a container it never
+# watched — after which the pane frames the new project's app on the old one's evidence. The
+# `app_name` comparison is what refuses that, and it has to happen INSIDE the script: a
+# Python-side read followed by a Python-side write leaves open exactly the interleaving the flip
+# needs. A refusal is not an error — it is `SERVING_PROOF_STAMP_REFUSED`, the near-miss recorded.
+#
+# AND WHY `HSETNX` ALONE CANNOT WORK: the create-time write in `sandbox/client.py` puts an
+# empty-string SENTINEL in the field, so the field always exists and `HSETNX` would refuse every
+# legitimate first stamp — silently, with the same 0 a genuine second stamp returns. Emptiness,
+# not absence, is how "never served" is spelled; `redis/keys.py` says why absence is reserved.
+#
+# The script returns a literal 1 rather than the `HSET` reply because `HSET` answers 0 when it
+# overwrites an existing field, which the sentinel always is — returning it would report every
+# successful first stamp as a refusal.
+_CAS_MARK_SERVING_LUA: Final = (
+    f"if redis.call('HGET', KEYS[1], '{REGISTRY_FIELD_APP_NAME}') ~= ARGV[1] then return 0 end "
+    f"if redis.call('HGET', KEYS[1], '{REGISTRY_FIELD_STATE}') ~= '{REGISTRY_STATE_READY}' "
+    "then return 0 end "
+    f"local stamped = redis.call('HGET', KEYS[1], '{REGISTRY_FIELD_SERVING_SINCE}') "
+    "if stamped and stamped ~= '' then return 0 end "
+    f"redis.call('HSET', KEYS[1], '{REGISTRY_FIELD_SERVING_SINCE}', ARGV[2]) return 1"
+)
+
+# Retract a standing proof, guarded on the same `app_name` identity for the same reason.
+#
+# BACK TO THE SENTINEL, NEVER `HDEL`: an absent field is the PRE-CUTOVER reading, which is
+# PROVEN, so deleting the stamp would turn a crashed app into a running one. And the proof has to
+# be actually standing — answering 0 for "there was nothing to retract" is what stops the crash
+# edge logging a loss that never happened.
+#
+# DELIBERATELY NOT GUARDED ON `state`, unlike the stamp above: a crash edge can be observed after
+# the reaper has already flipped this hash to `ending`, and refusing there would leave a proof
+# standing on a container being torn down.
+_CAS_CLEAR_SERVING_LUA: Final = (
+    f"if redis.call('HGET', KEYS[1], '{REGISTRY_FIELD_APP_NAME}') ~= ARGV[1] then return 0 end "
+    f"local stamped = redis.call('HGET', KEYS[1], '{REGISTRY_FIELD_SERVING_SINCE}') "
+    "if not stamped or stamped == '' then return 0 end "
+    f"redis.call('HSET', KEYS[1], '{REGISTRY_FIELD_SERVING_SINCE}', '') return 1"
+)
+
+
+async def mark_serving(
+    redis: aioredis.Redis, user_uuid: uuid.UUID, *, app_name: str, when: datetime
+) -> bool:
+    """Record the instant this user's sandbox was first watched to SERVE a request. True iff
+    this call is the one that stamped it.
+
+    FIRST SERVE WINS. A second observer of the same container changes nothing and returns False,
+    so the field keeps meaning "first serve" rather than "most recent sighting" — which is the
+    only reason `ms_since_container_created` on the `app_first_served` line is an answer to
+    anything.
+
+    False therefore carries two situations, and the caller reacts identically to both: do not
+    stamp. It is a no-op second sighting, or the write was REFUSED because the hash is gone,
+    marked `ending`, or names another project's container — the near-miss that owes a
+    `SERVING_PROOF_STAMP_REFUSED`. Only the caller, which knows whether it had already watched
+    this container serve, can tell those apart, so only the caller logs.
+
+    BARE on Redis errors, per the module's REDIS-ERROR POLICY: this is answer-bearing, and a
+    swallowed error would hand the caller a refusal that never happened."""
+    # Defensive, the same reading `_standing_stay` gives a deadline: a naive stamp is read as
+    # UTC, never local. A naive value written here would be ambiguous on the hash forever, and
+    # the hash outlives the process that wrote it.
+    stamp = when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+    stamped = await redis.eval(
+        _CAS_MARK_SERVING_LUA, 1, registry_key(user_uuid), app_name, stamp.isoformat()
+    )
+    return bool(stamped)
+
+
+async def clear_serving(redis: aioredis.Redis, user_uuid: uuid.UUID, *, app_name: str) -> bool:
+    """Retract this user's sandbox's serving proof — the app stopped answering. True iff a
+    standing proof was actually retracted.
+
+    Idempotent, and False on a hash that names a different container: the identity guard the
+    stamp carries, for the identical reason. Retracting costs the citizen a card, not an error
+    page — the pane falls back to "getting your app ready" — but callers still debounce, because
+    a single unanswered poll is a poll, not a dead app."""
+    cleared = await redis.eval(_CAS_CLEAR_SERVING_LUA, 1, registry_key(user_uuid), app_name)
+    return bool(cleared)
+
+
 # --- registry state -----------------------------------------------------------
 # The concrete sandbox client owns registry CREATE/DELETE (services/sandbox/client.py); these
 # helpers are the reaper's read + the mark-ending flip. Both use the frozen key
 # builders — the sandbox layer and this layer never share a helper module (the frozen
 # keys.py IS the shared contract), because sandbox/ must not import build_sessions/.
+
+
+# --- READING WHAT THE STAMP SAYS ---------------------------------------------------------------
+#
+# THE THREE READERS EVERY OBSERVER SHARES, and they live here because here is the one module the
+# turn engine, the session manager and the reaper all already import. They were written four
+# times over — `engine._elapsed_ms`, `manager._ms_since_created`, `manager._first_served_at` and
+# `reaper._an_instant_on_the_hash`, plus three more inline subtractions in the reaper — because
+# each of those files was written against a different half of the same change and none could edit
+# another. Four parsers of one field format is four places for a naive-datetime bug to hide in.
+#
+# NOT in `redis/keys.py`, which is the FROZEN key/field contract and is imported by
+# `services/sandbox/` — a layer that must not reach into `build_sessions/`. Keys stay a vocabulary;
+# these are the reading of it.
+
+
+def an_instant_on_the_hash(reg: Mapping[str, str] | None, field: str) -> datetime | None:
+    """One ISO-8601 field off a registry record, or `None` when the hash cannot say.
+
+    UNREADABLE READS AS UNKNOWN, never as "ancient". Callers use these instants to decide whether
+    a live observer might still be waiting, and a corrupt field resolving to the beginning of time
+    would answer "nobody is coming" about a container three seconds old.
+
+    A NAIVE VALUE IS UTC, never local. Every writer of these fields writes UTC, and the hash
+    outlives the process that wrote it — guessing local time for a record another deployment left
+    behind would silently offset every derived number by hours.
+    """
+    if reg is None:
+        return None
+    raw = reg.get(field)
+    if not raw:
+        return None
+    try:
+        instant = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+
+
+def elapsed_ms(since: datetime | None, until: datetime) -> int | None:
+    """Milliseconds between two instants, or `None` when the first one is unknown.
+
+    THE SUBTRACTION HAPPENS ONCE SO THE OPERATOR DOES NOT HAVE TO. `app_first_served`'s
+    `ms_since_container_created` and `app_serving_lost`'s `served_for_ms` are both "how long
+    between two timestamps that end up in two different log lines" — and the 2026-09-10
+    measurement had to reconstruct exactly that number off a screen recording, because no line
+    carried it. `None` rather than a raise: this feeds a log field, and a malformed timestamp
+    written by some older process must not be able to kill the observer that is reporting it.
+    """
+    return None if since is None else int((until - since).total_seconds() * 1000)
+
+
+def stamp_is_proven(reg: Mapping[str, str]) -> bool:
+    """Has anything ever watched this container's app ANSWER a request?
+
+    THE ONE PLACE THE THREE READINGS ARE DECIDED, and `redis/keys.py::REGISTRY_FIELD_SERVING_SINCE`
+    is the contract it implements:
+      absent   -> a hash written before the stamp existed: PRE-CUTOVER, read as PROVEN.
+      ""       -> the container exists and has NEVER served: UNPROVEN.
+      ISO-8601 -> the instant of first serve: PROVEN.
+
+    ABSENT MUST STAY PROVEN until the fleet has turned over. At the deploy instant every live hash
+    is `state=ready` with no stamp, and reading that as unproven would flip every working preview
+    to `starting` — which the frame veto withholds the iframe on — unframing healthy apps at fleet
+    scale. That is a false negative in the exact shape `PreviewLifeState` was written to kill, and
+    it is worse than the eight-second window this change closes. DELETABLE one stay window after
+    deploy (nothing writes a hash without the field any more, create-time seed and legacy adoption
+    included), and `test_preview_state.py` pins all three readings so that deletion is a one-line
+    change against a red test.
+
+    KEPT SEPARATE FROM `_registry_serves_and_is_ready`, deliberately: that predicate is also the
+    start path's "is there a container I can reuse?", and a container that is merely still booting
+    is perfectly reusable. Tightening it there would tear down healthy containers and make cold
+    starts worse. Two questions, one comparison each.
+    """
+    stamp = reg.get(REGISTRY_FIELD_SERVING_SINCE)
+    return stamp is None or stamp != ""
 
 
 async def read_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> dict[str, str] | None:
@@ -518,7 +698,12 @@ async def _adopt_a_pre_cutover_record(
 
     Copy first, delete second: dying between them leaves a legacy key the next read ignores
     (current key wins) and `delete_registry` clears from both prefixes either way; the reverse
-    order would lose the record outright."""
+    order would lose the record outright.
+
+    TWO FIELDS ARE ADDED rather than copied, because a legacy record cannot carry either: the
+    adoption marker, and the serving proof — see the comment on the write below for why a
+    verbatim copy of the proof's ABSENCE would be a rollout-breaking bug rather than a
+    faithful mirror."""
     raw = await redis.hgetall(legacy_registry_key(user_uuid))
     if not raw:
         return None
@@ -547,15 +732,41 @@ async def _adopt_a_pre_cutover_record(
         current = await redis.hgetall(registry_key(user_uuid))
         return {str(k): str(v) for k, v in current.items()} if current else None
 
+    inherited = {str(k): str(v) for k, v in raw.items()}
+
+    # THE MIRROR WRITES THE SERVING PROOF EXPLICITLY, and that is load-bearing rather than tidy.
+    # A verbatim copy would carry no `serving_since`, and an adoption can land at ANY time — a
+    # pre-cutover container attached months from now still arrives here — so "absent can only
+    # mean pre-cutover" would never become true, and the grandfather arm that reads absence as
+    # PROVEN could never be safely retired. Writing a real instant is precisely what makes
+    # absence impossible on any record written after the cutover.
+    #
+    # The instant is this record's OWN `created_at`, and PROVEN is the correct reading for it:
+    # the container was scheduled before the stamp existed, and it is very likely serving a
+    # citizen at this moment. The alternative — the `""` sentinel — would retire a live preview
+    # on the spot, which is the single thing the grandfather arm exists to prevent.
+    first_served_at = inherited.get(REGISTRY_FIELD_CREATED_AT, "")
+    if not first_served_at:
+        # A truncated legacy hash: no birthday to inherit. Falling back to NOW keeps the PROVEN
+        # reading without inventing a history — the instant recorded is simply the earliest this
+        # platform can honestly claim to have known the container was there.
+        _log.warning(
+            "adopting a legacy registry record with no created_at; stamping its serving proof "
+            "at the adoption instant instead",
+            user_id=str(user_uuid),
+        )
+        first_served_at = datetime.now(UTC).isoformat()
+
     # The residual race COPY closed and this does not: a writer landing between the `exists`
     # above and the `hset` below is overwritten. It is narrow and benign in the shapes that
     # actually occur — two concurrent MIGRATIONS write byte-identical content, and the only
     # other writer (`_write_registry` during provisioning) runs under the per-user start lock,
     # which a caller reaching this line does not hold. Accepted deliberately over a command
     # that cannot run on the substrate.
-    # Inline comprehension, not a `dict[str, str]` variable: redis-py types `mapping` as
-    # `Mapping[FieldT, EncodableT]` whose KEY parameter is invariant, so a named
-    # `dict[str, str]` fails every type gate while the identical inline literal passes.
+    # Inline comprehension, not the `inherited` variable a reader would reach for first (nor any
+    # other `dict[str, str]`): redis-py types `mapping` as `Mapping[FieldT, EncodableT]` whose
+    # KEY parameter is invariant, so a named `dict[str, str]` fails every type gate — spread into
+    # the literal as well — while the identical inline literal passes.
     await redis.hset(
         registry_key(user_uuid),
         # The adoption marker rides along in the same write, so a record can never exist under the
@@ -565,6 +776,7 @@ async def _adopt_a_pre_cutover_record(
         mapping={
             **{str(k): str(v) for k, v in raw.items()},
             REGISTRY_FIELD_ADOPTED_FROM_LEGACY: "1",
+            REGISTRY_FIELD_SERVING_SINCE: first_served_at,
         },
     )
     _log.info(
@@ -575,7 +787,11 @@ async def _adopt_a_pre_cutover_record(
             "is left for delete_registry, never removed on read"
         ),
     )
-    return {str(k): str(v) for k, v in raw.items()}
+    # The serving proof goes back to the caller, unlike the adoption marker beside it: the marker
+    # is bookkeeping between this migration and the delete and nothing should branch on it, while
+    # the proof is exactly a field consumers branch on — a caller handed a record whose stamp it
+    # cannot see would have to re-read the hash to learn what this write just put there.
+    return inherited | {REGISTRY_FIELD_SERVING_SINCE: first_served_at}
 
 
 async def mark_registry_ending(redis: aioredis.Redis, user_uuid: uuid.UUID) -> None:

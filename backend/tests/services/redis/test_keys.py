@@ -179,6 +179,13 @@ def test_registry_fields_are_the_frozen_set() -> None:
             "token_ref",
             "created_at",
             "state",
+            # THE ONLY FIELD ON THIS HASH THAT MEANS THE APP ANSWERED A REQUEST. `state` is a
+            # reaper-lifecycle label — its two values say whether the container is being torn
+            # down — and the platform reporting `state=ready` as "your app is running" is the
+            # 2026-09-10 defect this field exists to end. Three readings, and `keys.py` carries
+            # the contract: absent = pre-cutover (proven), "" = never served, ISO-8601 = the
+            # instant of first serve.
+            "serving_since",
             "preview_stay_until",
             "stay_writer",
             # Temporary: `keys.py` retires this one with the rest of the legacy arm.

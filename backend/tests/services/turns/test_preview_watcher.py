@@ -18,6 +18,8 @@ import contextlib
 import uuid
 
 import pytest
+import redis.asyncio as aioredis
+import structlog.testing
 from pydantic import SecretStr
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -26,9 +28,19 @@ import src.services.turns.engine as engine_mod
 from src.config import settings
 from src.db.models.conversation import ChatKind
 from src.services.agent.mode_prompts import PromptContext
+from src.services.build_sessions.alarms import (
+    APP_SERVING_LOST_EVENT,
+    SERVING_PROOF_STAMP_REFUSED,
+)
 from src.services.build_sessions.manager import SessionManager
 from src.services.orchestrator.deps import SandboxSession
-from src.services.sandbox import DevStatus, SandboxHandle
+from src.services.redis import REGISTRY_STATE_READY, registry_key
+from src.services.redis.keys import (
+    REGISTRY_FIELD_APP_NAME,
+    REGISTRY_FIELD_SERVING_SINCE,
+    REGISTRY_FIELD_STATE,
+)
+from src.services.sandbox import DevStatus, SandboxError, SandboxHandle
 from src.services.sandbox.config import SandboxConfig
 from src.services.turns.engine import TurnEngine, _TurnState, set_turn_engine_for_tests
 from src.services.turns.guard import _mid_reply
@@ -156,6 +168,251 @@ async def test_a_framed_preview_with_a_dead_port_still_reconnects(
 
     assert len(_reconnecting_frames(state)) == 1  # an edge, not one per poll
     assert state.preview_state == "reconnecting"
+
+
+# ─── the serving proof this watcher writes and takes back ────────────────────────────────
+#
+# The watcher is the FIRST of the four observers to know a build's app is answering: it already
+# polls `/dev/status` every second and already reads the one signal that means "a request to the
+# app root actually succeeded". Until this change it threw that away, and the platform reported
+# a container as running from the moment ACA SCHEDULED it — which is how, on 2026-09-10, a
+# citizen's pane framed nginx's "This app isn't running right now" page for eight seconds inside
+# a perfectly healthy build while the live region announced the preview was live.
+#
+# It is also the only observer that can see the app DIE inside a turn, so it owns the retraction
+# too — debounced on the same streak the reconnecting frame uses, and never on anything weaker.
+
+
+async def _the_registry_says(
+    redis: aioredis.Redis, state: _TurnState, *, serving_since: str
+) -> None:
+    """The hash `_write_registry` leaves behind for the container this turn is watching."""
+    assert state.sandbox is not None
+    await redis.hset(
+        registry_key(state.user_id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: state.sandbox.handle.app_name,
+            REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+            REGISTRY_FIELD_SERVING_SINCE: serving_since,
+        },
+    )
+
+
+async def _stamp(redis: aioredis.Redis, state: _TurnState) -> str | None:
+    # `decode_responses=True` on the fixture means this is always `str | None`; redis-py's own
+    # annotation still admits `bytes`, so the narrowing is spelled rather than asserted.
+    raw = await redis.hget(registry_key(state.user_id), REGISTRY_FIELD_SERVING_SINCE)
+    return raw.decode() if isinstance(raw, bytes) else raw
+
+
+async def test_the_watcher_records_the_instant_it_watches_the_app_answer(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ THE FIX, from the observer's end. `/dev/status.ready` is the signal — deliberately NOT
+    the dev server's own "Ready in Nms" stdout marker, which prints before the first route
+    compiles and once had a blank page announced as finished."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=True, ready=True))
+    # The un-framed shape — a build's very first serve, where this watcher is also the emitter
+    # that gets to claim the frame. Its sibling below is the same run with the claim gone.
+    state.preview_framed = False
+    await _the_registry_says(fake_redis, state, serving_since="")
+
+    await _poll_a_while(state)
+
+    stamped = await _stamp(fake_redis, state)
+    assert stamped is not None and stamped != "", "the watcher saw the app answer and said nothing"
+    assert state.preview_framed is True, "guard the premise: this run really did take the claim"
+
+
+async def test_the_proof_is_recorded_even_when_another_emitter_took_the_frame_claim(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ THE ONE THAT WOULD HAVE SHIPPED SILENTLY BROKEN. `claim_preview_frame` is a
+    once-per-turn ONE-SHOT with a second caller — the self-heal verify path — and the stamp was
+    originally specified to live inside `if first_serve or reconnecting:`. Whenever verify won
+    the claim, nothing would ever have stamped: the app serves, the pane sits on "getting your
+    app ready" over a working app until the five-minute reaper, and every test in this file
+    would have stayed green because none of them takes the claim first.
+
+    The compare-and-set's own first-serve-wins rule supplies the once-only property the claim was
+    being borrowed for, so the proof goes down on the OBSERVATION and the claim goes back to
+    meaning what its name says: who emits the frame.
+
+    Mutation-check: move the `_prove_it_serves` call back under `if first_serve or reconnecting:`
+    and this goes red while its sibling above stays green."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    # `_framed_state` is exactly the shape a spent claim leaves behind — `preview_framed` is
+    # already True, so `claim_preview_frame()` answers False for the watcher from its first poll
+    # onward, which is what the verify path winning the race looks like from in here.
+    state = _framed_state(_ScriptedStatusSandbox(running=True, ready=True))
+    await _the_registry_says(fake_redis, state, serving_since="")
+    assert state.claim_preview_frame() is False, "the premise: the claim is already gone"
+
+    await _poll_a_while(state)
+
+    stamped = await _stamp(fake_redis, state)
+    assert stamped is not None and stamped != "", (
+        "the stamp is gated on a token another consumer can take, so nothing ever stamps when "
+        "that consumer wins"
+    )
+
+
+async def test_a_dev_server_that_dies_inside_the_turn_has_its_proof_taken_back(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The crash edge, on the same debounced streak as the reconnecting frame. Without it an app
+    that dies after serving keeps reading RUNNING, and the next page load frames nginx's
+    app-gone 404 with no card over it — the reconnecting cover does not survive a reload.
+
+    BACK TO THE SENTINEL, NEVER DELETED: absent is the pre-cutover reading and is grandfathered
+    as PROVEN, so a delete here would turn a crashed app into a running one."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=False, ready=False))
+    await _the_registry_says(fake_redis, state, serving_since="2026-09-10T09:41:04+00:00")
+
+    await _poll_a_while(state)
+
+    assert await fake_redis.hexists(registry_key(state.user_id), REGISTRY_FIELD_SERVING_SINCE) == 1
+    assert await _stamp(fake_redis, state) == ""
+
+
+async def test_a_turn_that_framed_nothing_still_takes_back_an_earlier_turns_proof(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ THE CRASH EDGE'S SECOND LATCH, and why it is kept apart from `reconnecting`. That flag
+    is gated on `state.preview_framed` — correct for the SSE frame, which must not announce a
+    reconnect for an iframe it never told the client to mount — but wrong for the proof, which
+    is a fact about the CONTAINER and outlives any one turn's framing.
+
+    The shape: an Ask turn attaches a container an EARLIER turn already stamped, and watches it
+    die without ever framing anything. A proof-clear riding `preview_framed` would leave that
+    dead app reading RUNNING to every tab in the platform.
+
+    Mutation-check: gate the retraction on `state.preview_framed` and this goes red while
+    `test_a_dev_server_that_dies_inside_the_turn_has_its_proof_taken_back` stays green."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=False, ready=False))
+    state.preview_framed = False  # this turn never put an iframe on screen
+    await _the_registry_says(fake_redis, state, serving_since="2026-09-10T09:41:04+00:00")
+
+    await _poll_a_while(state)
+
+    assert await _stamp(fake_redis, state) == ""
+    assert _reconnecting_frames(state) == [], (
+        "guard the premise: an un-framed turn announces no reconnect, so the retraction really "
+        "did happen on its own latch"
+    )
+
+
+async def test_a_dead_child_that_still_serves_keeps_its_proof(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE demo row again, now for the proof rather than the frame. The agent can `pkill` our
+    child and `nohup` its own replacement through the open-sandbox surface, so
+    `running=False, ready=True` is a NORMAL state for an app serving its citizen perfectly well.
+    Retracting on `running` alone would take the frame away from exactly those apps."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=False, ready=True))
+    await _the_registry_says(fake_redis, state, serving_since="2026-09-10T09:41:04+00:00")
+
+    await _poll_a_while(state)
+
+    assert await _stamp(fake_redis, state) == "2026-09-10T09:41:04+00:00"
+
+
+async def test_a_slow_route_render_never_costs_the_app_its_proof(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ready=False` ALONE IS NOT A DEATH. The supervisor's readiness answer comes off a bounded
+    2-second probe and a real cold render of a heavy route takes longer, so a healthy app answers
+    not-ready while it works. A live child resets the streak on every poll, which is why this
+    never reaches the crash edge at all.
+
+    Mutation-check: drop `not status.running` from the crash-edge condition and this goes red."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=True, ready=False))
+    await _the_registry_says(fake_redis, state, serving_since="2026-09-10T09:41:04+00:00")
+
+    await _poll_a_while(state)
+
+    assert await _stamp(fake_redis, state) == "2026-09-10T09:41:04+00:00"
+
+
+class _UnreachableSupervisor(FakeSandboxClient):
+    """A container whose supervisor will not answer at all — a transport failure, not a verdict
+    about the app."""
+
+    async def dev_status(self, handle: SandboxHandle) -> DevStatus:
+        raise SandboxError("the supervisor did not answer")
+
+
+async def test_a_supervisor_that_will_not_answer_never_costs_the_app_its_proof(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UNREACHABLE IS NOT DEAD. The `except SandboxError` arm continues without counting the
+    poll, so a wedged ingress or a busy supervisor cannot retract a citizen's standing proof —
+    the same asymmetry the reconciler's probe is built on, and the reason a fleet-wide ARM
+    outage cannot unframe the fleet."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_UnreachableSupervisor())
+    await _the_registry_says(fake_redis, state, serving_since="2026-09-10T09:41:04+00:00")
+
+    await _poll_a_while(state)
+
+    assert await _stamp(fake_redis, state) == "2026-09-10T09:41:04+00:00"
+
+
+async def test_a_container_that_never_served_logs_no_loss_when_it_dies(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The compare-and-set answering 0 is what stops the crash edge reporting a loss that never
+    happened: this container had no proof to take back. An `app_serving_lost` line here would
+    tell an operator an app stopped serving when it had never started."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=False, ready=False))
+    await _the_registry_says(fake_redis, state, serving_since="")
+
+    with structlog.testing.capture_logs() as logs:
+        await _poll_a_while(state)
+
+    assert [e for e in logs if e.get("event") == APP_SERVING_LOST_EVENT] == []
+    assert await _stamp(fake_redis, state) == ""
+
+
+async def test_a_stamp_is_never_written_onto_another_projects_container(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ THE NEAR-MISS, from the watcher's end. The registry key is per USER and survives a
+    container swap, so a turn still polling after this citizen's one workspace flipped to
+    another of their projects would otherwise stamp "serving" onto a container it never watched
+    — and the pane would frame the new project's app on the old one's evidence.
+
+    The refusal is a WARNING and not silence, because this is the single most dangerous event in
+    the design: it is the near-miss of proving the wrong container."""
+    monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
+    state = _framed_state(_ScriptedStatusSandbox(running=True, ready=True))
+    assert state.sandbox is not None
+    await fake_redis.hset(
+        registry_key(state.user_id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: "sbx-somebody-elses",
+            REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+            REGISTRY_FIELD_SERVING_SINCE: "",
+        },
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await _poll_a_while(state)
+
+    assert await _stamp(fake_redis, state) == "", "the successor container was stamped"
+    refusals = [e for e in logs if e.get("event") == SERVING_PROOF_STAMP_REFUSED]
+    assert refusals, "the near-miss went unrecorded"
+    # A BOOL, never the other project's container name: the id vocabulary in this log stays
+    # user-scoped, and naming the loser would put one of the citizen's projects into another's
+    # build trace.
+    assert refusals[0]["found_app_present"] is True
+    assert "sbx-somebody-elses" not in str(refusals[0])
 
 
 # ─── the watcher's lifetime: read-mode turns must not leak it ─────────────────────────────

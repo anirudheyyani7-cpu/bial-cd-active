@@ -14,6 +14,7 @@ the fleet disappear from both `sweep_all` and `take_sandbox_inventory`.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 import redis.asyncio as aioredis
@@ -28,6 +29,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
     REGISTRY_STATE_ENDING,
@@ -57,16 +59,41 @@ class _Fleet:
         return [a_fleet_member(n) for n in self.names]
 
 
+_BORN = "2026-07-22T04:11:00+00:00"
+
+
 def _record(app_name: str) -> dict[str, str]:
-    """A COMPLETE registry hash — every frozen field, so "without losing a field" is a real
-    assertion rather than a spot check on the two the reaper happens to read."""
+    """A COMPLETE PRE-CUTOVER registry hash — every field the fleet carried before the prefix
+    moved, so "without losing a field" is a real assertion rather than a spot check on the two
+    the reaper happens to read.
+
+    NO `serving_since`, and that absence is the historical truth this fixture stands for: the
+    field did not exist when these records were written. What the adoption DOES about that is
+    `_adopted` below."""
     return {
         REGISTRY_FIELD_APP_NAME: app_name,
         REGISTRY_FIELD_FQDN: f"{app_name}.westeurope.azurecontainerapps.io",
         REGISTRY_FIELD_TOKEN_REF: "ref-from-before-the-cutover",
-        REGISTRY_FIELD_CREATED_AT: "2026-07-22T04:11:00+00:00",
+        REGISTRY_FIELD_CREATED_AT: _BORN,
         REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
     }
+
+
+def _adopted(app_name: str) -> dict[str, str]:
+    """The same record as an adoption hands it BACK: every legacy field, plus a serving proof
+    stamped at the record's own `created_at`.
+
+    ONE FIELD IS ADDED RATHER THAN COPIED, and it has to be. A verbatim copy would carry no
+    `serving_since`, and an adoption can land at ANY time — a pre-cutover container attached
+    months from now still arrives here — so "absent can only mean pre-cutover" would never
+    become true and the grandfather arm that reads absence as PROVEN could never be retired.
+    Writing a real instant is exactly what makes absence impossible on any record written after
+    the cutover.
+
+    PROVEN, not the `""` sentinel: this container was scheduled before the stamp existed and is
+    very likely serving a citizen right now. Seeding it unproven would unframe a live preview on
+    the spot — the single thing the grandfather arm exists to prevent."""
+    return _record(app_name) | {REGISTRY_FIELD_SERVING_SINCE: _BORN}
 
 
 async def _write(redis: aioredis.Redis, key: str, record: dict[str, str]) -> None:
@@ -181,13 +208,16 @@ async def test_the_read_migrates_a_legacy_hash_without_losing_a_field(
 
     reg = await locks.read_registry(fake_redis, user)
 
-    assert reg == _record(_LEGACY_APP)
+    # The serving proof rides back to the CALLER too, not just into the hash: it is exactly a
+    # field consumers branch on, and a caller handed a record whose stamp it cannot see would
+    # have to re-read the key to learn what this write just put there.
+    assert reg == _adopted(_LEGACY_APP)
     # Rewritten under the environment-scoped key, field for field, plus the adoption marker —
-    # which is what later authorises `delete_registry` to clear the legacy key. The RETURNED
-    # record stays exactly the caller's record: the marker is bookkeeping between the migration
-    # and the delete, not a field any consumer should start branching on.
+    # which is what later authorises `delete_registry` to clear the legacy key. The marker is
+    # bookkeeping between the migration and the delete, not a field any consumer should start
+    # branching on, so it is the one thing the returned record above does NOT carry.
     assert await fake_redis.hgetall(registry_key(user)) == {
-        **_record(_LEGACY_APP),
+        **_adopted(_LEGACY_APP),
         REGISTRY_FIELD_ADOPTED_FROM_LEGACY: "1",
     }
     # THE LEGACY KEY SURVIVES THE READ, DELIBERATELY: retiring it here would let a process
@@ -286,11 +316,94 @@ async def test_both_point_reads_agree_on_a_legacy_record(fake_redis: aioredis.Re
     from_locks = await locks.read_registry(fake_redis, user_a)
     from_client = await _client_with_no_arm()._read_registry(user_b)
 
-    assert from_locks == from_client == _record(_LEGACY_APP)
-    assert await fake_redis.hgetall(registry_key(user_b)) == _record(_LEGACY_APP)
+    # INCLUDING THE SERVING PROOF, which is the newest way these two can drift and the most
+    # expensive: one mirror stamping and the other not would leave half the adopted fleet
+    # reading as PRE-CUTOVER forever, so the grandfather arm could never be retired — and which
+    # mirror ran would depend on nothing more meaningful than which caller attached first.
+    assert from_locks == from_client == _adopted(_LEGACY_APP)
+    assert await fake_redis.hgetall(registry_key(user_b)) == _adopted(_LEGACY_APP)
     # The legacy key SURVIVES the read — see the sibling test below for why that is the safe
     # behaviour, and `delete_registry` for where it is actually removed.
     assert await fake_redis.exists(legacy_registry_key(user_b)) == 1
+
+
+# --- the serving proof an adopted record cannot have carried ---------------------------------
+#
+# "`_write_registry` is the only writer, so an absent `serving_since` can only mean pre-cutover"
+# is the sentence the whole rollout rests on — and it is FALSE unless adoption stamps too. This
+# path copies a legacy hash under the current prefix at any time, months after the deploy, and a
+# verbatim copy would keep manufacturing absent-stamped records forever: the grandfather arm
+# could never be retired, and the comment shipped beside it saying it is deletable would be
+# misleading whoever eventually acted on it.
+
+
+async def test_adoption_stamps_the_legacy_records_own_birthday_as_its_serving_proof(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """PROVEN, and dated to the record itself rather than to the adoption. The instant matters:
+    `ms_since_container_created` is read off the gap between `created_at` and this field, so
+    stamping NOW on a container born in July would report a first serve weeks after its birth.
+
+    Mutation-check: copy the legacy hash verbatim and this goes red on the first assertion —
+    which is the shape the design originally shipped."""
+    user = uuid.uuid4()
+    await _seed_legacy(fake_redis, user, _LEGACY_APP)
+
+    reg = await locks.read_registry(fake_redis, user)
+
+    assert reg is not None
+    assert reg[REGISTRY_FIELD_SERVING_SINCE] == _BORN
+    assert reg[REGISTRY_FIELD_SERVING_SINCE] != "", (
+        "the empty sentinel would read as UNPROVEN and unframe a preview that is very likely "
+        "serving a citizen at this exact moment — the one thing the grandfather arm exists to "
+        "prevent"
+    )
+
+
+async def test_a_truncated_legacy_hash_with_no_birthday_is_still_stamped_proven(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """No `created_at` to inherit. The fallback is the adoption instant — the earliest moment
+    this platform can honestly claim to have known the container was there — and NOT the empty
+    sentinel, because "we cannot date it" is not evidence that it never served.
+
+    A truncated record still has to leave the field PRESENT, or this one record goes on reading
+    as pre-cutover after every other one has been closed."""
+    user = uuid.uuid4()
+    await fake_redis.hset(legacy_registry_key(user), REGISTRY_FIELD_APP_NAME, _LEGACY_APP)
+
+    reg = await locks.read_registry(fake_redis, user)
+
+    assert reg is not None
+    stamped = reg[REGISTRY_FIELD_SERVING_SINCE]
+    assert stamped != ""
+    # Parses, and is not in some far-off year: a value the reader cannot parse resolves to
+    # "cannot say", which would make the stamp decorative.
+    assert abs((datetime.fromisoformat(stamped) - datetime.now(UTC)).total_seconds()) < 60
+
+
+async def test_both_mirrors_stamp_an_adopted_record_identically(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """★ THE DRIFT THAT WOULD BE INVISIBLE. `locks._adopt_a_pre_cutover_record` and
+    `SandboxClient._adopt_a_pre_cutover_record` are separate implementations by design
+    (`services/sandbox/` must not import `services/build_sessions/`), and this is the only thing
+    stopping them from disagreeing about the newest field on the hash.
+
+    Handed the same legacy record they must write the same proof — asserted as an EXACT value,
+    not merely "both non-empty", because `""` and an instant are both non-absent and mean
+    opposite things."""
+    user_a, user_b = uuid.uuid4(), uuid.uuid4()
+    await _seed_legacy(fake_redis, user_a, _LEGACY_APP)
+    await _seed_legacy(fake_redis, user_b, _LEGACY_APP)
+
+    await locks.read_registry(fake_redis, user_a)
+    await _client_with_no_arm()._read_registry(user_b)
+
+    from_locks = await fake_redis.hget(registry_key(user_a), REGISTRY_FIELD_SERVING_SINCE)
+    from_client = await fake_redis.hget(registry_key(user_b), REGISTRY_FIELD_SERVING_SINCE)
+
+    assert from_locks == from_client == _BORN
 
 
 async def test_attach_reaches_a_legacy_record_instead_of_calling_it_gone(
@@ -471,7 +584,7 @@ async def test_a_read_does_not_strand_another_environments_container(
     # A process in ANOTHER environment reads it (here: this process, standing in for it — the
     # point is only that a read happened under a different prefix).
     migrated = await locks.read_registry(fake_redis, user)
-    assert migrated == _record(_LEGACY_APP)
+    assert migrated == _adopted(_LEGACY_APP)
 
     # The legacy record is still there, so the owning environment's sweep still finds it.
     assert await fake_redis.exists(legacy_registry_key(user)) == 1

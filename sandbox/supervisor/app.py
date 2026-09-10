@@ -478,6 +478,15 @@ class _Ready:
 
     lock = threading.Lock()
     served_until: float = 0.0  # monotonic deadline; anything <= now means "no affirmative"
+    # THE STATUS THAT AFFIRMATIVE CAME WITH, cached beside it because it expires with it.
+    #
+    # `ready` is fail-open BY DESIGN — any response counts, 4xx and 5xx included — so that a
+    # compile error cannot wedge it False forever and mislead the model. That is right for the
+    # model and WRONG for the citizen's preview: a dev server answering 404 because the agent
+    # has not written `app/page.tsx` yet is "answering", and framing it puts a blank page on
+    # screen under a live-preview label. So the code travels with the flag and the control plane
+    # decides for itself which question it is asking. Nothing here changes what `ready` means.
+    served_status: int | None = None
     generation: int = 0
     probing: threading.Event | None = None  # the in-flight probe's signal; None = idle
     mourned: object | None = None  # the child whose death already invalidated the cache
@@ -500,6 +509,10 @@ def _forget_ready(mourned: object | None = None) -> None:
             return
         _Ready.mourned = mourned
         _Ready.served_until = 0.0
+        # WITH the affirmative it describes. A status outliving its own cache entry would let a
+        # restarted server inherit the previous one's answer, which is the whole reason
+        # `generation` exists one line down.
+        _Ready.served_status = None
         _Ready.generation += 1
         _Ready.probing = None
         # Re-arm the base-path check. `base_path_checked` holds a generation, and the new one is
@@ -511,14 +524,20 @@ def _forget_ready(mourned: object | None = None) -> None:
 def _run_probe(done: threading.Event, generation: int) -> None:
     """Probe the dev port once, then publish — unless a reset has since disowned this answer."""
     serving = False
+    status: int | None = None
     check_base_path = False
     try:
-        serving = _dev_port_serving(_DEV_PORT, _READY_CONNECT_TIMEOUT, _READY_READ_TIMEOUT)
+        # THE STATUS, not merely the fact of an answer — the boolean is derived from it here so
+        # the two can never disagree. `_dev_port_status` documents itself as having no reader
+        # today and names this the seam if that changes; this is that change.
+        status = _dev_port_status(_DEV_PORT, _READY_CONNECT_TIMEOUT, _READY_READ_TIMEOUT)
+        serving = status is not None
     finally:
         with _Ready.lock:
             if generation == _Ready.generation:  # a restart mid-probe discards the result
                 if serving:
                     _Ready.served_until = time.monotonic() + _READY_CACHE_TTL
+                    _Ready.served_status = status
                     if _Ready.base_path_checked != generation:
                         _Ready.base_path_checked = generation
                         check_base_path = True
@@ -1128,7 +1147,25 @@ def dev_status() -> dict[str, Any]:
     # a live app forever. A served response is the sole authority; `running` stays
     # child-process truth, which is what tells the rescue path a dead child is genuinely down.
     ready = _dev_is_serving()
-    return {"running": running, "ready": ready, "port": _DEV_PORT, "exit_code": exit_code}
+    # WHAT THE ROOT ACTUALLY ANSWERED WITH — the same probe `ready` just ran, at the same path,
+    # read out rather than thrown away. `None` when nothing answered, and also when the answer
+    # predates this field on a container built before it existed.
+    #
+    # WHY BOTH ARE PUBLISHED. They are two different questions and two different consumers.
+    # `ready` asks "is a dev server there at all" and stays fail-open, because the MODEL needs to
+    # keep working through a compile error. `root_status` asks "would a citizen see a page", and
+    # a 404 answers that question NO — which is exactly the state a build sits in for the seconds
+    # between the dev server binding and the agent writing `app/page.tsx`. Framing that window is
+    # how a preview comes to show a blank document under a live-preview label.
+    with _Ready.lock:
+        root_status = _Ready.served_status if ready else None
+    return {
+        "running": running,
+        "ready": ready,
+        "root_status": root_status,
+        "port": _DEV_PORT,
+        "exit_code": exit_code,
+    }
 
 
 @app.get("/dev/logs", dependencies=[Depends(_auth)])

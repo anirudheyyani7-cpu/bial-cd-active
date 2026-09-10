@@ -28,6 +28,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_APP_NAME,
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
+    REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
     starting_key,
@@ -51,10 +52,50 @@ async def _built(db: AsyncSession, user, project) -> uuid.UUID:
     return app_id
 
 
-async def _register_container(redis, user_id: uuid.UUID, app_name: str, *, state: str) -> None:
+#: A stamp that reads as PROVEN — an instant something watched this container's app answer a
+#: request. Any non-empty ISO-8601 value does; a fixed one keeps the assertions readable.
+SERVED = "2026-09-10T09:41:04+00:00"
+
+#: The create-time sentinel `_write_registry` seeds: the container exists and has NEVER served.
+NEVER_SERVED = ""
+
+
+async def _register_container(
+    redis, user_id: uuid.UUID, app_name: str, *, state: str, serving_since: str
+) -> None:
     """Write the registry hash by hand rather than through a relaunch: this route reads the
     registry and nothing else, so a provisioning path in the setup would test the path
-    instead of the read."""
+    instead of the read.
+
+    `serving_since` IS REQUIRED, AND THAT KEYWORD IS THE POINT OF THIS FIXTURE. It used to write
+    five fields and no stamp, and an ABSENT stamp is the PRE-CUTOVER reading, which the rollout
+    grandfathers as PROVEN — so every `alive` assertion in this file passed through the
+    grandfather arm and would have gone on passing with the new STARTING arm deleted or
+    inverted. A fix landing while the guard meant to prove it is blind is this repo's own
+    recorded failure shape. Naming the reading at every call site is what stops it: a test that
+    wants ALIVE says `serving_since=SERVED` and means it, and a test that wants the pre-cutover
+    arm calls `_register_a_pre_cutover_container` and says THAT out loud."""
+    await redis.hset(
+        registry_key(user_id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: app_name,
+            REGISTRY_FIELD_FQDN: f"{app_name}.example.azurecontainerapps.io",
+            REGISTRY_FIELD_TOKEN_REF: f"ref-{app_name}",
+            REGISTRY_FIELD_CREATED_AT: datetime.now(UTC).isoformat(),
+            REGISTRY_FIELD_STATE: state,
+            REGISTRY_FIELD_SERVING_SINCE: serving_since,
+        },
+    )
+
+
+async def _register_a_pre_cutover_container(
+    redis, user_id: uuid.UUID, app_name: str, *, state: str
+) -> None:
+    """The hash as it was written BEFORE `serving_since` existed — the fleet that is live at the
+    deploy instant. Field for field the same as its sibling minus the stamp, deliberately spelled
+    out rather than expressed as `_register_container(..., serving_since=None)`: the sibling's
+    whole job is to refuse to let a caller leave the reading unstated, and an `Optional` would
+    hand that hole straight back."""
     await redis.hset(
         registry_key(user_id),
         mapping={
@@ -65,6 +106,11 @@ async def _register_container(redis, user_id: uuid.UUID, app_name: str, *, state
             REGISTRY_FIELD_STATE: state,
         },
     )
+
+
+def _state_and_instant(body: dict[str, Any]) -> tuple[str, object]:
+    """The two fields that must never disagree, as one tuple — so a failure names both."""
+    return (body["state"], body["servingSince"])
 
 
 async def _probe(client: AsyncClient, user, project) -> dict[str, Any]:
@@ -153,7 +199,7 @@ async def test_a_live_container_for_this_project_is_alive_with_a_framable_url(
     user, project = await _user_project(db_session, "ps-alive@rvaiglobal.com")
     app_id = await _built(db_session, user, project)
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
 
     body = await _probe(client, user, project)
@@ -163,6 +209,9 @@ async def test_a_live_container_for_this_project_is_alive_with_a_framable_url(
     assert body["previewUrl"] == (f"https://citizenapps.bialairport.com/a/{app_name_for(app_id)}")
     assert "azurecontainerapps.io" not in body["previewUrl"]
     assert body["occupyingProjectName"] is None
+    # ALIVE NOW MEANS SERVED. This container carries a real stamp, so the answer comes off the
+    # proven arm rather than the pre-cutover grandfather — see the serving-proof section below.
+    assert body["servingSince"] is not None
 
 
 async def test_another_project_holding_the_slot_is_named(
@@ -173,7 +222,11 @@ async def test_another_project_holding_the_slot_is_named(
     await _built(db_session, user, mine)
     other_app = await _built(db_session, user, theirs)
     await _register_container(
-        fake_redis, user.id, app_name_for(other_app), state=REGISTRY_STATE_READY
+        fake_redis,
+        user.id,
+        app_name_for(other_app),
+        state=REGISTRY_STATE_READY,
+        serving_since=SERVED,
     )
 
     body = await _probe(client, user, mine)
@@ -189,7 +242,9 @@ async def test_an_unattributable_container_takes_the_slot_without_naming_anyone(
 ) -> None:
     user, project = await _user_project(db_session, "ps-ghost@rvaiglobal.com")
     await _built(db_session, user, project)
-    await _register_container(fake_redis, user.id, "sbx-somebodyelses", state=REGISTRY_STATE_READY)
+    await _register_container(
+        fake_redis, user.id, "sbx-somebodyelses", state=REGISTRY_STATE_READY, serving_since=SERVED
+    )
 
     body = await _probe(client, user, project)
 
@@ -204,7 +259,11 @@ async def test_a_container_of_ours_mid_teardown_reads_as_asleep_not_taken(
     user, project = await _user_project(db_session, "ps-ending@rvaiglobal.com")
     app_id = await _built(db_session, user, project)
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_ENDING
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_ENDING,
+        serving_since=SERVED,
     )
 
     body = await _probe(client, user, project)
@@ -214,8 +273,287 @@ async def test_a_container_of_ours_mid_teardown_reads_as_asleep_not_taken(
 
 
 # --------------------------------------------------------------------------------------
-# The unknowns
+# The serving proof — ALIVE means SERVED, not SCHEDULED
+#
+# `state=ready` on the registry hash says an ACA container was CREATED. Until the stamp
+# existed, the platform reported that as "your app is running", handed out a framable URL, and
+# on 2026-09-10 a citizen watched nginx's "This app isn't running right now" page inside their
+# own healthy build for eight seconds while the live region announced the preview was live.
+#
+# THE THREE READINGS OF `serving_since` ARE THE WHOLE CONTRACT and each gets its own test
+# below, because the middle one is the fix, the first one is the rollout, and getting either
+# wrong is a fleet-scale outage in one direction or the shipped bug in the other.
 # --------------------------------------------------------------------------------------
+
+
+async def test_a_container_that_has_never_answered_a_request_is_a_wait_not_a_running_app(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """★ THE FIX, and the reading in the middle: `serving_since == ""` means the container
+    exists and has never served. That is the measured 48s→56s window, in which every byte of
+    this hash already said `ready`.
+
+    NO URL IS THE HALF THAT MATTERS. `starting` is in the client's frame veto, so withholding
+    the address is what stops an iframe mounting on nginx's app-gone page — the state name alone
+    would not.
+
+    Mutation-check: delete the `if not _stamp_is_proven(reg)` arm from `project_preview_state`
+    (or invert it to `if _stamp_is_proven(reg)`) and this goes red on `state`."""
+    user, project = await _user_project(db_session, "ps-scheduled@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since=NEVER_SERVED,
+    )
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "starting"
+    assert body["alive"] is False
+    assert body["previewUrl"] is None, (
+        "a URL here is an iframe mounted on an app that has never answered anything"
+    )
+    assert body["servingSince"] is None
+
+
+async def test_a_hash_written_before_the_stamp_existed_still_reads_as_running(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """The reading at the top, and it is the entire rollout: an ABSENT `serving_since` is a
+    record written before this change, and it is grandfathered as PROVEN.
+
+    Read absence as unproven instead and every container live at the deploy instant flips to
+    `starting` — which the frame veto withholds the iframe on — unframing the whole serving
+    fleet at once. That is a false negative at fleet scale, strictly worse than the eight-second
+    window this change closes, and it is the failure `PreviewLifeState` was written to kill.
+
+    THE GRANDFATHER ARM IS DELETABLE ONE STAY WINDOW AFTER DEPLOY (nothing writes a hash without
+    the field any more — not the create-time seed, not the legacy adoption). This test is what
+    makes that deletion a one-line change against a red assertion instead of an archaeology
+    exercise, so DELETE IT DELIBERATELY when the time comes rather than discovering it."""
+    user, project = await _user_project(db_session, "ps-precutover@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await _register_a_pre_cutover_container(
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+    )
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "alive"
+    assert body["previewUrl"] == f"https://citizenapps.bialairport.com/a/{app_name_for(app_id)}"
+    assert body["servingSince"] is None, (
+        "proven, but there is no instant to name — a pre-cutover record has no first serve to "
+        "report, and inventing one would put a fabricated timestamp in front of an operator"
+    )
+
+
+async def test_a_stamped_container_is_running_and_names_the_instant_it_first_served(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """The reading at the bottom: a real ISO-8601 instant is PROVEN, and it reaches the wire as
+    the diagnostic `servingSince` so an operator can join a screenshot to the `app_first_served`
+    log line rather than taking "alive" on faith."""
+    user, project = await _user_project(db_session, "ps-proven@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await _register_container(
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
+    )
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "alive"
+    assert body["previewUrl"] == f"https://citizenapps.bialairport.com/a/{app_name_for(app_id)}"
+    assert datetime.fromisoformat(body["servingSince"]) == datetime.fromisoformat(SERVED)
+
+
+async def test_a_stamp_nobody_can_parse_still_keeps_the_app_running(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """A CORRUPT STAMP COSTS THE DIAGNOSTIC, NEVER THE FRAME. Whatever put an unparseable value
+    in this field, it was not the empty sentinel — so the container HAS served, and the honest
+    answer is `alive` with nothing to report about when.
+
+    The other way round is the tempting one and it is wrong twice over: it would unframe a
+    working app over a formatting defect, and it would do it on the strength of a field whose
+    docstring says no logic may branch on it."""
+    user, project = await _user_project(db_session, "ps-corrupt-stamp@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since="whenever, honestly",
+    )
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "alive"
+    assert body["previewUrl"] is not None
+    assert body["servingSince"] is None, "only the diagnostic goes quiet"
+
+
+async def test_a_container_that_never_served_is_still_a_wait_once_its_marker_has_gone(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """WHY THE NEW ARM SITS ABOVE THE `starting` MARKER CHECK, which is a placement and not a
+    preference. The marker carries a 300s TTL; a cold build that outruns it would otherwise fall
+    through to the registry arms below and offer this citizen a Launch button — or, with the
+    slot held by an app row it cannot resolve, `slot_taken` — in the middle of their own build.
+
+    No marker is written here at all, which is exactly the state a lapsed TTL leaves behind.
+
+    Mutation-check: move the unproven arm below `if starting is not None:` and this goes red."""
+    user, project = await _user_project(db_session, "ps-marker-gone@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await fake_storage.put(snapshot_key(app_id), b"SAVED-BUNDLE")  # a Launch button to offer
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since=NEVER_SERVED,
+    )
+    assert await fake_redis.exists(starting_key(user.id)) == 0, "the marker's TTL has lapsed"
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "starting"
+    assert body["restorable"] is None, "no restore is offered in the middle of a citizen's build"
+
+
+async def test_the_unproven_arm_spends_nothing_on_the_object_store_either(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis,
+    fake_storage,
+    wire,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget the ALIVE arm has always kept, now held across the WHOLE pre-serve window —
+    which is the interval the client polls every 3 seconds. BUILDING used to be a few seconds of
+    marker; it now spans every second from container-create to first serve, so an arm placed
+    below `restorable_presence` would have moved a cold build's entire wait onto a Blob HEAD per
+    poll without anyone noticing.
+
+    A recovery copy EXISTS, so the empty `heads` proves the question was SKIPPED rather than
+    that it had nothing to find.
+
+    Mutation-check: move the unproven arm below `restorable_presence` and `heads` comes back
+    with the recovery key in it."""
+    user, project = await _user_project(db_session, "ps-unproven-budget@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await fake_storage.put(recovery_key(app_id), b"RECOVERY-BUNDLE")
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since=NEVER_SERVED,
+    )
+
+    heads: list[str] = []
+    read_head = fake_storage.head
+
+    async def record_a_head(key: str):
+        heads.append(key)
+        return await read_head(key)
+
+    monkeypatch.setattr(fake_storage, "head", record_a_head)
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "starting"
+    assert heads == [], "the whole pre-serve window must not touch the object store"
+
+
+async def test_a_reading_only_moves_from_wait_to_running_and_never_back_the_other_way(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """THE MONOTONICITY INVARIANT, which is what licenses shipping this backend alone: `alive`
+    is only ever emitted LATER than it used to be, never earlier. One container, one hash, read
+    twice — the only thing that changes between the reads is the stamp landing.
+
+    This is the assertion that catches a future editor who "optimises" the ALIVE arm by relaxing
+    the stamp check, and it is also why absence is grandfathered rather than age-boxed: an age
+    box can emit alive→starting for a pre-cutover container that is serving perfectly, which
+    retires a working frame."""
+    user, project = await _user_project(db_session, "ps-monotone@rvaiglobal.com")
+    app_id = await _built(db_session, user, project)
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since=NEVER_SERVED,
+    )
+
+    before = await _probe(client, user, project)
+
+    # The one write an observer makes when it watches the app answer — nothing else changes.
+    await fake_redis.hset(registry_key(user.id), REGISTRY_FIELD_SERVING_SINCE, SERVED)
+
+    after = await _probe(client, user, project)
+
+    assert (before["state"], after["state"]) == ("starting", "alive")
+    assert before["previewUrl"] is None and after["previewUrl"] is not None
+
+
+async def test_no_state_but_running_ever_names_a_serving_instant(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """`servingSince` is DIAGNOSTIC ONLY and non-null strictly when `state == alive`. Pinned
+    because it is the same fact as `state` spelled a second time from one read: let it leak onto
+    another arm and a client computing liveness as `servingSince !== null` — which the field's
+    own docstring forbids, and which somebody will write anyway — would disagree with `state`."""
+    user, mine = await _user_project(db_session, "ps-diagnostic@rvaiglobal.com")
+    named: list[tuple[str, object]] = []
+
+    named.append(_state_and_instant(await _probe(client, user, mine)))  # never_built
+
+    app_id = await _built(db_session, user, mine)
+    named.append(_state_and_instant(await _probe(client, user, mine)))  # asleep
+
+    await write_starting_marker(fake_redis, user.id, mine.id)
+    named.append(_state_and_instant(await _probe(client, user, mine)))  # starting (the marker)
+    await fake_redis.delete(starting_key(user.id))
+
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(app_id),
+        state=REGISTRY_STATE_READY,
+        serving_since=NEVER_SERVED,
+    )
+    named.append(_state_and_instant(await _probe(client, user, mine)))  # starting (unproven)
+
+    theirs = await ProjectFactory.create(db_session, user.id, name="Gate Rostering")
+    other_app = await _built(db_session, user, theirs)
+    await _register_container(
+        fake_redis,
+        user.id,
+        app_name_for(other_app),
+        state=REGISTRY_STATE_READY,
+        serving_since=SERVED,
+    )
+    named.append(_state_and_instant(await _probe(client, user, mine)))  # slot_taken
+
+    assert named == [
+        ("never_built", None),
+        ("asleep", None),
+        ("starting", None),
+        ("starting", None),
+        ("slot_taken", None),
+    ]
+    # …and the positive control, so the list above proves an omission rather than a field that
+    # is simply never populated at all.
+    await _register_container(
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
+    )
+    assert _state_and_instant(await _probe(client, user, mine))[1] is not None
 
 
 async def test_a_registry_read_failure_is_unknown_not_gone(
@@ -334,7 +672,7 @@ async def test_a_completed_start_clears_the_marker_and_the_next_read_answers_ali
 
     await fake_redis.delete(starting_key(user.id))
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
 
     body = await _probe(client, user, project)
@@ -407,7 +745,7 @@ async def test_a_marker_naming_this_project_while_the_registry_already_serves_it
     user, project = await _user_project(db_session, "ps-stale-marker@rvaiglobal.com")
     app_id = await _built(db_session, user, project)
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
     await write_starting_marker(fake_redis, user.id, project.id)
 
@@ -436,7 +774,7 @@ async def test_a_poll_runs_no_command_in_the_container_and_never_attaches(
     app_id = await _built(db_session, user, project)
     await fake_storage.put(recovery_key(app_id), b"RECOVERY-BUNDLE")
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
 
     commands: list[list[str]] = []
@@ -479,7 +817,7 @@ async def test_the_alive_path_spends_nothing_on_the_object_store(
     # than that it had no answer to find.
     await fake_storage.put(recovery_key(app_id), b"RECOVERY-BUNDLE")
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
 
     heads: list[str] = []
@@ -519,14 +857,18 @@ async def test_every_state_is_reachable_and_they_are_all_different(
     await fake_redis.delete(starting_key(user.id))
 
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
     seen.append((await _probe(client, user, mine))["state"])
 
     theirs = await ProjectFactory.create(db_session, user.id, name="Stand Allocation")
     other_app = await _built(db_session, user, theirs)
     await _register_container(
-        fake_redis, user.id, app_name_for(other_app), state=REGISTRY_STATE_READY
+        fake_redis,
+        user.id,
+        app_name_for(other_app),
+        state=REGISTRY_STATE_READY,
+        serving_since=SERVED,
     )
     seen.append((await _probe(client, user, mine))["state"])
 
@@ -553,7 +895,7 @@ async def test_the_registry_and_marker_are_read_in_one_pipelined_round_trip(
     user, project = await _user_project(db_session, "ps-pipeline@rvaiglobal.com")
     app_id = await _built(db_session, user, project)
     await _register_container(
-        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY
+        fake_redis, user.id, app_name_for(app_id), state=REGISTRY_STATE_READY, serving_since=SERVED
     )
 
     pipelines: list[object] = []
@@ -668,6 +1010,109 @@ async def test_a_readiness_timeout_on_the_attach_arm_is_non_destructive_and_the_
     assert fake_storage.mtimes[snapshot_key(app_id)] == mtime_before
 
 
+async def test_a_launch_that_proves_the_app_serves_stamps_it_and_the_pane_says_running(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis,
+    fake_storage,
+    wire,
+) -> None:
+    """THE RELAUNCH OBSERVER, end to end and through the real route. `wait_ready` returning
+    without `SandboxNotReadyError` IS the proof — it means a request to the app root actually
+    succeeded — so the very poll that follows the press already answers `alive`, with no second
+    round trip and no watcher needing to catch up.
+
+    Driven from the container's create-time sentinel rather than a hand-written stamp: the
+    registry hash here is written by the provisioning path, so this asserts the whole chain
+    (`_write_registry` seeds `""` → the relaunch stamps it → the poll reads it), which is the
+    one thing three separate unit tests cannot say between them."""
+    user, project = await _user_project(db_session, "ps-launch-proves@rvaiglobal.com")
+    app_id = await resolve_app_for_project(db_session, user.id, project.id)
+    await db_session.commit()
+    await fake_storage.put(snapshot_key(app_id), b"SAVED-BUNDLE")
+
+    launched = await client.post(
+        "/v1/build-sessions/relaunch",
+        json={"projectId": str(project.id)},
+        headers=auth_headers(user),
+    )
+
+    assert launched.status_code == 200
+    assert launched.json()["ready"] is True
+    stamped = await fake_redis.hget(registry_key(user.id), REGISTRY_FIELD_SERVING_SINCE)
+    assert stamped, "the relaunch watched the app answer and recorded nothing"
+    assert (await _probe(client, user, project))["state"] == "alive"
+
+
+async def test_a_readiness_timeout_on_the_attach_arm_takes_the_serving_proof_back(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis,
+    fake_storage,
+    wire,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ THE ONE PLACE OUTSIDE A LIVE TURN THAT CAN RETRACT. This arm has just watched a root
+    GET fail against a container it attached to — real evidence the app is not answering — and
+    that container HAS served, so it carries an instant nothing else would ever clear: the only
+    other clearer, the turn watcher's crash edge, exists only while a turn is streaming.
+
+    Without this the pane goes on reporting RUNNING and frames nginx's "This app isn't running
+    right now" page: the measured 2026-09-10 defect, one door down.
+
+    IT MARKS NOTHING `ending` AND TEARS NOTHING DOWN, and that is not timidity — condemning a
+    container for a slow root GET once cost a citizen their unsaved work. Retracting a claim
+    costs them a card. The sibling test above pins the non-destruction in full; what is added
+    here is that the claim itself comes off, and that the pane follows."""
+    user, project = await _user_project(db_session, "ps-timeout-retracts@rvaiglobal.com")
+    app_id = await resolve_app_for_project(db_session, user.id, project.id)
+    await db_session.commit()
+    await fake_storage.put(snapshot_key(app_id), b"SAVED-BUNDLE")
+
+    cold = await client.post(
+        "/v1/build-sessions/relaunch",
+        json={"projectId": str(project.id)},
+        headers=auth_headers(user),
+    )
+    assert cold.status_code == 200
+    assert await fake_redis.hget(registry_key(user.id), REGISTRY_FIELD_SERVING_SINCE), (
+        "guard the premise: there has to be a standing proof for the retraction to take back"
+    )
+    assert (await _probe(client, user, project))["state"] == "alive"
+
+    wire.sbx.attach_handle = SandboxHandle(
+        fqdn="live.example",
+        token="tok",  # noqa: S106 - a fake, never a real bearer
+        app_name=app_name_for(app_id),
+        preview_url="https://live.example",
+        ready=True,
+    )
+    torn_down_before = list(wire.sbx.torn_down)
+
+    async def the_dev_server_stopped_answering(handle: SandboxHandle, *, timeout_s: float = 120.0):
+        raise SandboxNotReadyError("the app root never served")
+
+    monkeypatch.setattr(wire.sbx, "wait_ready", the_dev_server_stopped_answering)
+
+    degraded = await client.post(
+        "/v1/build-sessions/relaunch",
+        json={"projectId": str(project.id)},
+        headers=auth_headers(user),
+    )
+
+    assert degraded.status_code == 200
+    assert degraded.json()["ready"] is False
+    # BACK TO THE SENTINEL, NEVER DELETED: an absent field is the pre-cutover reading and is
+    # grandfathered as PROVEN, so a delete here would report the dead app as running again.
+    assert await fake_redis.hexists(registry_key(user.id), REGISTRY_FIELD_SERVING_SINCE) == 1
+    assert await fake_redis.hget(registry_key(user.id), REGISTRY_FIELD_SERVING_SINCE) == ""
+    assert wire.sbx.torn_down == torn_down_before, "a claim was retracted by destroying something"
+
+    settled = await _probe(client, user, project)
+    assert settled["state"] == "starting", "the pane went on framing an app that stopped serving"
+    assert settled["previewUrl"] is None
+
+
 async def test_an_attach_that_cannot_confirm_anything_refuses_rather_than_restoring(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -764,3 +1209,55 @@ async def test_a_confirmed_absent_container_still_restores(
     assert restored.status_code == 200
     assert restored.json()["previewUrl"]
     assert wire.sbx.restored, "the cold path must still restore, or the app never comes back"
+
+
+# --- a workspace somebody else is holding, BEFORE this project has ever built -------------------
+#
+# ★ THE VANISHING MESSAGE. `project_preview_state`'s "no app row -> NEVER_BUILT" arm used to sit
+# ABOVE the slot-taken check, which made SLOT_TAKEN structurally unreachable for a project that had
+# never built — the project most likely to meet it, since a citizen only ever has one workspace.
+#
+# WHAT IT COST, MEASURED ON 2026-09-10 IN TWO OF THREE REAL RUNS: the pane said "Describe what you
+# want to build." over a workspace another project was holding. The citizen typed, pressed send,
+# the server refused the start with a 409, and the composer — which rolls both bubbles back on a
+# refusal, correctly — left NOTHING on screen. No message, no error, no card, no button. The
+# platform's answer to "why did my message disappear" was a sentence inviting them to type it again.
+
+
+async def test_a_first_time_project_reports_a_workspace_another_project_is_holding(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """★ The arm that could not be reached. No app row here, and the registry names somebody
+    else's container: the honest answer is SLOT_TAKEN, not "you have never built anything".
+
+    Mutation-check: move the `NEVER_BUILT` return back above the registry read in
+    `project_preview_state` and this goes red on `state`.
+    """
+    user, project = await _user_project(db_session, "ps-held-first@rvaiglobal.com")
+    await _register_container(
+        fake_redis, user.id, "sbx-somebodyelses", state=REGISTRY_STATE_READY, serving_since=""
+    )
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "slot_taken", "a held workspace read as 'never built'"
+    # STILL A CONFIRMED ABSENT. No app row means no bundle key can exist, so this is an answer
+    # rather than an omission — and the card must not offer to restore something that cannot exist.
+    assert body["restorable"] is False
+    assert body["previewUrl"] is None
+
+
+async def test_a_first_time_project_with_a_free_workspace_still_says_never_built(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """THE OTHER HALF, and the reason the fix is a reorder rather than a replacement: with nothing
+    holding the workspace, "nothing has been built here" is still the true and useful answer.
+
+    Mutation-check: make the new arm answer SLOT_TAKEN unconditionally and this goes red — which
+    is what stops the fix from turning every empty project into a held one."""
+    user, project = await _user_project(db_session, "ps-free-first@rvaiglobal.com")
+
+    body = await _probe(client, user, project)
+
+    assert body["state"] == "never_built"
+    assert body["restorable"] is False

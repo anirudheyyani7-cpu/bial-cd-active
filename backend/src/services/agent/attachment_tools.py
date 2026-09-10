@@ -36,6 +36,7 @@ from src.core.prompt_blocks import ATTACHMENT_READ_TOOL
 from src.services.agent.read_tools import (
     ATTACHMENTS_PREFIX,
     is_an_attachment_path,
+    refuse_unsafe_path,
     to_container_path,
 )
 from src.services.orchestrator.deps import SandboxSession
@@ -111,6 +112,20 @@ def attachment_toolset[DepsT](
         summarised it is named. Use this rather than guessing from the file's name, and never
         write your own parser: this is the tested one.
         """
+        # ★ THE PREFIX IS NOT A CONTAINMENT CHECK, and treating it as one left the attachments
+        # root escapable. `is_an_attachment_path` answers "does this name the reserved prefix" and
+        # nothing more, so `.attachments/../../etc/roster.csv` satisfies it — and this tool hands
+        # its argv to `exec`, which does NOT pass through the supervisor's `_resolve`. The reader
+        # would open any `.csv`/`.xlsx`/`.docx`/`.pptx`/`.tsv` in the container.
+        #
+        # It matters because the path can be MODEL-CHOSEN and attachment content is untrusted by
+        # this feature's own rule (R18) — a spreadsheet cell that talks an agent into a traversal
+        # is exactly the shape that rule anticipates. `_vet_path_token` is the same lexical guard
+        # `read_file` and `search_files` apply, and it is applied here for the same reason and
+        # BEFORE the translation, exactly as `to_container_path` documents.
+        refusal = refuse_unsafe_path(file)
+        if refusal is not None:
+            raise ModelRetry(refusal)
         if not is_an_attachment_path(file):
             # A TEACHING REFUSAL, not an error. The model gets one sentence naming the shape it
             # should have used and retries — the same contract every refusal on the read surface

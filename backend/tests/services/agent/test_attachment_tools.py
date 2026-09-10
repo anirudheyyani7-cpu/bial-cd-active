@@ -70,6 +70,36 @@ async def test_it_refuses_a_path_that_is_not_an_attachment() -> None:
     assert reader.seen is None  # nothing reached the container
 
 
+@pytest.mark.parametrize(
+    "escape",
+    [
+        ".attachments/../../etc/roster.csv",
+        ".attachments/../app/lib/secrets.csv",
+        ".attachments/nested/../../../../var/data.xlsx",
+    ],
+)
+async def test_a_traversal_out_of_the_attachments_root_is_refused(escape: str) -> None:
+    """★ THE PREFIX IS NOT CONTAINMENT (#214 R19).
+
+    `is_an_attachment_path` answers one question — does this name the reserved prefix — and every
+    string below answers it yes. This tool then builds an argv and hands it to `exec`, which does
+    NOT pass through the supervisor's `_resolve`, so an unvetted `..` reached the reader and it
+    would open any `.csv`/`.xlsx`/`.docx`/`.pptx`/`.tsv` in the container.
+
+    It is reachable rather than theoretical: the path is model-chosen, and this feature's own rule
+    (R18) holds that attachment content is untrusted — a spreadsheet cell that talks an agent into
+    a traversal is exactly what that rule anticipates.
+
+    Mutation receipt: drop the `refuse_unsafe_path` call and each of these reaches `exec`.
+    """
+    reader = _Recorder()
+
+    with pytest.raises(ModelRetry):
+        await _tool(reader)(None, escape)
+
+    assert reader.seen is None, f"{escape} reached the container"
+
+
 async def test_the_command_is_the_shipped_reader_over_the_container_path() -> None:
     """★ THE ARGV IS THE SCOPE, AND THE PATH IN IT MUST BE THE CONTAINER'S.
 

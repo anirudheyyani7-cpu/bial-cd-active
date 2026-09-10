@@ -117,6 +117,21 @@ def is_an_attachment_path(path: str) -> bool:
     return path == ATTACHMENTS_PREFIX.rstrip("/") or path.startswith(ATTACHMENTS_PREFIX)
 
 
+def refuse_unsafe_path(path: str) -> str | None:
+    """The lexical guard, as a public entry point: why this path may not become a command operand,
+    or None if it may. Absolute, `~`-rooted and `..`-bearing tokens are refused.
+
+    ★ IT IS PUBLIC BECAUSE THE PREFIX IS NOT CONTAINMENT. `is_an_attachment_path` answers one
+    question — does this name the reserved prefix — and `.attachments/../../etc/roster.csv` answers
+    it yes. The attachment reader is the one consumer that does NOT go through
+    `LiveSandboxWorkspace`: it builds an argv and hands it to `exec`, which never meets the
+    supervisor's `_resolve`. So it needs this guard, BEFORE `to_container_path` translates —
+    exactly the order that function's own contract states — and reaching into a private from a
+    sibling module would have been the same coupling with none of the documentation.
+    """
+    return _vet_path_token(path)
+
+
 def to_container_path(path: str) -> str:
     """Model-facing path → the path the container understands.
 
@@ -376,6 +391,26 @@ def _strip_the_dot_slash(path: str) -> str:
     return path[2:] if path.startswith("./") else path
 
 
+def to_model_path(path: str) -> str:
+    """Container path → the path the MODEL was taught, the inverse of `to_container_path`.
+
+    ★ A RESULT THE MODEL CANNOT FEED BACK IS A DEAD END. `search_files` translates `subdir` on the
+    way in, so grep runs against `/workspace/attachments/…` and every hit it prints carries that
+    container-absolute prefix. Returned untranslated, those paths name a location the model was
+    never told about and that every read tool refuses — `_vet_path_token` rejects a leading `/` —
+    so a search over an attachment produced hits nothing could act on.
+
+    Translation has to be symmetric: what goes in as `.attachments/x` comes back as
+    `.attachments/x`. An app-tree path is returned untouched, so this is a no-op for everything
+    except the one reserved prefix.
+    """
+    if path == _CONTAINER_ATTACHMENTS_ROOT:
+        return ATTACHMENTS_PREFIX.rstrip("/")
+    if path.startswith(f"{_CONTAINER_ATTACHMENTS_ROOT}/"):
+        return f"{ATTACHMENTS_PREFIX}{path[len(_CONTAINER_ATTACHMENTS_ROOT) + 1 :]}"
+    return path
+
+
 def _is_under_an_ignored_dir(path: str) -> bool:
     return any(part in IGNORED_DIRS for part in path.split("/"))
 
@@ -510,7 +545,8 @@ class LiveSandboxWorkspace:
             line_no, line_sep, text = rest.partition(":")
             if not path_sep or not line_sep or not line_no.isdigit():
                 continue  # `grep: …` diagnostics and "Binary file … matches" carry no hit
-            relative = _strip_the_dot_slash(path)
+            # Back to the vocabulary the model was given, so a hit can be passed to `read_file`.
+            relative = to_model_path(_strip_the_dot_slash(path))
             if _is_under_an_ignored_dir(relative) or _is_an_ignored_file(relative):
                 continue
             hits.append(SearchHit(path=relative, line_no=int(line_no), line=text.strip()[:300]))

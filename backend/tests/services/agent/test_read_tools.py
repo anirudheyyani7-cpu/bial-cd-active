@@ -34,6 +34,8 @@ from src.services.agent.read_tools import (
     WorkspacePathError,
     check_the_guest_list,
     read_only_toolset,
+    to_container_path,
+    to_model_path,
 )
 from src.services.agent.toolsets import ReadDeps, toolsets_for_kind, workspace_from_read_deps
 from src.services.classification.agent import ReviewDeps
@@ -275,6 +277,26 @@ async def test_search_returns_no_hits_from_inside_a_lockfile(
         ("app/pnpm-lock.yaml", 2),
         ("my-package-lock.json.bak", 1),
     ]
+
+
+def test_a_search_hit_comes_back_in_the_vocabulary_the_model_was_given() -> None:
+    """★ A RESULT THE MODEL CANNOT FEED BACK IS A DEAD END (#214 R19).
+
+    `search_files` translates `subdir` on the way IN, so grep runs against
+    `/workspace/attachments/…` and every hit it prints carries that container-absolute prefix.
+    Returned untranslated those paths name a location the model was never taught, and that every
+    read tool refuses — `_vet_path_token` rejects a leading `/` — so a search over an attachment
+    produced hits nothing could act on.
+
+    Translation has to be symmetric. Mutation receipt: drop `to_model_path` from the hit loop and
+    this comes back container-absolute.
+    """
+    assert to_model_path("/workspace/attachments/roster.csv") == ".attachments/roster.csv"
+    assert to_model_path("/workspace/attachments") == ".attachments"
+    # An app-tree path is untouched — this is a translation for exactly one prefix.
+    assert to_model_path("app/page.tsx") == "app/page.tsx"
+    # And it is the inverse of the inbound translation, which is the property that matters.
+    assert to_model_path(to_container_path(".attachments/book.xlsx")) == ".attachments/book.xlsx"
 
 
 def test_live_find_and_grep_exclude_lockfiles_at_the_source() -> None:

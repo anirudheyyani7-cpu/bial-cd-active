@@ -345,8 +345,8 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
     NULL — which, since the first message of every new chat does exactly that, is the common case
     rather than a contrived one. Anything uploading without a link was uncapped.
 
-    The account-wide fallback is the same shape the byte budget already used for that case, and the
-    row is adopted into its conversation on first use, so the narrow scope resumes next turn.
+    It counts the UNLINKED POOL — files that are also still unsent — which is the same population
+    the byte budget uses for that case; each file leaves the pool when its message is sent.
 
     Mutation receipt: restore the `conversation_id is not None` gate and the 21st upload is
     accepted.
@@ -378,6 +378,51 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
 
     assert over.status_code == 413, over.text
     assert over.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
+
+
+async def test_twenty_files_sent_elsewhere_do_not_block_a_new_chats_first_upload(
+    client, db_session, fake_storage
+) -> None:
+    """★ AGC129'S B4 — the unlinked fallback used to be the whole account.
+
+    The first upload of every new chat is unlinked, because its conversation row is written by the
+    first send. Scoped to the account, it was counted against every attachment the citizen had ever
+    sent anywhere: twenty files in old chats, and the next new chat's first upload was refused with
+    "This conversation has reached its limit of 20 attachments" — on a chat holding zero, naming
+    "start a new chat" as the remedy, which was the one move that could not help. The demo account
+    had already been past it from rehearsal.
+
+    Mutation receipt: put the account-wide scope back and this upload 413s.
+    """
+    headers, user = await _auth(db_session)
+    elsewhere = await _a_conversation(db_session, user)
+    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
+        db_session.add(
+            Attachment(
+                user_id=user.id,
+                attachment_id=f"att_sent_{index}",
+                media_type="image/png",
+                name="",
+                size=len(_PNG),
+                storage_key=f"att/{user.id}/sent_{index}",
+                conversation_id=elsewhere.id,
+            )
+        )
+    await db_session.flush()
+
+    resp = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_new_chat_first",
+            "name": "roster.png",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+            # No conversationId — the first upload of a chat whose row does not exist yet.
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
 
 
 async def test_a_csv_is_not_run_through_the_archive_bound(

@@ -295,14 +295,26 @@ async def _store_attachment_bytes(
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
     existing link to NULL (the link is set-once-then-refreshable, never silently dropped)."""
     size = len(data)
-    # BOTH BUDGETS ARE SCOPED TO THE CONVERSATION when there is one. An upload that carries no
-    # link (no client sends that shape today — see `_resolve_conversation_link`) falls back to
-    # the account-wide sum, so an unlinked row can still never be free.
-    scope = (
-        [Attachment.user_id == user_id, Attachment.conversation_id == conversation_id]
+    # BOTH BUDGETS ARE SCOPED TO THE CONVERSATION when there is one, and to the UNLINKED POOL when
+    # there is not (#214, agc129's B4).
+    #
+    # ★ THE FALLBACK USED TO BE THE WHOLE ACCOUNT, and that refused a new chat's first file for
+    # anyone who had attached twenty things anywhere. The first upload of every new chat is
+    # unlinked — its conversation row is written by the first send — so it was counted against
+    # every sent attachment in every other chat: "This conversation has reached its limit of 20
+    # attachments" on a chat holding zero, with "start a new chat" as the remedy, which was the one
+    # move that could not help.
+    #
+    # Scoped to `conversation_id IS NULL`, an unlinked upload competes only with files that are
+    # ALSO still unsent. The pool stays bounded — nothing uploaded without a chat is ever free —
+    # and every file leaves it the moment the message carrying it is sent
+    # (`materialize.adopt_unlinked_attachments`).
+    link = (
+        Attachment.conversation_id == conversation_id
         if conversation_id is not None
-        else [Attachment.user_id == user_id]
+        else Attachment.conversation_id.is_(None)
     )
+    scope = [Attachment.user_id == user_id, link]
     used_raw = await db.scalar(
         sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(*scope)
     )
@@ -313,12 +325,12 @@ async def _store_attachment_bytes(
         )
     )
     # ONLY A ROW IN THE SAME SCOPE OFFSETS THE SUM. `existing` is looked up by (owner, id) alone,
-    # so on a re-upload under a DIFFERENT conversation its size was never in `used` — subtracting
-    # it drove the total negative and handed the citizen free headroom. The offset applies only
-    # where the row actually contributes to the figure being checked.
-    counts_toward_used = existing is not None and (
-        conversation_id is None or existing.conversation_id == conversation_id
-    )
+    # so a row from a DIFFERENT scope was never in `used` — subtracting its size drove the total
+    # negative and handed the citizen free headroom. Both scopes reduce to one comparison: the row
+    # counts iff its link equals the one being checked, and `None == None` is the unlinked pool.
+    # (The previous `conversation_id is None or …` form subtracted a LINKED row's size from the
+    # unlinked sum, which would have reopened exactly that hole under the scope above.)
+    counts_toward_used = existing is not None and existing.conversation_id == conversation_id
     old_size = existing.size if (existing is not None and counts_toward_used) else 0
     if used - old_size + size > ATTACHMENT_TOTAL_CAP:
         raise AppApiError(
@@ -330,16 +342,12 @@ async def _store_attachment_bytes(
     # same id replaces a row rather than adding one, so counting it would refuse an idempotent
     # retry at the boundary.
     #
-    # ★ IT NO LONGER SKIPS AN UNLINKED UPLOAD. Gated on `conversation_id is not None`, the cap was
-    # bypassable by anything that uploads before its chat exists — which, since the first message
-    # of every new chat does exactly that, is the ordinary path rather than a contrived one. The
-    # account-wide fallback below is the same shape the byte budget already uses for that case: an
-    # unlinked row can never be free, and the row is adopted into its conversation on first use
-    # (`code_lane_attachments`), so the narrow scope resumes from the next turn.
+    # IT DOES NOT SKIP AN UNLINKED UPLOAD: gated on `conversation_id is not None` the cap was
+    # bypassable on the ordinary path, since every new chat's first file is unlinked. It counts the
+    # unlinked pool instead — the same population the byte budget above uses for that case.
     if existing is None:
         held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
-        # `scope` already narrows to the conversation when there is one, and to the account when
-        # there is not — so this counts the right population either way.
+        # `scope` is the conversation when there is one and the unlinked pool when there is not.
         if int(held or 0) + 1 > MAX_ATTACHMENTS_PER_CONVERSATION:
             raise AppApiError(
                 413,

@@ -355,11 +355,11 @@ class QuotaFrame(CamelModel):
 class TurnEndedFrame(CamelModel):
     """The semantic terminal — exactly one per turn; the transport closes right after
     (`data: [DONE]`). `reason` names WHY a non-`completed` turn stopped (`quota_exceeded`,
-    `self_heal_budget_exhausted`, `sandbox_gone`, `wall_clock_deadline_exceeded`,
-    `request_limit`, `build_wrote_nothing`, `stopped_by_user`). `snapshot_committed` is
-    TRI-STATE: `true`/`false` is the finalize's answer, `null` is UNKNOWN (nothing to
-    snapshot, or a terminal that never reached finalize) — a client that collapses `null`
-    into `false` loses work that may well be saved. All three fields are optional additions."""
+    `self_heal_budget_exhausted`, `sandbox_gone`, `wall_clock_deadline_exceeded`, `request_limit`,
+    `build_wrote_nothing`, `model_unavailable`, `stopped_by_user`). `snapshot_committed` is
+    TRI-STATE: `true`/`false` is the finalize's answer, `null` is UNKNOWN (nothing to snapshot, or
+    a terminal that never reached finalize) — a client that collapses `null` into `false` loses
+    work that may well be saved. All three fields are optional additions."""
 
     type: Literal["turn_ended"] = "turn_ended"
     seq: int

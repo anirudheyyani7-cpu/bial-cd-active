@@ -233,8 +233,9 @@ async def test_the_sentence_names_no_number_and_no_provider(
     ("status_code", "body"),
     [
         pytest.param(400, UNSUPPORTED_MEDIA_BODY, id="a-400-about-something-else"),
-        pytest.param(429, "rate limit exceeded", id="rate-limited"),
-        pytest.param(500, {"error": {"message": "internal server error"}}, id="provider-broke"),
+        pytest.param(
+            403, {"error": {"message": "forbidden"}}, id="a-refusal-that-is-not-transient"
+        ),
         pytest.param(400, None, id="a-400-with-no-body-to-read"),
     ],
 )
@@ -246,6 +247,11 @@ async def test_other_provider_errors_still_reach_the_generic_handler_unchanged(
     Each of these is a `ModelHTTPError` — so each one enters the SPECIFIC arm — and none of them
     means the chat is full. Telling this citizen to start a new chat would send them somewhere
     the identical message fails the identical way, with nothing left to try.
+
+    A 429 and a 5xx used to sit in this list. They left it on 2026-09-11, when they gained a named
+    ending of their own (`test_model_unavailable.py`): the point of this test is that a refusal
+    which is NEITHER an overflow NOR transient still ends generically, so the statuses here are
+    the ones no specific arm claims.
 
     IT ALSO PINS THE ENDING, not just the sentence. The non-matching branch cannot `raise`
     onward (a sibling `except` never catches what another one raises), so the way this could

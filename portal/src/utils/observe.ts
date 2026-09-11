@@ -18,10 +18,14 @@
  * abandons the measurement; a backgrounded tab gets REFUSED by that ceiling) make this a
  * floor on a healthy journey, not an average.
  *
- * `markAppVisible` fires on the preview frame's `load` plus the cover coming down — true
- * for a 500 as readily as a 200, so this measures time-until-looking, not
- * time-until-known-good (a confirmed reversion is excluded at the pane, see
- * `LivePreview.tsx`). Every call is fire-and-forget, the server's `count(...)` contract.
+ * `markAppVisible` fires when the framed document itself vouches that it is showing
+ * something — its `bial:app-mounted` beacon — plus the cover coming down. A bodyless 502
+ * ships no script at all, so it can no longer stop this clock; until 2026-09-11 the mark
+ * rode the frame's `load` event, which fires for a 500 as readily as a 200, and that gap
+ * became a production incident. It still measures time-until-looking rather than
+ * time-until-known-good, because a page that paints and then throws has been seen (a
+ * confirmed reversion is excluded at the pane, see `LivePreview.tsx`). Every call is
+ * fire-and-forget, the server's `count(...)` contract.
  */
 import { authFetch } from './api'
 
@@ -91,7 +95,8 @@ export function markChatOpened(projectId: string | null): void {
 }
 
 /**
- * The citizen is looking at their own app: the preview frame loaded AND the cover is down.
+ * The citizen is looking at their own app: the framed document vouched that it is showing
+ * something AND the cover is down.
  *
  * Sends nothing when no clock was started for this project — the project had no app, or this load
  * never opened its page (a deep link straight into a chat). Defaulting a missing mark to page-load

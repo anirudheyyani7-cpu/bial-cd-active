@@ -853,3 +853,14 @@ def test_the_tools_docstring_counts_match_what_the_generator_renders() -> None:
             "this file, and the paragraph already carries one stale count it had to correct."
         )
     assert counts == {"inline": 21, "none": 68, "free_text": 13, "floor": 29}
+
+
+def test_a_profile_without_the_date_filter_column_stops_the_build() -> None:
+    """`header` writes the date-filter rule from `SIBT_SOBT_TIME`. A re-profile that dropped it
+    gave a bare KeyError from a script whose every other missing-column path names the column and
+    says what to do — the third silent lookup in this file, after `simple_type`'s two."""
+    without = json.loads(json.dumps(PROFILE))
+    without["columns"] = [c for c in without["columns"] if c["name"] != "SIBT_SOBT_TIME"]
+    kept = tuple((n, d) for n, d in DEFINITIONS if n != "SIBT_SOBT_TIME")
+    with pytest.raises(SystemExit, match="SIBT_SOBT_TIME has no row"):
+        build(without, kept)

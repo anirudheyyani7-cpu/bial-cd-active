@@ -635,6 +635,16 @@ def header(profile: dict[str, Any], columns: dict[str, dict[str, Any]], names: l
     showed that window's absolute figures to be 21x off production, so the ratio is unproven at
     scale. The rule stands without a number."""
     period = profile["period"]
+    # NAMED IN THE ERROR, LIKE EVERY OTHER MISSING COLUMN. `build` already refuses when a
+    # definition has no profile row; this one is referenced by the header rather than by the
+    # definitions, so a re-profile that drops it would surface as a bare KeyError from a script
+    # whose whole posture is to say what is wrong and stop.
+    if "SIBT_SOBT_TIME" not in columns:
+        raise SystemExit(
+            "SIBT_SOBT_TIME has no row in profile.json, and the header's date-filter rule is "
+            "written from it. Re-profile with the column, or rewrite the rule around its "
+            "replacement — do not ship the header without it."
+        )
     flight_time = columns["SIBT_SOBT_TIME"]
     described = [columns[name] for name in names]
     padded_values, padded_columns, padded_inline = padding_reach(described)

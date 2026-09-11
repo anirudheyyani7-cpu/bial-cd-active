@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import namedtuple
 
 from src.services.projects.duplicates import (
+    _AGREEMENT_MIN_SIMILARITY,
     _AGREEMENT_TOP_N,
     _KEYWORD_SOLO_RANK,
     _VECTOR_ONLY_FALLBACK_SIMILARITY,
@@ -31,12 +32,31 @@ def _row(*, kw_rank=None, kw_score=None, vec_rank=None, vec_score=None, name="Ap
     )
 
 
-def test_both_arms_in_top_n_is_shown_regardless_of_native_score() -> None:
-    # Deliberately LOW native scores on both sides — agreement alone is the bar here.
+def test_both_arms_in_top_n_with_a_real_vector_score_is_shown() -> None:
+    # Agreement discounts BELOW either solo bar, but is not a free pass (review of #191,
+    # round 3, agc129) — `kw_score` stays low (agreement carries no floor of its own on the
+    # keyword side), and `vec_score` clears `_AGREEMENT_MIN_SIMILARITY` while staying below
+    # `_VECTOR_SOLO_SIMILARITY`: this row is accepted BECAUSE of agreement, not despite it,
+    # which is what distinguishes this case from the vacuous one below.
     row = _row(
-        kw_rank=_AGREEMENT_TOP_N, kw_score=0.0001, vec_rank=_AGREEMENT_TOP_N, vec_score=0.01
+        kw_rank=_AGREEMENT_TOP_N,
+        kw_score=0.0001,
+        vec_rank=_AGREEMENT_TOP_N,
+        vec_score=(_AGREEMENT_MIN_SIMILARITY + _VECTOR_SOLO_SIMILARITY) / 2,
     )
     assert _select_confident_matches([row]) == [row]
+
+
+def test_agreement_with_a_native_score_below_the_floor_is_excluded() -> None:
+    # THE BUG THIS PINS (review of #191, round 3, agc129): agreement used to be RANK-ONLY, and
+    # with the OR-joined keyword arm some row is always inside both arms' own top N — so
+    # `both_in_agreement` accepted candidates whose own numbers said they were unrelated.
+    # Measured live: four genuinely unrelated apps were all accepted by agreement alone, at
+    # cosine similarities of 0.34-0.53, none clearing either arm's own solo bar. This row
+    # reproduces that shape — comfortably inside the agreement window, comfortably below
+    # `_AGREEMENT_MIN_SIMILARITY` — and must be excluded.
+    row = _row(kw_rank=1, kw_score=0.2, vec_rank=1, vec_score=_AGREEMENT_MIN_SIMILARITY - 0.01)
+    assert _select_confident_matches([row]) == []
 
 
 def test_agreement_requires_both_arms_inside_the_agreement_window() -> None:

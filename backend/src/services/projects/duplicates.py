@@ -71,12 +71,27 @@ _VECTOR_SOLO_SIMILARITY = 0.75
 # match needs to clear a higher bar before it is worth interrupting someone's create flow.
 _VECTOR_ONLY_FALLBACK_SIMILARITY = 0.85
 
-# `ts_rank_cd`'s native scale is corpus- and query-length-dependent (no fixed bound the way
-# cosine similarity has), so this constant is the least defensible of the three without live
-# data — flagged here rather than asserted with false confidence. Tune against real
-# descriptions before go-live; a value this low is deliberately permissive in the meantime,
-# since the vector arm's own bar is the one carrying most of the recall burden here.
-_KEYWORD_SOLO_RANK = 0.01
+# Measured against the `english` config on real descriptions (review of #191, round 3, agc129):
+# `ts_rank_cd` scores ~0.1-0.2 per incidental shared lexeme under the OR-joined query `_tsquery`
+# now builds — three incidental words (e.g. "staff"/"terminal"/"log", routine in one catalog's
+# vocabulary) already reach 0.30, while a genuine reworded near-duplicate reaches 0.70-0.80 and
+# an identical description 1.70+. 0.5 sits in the empty band between the two, clear of both. THIS
+# BAR IS PAIRED WITH THE OR-QUERY — the old 0.01 was calibrated against `websearch_to_tsquery`'s
+# AND semantics, where clearing it meant matching every stemmed term; if `_tsquery` ever goes
+# back to AND, this number is wrong again and must be re-measured against that shape instead.
+_KEYWORD_SOLO_RANK = 0.5
+
+# Agreement across both arms relaxes the solo bars above, but RANK-ONLY agreement is VACUOUS:
+# any row that clears the keyword arm's `@@` predicate enters it, and with the OR-join one
+# shared word is enough — so some row is always inside both arms' own top `_AGREEMENT_TOP_N`,
+# and `both_in_agreement` would accept it regardless of how unrelated its actual scores say it
+# is (review of #191, round 3, agc129 — measured live: four genuinely unrelated apps all
+# accepted by agreement alone, at cosine similarities of 0.34-0.53, none clearing either arm's
+# own solo bar). This floor is deliberately LOWER than `_VECTOR_SOLO_SIMILARITY` — agreement is
+# still worth a discount, that is the whole point of the rule — but it is not a free pass:
+# measured unrelated apps topped out at 0.53, a genuine near-duplicate reached ~0.84, so 0.6
+# sits clear of the unrelated band without encroaching on the solo bar it discounts.
+_AGREEMENT_MIN_SIMILARITY = 0.6
 
 
 @dataclass(frozen=True)
@@ -246,6 +261,8 @@ def _select_confident_matches(rows: Sequence[Any]) -> list[Any]:
             and row.kw_rank <= _AGREEMENT_TOP_N
             and row.vec_rank is not None
             and row.vec_rank <= _AGREEMENT_TOP_N
+            and row.vec_score is not None
+            and row.vec_score >= _AGREEMENT_MIN_SIMILARITY
         )
         keyword_alone_clears = (
             row.kw_rank is not None

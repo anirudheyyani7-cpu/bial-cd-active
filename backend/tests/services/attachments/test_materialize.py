@@ -292,6 +292,30 @@ def test_the_note_names_the_file_the_path_and_the_reader() -> None:
     assert "own parser" in note
 
 
+def test_the_note_gives_commands_a_path_they_can_open() -> None:
+    """★ AGC129'S B2 — Build was told a path nothing on its arm could resolve.
+
+    Build has no `read_attachment` tool (R15: it runs, and may edit, the reader through
+    `run_command`), and `run_command` executes inside the app folder. The note offered only
+    `.attachments/<name>` and a Run line taking `<path>`, so Build ran the reader on a path
+    relative to the app folder and got `missing` for a file that was there.
+
+    The note is kind-blind by design — this module may not branch on `ChatKind` (R71) — so it
+    gives both addresses and says which is for what, and that is correct on Plan and Build alike.
+
+    Mutation receipt: put `<path>` back on the Run line and the second assertion goes red.
+    """
+    note = AttachmentDelivery(
+        files=(_file(name="Gate roster.xlsx", file_name="Gate_roster.xlsx", size=4096),),
+        storage=FakeStorage(),
+    ).note()
+
+    assert "/workspace/attachments/Gate_roster.xlsx" in note
+    run = next(line for line in note.splitlines() if line.startswith("Run:"))
+    assert "read_attachment.py /workspace/attachments/" in run
+    assert "app's folder" in note
+
+
 def test_the_note_says_a_failure_is_an_answer() -> None:
     """The reader always exits 0 and prints one object, including for a damaged file. An agent
     that reads `"ok": false` as a broken command retries it, or falls back to writing its own
@@ -355,6 +379,8 @@ def test_the_note_lists_every_file_the_conversation_holds() -> None:
 
     assert ".attachments/a.csv" in note
     assert ".attachments/b.docx" in note
+    assert "/workspace/attachments/a.csv" in note
+    assert "/workspace/attachments/b.docx" in note
 
 
 # --- what the turn can see (R20a) -----------------------------------------------------------

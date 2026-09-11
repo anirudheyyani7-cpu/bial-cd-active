@@ -337,6 +337,16 @@ class AttachmentDelivery:
           than in the app tree, so an edit a Build turn made to it does not survive the workspace
           being rebuilt. Said plainly, because an agent that "fixed" the reader last turn and
           finds its change gone is one that starts writing its own again.
+
+        ★ EVERY FILE IS GIVEN TWO ADDRESSES, AND THE RUN LINE USES THE ON-DISK ONE (#214,
+        agc129's B2). The note used to offer only `.attachments/<name>`, which only a TOOL can
+        resolve — the read tools and `read_attachment` translate it. Build has no
+        `read_attachment` (R15: it runs, and may edit, the reader through `run_command`), and a
+        command executes inside the app folder, where `.attachments/` does not exist: Build ran
+        the reader on the path it was given and got `missing` for a file that was there. This
+        module may not branch on the chat's kind (R71), so rather than one address per kind it
+        gives both and says which is for what — correct on every arm, with nothing to keep in
+        step.
         """
         lines = [
             "The person you are talking to attached these files to this conversation. They are "
@@ -344,17 +354,23 @@ class AttachmentDelivery:
             "",
         ]
         lines += [
-            f"- {file.display_name} — {file.model_path} ({file.size:,} bytes)"
+            f"- {file.display_name} — {file.model_path} (on disk: {file.container_path}; "
+            f"{file.size:,} bytes)"
             for file in self.files
         ]
         lines += [
+            "",
+            f"EACH FILE HAS TWO ADDRESSES. The `{ATTACHMENTS_PREFIX}` path is for tools that take "
+            "a path, such as `read_attachment` if you have it. The on-disk path is for commands: "
+            f"a command runs inside the app's folder, where `{ATTACHMENTS_PREFIX}` does not "
+            "exist, so the reader would report the file as missing.",
             "",
             "READ ONE WITH THE READER THAT IS ALREADY INSTALLED. Do not write your own parser and "
             "do not guess from a file's name: a hand-written reader misses formulas, drops table "
             "headers and inlines images, and its answer looks exactly as confident as a correct "
             "one.",
-            f"Run: python3 {READER_PATH} <path> — or, if you have a `read_attachment` tool, call "
-            f"it with the `{ATTACHMENTS_PREFIX}` path above.",
+            f"Run: python3 {READER_PATH} {CONTAINER_ATTACHMENTS_ROOT}/<file> — or, if you have a "
+            f"`read_attachment` tool, call it with the `{ATTACHMENTS_PREFIX}` path above.",
             "It prints one JSON object and always exits 0, including for a damaged file: an "
             '`"ok": false` result is an ANSWER to pass on, not a reason to retry.',
             "The reader is part of the workspace image rather than of the app, so it is the "

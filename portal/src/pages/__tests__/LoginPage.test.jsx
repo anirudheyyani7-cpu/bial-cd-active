@@ -216,3 +216,32 @@ describe('LoginPage — the correlation reference', () => {
     expect(screen.queryByTestId('login-notice-ref')).toBeNull()
   })
 })
+
+// Production, 2026-09-11 (refs b005f1e8, d172da84): Entra reused a browser session whose MFA had
+// expired, and every "try again" re-minted a code from that same session. The callback now retries
+// once with a forced sign-in; when that is not enough it lands here with `reauth_required`, and the
+// button must ask Entra for a fresh sign-in rather than the same silent one.
+describe('LoginPage — a sign-in Conditional Access refused (reauth_required)', () => {
+  it('says the organization needs the sign-in confirmed again, and keeps the reference', () => {
+    renderAt('/login?authError=reauth_required&ref=d172da84')
+    const text = screen.getByTestId('login-notice').textContent
+    expect(text).toContain('confirm your sign-in again')
+    expect(text).not.toContain('Sign-in failed')
+    expect(screen.getByText(/Reference: d172da84/)).toBeTruthy()
+  })
+
+  it('makes the next Sign in with Microsoft a fresh sign-in (prompt=login)', () => {
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: '' } })
+    renderAt('/login?authError=reauth_required')
+    fireEvent.click(screen.getByTestId('login-microsoft'))
+    expect(window.location.href).toBe(`${LOGIN_URL}?prompt=login`)
+  })
+
+  it('keeps any other failure on the ordinary sign-in', () => {
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: '' } })
+    renderAt('/login?authError=auth_failed')
+    fireEvent.click(screen.getByTestId('login-microsoft'))
+    expect(window.location.href).toBe(LOGIN_URL)
+  })
+})
+

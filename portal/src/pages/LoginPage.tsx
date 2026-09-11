@@ -51,6 +51,11 @@ const AUTH_ERROR_BANNERS: Record<string, string> = {
     'That account isn’t part of the BIAL organization. Please sign in with your BIAL account.',
   account_suspended:
     'Your access has been paused by an administrator. Please contact your BIAL administrator to restore it.',
+  // Entra refused a browser session that no longer satisfies Conditional Access (expired MFA) even
+  // after the callback's one forced sign-in. "Try again" is not the advice: the next attempt has
+  // to be a fresh sign-in, which is what the button asks for after this banner.
+  reauth_required:
+    'Your organization needs you to confirm your sign-in again. Select Sign in with Microsoft and complete the verification step.',
 }
 const GENERIC_AUTH_ERROR = 'Sign-in failed. Please try again.'
 
@@ -68,6 +73,8 @@ export default function LoginPage() {
   const location = useLocation()
   const [notice, setNotice] = useState('')
   const [noticeRef, setNoticeRef] = useState('')
+  // Set only by the `reauth_required` banner: the next sign-in must not reuse the stale session.
+  const [freshSignIn, setFreshSignIn] = useState(false)
   // The banner is resolved EXACTLY once per mount. Consuming ?authError below re-runs this
   // effect with a clean query string, and without this latch the second pass would fall
   // through past the (now absent) authError and overwrite the failure banner with a signout
@@ -113,6 +120,7 @@ export default function LoginPage() {
       )
       const ref = searchParams.get('ref') ?? ''
       setNoticeRef(AUTH_ERROR_REF_PATTERN.test(ref) ? ref : '')
+      setFreshSignIn(authError === 'reauth_required')
       // CONSUME the params — the banner is one-time, and until this landed it was not:
       // ?authError stayed in the address bar, so reload, hard reload and close-and-reopen
       // (Chrome restores the tab's URL) all re-rendered "Sign-in failed" forever, with no
@@ -142,7 +150,7 @@ export default function LoginPage() {
   // ?authError on failure). Not an in-SPA fetch — the browser must leave for
   // login.microsoftonline.com and return.
   const signIn = () => {
-    window.location.href = LOGIN_URL
+    window.location.href = freshSignIn ? `${LOGIN_URL}?prompt=login` : LOGIN_URL
   }
 
   return (

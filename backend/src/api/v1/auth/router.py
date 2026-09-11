@@ -13,9 +13,10 @@ carries them. The callback redirect_uri is the configured `AUTH__REDIRECT_URI`
 
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
-from typing import Annotated
+from typing import Annotated, Final
 from urllib.parse import quote
 
 import httpx
@@ -52,6 +53,7 @@ from src.services.auth.csrf import issue_csrf_token, verify_csrf
 from src.services.auth.errors import (
     REASON_ACCOUNT_SUSPENDED,
     REASON_AUTH_FAILED,
+    REASON_REAUTH_REQUIRED,
     AuthError,
 )
 from src.services.auth.oidc import get_oauth, validate_entra_token
@@ -72,6 +74,27 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Authlib OAuth registry, injected via Annotated (S8410) rather than a `= Depends`
 # default so the signature stays call-safe and matches the DbSession/CurrentUser idiom.
 OAuthClient = Annotated[OAuth, Depends(get_oauth)]
+
+# Entra codes meaning "this browser session no longer satisfies Conditional Access — sign in
+# again": 50076 (MFA required), 50078 (MFA expired), 50079 (MFA enrollment required), 70044
+# (sign-in frequency). Entra mints a code from such a session without prompting and then refuses to
+# redeem it, so a plain retry fails identically every time; `prompt=login` makes Entra
+# re-authenticate.
+_STEP_UP_AADSTS: Final = frozenset({"50076", "50078", "50079", "70044"})
+_AADSTS_CODE: Final = re.compile(r"AADSTS(\d+)")
+# The one-retry marker, kept in the oauth_transient session beside Authlib's PKCE state.
+_STEP_UP_MARKER: Final = "auth_step_up"
+
+
+def _step_up_code(exc: Exception) -> str | None:
+    """The Conditional Access code when `exc` is Entra refusing a stale session, else None."""
+    if not isinstance(exc, OAuthError):
+        return None
+    codes: list[str] = _AADSTS_CODE.findall(f"{exc.error} {exc.description}")
+    for code in codes:
+        if code in _STEP_UP_AADSTS:
+            return code
+    return None
 
 
 # --- cookie helpers (private; the names/Secure decision live in services/auth/
@@ -147,6 +170,34 @@ def _login_error_redirect(reason: str, *, trace_id: str) -> RedirectResponse:
     )
 
 
+async def _step_up(
+    request: Request, oauth: OAuth, *, code: str, trace_id: str, already_forced: bool
+) -> Response:
+    """Send a session Conditional Access refused back to Entra ONCE, with `prompt=login`.
+
+    PRODUCTION, 2026-09-11 (refs b005f1e8, d172da84): Entra minted a code from a browser session
+    whose MFA had expired (AADSTS50078), the redemption failed, and every press of "Sign in with
+    Microsoft" re-minted a code from the same session — the retry the banner asked for could never
+    succeed. A fresh interactive sign-in is the only thing that clears it, so the callback asks
+    for one. BOUNDED: a rejection arriving after a forced sign-in bounces to the `reauth_required`
+    banner instead of looping, and so does a step-up that cannot reach Entra."""
+    if not already_forced:
+        request.session[_STEP_UP_MARKER] = True
+        try:
+            response: Response = await oauth.entra.authorize_redirect(
+                request, settings.auth.redirect_uri, prompt="login"
+            )
+        except (OAuthError, httpx.HTTPError, ValueError) as exc:  # fmt: skip  # py314 paren strip
+            request.session.pop(_STEP_UP_MARKER, None)
+            logger.warning(
+                "auth_step_up_unavailable", error_type=type(exc).__name__, trace_id=trace_id
+            )
+        else:
+            logger.info("auth_step_up_redirect", aadsts=code, trace_id=trace_id)
+            return response
+    return _login_error_redirect(REASON_REAUTH_REQUIRED, trace_id=trace_id)
+
+
 # --- endpoints -----------------------------------------------------------------
 
 
@@ -155,6 +206,17 @@ async def login(request: Request, oauth: OAuthClient) -> Response:
     # Generates state + nonce + PKCE verifier (stored in the oauth_transient
     # session cookie) and 302s to Entra. redirect_uri is the configured external
     # callback, byte-matching the Entra reply URL through the edge.
+    #
+    # `?prompt=login` is the step-up path from the login page's `reauth_required` banner: Entra
+    # must authenticate again instead of reusing the browser session. ONLY that value is honoured —
+    # `none` would turn a sign-in into a silent failure and `consent` into an unwanted prompt.
+    if request.query_params.get("prompt") == "login":
+        request.session[_STEP_UP_MARKER] = True
+        forced: Response = await oauth.entra.authorize_redirect(
+            request, settings.auth.redirect_uri, prompt="login"
+        )
+        return forced
+    request.session.pop(_STEP_UP_MARKER, None)
     response: Response = await oauth.entra.authorize_redirect(request, settings.auth.redirect_uri)
     return response
 
@@ -166,6 +228,9 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
     # deliberately short hex rather than a UUID — and it is not a credential: it
     # authenticates nothing and is generated fresh per request.
     trace_id = secrets.token_hex(4)
+    # Read AND clear the one-retry marker before anything can fail, so every exit — a success
+    # included — leaves the next attempt its own automatic step-up.
+    already_forced = bool(request.session.pop(_STEP_UP_MARKER, False))
     try:
         token = await oauth.entra.authorize_access_token(request)
         identity = validate_entra_token(token)
@@ -188,6 +253,11 @@ async def callback(request: Request, db: DbSession, oauth: OAuthClient) -> Respo
             detail=str(exc)[:500],
             trace_id=trace_id,
         )
+        step_up = _step_up_code(exc)
+        if step_up is not None:
+            return await _step_up(
+                request, oauth, code=step_up, trace_id=trace_id, already_forced=already_forced
+            )
         return _login_error_redirect(REASON_AUTH_FAILED, trace_id=trace_id)
     except AuthError as exc:
         # Wrong tenant / invalid callback — reason drives the banner. This branch used to

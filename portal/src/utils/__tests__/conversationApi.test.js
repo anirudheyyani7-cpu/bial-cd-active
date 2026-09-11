@@ -589,17 +589,25 @@ describe('messagesFromProjection — a stopped turn still looks stopped after a 
     // string, every assertion in this file would pass and say nothing — so the distinctness of
     // what the reload renders is asserted directly.
     const rendered = Object.keys(OUTCOME_COPY).map((reason) => reloaded('stopped', reason))
-    expect(new Set(rendered).size).toBe(rendered.length)
+    // ONE pair shares a sentence on purpose: `request_limit` and `wall_clock_deadline_exceeded`
+    // are two internal bounds the citizen cannot act on differently (2026-09-11). So the
+    // distinct count is the key count less exactly that pair — anything less is a collapse.
+    expect(reloaded('stopped', 'request_limit')).toBe(
+      reloaded('stopped', 'wall_clock_deadline_exceeded'),
+    )
+    expect(new Set(rendered).size).toBe(rendered.length - 1)
     expect(rendered.every((text) => typeof text === 'string' && text.length > 0)).toBe(true)
   })
 
   it('falls back to the neutral sentence rather than printing the machine token', () => {
     // Every `reason` on this wire is a machine token — `sandbox_unavailable`,
-    // `wall_clock_deadline_exceeded` — and none of them is prose. An unlisted one gets the
+    // `self_heal_budget_exhausted` — and none of them is prose. An unlisted one gets the
     // neutral line for its terminal; interpolating it is the defect this replaced.
-    const text = reloaded('failed', 'wall_clock_deadline_exceeded')
+    // (`wall_clock_deadline_exceeded` used to be the example here; it has had its own sentence
+    // since 2026-09-11, so the example is now a token the table still does not name.)
+    const text = reloaded('failed', 'sandbox_unavailable')
     expect(text).toBe('The build failed.')
-    expect(text).not.toMatch(/wall_clock_deadline_exceeded/)
+    expect(text).not.toMatch(/sandbox_unavailable/)
   })
 
   it('preserves the absence signal: a turn with no terminal row says nothing about how it ended', () => {

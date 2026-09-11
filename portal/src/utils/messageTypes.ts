@@ -111,10 +111,11 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * "Two authors for one sentence" is the documented failure this arrangement exists to prevent —
  * fixing one emitter alone only ever changed WHEN the wrong text appeared, never whether it did.
  *
- * IT MIRRORS `backend/src/services/build_sessions/outcome.py::_summary` — same four reasons, same
+ * IT MIRRORS `backend/src/services/build_sessions/outcome.py::_summary` — its four reasons, same
  * wording — because that emitter writes the durable row for legacy build sessions while this one
  * renders the turn terminal, and a transcript must not say different things about the same build
- * depending on when you looked at it.
+ * depending on when you looked at it. The turn engine's own endings (`request_limit`,
+ * `wall_clock_deadline_exceeded`, `model_unavailable`) have no legacy row and are listed here only.
  *
  * PLUS ONE ARM THE SERVER TABLE LACKS: `workspace_restored`. It is raised at
  * `engine.py`'s `_WriteEndedError("workspace_restored", …)` — a turn that ends because the
@@ -129,6 +130,16 @@ export const OUTCOME_COPY: Readonly<Record<string, string | undefined>> = {
   idle_teardown: 'This build was stopped because it sat idle.',
   workspace_restored:
     'This build stopped so your workspace could be put back from the last saved copy. Send your message again once your workspace is back.',
+  // THE TURN ENGINE'S OWN BOUNDED ENDINGS (2026-09-11). `request_limit` and
+  // `wall_clock_deadline_exceeded` end through `_bounded_run_ending`, whose banner tells the
+  // citizen their app is working — a transcript row reading "The build failed." over that banner
+  // was the contradiction a citizen photographed. One sentence for both, because which bound
+  // fired is not something they can act on differently. `model_unavailable` is the named ending
+  // for a model service that stayed down past every retry (`engine.py::_end_model_unavailable`).
+  request_limit: 'This build stopped after doing as much as it does in one go.',
+  wall_clock_deadline_exceeded: 'This build stopped after doing as much as it does in one go.',
+  model_unavailable:
+    'The assistant could not get an answer from its service, so this build stopped.',
 }
 
 /**

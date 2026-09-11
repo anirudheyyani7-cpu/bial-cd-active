@@ -156,7 +156,8 @@ export interface TurnEndedFrame {
   turnId: string
   status: 'completed' | 'failed' | 'stopped'
   /** WHY a non-completed turn stopped: `quota_exceeded` | `self_heal_budget_exhausted` |
-   *  `sandbox_gone` | `wall_clock_deadline_exceeded` | `request_limit` | `stopped_by_user`. */
+   *  `sandbox_gone` | `wall_clock_deadline_exceeded` | `request_limit` | `model_unavailable` |
+   *  `stopped_by_user`. */
   reason?: string | null
   previewUrl?: string | null
   /** TRI-STATE, and the distinction matters: `null` means UNKNOWN (a chat turn, or a

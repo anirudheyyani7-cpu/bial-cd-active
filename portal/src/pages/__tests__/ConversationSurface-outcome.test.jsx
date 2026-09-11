@@ -408,6 +408,19 @@ describe('the copy table', () => {
       'failed',
       'This build stopped so your workspace could be put back from the last saved copy. Send your message again once your workspace is back.',
     ],
+    // The turn engine's own bounded endings (2026-09-11): one sentence for the two internal
+    // ceilings, and a named ending for a model service that stayed down past every retry.
+    ['request_limit', 'failed', 'This build stopped after doing as much as it does in one go.'],
+    [
+      'wall_clock_deadline_exceeded',
+      'failed',
+      'This build stopped after doing as much as it does in one go.',
+    ],
+    [
+      'model_unavailable',
+      'failed',
+      'The assistant could not get an answer from its service, so this build stopped.',
+    ],
   ]
 
   it.each(TABLE)('%s says its own sentence, and says it whatever status carries it', (reason, status, sentence) => {
@@ -421,8 +434,10 @@ describe('the copy table', () => {
   })
 
   it('names every arm the server names, and the one it does not', () => {
-    // Mirrors `outcome.py::_summary`'s four reasons plus `workspace_restored` (engine.py:1612).
-    // A sixth arm appearing here without a matching one there is the drift this pins.
+    // Mirrors `outcome.py::_summary`'s four reasons plus `workspace_restored`, plus the turn
+    // engine's three bounded endings (`request_limit`, `wall_clock_deadline_exceeded`,
+    // `model_unavailable` — none has a legacy row). An arm appearing in `OUTCOME_COPY` without a
+    // row in this table is the drift this pins.
     expect(Object.keys(OUTCOME_COPY).sort()).toEqual(TABLE.map(([reason]) => reason).sort())
   })
 

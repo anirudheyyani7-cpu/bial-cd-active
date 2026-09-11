@@ -1136,13 +1136,15 @@ export default function LivePreview({
             : // THE LIVE CLAIM IS EARNED NOW, NOT ASSUMED.
               //
               // This arm used to read `revealed ? 'Your app preview is live' : ''`, and that was
-              // false. `revealed` is `frameLoaded && !covered`, and `frameLoaded` is the framed
-              // document's `load` event — which fires for a 500 exactly as it does for a 200, on a
-              // cross-origin frame whose status code this pane cannot read, and which the
-              // in-container proxy emits even on the 502 it returns when the dev server is down. So
-              // the one sentence in this chain making a claim about the APP rested on the one
-              // signal carrying no health term at all: a citizen using a screen reader was told
-              // their preview was live over a framework error screen.
+              // false. `revealed` was `frameLoaded && !covered` then, and `frameLoaded` is the
+              // framed document's `load` event — which fires for a 500 exactly as it does for a
+              // 200, on a cross-origin frame whose status code this pane cannot read, and which
+              // the in-container proxy emits even on the 502 it returns when the dev server is
+              // down. So the one sentence in this chain making a claim about the APP rested on the
+              // one signal carrying no health term at all: a citizen using a screen reader was
+              // told their preview was live over a framework error screen. `revealed` now reads
+              // `frameVouched && !covered` — the framed document's own beacon — which is a reason
+              // to keep this claim earned here, not a licence to go back to assuming it.
               //
               // It is not simply deleted, because deleting it leaves the success path SILENT while
               // the failure path speaks — a screen-reader user hears the wait end and then nothing,

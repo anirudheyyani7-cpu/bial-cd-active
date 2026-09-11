@@ -175,23 +175,56 @@ async def code_lane_attachments(
         .scalars()
         .all()
     )
-    # ★ ADOPT A ROW THAT ARRIVED BEFORE THE CHAT EXISTED, and this is not bookkeeping — without it
-    # the file works on turn one and disappears on turn two.
-    #
-    # The composer uploads before the first send, so on a new chat there is no conversation row to
-    # link to yet and the upload stores `NULL` (see the route's `_resolve_conversation_link`). Turn
-    # one still finds the file, because the message carries its id. Turn two carries no ids, the
-    # link is still NULL, and the query returns nothing: not placed, not named to the agent, and
-    # `read_attachment` not even registered. The citizen sees a file they attached become invisible
-    # one message later.
-    #
-    # Stamping it here — the first moment a conversation demonstrably exists AND the file is known
-    # to belong to it — is what makes the link permanent. Owner-scoped by the query above, so this
-    # can only ever adopt the caller's own row.
-    for row in rows:
-        if row.conversation_id is None:
-            row.conversation_id = conversation_id
+    # ★ A PURE READ, AND THAT IS THE FIX FOR A 500 (#214, agc129's B1). This used to adopt
+    # NULL-linked rows into the conversation right here — but it runs in the send route BEFORE the
+    # conversation row is written, so the route's next query autoflushed the pending UPDATE into a
+    # non-deferrable foreign key that did not exist yet. The first message of every new chat that
+    # carried a spreadsheet was a 500, and every retry failed identically. Adoption now lives in
+    # `adopt_unlinked_attachments`, which the route calls once the conversation demonstrably
+    # exists.
     return _named_without_collisions(rows)
+
+
+async def adopt_unlinked_attachments(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    attachment_ids: Sequence[str],
+) -> None:
+    """Link this message's not-yet-linked uploads to the conversation they were sent in.
+
+    ★ WITHOUT IT THE FILE WORKS ON TURN ONE AND VANISHES ON TURN TWO (#214 R7a). The composer
+    uploads before the first send, so on a new chat there is no conversation row to link to and
+    the upload stores NULL. Turn one finds the file by the message's own ids; turn two carries
+    none, so a file that was never linked is not placed, not named to the agent, and
+    `read_attachment` is not even registered.
+
+    ★ AND IT MAY RUN ONLY ONCE THE CONVERSATION ROW EXISTS. It used to run inside
+    `code_lane_attachments`, before the send route had written that row, and the next query
+    autoflushed it into the foreign key — the 500 agc129 reproduced on the demo's opening move.
+    The caller invokes this after the conversation is flushed or loaded, never before.
+
+    EVERY ID THE MESSAGE CARRIES, NOT ONLY THE CODE LANE. A model-lane upload is NULL-linked for
+    the same reason, and the unlinked pool is what an upload with no conversation is budgeted
+    against (`attachments/router.py`) — rows left NULL forever would fill it and refuse the next
+    new chat's first file, which is B4 arriving slowly instead of at once.
+
+    ONE OWNER-SCOPED UPDATE, restricted to rows that are still NULL: it cannot move another user's
+    row, and it never re-links a file that already belongs to a conversation.
+    """
+    wanted = list(dict.fromkeys(attachment_ids))
+    if not wanted:
+        return
+    await db.execute(
+        sa.update(Attachment)
+        .where(
+            Attachment.user_id == user_id,
+            Attachment.attachment_id.in_(wanted),
+            Attachment.conversation_id.is_(None),
+        )
+        .values(conversation_id=conversation_id)
+    )
 
 
 @dataclass(frozen=True, slots=True)

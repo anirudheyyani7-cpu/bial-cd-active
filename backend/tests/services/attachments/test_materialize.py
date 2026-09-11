@@ -447,18 +447,61 @@ async def test_a_row_with_no_conversation_link_is_still_found_by_its_id(db_sessi
     assert [f.attachment_id for f in found] == ["loose"]
 
 
-async def test_an_unlinked_row_is_adopted_so_the_second_turn_still_finds_it(db_session) -> None:
+async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
+    """★ AGC129'S B1 — reading must never write, because the chat does not exist yet.
+
+    `code_lane_attachments` runs in the send route BEFORE the conversation row is written. It used
+    to adopt NULL-linked rows into that not-yet-written conversation, and the route's next query
+    autoflushed the UPDATE into a non-deferrable foreign key: the first message of every new chat
+    carrying a spreadsheet was a 500, and every retry failed identically.
+
+    THIS REPRODUCES THE REAL ORDERING, which the previous version of this test could not: it used a
+    `ConversationFactory` row the fixture had already committed — the same blind spot that hid the
+    upload-side 404, one step later. Here the conversation id has NO ROW, exactly as on a first
+    message, and the route's next statement is run after the read.
+
+    Mutation receipt: put the adoption loop back into `code_lane_attachments` and the SELECT
+    below raises a ForeignKeyViolation.
+    """
+    from sqlalchemy import select
+
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    await _stored(
+        db_session,
+        storage,
+        user_id=user.id,
+        attachment_id="loose",
+        media_type=EXCEL_MEDIA_TYPE,
+        name="book.xlsx",
+        conversation_id=None,
+    )
+    not_written_yet = uuid.uuid4()
+
+    found = await code_lane_attachments(
+        db_session, user_id=user.id, conversation_id=not_written_yet, attachment_ids=["loose"]
+    )
+    assert [f.attachment_id for f in found] == ["loose"]
+
+    # The route's next statement. With a pending UPDATE on the row this autoflushes and raises.
+    link = await db_session.scalar(
+        select(Attachment.conversation_id).where(Attachment.attachment_id == "loose")
+    )
+    assert link is None
+
+
+async def test_adoption_keeps_the_file_findable_on_the_second_turn(db_session) -> None:
     """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO (#214 R7a).
 
-    The composer uploads before the first send, so on a new chat there is no conversation row to
-    link to and the upload stores NULL. Turn one finds the file anyway, because the message carries
-    its id. Turn two carries no ids — so with the link still NULL the query returned nothing: not
-    placed, not named to the agent, and `read_attachment` not even registered. A file the citizen
-    attached became invisible one message later.
+    Turn one finds an unlinked file by the message's own ids. Turn two carries none, so a row whose
+    link is still NULL is not found at all — not placed, not named to the agent, `read_attachment`
+    not even registered. Adoption is now a separate step the send route calls once the conversation
+    demonstrably exists, which is what B1 requires.
 
-    Adoption happens at the first moment a conversation demonstrably exists AND the file is known
-    to belong to it. Mutation receipt: remove the adoption loop and the second call returns empty.
+    Mutation receipt: skip `adopt_unlinked_attachments` and the second read returns empty.
     """
+    from src.services.attachments.materialize import adopt_unlinked_attachments
+
     storage = FakeStorage()
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, user.id)
@@ -473,15 +516,71 @@ async def test_an_unlinked_row_is_adopted_so_the_second_turn_still_finds_it(db_s
         conversation_id=None,
     )
 
-    # Turn one — found by the message's own ids, and adopted on the way through.
+    # Turn one — found by the message's own ids; the route then adopts it.
     first = await code_lane_attachments(
         db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
     )
     assert [f.attachment_id for f in first] == ["loose"]
+    await adopt_unlinked_attachments(
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
+    )
 
     # Turn two — no ids on the message at all.
     second = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
     assert [f.attachment_id for f in second] == ["loose"], "the file vanished on the second turn"
+
+
+async def test_adoption_moves_only_the_callers_still_unlinked_rows(db_session) -> None:
+    """Adoption is one UPDATE over client-supplied ids, so it must be narrow in both directions: it
+    never re-links a file that already belongs to a conversation, and it never touches a row
+    belonging to someone else — even when that row's id is named."""
+    from sqlalchemy import select
+
+    from src.services.attachments.materialize import adopt_unlinked_attachments
+
+    storage = FakeStorage()
+    me = await UserFactory.create(db_session)
+    them = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, me.id)
+    this_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
+    other_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
+    await _stored(
+        db_session,
+        storage,
+        user_id=me.id,
+        attachment_id="already",
+        media_type=CSV_MEDIA_TYPE,
+        name="a.csv",
+        conversation_id=other_chat.id,
+    )
+    await _stored(
+        db_session,
+        storage,
+        user_id=them.id,
+        attachment_id="theirs",
+        media_type=CSV_MEDIA_TYPE,
+        name="b.csv",
+        conversation_id=None,
+    )
+
+    await adopt_unlinked_attachments(
+        db_session,
+        user_id=me.id,
+        conversation_id=this_chat.id,
+        attachment_ids=["already", "theirs"],
+    )
+
+    links = dict(
+        (
+            await db_session.execute(
+                select(Attachment.attachment_id, Attachment.conversation_id).where(
+                    Attachment.attachment_id.in_(["already", "theirs"])
+                )
+            )
+        ).all()
+    )
+    assert links["already"] == other_chat.id  # not re-linked
+    assert links["theirs"] is None  # not someone else's to move
 
 
 async def test_another_owners_file_is_not_reachable_by_naming_its_id(db_session) -> None:

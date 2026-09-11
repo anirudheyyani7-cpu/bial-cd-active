@@ -58,6 +58,7 @@ from src.schemas import AUTH_401, CamelModel, DailyTokenLimitBody, ErrorEnvelope
 from src.services.agent.mode_prompts import PromptContext
 from src.services.attachments.materialize import (
     AttachmentDelivery,
+    adopt_unlinked_attachments,
     code_lane_attachments,
 )
 from src.services.build_sessions import SandboxReclaimBlockedError
@@ -633,6 +634,20 @@ async def start_turn(
             await db.refresh(conversation)
     if conversation is None:  # the losing arm's cross-owner id; otherwise unreachable
         raise AppApiError(404, "Conversation not found.")
+
+    # ADOPT THIS MESSAGE'S UNLINKED UPLOADS — HERE, AND NOT A LINE EARLIER (#214, agc129's B1).
+    # This is the first point where the conversation row demonstrably exists on both arms: a staged
+    # one has been flushed above (or replaced by the race winner after its rollback), and an
+    # existing one was loaded. Every side-effect-free refusal is above it, so a refused message
+    # links nothing. Run any earlier and the UPDATE is autoflushed into a foreign key that does not
+    # exist yet — the 500 that the first message of every new chat carrying a spreadsheet used to
+    # hit, reproduced by agc129 through this route.
+    await adopt_unlinked_attachments(
+        db,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        attachment_ids=body.message.attachment_ids,
+    )
 
     # Free text while plan options are pending resolves them as an implicit "keep refining".
     # The model must see a RESOLVED call — the dangling-call repair never has to guess

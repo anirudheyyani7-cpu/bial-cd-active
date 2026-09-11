@@ -1327,7 +1327,15 @@ class TurnEngine:
                         prompt_context=prompt_context,
                         workspace=workspace,
                     )
-                    toolsets = toolsets_for_kind(state.kind, _workspace_of).toolsets
+                    # THE CONNECTED-DATA SURFACE RIDES THE PROMPT CONTEXT, and passing it is what
+                    # makes the feature exist at all: the argument defaults to none, so a call
+                    # that forgot it would register the tool for nobody while every registration
+                    # test — which calls `toolsets_for_kind` directly — stayed green.
+                    toolsets = toolsets_for_kind(
+                        state.kind,
+                        _workspace_of,
+                        connected_systems=prompt_context.connected_systems,
+                    ).toolsets
                     # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT. A run can only
                     # end deferred if a tool that DEFERS was registered on it, and
                     # `present_plan_options` — the one `CallDeferred` in the tree — is on the
@@ -2284,7 +2292,14 @@ class TurnEngine:
             deps=deps,
             model=model,
             message_history=messages,
-            toolsets=toolsets_for_kind(ChatKind.BUILD, _workspace_of, _sandbox_of).toolsets,
+            # Same connected-data surface as the Plan arm, off the same one value — see the
+            # note at the Plan call site.
+            toolsets=toolsets_for_kind(
+                ChatKind.BUILD,
+                _workspace_of,
+                _sandbox_of,
+                connected_systems=prompt_context.connected_systems,
+            ).toolsets,
             output_type=str,
             usage_limits=UsageLimits(request_limit=MODEL_TURN_CEILING),
             # Without `max_tokens` pydantic-ai's Anthropic default of 4096 truncates a

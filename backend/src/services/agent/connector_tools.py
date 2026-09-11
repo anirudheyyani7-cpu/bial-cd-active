@@ -156,14 +156,23 @@ async def connector_schema(ctx: RunContext[Any], system: str) -> str:
 
     try:
         return _load(match.key)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         # NAMED IN THE SERVER LOG, NEVER IN THE MODEL'S ANSWER. The path is the one thing a human
         # needs to fix this and the one thing the model has no use for.
+        #
+        # BOTH WAYS THE READ CAN FAIL. `OSError` is the missing or unreadable file;
+        # `UnicodeDecodeError` is the file that exists and is corrupt, which is NOT an OSError and
+        # would otherwise escape as an unhandled exception — failing the citizen's whole turn
+        # instead of telling the model to stop rather than guess column names.
+        #
+        # `exc_info=True` because the module docstring calls this a packaging break a human must
+        # fix, and that is exactly when the traceback is the thing they need.
         logger.error(
             "connector_catalogue_unreadable",
             connector_key=match.key,
             path=str(_CATALOGUE / f"{match.key}.txt"),
             error=str(exc),
+            exc_info=True,
         )
         return _UNAVAILABLE
 

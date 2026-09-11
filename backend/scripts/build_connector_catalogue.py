@@ -429,7 +429,17 @@ later by the artefact-wide ASCII assertion."""
 
 
 def simple_type(dtypes: list[str]) -> str:
-    """The dtype in words the model can act on, not polars' spelling of it."""
+    """The dtype in words the model can act on, not polars' spelling of it.
+
+    FAIL-FIRST ON BOTH UNKNOWNS, because either one ships a confident falsehood. A column whose
+    files disagree on dtype has no single answer and `dtypes[0]` would silently pick one; a dtype
+    no branch below names would fall through to "text" and label a numeric column as free text,
+    which is the mislabelling `value_clause` trusts this function to prevent."""
+    if len(dtypes) != 1:
+        raise SystemExit(
+            f"{dtypes!r} holds {len(dtypes)} dtypes, not one — a column whose files disagree "
+            "has no single type to state. Re-profile, or decide the type and record it."
+        )
     dtype = dtypes[0]
     if dtype.startswith("Datetime"):
         return "timestamp"
@@ -437,7 +447,12 @@ def simple_type(dtypes: list[str]) -> str:
         return "integer"
     if dtype.startswith("Decimal"):
         return "decimal"
-    return "text"
+    if dtype == "String":
+        return "text"
+    raise SystemExit(
+        f"{dtype!r} matches no known dtype. Add a branch naming it rather than letting it fall "
+        "through to 'text' — a mislabelled type is a query written against the wrong shape."
+    )
 
 
 def group_of(name: str) -> str:
@@ -491,6 +506,18 @@ def value_clause(column: dict[str, Any]) -> str:
 
     VERBATIM AND QUOTED, never stripped — see the module docstring on `'Indigo '`."""
     values = [str(value) for value in (column.get("values") or [])]
+    # THE CLIENT'S BYTES, CHECKED BEFORE THEY BECOME A LINE. `ascii_only` folds the definitions WE
+    # write; values are rendered verbatim by contract and never pass through it. A value holding a
+    # newline does not corrupt its line, it SPLITS one — and the halves read as two more columns
+    # in a file whose entire format is one column per line, which is a fabricated column in the
+    # one artefact that exists to make fabrication impossible. Checked per value, not on the
+    # assembled text, because by then the text is full of legitimate newlines.
+    for value in values:
+        if not value.isascii() or not value.isprintable():
+            raise SystemExit(
+                f"{column['name']}'s value {value!r} is not printable ASCII. Values are rendered "
+                "verbatim, so this is the client's byte, not ours — decide how to represent it."
+            )
     if not values or simple_type(column["dtypes"]) in {"integer", "decimal"}:
         return ""
     distinct = int(column.get("distinct_max") or 0)
@@ -590,7 +617,11 @@ def padding_reach(described: list[dict[str, Any]]) -> tuple[int, int, int]:
         if padded:
             padded_values += len(padded)
             padded_columns.append(column)
-    listed = sum(1 for c in padded_columns if len(c["values"]) <= INLINE_VALUE_MAX)
+    # DERIVED FROM THE RENDERER, NOT RE-SPELLED. `value_clause` decides whether a column's values
+    # are listed on three conditions, not one; counting `len(values) <= INLINE_VALUE_MAX` here
+    # restated a third of that rule, so the header's sentence could disagree with the lines it
+    # describes. Asking the renderer is the only spelling that cannot drift.
+    listed = sum(1 for c in padded_columns if value_clause(c).startswith("= '"))
     return padded_values, len(padded_columns), listed
 
 

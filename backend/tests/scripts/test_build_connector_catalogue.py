@@ -52,6 +52,7 @@ from scripts.build_connector_catalogue import (
     group_of,
     load_definitions,
     load_profile,
+    simple_type,
 )
 from tests.subprocess_env import child_env
 
@@ -593,6 +594,25 @@ def test_an_integer_renders_its_type_and_no_range() -> None:
     assert "min" not in lines["NO_OF_SEATS_NOSE"]
 
 
+def test_a_decimal_renders_its_type_and_not_its_values() -> None:
+    """★ THE OTHER HALF OF THE NUMERIC SUPPRESSION, WHICH HAD NO TEST.
+
+    `value_clause` suppresses the value list for `integer` AND `decimal`, but only the integer
+    half was pinned. The decimal half is live in the real data and it is the half that would look
+    plausible if it broke: `AIRLINES_ID` has 1,458 recorded values, so narrowing the exclusion to
+    `{"integer"}` ships `= at least 1,458 distinct values observed` against a numeric surrogate
+    key — numerically true, and an invitation to build a dropdown of airline IDs.
+
+    Mutation check: narrow the set to `{"integer"}` and this goes red naming the column."""
+    lines = column_lines(SHIPPED)
+    assert lines["AIRLINES_ID"] == "AIRLINES_ID (decimal)"
+    assert lines["AIRCRAFT_ID"] == "AIRCRAFT_ID (decimal)"
+    # The suppression is doing real work: these columns DO carry values, they are simply not a
+    # vocabulary anyone should filter on.
+    assert len(COLUMNS["AIRLINES_ID"]["values"]) > INLINE_VALUE_MAX
+    assert "=" not in lines["AIRLINES_ID"]
+
+
 def test_a_timestamp_renders_bare() -> None:
     lines = column_lines(SHIPPED)
     assert lines["SIBT_SOBT_TIME"] == "SIBT_SOBT_TIME (timestamp)"
@@ -716,3 +736,120 @@ def test_a_definition_with_no_profile_row_stops_the_build() -> None:
 def test_a_column_no_group_claims_stops_the_build() -> None:
     with pytest.raises(SystemExit, match="matches no domain group"):
         group_of("zzz_unclaimed_column")
+
+
+def test_ascii_only_folds_to_the_characters_it_claims() -> None:
+    """★ THE FUNCTION, NOT THE FUNCTION COMPARED WITH ITSELF.
+
+    The only other exercise of `ascii_only` asserts `gloss == ascii_only(definitions[name])` — it
+    applies the function to BOTH sides, so a wrong-but-still-ASCII entry in `_ASCII_FOLDS` (an
+    em-dash folding to `+`, say) passes on every column. This pins the fold table against
+    hardcoded literals instead, so the expected bytes are written down rather than computed by
+    the code under test.
+
+    This is the same defect shape as two others already found in this change: an assertion whose
+    two sides share the fault it is meant to catch."""
+    assert ascii_only("a—b") == "a-b"  # em-dash
+    assert ascii_only("a–b") == "a-b"  # en-dash
+    assert ascii_only("‘q’") == "'q'"  # single curly quotes, both sides
+    # Already-ASCII text is returned untouched — the fold table must not rewrite ordinary prose.
+    assert ascii_only("plain 'text' -- with punctuation") == "plain 'text' -- with punctuation"
+    # The table is FOUR entries and everything else is a failure, so the DOUBLE curly quotes are
+    # not folded — they raise. Pinning that here because it is the property that makes the table
+    # safe to extend: a new entry is a deliberate decision, never a silent widening.
+    with pytest.raises(SystemExit, match="non-ASCII"):
+        ascii_only("“q”")
+
+
+def test_a_character_the_fold_table_does_not_know_stops_the_build() -> None:
+    """`ascii_only`'s fail-first arm, which had no test of its own.
+
+    The ellipsis is not a hypothetical: it arrived in `ENRC`'s corrected definition and this is
+    the guard that caught it. A lenient `.encode("ascii", "ignore")` would have swallowed it."""
+    with pytest.raises(SystemExit, match="non-ASCII"):
+        ascii_only("an ellipsis…")
+
+
+def test_a_column_whose_files_disagree_on_type_stops_the_build() -> None:
+    """`dtypes[0]` was the one silent pick left in a fail-first file: a column profiled as two
+    types has no single type to state, and picking the first states one anyway."""
+    with pytest.raises(SystemExit, match="holds 2 dtypes"):
+        simple_type(["Int64", "String"])
+
+
+def test_a_dtype_no_branch_names_stops_the_build() -> None:
+    """The fall-through used to return "text", so a future `Float64` or `Boolean` column would be
+    labelled free text — the same mislabelling `value_clause` trusts `simple_type` to prevent."""
+    with pytest.raises(SystemExit, match="matches no known dtype"):
+        simple_type(["Float64"])
+
+
+def test_a_non_ascii_value_stops_the_build_not_just_a_non_ascii_definition() -> None:
+    """★ `ascii_only` GUARDS OUR PROSE; THIS GUARDS THE CLIENT'S BYTES.
+
+    Values are rendered VERBATIM by contract — never folded, never stripped. So the one guard the
+    definitions get does not reach them, and a value carrying a newline does not corrupt a line,
+    it SPLITS one: the halves then read as two more columns in a file whose entire format is one
+    column per line. That is a fabricated column, which is the exact failure this artefact exists
+    to make impossible."""
+    poisoned = json.loads(json.dumps(PROFILE))
+    for column in poisoned["columns"]:
+        # A column rendered INLINE, so the poisoned value actually reaches the artefact —
+        # `GROUND_HANDLER` holds more than the cap and renders as a count, which would have made
+        # this test pass for the wrong reason.
+        if column["name"] == "AIRCRAFT_BODY_TYPE":
+            column["values"] = [*column["values"], "FAKE\nSPLIT_COLUMN (text)"]
+            break
+    with pytest.raises(SystemExit, match=r"AIRCRAFT_BODY_TYPE's value .* not printable ASCII"):
+        build(poisoned, DEFINITIONS)
+
+
+def test_the_tools_docstring_counts_match_what_the_generator_renders() -> None:
+    """★ A CLAIM IN SHIPPED PROSE, PINNED TO THE THING IT CLAIMS ABOUT.
+
+    `connector_tools.py`'s module docstring states the bucket split off the artefact — 21 inline,
+    68 with no vocabulary, 13 free-text, 29 a floor. Those numbers were correct when typed and
+    nothing held them there, so the next workbook revision moves the artefact and leaves the prose
+    asserting a split that no longer exists. The docstring is read by humans deciding what this
+    tool returns, and the same paragraph already carries a correction of the plan's stale 21/26/84
+    — which is what a hand-counted number does the second time.
+
+    Counted from the SHIPPED bytes rather than from the profile: the claim is about what the block
+    renders, not about what the data could support."""
+    counts = {"inline": 0, "none": 0, "free_text": 0, "floor": 0}
+    for line in column_lines(SHIPPED).values():
+        clause = line.split(" -- ", 1)[0]
+        if "= '" in clause:
+            counts["inline"] += 1
+        elif "free text, not a code list" in clause:
+            counts["free_text"] += 1
+        elif "distinct values observed" in clause:
+            counts["floor"] += 1
+        else:
+            counts["none"] += 1
+
+    assert sum(counts.values()) == len(DESCRIBED) == 131
+
+    # WHOLE SENTENCES, NOT `str(count) in docstring`. That substring check is what I wrote first
+    # and it proves nothing: the same paragraph corrects the plan's stale "21 / 26 / 84", so "21"
+    # is in the text whatever the inline count becomes. Whitespace is collapsed because the
+    # docstring wraps, and a claim must not be pinnable or unpinnable by where a line breaks.
+    docstring = " ".join(
+        (_BACKEND / "src/services/agent/connector_tools.py")
+        .read_text(encoding="utf-8")
+        .split('"""')[1]
+        .split()
+    )
+    claims = {
+        "inline": f"{counts['inline']} columns carry their values INLINE",
+        "none": f"{counts['none']} have no vocabulary to state at all",
+        "free_text": f"{counts['free_text']} hold more distinct values",
+        "floor": f"the remaining {counts['floor']} are airport",
+    }
+    for label, claim in claims.items():
+        assert claim in docstring, (
+            f"the artefact renders {counts[label]} {label} columns and connector_tools.py's "
+            f"docstring does not say {claim!r}. Recount it — those numbers are a claim about "
+            "this file, and the paragraph already carries one stale count it had to correct."
+        )
+    assert counts == {"inline": 21, "none": 68, "free_text": 13, "floor": 29}

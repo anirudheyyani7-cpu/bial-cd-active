@@ -13,11 +13,11 @@ import asyncio
 import enum
 import math
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -28,10 +28,13 @@ from src.api.v1.live_build import refuse_while_build_session_live
 from src.api.v1.offset_pagination import PageQuery, clean_page
 from src.api.v1.pagination import (
     DEFAULT_PAGE_SIZE,
+    CursorQuery,
     LimitQuery,
     SearchQuery,
     clean_limit,
     clean_search,
+    parse_cursor,
+    split_keyset,
 )
 from src.config import settings
 from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
@@ -40,8 +43,11 @@ from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.conversation import Conversation
 from src.db.models.deleted_project import DeletedProject
 from src.db.models.project import Project
+from src.db.models.project_share import ProjectShare
+from src.db.models.user import User
 from src.schemas import (
     AUTH_401,
+    ColleagueSearchResponse,
     ErrorEnvelope,
     OkResponse,
     ProjectCountsResponse,
@@ -53,8 +59,12 @@ from src.schemas import (
     ProjectListResponse,
     ProjectPatch,
     ProjectResponse,
+    ProjectSharesResponse,
+    SharedProjectListResponse,
+    ShareRequest,
     error_responses,
 )
+from src.schemas.shares import ColleagueResult, SharedProjectResponse, ShareResponse
 from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth, teardown_handles
 from src.services.audit.log import append_audit
@@ -66,13 +76,21 @@ from src.services.deploy.registry_delete import sweep_app_repositories
 from src.services.deploy.teardown import sweep_published_apps
 from src.services.embeddings import EmbedderDep, write_description_embedding
 from src.services.projects import (
+    MIN_COLLEAGUE_QUERY_CHARS,
+    create_share,
     delete_project_cascade,
     find_possible_duplicates,
+    list_shared_with_me,
+    list_shares_for_project,
     log_matches_shown,
     log_resolution,
     owned_project_or_404,
+    resolve_project_access,
     resweep_submission_prefixes,
+    revoke_share,
+    search_colleagues,
 )
+from src.services.ratelimit import rate_limit
 from src.services.redis import get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 from src.services.sandbox import SandboxClient
@@ -110,6 +128,7 @@ def _to_response(
     has_relaunchable_snapshot: bool | None = None,
     *,
     is_serving: bool,
+    access: Literal["owner", "shared"] = "owner",
 ) -> ProjectResponse:
     """Project a row onto the wire shape.
 
@@ -118,6 +137,11 @@ def _to_response(
     so `GET /{id}` reported a live app as not serving while its own field docstring says it
     IS the server's answer. A default is what let the omission type-check; without one, a new
     endpoint cannot forget it, and `_serving_now` is the one way to work it out.
+
+    `access` DOES default, unlike `is_serving` — every call site except `get_project` deals
+    exclusively with the caller's own projects (#198), so defaulting to `"owner"` is the
+    answer for all of them and only the one route that can return a shared view needs to say
+    otherwise.
     """
     return ProjectResponse(
         id=project.id,
@@ -129,6 +153,7 @@ def _to_response(
         is_serving=is_serving,
         created_at=project.created_at,
         updated_at=project.updated_at,
+        access=access,
     )
 
 
@@ -437,13 +462,141 @@ async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsRespo
     )
 
 
+_COLLEAGUE_QUERY_MAX_CHARS = 100
+
+
+def _clean_colleague_query(q: str) -> str:
+    """Normalize a `?q=` colleague-search token (#198 R4): strip, refuse below the 3-char
+    minimum (a query this short against an anchored match is either near-useless or, for a
+    two-letter name, still wide enough to be an annoyance rather than a search), refuse an
+    over-long paste, refuse a NUL byte for the same reason `pagination.py::clean_search`
+    does (unrepresentable in Postgres text, would 500 downstream)."""
+    q = q.strip()
+    if len(q) < MIN_COLLEAGUE_QUERY_CHARS:
+        raise AppApiError(422, f"Type at least {MIN_COLLEAGUE_QUERY_CHARS} characters to search.")
+    if len(q) > _COLLEAGUE_QUERY_MAX_CHARS:
+        raise AppApiError(422, f"q must be at most {_COLLEAGUE_QUERY_MAX_CHARS} characters.")
+    if "\x00" in q:
+        raise AppApiError(422, "q contains an unsupported character.")
+    return q
+
+
+# Per-user rate limit on colleague search (#198 R4) — modeled on `feedback/router.py`'s
+# `_feedback_limiter`: a door dependency (runs BEFORE the route body, unlike
+# `create_project`'s description-generation limiter, which had to skip refusals that spend
+# nothing — a search spends nothing EITHER way, so there is no such exception to make here).
+COLLEAGUE_SEARCH_RATE_LIMIT = 30
+COLLEAGUE_SEARCH_RATE_WINDOW_SECONDS = 60
+
+
+async def _colleague_search_rate_key(user: CurrentUser) -> str:
+    return f"colleague-search:{user.id}"
+
+
+_colleague_search_limiter = rate_limit(
+    _colleague_search_rate_key,
+    limit=COLLEAGUE_SEARCH_RATE_LIMIT,
+    window_seconds=COLLEAGUE_SEARCH_RATE_WINDOW_SECONDS,
+    message="Too many colleague searches. Please wait a moment and try again.",
+)
+
+
+@router.get(
+    "/colleagues",
+    dependencies=[Depends(_colleague_search_limiter)],
+    responses=error_responses(
+        AUTH_401,
+        (422, ErrorEnvelope, "Query too short, too long, or unsupported"),
+        (429, ErrorEnvelope, "Too many colleague searches"),
+    ),
+)
+async def search_project_colleagues(
+    user: CurrentUser, db: DbSession, q: Annotated[str, Query()]
+) -> ColleagueSearchResponse:
+    """Find a colleague to share a project with (#198 R4/R5) — anchored match on the start of
+    a display-name token or the start of an email local part, never a substring (see
+    `services/projects/shares.py::search_colleagues` for why: a substring match on a tenant
+    sharing one email domain would match every user in it). Returns display name + email
+    local part only, at most 10 results — NOT the admin roster shape, which additionally
+    carries token limits, usage and suspension state that no citizen picking a colleague to
+    share with has any business seeing.
+
+    DECLARED BEFORE `/{project_id}` — same reason `/counts` is: FastAPI matches in
+    declaration order, so a static path registered after the parameterised route would be
+    swallowed by it and answer 422 on a UUID parse instead of running this handler.
+    """
+    cleaned = _clean_colleague_query(q)
+    colleagues = await search_colleagues(db, requester_id=user.id, query=cleaned)
+    return ColleagueSearchResponse(
+        colleagues=[
+            ColleagueResult(
+                id=colleague.id,
+                display_name=colleague.display_name,
+                email_local_part=colleague.email.split("@", 1)[0],
+            )
+            for colleague in colleagues
+        ]
+    )
+
+
+@router.get(
+    "/shared",
+    responses=error_responses(AUTH_401, (422, ErrorEnvelope, "Invalid pagination cursor")),
+)
+async def list_projects_shared_with_me(
+    user: CurrentUser,
+    db: DbSession,
+    cursor: CursorQuery = None,
+    limit: LimitQuery = DEFAULT_PAGE_SIZE,
+) -> SharedProjectListResponse:
+    """Projects a colleague has shared with the caller (#198 R12) — KEYSET paginated, not the
+    numbered-offset shape `list_projects`/`project_counts` above use for the caller's OWN
+    projects; see `services/projects/shares.py::list_shared_with_me` for why that
+    justification does not carry over to a list every sharer writes into.
+
+    DECLARED BEFORE `/{project_id}` for the same reason `/colleagues` above is.
+    """
+    parsed_cursor = parse_cursor(cursor)
+    cleaned_limit = clean_limit(limit)
+    # `limit + 1`: the extra row is how `split_keyset` knows there is a next page without a
+    # second COUNT query — the platform's standard keyset idiom (`pagination.py`).
+    entries = await list_shared_with_me(db, user.id, limit=cleaned_limit + 1, cursor=parsed_cursor)
+    page, next_cursor, has_more = split_keyset(
+        entries, cleaned_limit, key=lambda entry: entry.share_id
+    )
+    return SharedProjectListResponse(
+        items=[
+            SharedProjectResponse(
+                project_id=entry.project.id,
+                project_name=entry.project.name,
+                project_description=entry.project.description,
+                shared_by_display_name=entry.shared_by.display_name,
+                shared_at=entry.shared_at,
+            )
+            for entry in page
+        ],
+        next_cursor=next_cursor,
+        has_more=has_more,
+    )
+
+
 @router.get(
     "/{project_id}",
     responses=error_responses(AUTH_401, (404, ErrorEnvelope, "Project not found")),
 )
 async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -> ProjectResponse:
-    project = await owned_project_or_404(db, user.id, project_id)
-    app_id, app_status = await _project_app(db, user.id, project.id)
+    """The ONE endpoint in this router that admits a share (#198 R11) — every other route
+    here still calls `owned_project_or_404`, unchanged. `resolve_project_access` checks
+    ownership first, so a builder viewing their own project always gets `access="owner"`
+    (R11's "owner takes precedence over shared")."""
+    resolved = await resolve_project_access(db, user.id, project_id)
+    project = resolved.project
+    # OWNER-SCOPED CHILD LOOKUPS USE THE PROJECT'S OWNER, NEVER THE CALLER. For a shared
+    # recipient the two differ, and `_project_app`/`restorable_presence`/`_serving_now` all
+    # answer "does THIS PROJECT's app exist / is it live" — one right answer regardless of who
+    # is asking. Passing `user.id` here (the pre-#198 shape) would silently read as "no app"
+    # for every recipient, since `AppRegistry` is scoped to the OWNER's id, never the viewer's.
+    app_id, app_status = await _project_app(db, project.user_id, project.id)
     # This is the ONE surface that offers Relaunch, so the one that pays for the head-check.
     # No app row means no bundle can exist, and that is a CONFIRMED absent rather than an
     # unknown: skipping the store call here is an answer, not an omission.
@@ -455,7 +608,86 @@ async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -
     # can never disagree about whether a restore is on offer.
     relaunchable = False if app_id is None else await restorable_presence(app_id)
     return _to_response(
-        project, app_id, app_status, relaunchable, is_serving=await _serving_now(db, app_id)
+        project,
+        app_id,
+        app_status,
+        relaunchable,
+        is_serving=await _serving_now(db, app_id),
+        access=resolved.access.value,
+    )
+
+
+def _share_response(share: ProjectShare, colleague: User) -> ShareResponse:
+    return ShareResponse(
+        id=share.id,
+        shared_with_user_id=colleague.id,
+        shared_with_display_name=colleague.display_name,
+        shared_with_email_local_part=colleague.email.split("@", 1)[0],
+        created_at=share.created_at,
+    )
+
+
+@router.post(
+    "/{project_id}:share",
+    responses=error_responses(
+        AUTH_401,
+        (400, ErrorEnvelope, "Self-share refused, or nothing saved to share yet"),
+        (404, ErrorEnvelope, "Project or colleague not found"),
+    ),
+)
+async def share_project(
+    project_id: uuid.UUID, body: ShareRequest, user: CurrentUser, db: DbSession
+) -> ShareResponse:
+    """Share a project the caller owns with a named colleague (#198 R1). Owner-only —
+    `owned_project_or_404`, never the widened `resolve_project_access`: sharing IS a mutation
+    of the project's own access list, and R6 grants a recipient "Can use", never the ability
+    to share onward. Idempotent (R3) and refused for self-share (R2) or a project with
+    nothing saved yet (R10) — both enforced inside `create_share`, not duplicated here."""
+    project = await owned_project_or_404(db, user.id, project_id)
+    colleague = await db.get(User, body.shared_with_user_id)
+    if colleague is None:
+        raise AppApiError(404, "That colleague could not be found.")
+    share = await create_share(db, project=project, actor_id=user.id, colleague_id=colleague.id)
+    await db.commit()
+    return _share_response(share, colleague)
+
+
+@router.post(
+    "/{project_id}:unshare",
+    response_model=OkResponse,
+    responses=error_responses(AUTH_401, (404, ErrorEnvelope, "Project not found")),
+)
+async def unshare_project(
+    project_id: uuid.UUID, body: ShareRequest, user: CurrentUser, db: DbSession
+) -> OkResponse:
+    """Revoke a project's share with a colleague (#198 R1). Owner-only, same reasoning as
+    `share_project`. `{"ok": true}` either way, whether or not the share still existed —
+    revoking an already-gone share is a normal double-click/retry, not an error (mirrors
+    `release_project_sandbox`'s own "released: false is a success" posture). Tearing down the
+    recipient's live container is wired in once the shared runtime exists (R25); today this
+    only ever removes the membership row and its audit trail."""
+    project = await owned_project_or_404(db, user.id, project_id)
+    await revoke_share(
+        db, project=project, actor_id=user.id, colleague_id=body.shared_with_user_id
+    )
+    await db.commit()
+    return OkResponse(ok=True)
+
+
+@router.get(
+    "/{project_id}/shares",
+    responses=error_responses(AUTH_401, (404, ErrorEnvelope, "Project not found")),
+)
+async def list_project_shares(
+    project_id: uuid.UUID, user: CurrentUser, db: DbSession
+) -> ProjectSharesResponse:
+    """Who a project is currently shared with, and when (#198 R12) — the read that makes
+    `unshare_project` usable: an owner has to see who holds access before picking who to
+    revoke it from. Owner-only, same reasoning as `share_project`."""
+    project = await owned_project_or_404(db, user.id, project_id)
+    entries = await list_shares_for_project(db, project.id)
+    return ProjectSharesResponse(
+        shares=[_share_response(entry.share, entry.recipient) for entry in entries]
     )
 
 

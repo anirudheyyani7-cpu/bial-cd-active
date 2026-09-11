@@ -258,6 +258,13 @@ class ProjectResponse(CamelModel):
     has_relaunchable_snapshot: bool | None = None
     created_at: datetime
     updated_at: datetime
+    # WHO THE CALLER IS TO THIS PROJECT (#198 R11/R14) — "owner" everywhere except the one
+    # place a share can widen access, `get_project`. This is what the restricted workspace
+    # view keys off client-side; the API's OWN refusal of every mutating action for a
+    # recipient does not depend on this field at all (those routes call the strict
+    # `owned_project_or_404`, which a share never satisfies) — it exists so the UI can decide
+    # what to render before it tries something the API would refuse anyway.
+    access: Literal["owner", "shared"] = "owner"
 
 
 class ProjectCountsResponse(CamelModel):

@@ -38,6 +38,28 @@ checks whether something like your app already exists before it creates a new pr
   from yet — build the app first" on every app, including fully built ones. The button, its endpoint
   and the unused `app_registry.current_code` column behind it are all removed.
 
+### Fixed
+
+- **A finished build no longer leaves the preview on "Putting this page together…".** When a build
+  ended while the app was still compiling, the pane kept its compile cover up with nothing left to
+  take it down, so the app never appeared even though opening it in a new tab showed it working.
+  Thirty seconds after the build ends the cover now steps aside and the app's own "on screen" signal
+  decides what shows. An app that has not sent that signal gets the ordinary wait, never a blank frame.
+- **A build that stopped at its request limit is no longer labelled "The build failed."** The
+  transcript now says what the assistant's own message says: "This build stopped after doing as much
+  as it does in one go." A build that reaches its time limit reads the same way.
+- **Signing in no longer fails on every attempt once the organization's verification has expired.**
+  Microsoft reused a signed-in session whose multi-factor check had expired and then refused it, so
+  every attempt ended in "Sign-in failed. Please try again." and retrying could never help. The
+  platform now sends the person back to Microsoft once to verify again. If that also fails, the sign-in
+  page says the organization needs the sign-in confirmed again, and its button starts a fresh sign-in.
+- **A build interrupted by the assistant's service says so, and every failed build records why.** When
+  the model service stops answering partway through, the build now ends with "The assistant's service
+  stopped responding partway through…" and says to send the message again in a minute, instead of "The
+  assistant hit a problem". Pressing Stop while that ending is saving the app still ends the build.
+  Every failed build also stores the kind of error that ended it and where in the platform's code it
+  surfaced, never the error's text, so the next unexplained failure can be traced from the database.
+
 ### Deploying this release
 
 - **This release changes the database and cannot be deployed with a restart alone.** Migration 0039
@@ -49,6 +71,8 @@ checks whether something like your app already exists before it creates a new pr
   quietly falls back to matching words only and the two features above lose their meaning-based half.
   Set it alongside the existing `FOUNDRY__*` settings, then confirm it took by running one search whose
   words do not appear in the app it should find.
+- **The fixes above need only the backend image and the portal bundle.** They add no migration and no
+  setting of their own.
 
 ## [1.7.0-beta.12] - 2026-09-10
 

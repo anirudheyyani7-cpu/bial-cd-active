@@ -8,7 +8,8 @@ POINTER at the last build session touching the app — never reassigned (SPA-rou
 `kind` is a native PG enum, the WHOLE classification (`plan`/`build`, fixed at creation; no `mode`
 column since migration 0035) — tool gating derives from this column alone, never the client.
 `title`/`context` are SPA-owned mutable fields; legacy `code` JSONB was dropped in migration 0024
-(truth: `app_registry.current_code`). Ownership is `user_id` — every read scoped by it.
+(truth: the build snapshots — `app_registry.current_code` followed it in migration 0039, once
+its one remaining reader was deleted). Ownership is `user_id` — every read scoped by it.
 """
 
 from __future__ import annotations

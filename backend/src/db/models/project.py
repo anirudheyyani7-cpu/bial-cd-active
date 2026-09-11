@@ -13,17 +13,22 @@ every query over a project is scoped by the owning `user_id`, and a project and 
 children must share that `user_id` (a user cannot file work under another user's
 project). There is NO `org_id` — the user IS the isolation boundary.
 
-`description` is optional (NULL = no description) and doubles as shared grounding
-injected into every chat in the project. It is length-bounded and
-normalized (empty/whitespace → NULL) at the Pydantic write boundary, NOT the
-column — because it is injected into every project chat turn, an unbounded value is
-an uncapped per-turn token cost. The cap constant lives here so the
-write boundary and the injection point share one source of truth.
+`description` is REQUIRED ON CREATE and word-bounded (15-120 words, #191), and doubles as
+shared grounding injected into every chat in the project (R16, U8) and as the marketplace's
+listing/search text (#145). NULL is still a legal column value — a project created before
+#191 keeps working with none, and the rule is enforced at the Pydantic write boundary
+(U4/U7/#191), NOT the column, so no migration or backfill was needed to make it mandatory.
+Length and word-count are normalized (empty/whitespace → NULL, checked against the bounds
+below) at that same boundary — because the field is injected into every project chat turn,
+an unbounded value is an uncapped per-turn token cost (KD-8, R20). The cap constants live
+here so the write boundary (U4/U7/#191) and the injection point (U8) share one source of
+truth.
 """
 
 from __future__ import annotations
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,12 +50,28 @@ MAX_PROJECT_NAME_WORDS = 8
 # an unbounded description is an uncapped per-turn token cost. Enforced at the
 # Pydantic write boundary; this constant is the shared source of truth.
 MAX_PROJECT_DESCRIPTION = 2000
-# The marketplace's search text configuration (migration 0034), named ONCE here —
+# The WORD bounds a person is told about (#191) — the character cap above is only the
+# paste backstop, same relationship as MAX_PROJECT_NAME_WORDS to MAX_PROJECT_NAME. Unlike
+# the title, this one has a MINIMUM too: a one-line description embeds into a single vector
+# for semantic search (#191 slice 3), so a description too short to say anything embeds to
+# nothing worth matching. The maximum is a retrieval requirement as much as a storage one —
+# a long multi-topic description embeds to a vector that matches everything weakly, and
+# `ts_rank_cd` has no document-length normalisation, so a rambling description can out-rank
+# a precise one purely by containing more terms.
+MIN_PROJECT_DESCRIPTION_WORDS = 15
+MAX_PROJECT_DESCRIPTION_WORDS = 120
+# The marketplace's search text configuration (#145, migration 0034), named ONCE here —
 # where the generated column it must match lives — and imported by the marketplace router
 # rather than redeclared. A query parsed under a different configuration than the one the
 # generated column was built with stems differently and silently under-matches; that
 # failure mode is exactly why this can't be two independent constants that happen to agree.
 DESCRIPTION_TSV_REGCONFIG = "english"
+# `text-embedding-3-small`'s default dimension count (#191 slice 3, migration 0040) — under
+# pgvector's 2000-dimension ceiling for both HNSW and IVFFlat, so an index stays available as
+# the catalog grows. The model's `dimensions` shortening knob is honoured by the deployment
+# but deliberately not used: the default is already under the ceiling, so shortening would
+# cost recall and buy nothing.
+DESCRIPTION_EMBEDDING_DIMENSIONS = 1536
 
 
 class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
@@ -68,12 +89,23 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
             "description_tsv",
             postgresql_using="gin",
         ),
+        # Same "declared here even though the migration creates it" reasoning as above —
+        # migration 0040 builds this raw SQL, and an unaware model would let a future
+        # autogenerate emit a DROP of the semantic-search index (#191 slice 3).
+        sa.Index(
+            "ix_projects_description_embedding",
+            "description_embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"description_embedding": "vector_cosine_ops"},
+        ),
     )
 
     name: Mapped[str] = mapped_column(sa.String(MAX_PROJECT_NAME), nullable=False)
-    # Optional shared chat context. NULL = no description; the write
-    # boundary normalizes empty/whitespace to NULL so there is no undefined
-    # empty-string third state. Length is capped at the boundary, not here.
+    # Shared chat context (R15/R16), the marketplace listing (#145), and the search/duplicate-
+    # check text (#191). Required and word-bounded at the Pydantic write boundary as of #191 —
+    # the COLUMN stays nullable regardless, so a project written before #191 with no
+    # description is untouched (R13/R14). Length/word-count are checked at that same boundary,
+    # not here.
     description: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     # The marketplace's search index (migration 0034). DERIVED from `description` by
     # Postgres, never written from here — declared `Computed(persisted=True)` so SQLAlchemy
@@ -110,6 +142,20 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
             f"to_tsvector('{DESCRIPTION_TSV_REGCONFIG}', coalesce(description, ''))",
             persisted=True,
         ),
+        nullable=True,
+        deferred=True,
+    )
+    # The semantic-search index (#191 slice 3, migration 0040). UNLIKE `description_tsv`
+    # above, this is NOT `Computed` — an embedding call is a network round trip Postgres
+    # cannot make, so it is written explicitly from the API process (`api/v1/projects/
+    # router.py`) whenever a description is first set or changes (R25). NULL for every
+    # pre-#191 project and for any row whose embedding call failed (R26) — both read as
+    # keyword-only by the hybrid search query, not as an error.
+    #
+    # `deferred=True` for the same reason `description_tsv` is: `Project` is loaded as a
+    # full entity on the chat hot path, which has no use for a 1536-float vector.
+    description_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(DESCRIPTION_EMBEDDING_DIMENSIONS),
         nullable=True,
         deferred=True,
     )

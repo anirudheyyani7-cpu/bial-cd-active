@@ -5,13 +5,21 @@ ONE module-level `Agent`, built without a bound model — the Foundry model is p
 `ChatDeps` is built per request and scopes any tool to the caller's `user_id` (a dropped scope
 predicate is a cross-user leak).
 
-WHY THIS EXISTS: the per-run prompt has two sources, by `deps.kind`. `None` is a
-server-composed prompt applied verbatim — the path `describe.py` runs for
-`POST /{project_id}/description:generate`, composing its own prompt with no tools; it is NOT
-dead code. A set `kind` composes BASE + that kind's segment via
-`mode_prompts.compose_kind_prompt` — Build is an ordinary turn with more tools and a
-`SandboxSession`, composed the same way as Plan. Applied through `instructions`, NOT
-`system_prompt`, so prompts evolve without rewriting stored message history.
+The per-run system prompt has two sources, selected by `deps.kind` (U9/D4):
+
+- `kind is None` — a server-composed prompt applied verbatim. Its last caller,
+  `services/projects/describe.py` (`POST /{project_id}/description:generate`), was deleted in
+  #191 along with the rest of the Generate Description feature — as of that change nothing
+  constructs `ChatDeps` with `kind=None`. The branch is left in place rather than pulled with
+  its caller (removing it is a separate cleanup, not part of #191's stated scope).
+- `kind` set — a turn on the turn engine (which always sets it): BASE + that kind's segment
+  composed by `mode_prompts.compose_kind_prompt` from `deps.prompt_context`. BOTH kinds: a
+  Build turn is an ordinary turn with more tools (U5's convergence), so it composes here like
+  a Plan turn and carries a `SandboxSession` in `deps.sandbox`.
+
+Either way the text is applied through `instructions`, NOT `system_prompt`: instructions are
+never baked into stored message history, so prompts evolve without rewriting history — the
+same boundary that keeps U14's ephemeral reminders out of the DB.
 """
 
 from __future__ import annotations

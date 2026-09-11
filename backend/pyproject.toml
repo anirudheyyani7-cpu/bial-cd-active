@@ -17,6 +17,11 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "joserfc>=1.7.5",
     "openpyxl>=3.1.5",
+    # The SQLAlchemy `Vector` column type for `projects.description_embedding` (#191 slice
+    # 3). Shared, not `api`-only: `db/models/project.py` is imported by alembic and the
+    # worker too, not just the API process. The Postgres `vector` EXTENSION is separate and
+    # already enabled (migration 0001); this is the Python-side type that maps to it.
+    "pgvector>=0.4.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     # UPPER-BOUNDED, alone among these, because `services/parse/parsers.py` calls pypdf's
@@ -42,7 +47,9 @@ api = [
     "mammoth>=1.12.1",
     "markdownify>=1.2.3",
     "openpyxl>=3.1.5",
-    "pydantic-ai-slim[anthropic]>=2.37.0",
+    # `openai` extra added for #191 slice 3 (hybrid search): `OpenAIEmbeddingModel` +
+    # `AzureProvider` need the `openai` package pydantic-ai-slim vendors behind this extra.
+    "pydantic-ai-slim[anthropic,openai]>=2.37.0",
     "redis>=8.1.0",
 ]
 dev = [

@@ -70,7 +70,7 @@ class WorkerPass(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     #: `JSONB`, NOT `sa.JSON`, which is what this said and is not the same type. `sa.JSON` renders
     #: as `json` on Postgres: text, re-parsed on every read, un-indexable and with no containment
     #: operators. Every other JSON column in this schema is `JSONB` (`audit.detail`,
-    #: `app_registry.current_code`), and an operator wanting "every pass that destroyed anything"
+    #: `app_registry.declaration`), and an operator wanting "every pass that destroyed anything"
     #: needs the operators `json` does not have.
     counts: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
     #: Free text for the declined/failed arms. NEVER a container name — this is read

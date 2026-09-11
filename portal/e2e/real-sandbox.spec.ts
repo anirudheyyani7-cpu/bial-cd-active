@@ -27,10 +27,16 @@ const REAL_SANDBOX = process.env.E2E_REAL_SANDBOX === '1'
  */
 const PREVIEW_ADDRESS = /^https?:\/\/[^/]+\/a\/sbx-[0-9a-f]{28}\/?$/
 
+// A description that clears the 15-120 word bound (#191) — required on every create.
+const VALID_DESCRIPTION =
+  'Ground staff log VIP movement requests for each terminal. A duty supervisor approves ' +
+  "or rejects them, and the day's approved movements appear on a shared dashboard."
+
 async function createProject(page: Page, name: string): Promise<string> {
   await page.goto('/projects')
   await page.getByRole('button', { name: /new project/i }).first().click()
   await page.getByPlaceholder(/VIP Movement Tracker/i).fill(name)
+  await page.getByPlaceholder(/who uses it, and what do they do with it/i).fill(VALID_DESCRIPTION)
   await page.getByRole('button', { name: /create project/i }).click()
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}/)
   return page.url().split('/projects/')[1]

@@ -177,18 +177,6 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     # for the same reason, because that is what the code before it resolved them to.
     previous_status: Mapped[AppStatus | None] = mapped_column(app_status_enum, nullable=True)
 
-    # Code continuity's original store — same shape as the retired
-    # `conversations.code`'s `{current: {source, entry, ...}}`. IT HAS NO WRITER ANY MORE:
-    # the seed-on-open / write-back-on-build pair this was built for died with the
-    # `conversations.code` column (0024), and code truth moved to the sandbox's file tree
-    # and the build snapshots. `tests/api/v1/projects/test_code_continuity.py` pins the
-    # inertness — submit deliberately does not backstop it either.
-    #
-    # It is READ, which is why the column stays: `services/projects/describe.py` pulls the
-    # source out of it for the project-description generator, which 409s on a NULL. So a
-    # project that predates the move still describes itself, and one that does not, cannot.
-    current_code: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-
     # The submission under review: `submit` copies the app's mutable snapshot bundle to
     # the immutable `submission_key(app_id, source_submission_id)` blob and records the
     # ref + the bundle's HEAD commit SHA here. NULL until the first submit; every

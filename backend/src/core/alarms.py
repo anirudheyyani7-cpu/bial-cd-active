@@ -48,3 +48,28 @@ container bills; a database keeps a copy of the citizen's data alive after they 
 be destroyed). Delete it by hand, then fix the cause the `reason` field names — most often a
 credential without the delete permission, which is a configuration change rather than a code
 one."""
+
+EMBEDDING_GUARD_VIOLATION_EVENT: Final = "embedding_guard_violation"
+"""The Foundry-only fail-closed guard (`services/embeddings/client.py`) refused to build an
+embedding client because the resolved endpoint was not an Azure Foundry host (#191 slice 3).
+
+A SEPARATE event from `EMBEDDING_WRITE_FAILED_EVENT` on purpose (R26): an ordinary embed-call
+failure (timeout, 5xx, rate limit) is an expected, survivable degrade-to-keyword-only case; this
+one means the wiring itself is wrong — `FOUNDRY__RESOURCE`/`FOUNDRY__EMBEDDING_DEPLOYMENT` point
+somewhere that is not this platform's Foundry resource. It should never fire in a correctly
+configured deployment, so folding it into the generic failure event would bury a configuration
+bug under routine noise. The guard also runs once at application startup (before any request is
+served), so a mis-wired host fails the deploy rather than degrading silently into this path.
+
+Fields: `endpoint` (the base URL the guard rejected)."""
+
+EMBEDDING_WRITE_FAILED_EVENT: Final = "embedding_write_failed"
+"""Writing or refreshing a project's description embedding failed (#191 slice 3, R25/R26).
+
+NEVER RAISED INTO THE CALLER. The project write (create/patch) still succeeds — an embedding
+failure must never be the reason a citizen cannot save a description — and the row's embedding
+column is simply left absent/stale, which the hybrid search query already treats as
+keyword-only for that row. This event is the only record that it happened.
+
+Fields: `project_id`, `reason` (the exception type — never the message, which can carry request
+content)."""

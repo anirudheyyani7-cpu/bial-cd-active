@@ -7,7 +7,13 @@ import { test, expect, type Page } from '@playwright/test'
  */
 async function openComposer(page: Page): Promise<void> {
   const res = await page.request.post('/api/projects', {
-    data: { name: `E2E Deck ${Date.now()}` },
+    // #191: description is required, 15-120 words.
+    data: {
+      name: `E2E Deck ${Date.now()}`,
+      description:
+        'Ground staff log VIP movement requests for each terminal. A duty supervisor ' +
+        "approves or rejects them, and the day's approved movements appear on a shared dashboard.",
+    },
   })
   const projectId = (await res.json()).id as string
   await page.goto(`/chat/${crypto.randomUUID()}?projectId=${projectId}&kind=builder`)

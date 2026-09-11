@@ -100,15 +100,6 @@ async def test_old_owner_conversation_uniqueness_dropped(db_session) -> None:
     )
 
 
-async def test_current_code_jsonb_roundtrip(db_session) -> None:
-    user = await UserFactory.create(db_session)
-    snapshot = {"current": {"source": "export default () => null", "entry": "PreviewApp"}}
-    app = await AppRegistryFactory.create(db_session, user_id=user.id, current_code=snapshot)
-    fetched = await db_session.get(AppRegistry, app.id)
-    assert fetched is not None
-    assert fetched.current_code == snapshot
-
-
 async def test_delete_project_cascades_children(db_session) -> None:
     # DB-level ON DELETE CASCADE removes the project's app + conversations (the row
     # backstop — blob-aware cleanup is a separate service's job).

@@ -12,6 +12,8 @@ import { describe, it, expect } from 'vitest'
 import {
   countWords,
   MAX_PROJECT_NAME_WORDS,
+  MIN_PROJECT_DESCRIPTION_WORDS,
+  MAX_PROJECT_DESCRIPTION_WORDS,
   MIN_DELETE_REASON_WORDS,
   MAX_DELETE_REASON_WORDS,
 } from '../words'
@@ -50,7 +52,25 @@ describe('countWords — the shared rule', () => {
 })
 
 describe('the shared limits', () => {
-  it('carries the delete-reason bounds — five words minimum, fifty maximum', () => {
+  it('carries the description bounds from #191', () => {
+    expect(MIN_PROJECT_DESCRIPTION_WORDS).toBe(15)
+    expect(MAX_PROJECT_DESCRIPTION_WORDS).toBe(120)
+  })
+
+  it('counts EXACTLY at both description bounds', () => {
+    // Same reasoning as the delete-reason boundary test below: the boundary itself is what
+    // an off-by-one survives at, so it gets pinned directly rather than trusted by inference.
+    const under = Array.from({ length: MIN_PROJECT_DESCRIPTION_WORDS - 1 }, (_, i) => `w${i}`).join(' ')
+    const min = Array.from({ length: MIN_PROJECT_DESCRIPTION_WORDS }, (_, i) => `w${i}`).join(' ')
+    const max = Array.from({ length: MAX_PROJECT_DESCRIPTION_WORDS }, (_, i) => `w${i}`).join(' ')
+
+    expect(countWords(under)).toBe(MIN_PROJECT_DESCRIPTION_WORDS - 1)
+    expect(countWords(min)).toBe(MIN_PROJECT_DESCRIPTION_WORDS)
+    expect(countWords(max)).toBe(MAX_PROJECT_DESCRIPTION_WORDS)
+    expect(countWords(`${max} extra`)).toBe(MAX_PROJECT_DESCRIPTION_WORDS + 1)
+  })
+
+  it('carries the delete-reason bounds from §13.2', () => {
     expect(MIN_DELETE_REASON_WORDS).toBe(5)
     expect(MAX_DELETE_REASON_WORDS).toBe(50)
   })

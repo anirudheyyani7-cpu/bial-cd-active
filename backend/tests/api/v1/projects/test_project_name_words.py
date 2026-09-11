@@ -15,6 +15,7 @@ import pytest
 
 from src.core.words import count_words
 from src.db.models.project import MAX_PROJECT_NAME, MAX_PROJECT_NAME_WORDS
+from tests.api.v1.projects.conftest import _VALID_DESCRIPTION
 from tests.api.v1.projects.test_projects_crud import _auth
 
 _PROJECTS = "/v1/projects"
@@ -32,7 +33,9 @@ def _words(n: int) -> str:
 async def test_create_accepts_a_name_up_to_the_word_cap(client, db_session, n: int) -> None:
     headers, _ = await _auth(db_session)
 
-    resp = await client.post(_PROJECTS, headers=headers, json={"name": _words(n)})
+    resp = await client.post(
+        _PROJECTS, headers=headers, json={"name": _words(n), "description": _VALID_DESCRIPTION}
+    )
 
     assert resp.status_code == 201, resp.text
     assert count_words(resp.json()["name"]) == n
@@ -42,7 +45,9 @@ async def test_create_refuses_one_word_past_the_cap(client, db_session) -> None:
     headers, _ = await _auth(db_session)
 
     resp = await client.post(
-        _PROJECTS, headers=headers, json={"name": _words(MAX_PROJECT_NAME_WORDS + 1)}
+        _PROJECTS,
+        headers=headers,
+        json={"name": _words(MAX_PROJECT_NAME_WORDS + 1), "description": _VALID_DESCRIPTION},
     )
 
     assert resp.status_code == 422, resp.text
@@ -61,7 +66,9 @@ async def test_the_character_backstop_still_refuses_an_enormous_single_word(
     headers, _ = await _auth(db_session)
 
     resp = await client.post(
-        _PROJECTS, headers=headers, json={"name": "x" * (MAX_PROJECT_NAME + 1)}
+        _PROJECTS,
+        headers=headers,
+        json={"name": "x" * (MAX_PROJECT_NAME + 1), "description": _VALID_DESCRIPTION},
     )
 
     assert resp.status_code == 422, resp.text
@@ -78,7 +85,11 @@ async def test_rename_refuses_past_the_cap_too(client, db_session) -> None:
     whatever it is given.
     """
     headers, _ = await _auth(db_session)
-    created = await client.post(_PROJECTS, headers=headers, json={"name": "Visitor Log"})
+    created = await client.post(
+        _PROJECTS,
+        headers=headers,
+        json={"name": "Visitor Log", "description": _VALID_DESCRIPTION},
+    )
     project_id = created.json()["id"]
 
     resp = await client.patch(
@@ -97,7 +108,11 @@ async def test_rename_refuses_past_the_cap_too(client, db_session) -> None:
 
 async def test_rename_accepts_the_boundary(client, db_session) -> None:
     headers, _ = await _auth(db_session)
-    created = await client.post(_PROJECTS, headers=headers, json={"name": "Visitor Log"})
+    created = await client.post(
+        _PROJECTS,
+        headers=headers,
+        json={"name": "Visitor Log", "description": _VALID_DESCRIPTION},
+    )
     project_id = created.json()["id"]
 
     resp = await client.patch(
@@ -134,6 +149,8 @@ async def test_whitespace_runs_count_as_one_separator(client, db_session, name: 
     """
     headers, _ = await _auth(db_session)
 
-    resp = await client.post(_PROJECTS, headers=headers, json={"name": name})
+    resp = await client.post(
+        _PROJECTS, headers=headers, json={"name": name, "description": _VALID_DESCRIPTION}
+    )
 
     assert resp.status_code == 201, resp.text

@@ -21,6 +21,7 @@ from src.services.build_sessions.appdata import resolve_app_for_project
 from src.services.storage import ObjectMeta, snapshot_key
 from src.services.storage import accessor as storage_accessor
 from src.services.storage.errors import StorageError
+from tests.api.v1.projects.conftest import _VALID_DESCRIPTION
 from tests.api.v1.projects.test_projects_crud import _auth
 from tests.fakes import FakeStorage
 
@@ -47,7 +48,13 @@ def bind_store(monkeypatch: pytest.MonkeyPatch):
 async def test_a_project_with_no_app_at_all_makes_no_claim(client, db_session, bind_store) -> None:
     store = bind_store(FakeStorage())
     headers, _ = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Fresh"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Fresh", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
 
     fetched = (await client.get(f"/v1/projects/{created['id']}", headers=headers)).json()
 
@@ -61,7 +68,13 @@ async def test_the_bug_a_failed_first_build_does_not_claim_a_saved_build(
 ) -> None:
     bind_store(FakeStorage())
     headers, user = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Doomed"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Doomed", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
     await resolve_app_for_project(db_session, user.id, uuid.UUID(created["id"]))
     await db_session.commit()
 
@@ -77,7 +90,13 @@ async def test_the_normal_case_a_built_but_unsubmitted_app_still_claims_one(
 ) -> None:
     store = bind_store(FakeStorage())
     headers, user = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Healthy"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Healthy", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
     app_id = await resolve_app_for_project(db_session, user.id, uuid.UUID(created["id"]))
     await db_session.commit()
     await store.put(snapshot_key(app_id), b"BUNDLE")
@@ -100,7 +119,13 @@ async def test_an_unreachable_store_claims_nothing_in_either_direction(
     monkeypatch.setattr("src.services.build_sessions.manager._asleep", _no_backoff)
     bind_store(UnreachableStore())
     headers, user = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Foggy"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Foggy", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
     await resolve_app_for_project(db_session, user.id, uuid.UUID(created["id"]))
     await db_session.commit()
 
@@ -116,7 +141,13 @@ async def test_the_list_never_pays_for_a_head_check_per_row(
     object-store round-trip per project, and nothing on that surface offers Relaunch."""
     store = bind_store(FakeStorage())
     headers, user = await _auth(db_session)
-    created = (await client.post("/v1/projects", headers=headers, json={"name": "Listed"})).json()
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Listed", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
     app_id = await resolve_app_for_project(db_session, user.id, uuid.UUID(created["id"]))
     await db_session.commit()
     await store.put(snapshot_key(app_id), b"BUNDLE")

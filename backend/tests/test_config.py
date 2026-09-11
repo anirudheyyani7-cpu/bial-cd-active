@@ -545,6 +545,27 @@ def test_foundry_inner_fields_required() -> None:
         assert FoundryConfig.model_fields[field].is_required()
 
 
+def test_foundry_embedding_deployment_optional_defaults_none() -> None:
+    # #191 slice 3: nullable, NOT required — a Foundry block that predates hybrid search
+    # (or a dev/test TestModel setup with none at all) must still boot.
+    s = _settings(foundry={"resource": "r", "deployment": "d", "api_key": "k"})
+    assert s.foundry is not None
+    assert s.foundry.embedding_deployment is None
+
+
+def test_foundry_embedding_deployment_accepts_a_value() -> None:
+    s = _settings(
+        foundry={
+            "resource": "r",
+            "deployment": "d",
+            "api_key": "k",
+            "embedding_deployment": "text-embedding-3-small",
+        }
+    )
+    assert s.foundry is not None
+    assert s.foundry.embedding_deployment == "text-embedding-3-small"
+
+
 def test_foundry_unknown_key_forbidden() -> None:
     with pytest.raises(ValidationError):
         _settings(foundry={"resource": "r", "deployment": "d", "totally_bogus": "x"})

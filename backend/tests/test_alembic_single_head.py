@@ -27,3 +27,23 @@ def test_migrations_have_exactly_one_head() -> None:
         f"expected exactly one Alembic head, found {len(heads)}: {heads}. "
         "Reconcile divergent branches with `alembic merge heads`."
     )
+
+
+def test_every_revision_id_fits_alembic_versions_version_num() -> None:
+    """`alembic_version.version_num` is a `VARCHAR(32)` — Alembic itself never enforces this,
+    so an over-long revision id authors clean and only fails `alembic upgrade head` against a
+    REAL database, with "value too long for type character varying(32)" (review of #191,
+    agc129, round 2 — this PR's own `0040_project_description_embedding` was 34 characters,
+    caught only by a reviewer running the migration, not by anything in CI).
+    `0037_deleted_project_description` is already exactly 32 — the next author to lengthen a
+    stem past that boundary trips this test instead of a live migration run."""
+    config = Config(str(_BACKEND_ROOT / "alembic.ini"))
+    script = ScriptDirectory.from_config(config)
+    too_long = [
+        rev.revision
+        for rev in script.walk_revisions()
+        if len(rev.revision) > 32  # noqa: PLR2004
+    ]
+    assert too_long == [], (
+        f"revision id(s) over alembic_version.version_num's 32-char width: {too_long}"
+    )

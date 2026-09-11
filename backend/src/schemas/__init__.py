@@ -9,6 +9,9 @@ from src.schemas.marketplace import MarketplaceListResponse as MarketplaceListRe
 from src.schemas.projects import ProjectCountsResponse as ProjectCountsResponse
 from src.schemas.projects import ProjectCreate as ProjectCreate
 from src.schemas.projects import ProjectDeleteRequest as ProjectDeleteRequest
+from src.schemas.projects import ProjectDuplicateCheckRequest as ProjectDuplicateCheckRequest
+from src.schemas.projects import ProjectDuplicateCheckResponse as ProjectDuplicateCheckResponse
+from src.schemas.projects import ProjectDuplicateResolution as ProjectDuplicateResolution
 from src.schemas.projects import ProjectListResponse as ProjectListResponse
 from src.schemas.projects import ProjectPatch as ProjectPatch
 from src.schemas.projects import ProjectResponse as ProjectResponse

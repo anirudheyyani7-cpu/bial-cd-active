@@ -32,6 +32,7 @@ from src.services.appdb.names import database_name, role_name
 from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth
 from src.services.auth.session_jwt import mint_session_jwt
+from tests.api.v1.projects.conftest import _VALID_DESCRIPTION
 from tests.factories import UserFactory
 
 _DB_EXISTS = "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :db)"
@@ -83,7 +84,11 @@ async def test_create_project_provisions_a_ready_database(
 ) -> None:
     headers = await _auth(db_session, "u3-create@rvaiglobal.com")
 
-    resp = await client.post("/v1/projects", headers=headers, json={"name": "Gate Ops"})
+    resp = await client.post(
+        "/v1/projects",
+        headers=headers,
+        json={"name": "Gate Ops", "description": _VALID_DESCRIPTION},
+    )
 
     assert resp.status_code == 201
     created = resp.json()
@@ -107,7 +112,11 @@ async def test_create_project_still_reports_no_app(
     headers = await _auth(db_session, "u3-noapp@rvaiglobal.com")
 
     created = (
-        await client.post("/v1/projects", headers=headers, json={"name": "No App Yet"})
+        await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "No App Yet", "description": _VALID_DESCRIPTION},
+        )
     ).json()
     salted.append(uuid.UUID(created["id"]))
 
@@ -128,7 +137,11 @@ async def test_create_project_without_a_substrate_is_a_plain_201(
     monkeypatch.setattr(settings, "app_db", None)
     headers = await _auth(db_session, "u3-unconfigured@rvaiglobal.com")
     try:
-        resp = await client.post("/v1/projects", headers=headers, json={"name": "Substrate Off"})
+        resp = await client.post(
+            "/v1/projects",
+            headers=headers,
+            json={"name": "Substrate Off", "description": _VALID_DESCRIPTION},
+        )
 
         assert resp.status_code == 201
         project_id = uuid.UUID(resp.json()["id"])
@@ -159,7 +172,11 @@ async def test_a_failed_provision_leaves_a_live_project_and_a_non_terminal_marke
     monkeypatch.setattr(provision_module, "_stamp_provisioned_at", _boom)
     headers = await _auth(db_session, "u3-boom@rvaiglobal.com")
 
-    resp = await client.post("/v1/projects", headers=headers, json={"name": "Doomed Provision"})
+    resp = await client.post(
+        "/v1/projects",
+        headers=headers,
+        json={"name": "Doomed Provision", "description": _VALID_DESCRIPTION},
+    )
 
     # The create SUCCEEDS: a substrate hiccup is degraded state, never a failed create.
     assert resp.status_code == 201
@@ -193,7 +210,11 @@ async def test_a_provision_that_never_claims_still_returns_201(
     monkeypatch.setattr(provision_module, "_claim", _boom)
     headers = await _auth(db_session, "u3-noclaim@rvaiglobal.com")
 
-    resp = await client.post("/v1/projects", headers=headers, json={"name": "No Claim"})
+    resp = await client.post(
+        "/v1/projects",
+        headers=headers,
+        json={"name": "No Claim", "description": _VALID_DESCRIPTION},
+    )
 
     assert resp.status_code == 201
     project_id = uuid.UUID(resp.json()["id"])

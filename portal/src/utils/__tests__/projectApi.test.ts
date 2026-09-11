@@ -1,12 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import {
-  listProjects,
-  getProject,
-  createProject,
-  patchProject,
-  deleteProject,
-  generateDescription,
-} from '../projectApi'
+import { listProjects, getProject, createProject, patchProject, deleteProject } from '../projectApi'
 import { ApiError } from '../apiError'
 
 // A real WHATWG Response so `res.ok` / `res.status` / `res.json()` behave exactly
@@ -157,41 +150,6 @@ describe('deleteProject', () => {
     const fetchImpl = fetchReturning(200, { ok: true })
     await deleteProject('p1', 'no longer needed by ground ops', deps(fetchImpl))
     expect(Object.keys(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)))).toEqual(['remark'])
-  })
-})
-
-describe('generateDescription', () => {
-  it('POSTs an empty body to the :generate endpoint', async () => {
-    const fetchImpl = fetchReturning(200, { ...sampleProject, description: 'Auto text', appStatus: 'approved' })
-    const project = await generateDescription('p1', deps(fetchImpl))
-    const [url, init] = fetchImpl.mock.calls[0]
-    expect(url).toBe('/api/projects/p1/description:generate')
-    expect(init?.method).toBe('POST')
-    expect(init?.body).toBeUndefined()
-    expect(project.description).toBe('Auto text')
-  })
-
-  it('throws ApiError status 409 when there is no code to describe yet', async () => {
-    const fetchImpl = fetchReturning(409, { error: { message: 'No app code yet.' } })
-    const err = await generateDescription('p1', deps(fetchImpl)).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(409)
-  })
-
-  it('exposes the daily-limit code on the 429 envelope', async () => {
-    const fetchImpl = fetchReturning(429, {
-      error: { message: 'Daily token limit reached.', code: 'daily_token_limit_exceeded' },
-    })
-    const err = await generateDescription('p1', deps(fetchImpl)).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).code).toBe('daily_token_limit_exceeded')
-  })
-
-  it('throws ApiError status 503 when generation is not configured', async () => {
-    const fetchImpl = fetchReturning(503, { error: { message: 'Description generation is unavailable.' } })
-    const err = await generateDescription('p1', deps(fetchImpl)).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(503)
   })
 })
 

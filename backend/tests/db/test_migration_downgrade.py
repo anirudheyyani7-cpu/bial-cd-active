@@ -1,9 +1,18 @@
 """Alembic downgrade round-trip: head → pre-projects (0014) → head, in-suite.
 
-`tests/db/test_projects_migration.py` proves the shape 0015 PRODUCED; this proves the chain
-actually walks back and forward again against the real test DB, using the same `alembic.ini`
-config `tests/test_alembic_single_head.py` reads. The DB is restored to head in a `finally`
-so a failed assertion can't poison the rest of the suite.
+`tests/db/test_projects_migration.py` proves the shape 0015 PRODUCED; this proves the
+chain actually walks back and forward again against the real test DB: downgrading below
+0015/0016 removes everything they added (projects, the project_id wiring, the
+now-since-dropped current_code, users.suspended_at) and restores
+`uq_app_registry_owner_conversation`; re-upgrading restores head. Uses the programmatic
+`alembic.command` API off the same `alembic.ini` config `tests/test_alembic_single_head.py`
+reads. The DB is returned to head in a `finally` so a failed assertion can't poison the
+rest of the suite.
+
+`current_code` ITSELF DOES NOT SURVIVE TO HEAD ANY MORE (#191/0039 dropped it once its one
+reader, description-generation, was deleted) — so the round-trip only asserts it is absent
+below 0015 (0015 added it) and says nothing about its presence at head; 0039's own
+add/drop round-trip is covered separately.
 
 NOTE: the 0015 downgrade is a schema-shape rollback that is safe only pre-divergence (see
 its docstring); the suite's per-test transactions roll back, so the tables are empty here
@@ -89,7 +98,9 @@ def test_downgrade_to_pre_projects_and_back() -> None:
 
     state = _snapshot()
     assert state["projects_table"] is not None
-    assert {"project_id", "current_code"} <= state["app_registry_columns"]
+    assert "project_id" in state["app_registry_columns"]
+    # current_code was 0015's, but 0039 dropped it (#191) — it must not reappear at head.
+    assert "current_code" not in state["app_registry_columns"]
     assert "uq_app_registry_project" in state["app_registry_constraints"]
     assert "uq_app_registry_owner_conversation" not in state["app_registry_constraints"]
     assert "suspended_at" in state["users_columns"]

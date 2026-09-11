@@ -71,8 +71,17 @@ function asNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-/** One row, or `null` if it is unusable. NOT a throw: see `toPage`. */
-function toEntry(value: unknown): MarketplaceEntry | null {
+/**
+ * One row, or `null` if it is unusable. NOT a throw: see `toPage`.
+ *
+ * EXPORTED (#191 slice 4): the duplicate check reuses this exact parser, because its
+ * response is the SAME `MarketplaceEntry` shape the server deliberately reuses for both
+ * surfaces (`src/schemas/marketplace.py::MarketplaceEntry` — see its docstring) — one wire
+ * shape, one parser, rather than a second copy in `projectApi.ts` that could drift from
+ * this one's tolerance rules (dropping a row with no `url` rather than rendering a dead
+ * card).
+ */
+export function toEntry(value: unknown): MarketplaceEntry | null {
   if (!isRecord(value) || typeof value.url !== 'string' || value.url === '') {
     // The URL is the one field an entry cannot be useful without — it is the whole point of
     // the listing, and an entry only exists server-side because a deployment has one. A row

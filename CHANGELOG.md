@@ -10,6 +10,46 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
+## [1.7.0-beta.13] - 2026-09-11
+
+Every app now carries a description in its builder's own words, and that description is what makes
+an app findable. The marketplace searches by meaning rather than by matching words, and the platform
+checks whether something like your app already exists before it creates a new project.
+
+### Added
+
+- **Every new project asks what the app should do, and the answer is required.** The description box
+  is now a question — "What should this app do?" — answered in 15 to 120 words, with a worked example
+  behind an info control for anyone unsure what a good answer looks like. The same bounds are checked
+  in the browser and again at the API, so nothing the page accepts is refused on submit.
+- **The marketplace finds apps by meaning, not by matching words.** Searching "leave request tracker"
+  surfaces an app described as "Time-Off Approval Workflow" even though the two share no words at all.
+  Search now runs two ways at once — the words typed, and the meaning behind them — and blends the two
+  rankings, so an app that matches either way still surfaces.
+- **The platform checks for an existing app before creating a project.** If something already published
+  looks like what was just described, it is offered with a way to open it, and "Create project anyway"
+  stays available throughout. The typed name and description are preserved on "Go back". Nothing is
+  ever blocked: a failed, slow or unconfigured search simply creates the project as it did before.
+
+### Removed
+
+- **The "Generate Description" button is gone.** It asked an AI to write a description from the app's
+  code, but the column it read stopped being written months ago, so it answered "Nothing to generate
+  from yet — build the app first" on every app, including fully built ones. The button, its endpoint
+  and the unused `app_registry.current_code` column behind it are all removed.
+
+### Deploying this release
+
+- **This release changes the database and cannot be deployed with a restart alone.** Migration 0039
+  drops a column the previous image still maps, so stop the backend, run `alembic upgrade head`, then
+  start the new image. To roll back, downgrade the schema to `0038_app_previous_status` *before*
+  reverting the image — reverting the image alone leaves the old code reading a column that is gone.
+- **Semantic search needs `FOUNDRY__EMBEDDING_DEPLOYMENT` set.** It is a new setting and it is
+  optional: unset, the container still boots, nothing errors and nothing is logged, but the marketplace
+  quietly falls back to matching words only and the two features above lose their meaning-based half.
+  Set it alongside the existing `FOUNDRY__*` settings, then confirm it took by running one search whose
+  words do not appear in the app it should find.
+
 ## [1.7.0-beta.12] - 2026-09-10
 
 The white preview pane, reported from production on 2026-09-10: pressing Build showed a blank white

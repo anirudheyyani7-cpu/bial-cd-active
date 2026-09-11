@@ -134,3 +134,33 @@ export function StagedAttachmentsBinding({
   target.current = () => aui.composer.getState().attachments
   return null
 }
+
+/**
+ * EVERY PROVIDER A COMPOSER'S ATTACHMENTS NEED, MOUNTED AS ONE (#214, agc129's B3).
+ *
+ * ★ THIS EXISTS BECAUSE THE SEND GATE WAS HALF-SHIPPED. The pending-read count reached the chat
+ * composer through `PendingReadsProvider` in `ChatRuntimeProvider` — and the rail composer, which
+ * binds the same adapter, stages the same files and renders the same box, mounted the refusal sink
+ * and the staged binding but never that provider. `usePendingAttachmentReads()` read the context
+ * default `0`, Send's guard never fired, and a file dropped on the rail and sent mid-read landed
+ * nowhere while the chat started from the sentence alone.
+ *
+ * Three pieces wired by hand at each call site is how one gets forgotten, so they are one
+ * component: a composer that binds an adapter mounts this, and gets all three or none.
+ */
+export function AttachmentAdapterProviders({
+  bound,
+  children,
+}: {
+  bound: BoundAdapter
+  children: ReactNode
+}) {
+  return (
+    <RefusalSinkProvider value={bound.refusalRef}>
+      <PendingReadsProvider value={bound.pendingReads}>
+        <StagedAttachmentsBinding target={bound.stagedRef} />
+        {children}
+      </PendingReadsProvider>
+    </RefusalSinkProvider>
+  )
+}

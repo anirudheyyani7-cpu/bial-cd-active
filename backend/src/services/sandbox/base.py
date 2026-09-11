@@ -675,6 +675,7 @@ class SandboxClient(abc.ABC):
         *,
         app_env: dict[str, str],
         source_key: str | None = None,
+        kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
     ) -> SandboxHandle:
         """Provision a FRESH container and restore a git-bundle onto its local disk (git ops
         over `/_sup/exec`), then RE-INJECT the app-data credential from `app_env`. Returns a
@@ -683,7 +684,14 @@ class SandboxClient(abc.ABC):
         `source_key` names WHICH bundle to restore, defaulting to the app's saved snapshot.
         It exists so a recovery can pull the crash-recovery copy instead — the only reason that
         copy is written at all. Optional with a default rather than required, because every
-        existing caller means "the saved one" and should keep reading that way."""
+        existing caller means "the saved one" and should keep reading that way.
+
+        `kind` (#198) selects the ARM identity the fresh container is stamped with —
+        `sandbox_tags` (the default, `user_id` as OWNER) or `shared_sandbox_tags` (`user_id` as
+        RECIPIENT). ADDED, not widened from a callback: every existing caller means the default
+        and this keeps meaning it without touching a single call site. `is_a_shared_sandbox_name`
+        already matched this shape before any caller could produce it — a widening kept in step
+        with the guard it feeds, never announced ahead of one."""
         ...
 
     @abc.abstractmethod
@@ -767,4 +775,20 @@ class SandboxClient(abc.ABC):
         never grew.
         Default: `None` (no container to compile for). NON-LOAD-BEARING BY CONSTRUCTION: an
         override must never raise, and no caller may gate a preview frame on its return."""
+        return None
+
+    async def served_count(self, handle: SandboxHandle) -> int | None:
+        """How many requests the generated app has served, per `GET /_sup/served` — Caddy's own
+        count of real traffic through the app block, EXCLUDING every control-plane probe
+        (`log_skip` on the `/_sup/*` block; see `sandbox/Caddyfile`). #198's shared-runtime
+        viewer has no chat turn and takes no mutating action, so this monotonically increasing
+        count is the ONLY evidence available that a colleague is still looking at a shared
+        preview — the reclamation sweep compares two readings of it to decide whether to renew
+        `DeadlineWriter.APP_SERVED_TRAFFIC`.
+
+        DELIBERATELY NOT abstract, same reason as `someone_has_to_go_first`: the pinned-contract
+        test keeps the abstract set frozen, and every build-sandbox caller is unaffected by this
+        default. `None` (never 0) means "could not ask" — an unreachable container or a
+        pre-`/served` supervisor image — and must not be read as "definitely no new traffic",
+        which would let the sweep reap a container it simply failed to probe."""
         return None

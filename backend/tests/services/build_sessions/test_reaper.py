@@ -38,6 +38,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_PREVIEW_STAY_UNTIL,
     REGISTRY_FIELD_SERVING_SINCE,
+    REGISTRY_FIELD_SHARED_SERVED_COUNT,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
     starting_key,
@@ -45,7 +46,13 @@ from src.services.redis.keys import (
 from src.services.sandbox import SandboxError, SandboxHandle
 from src.services.sandbox.base import DevStatus, ExecResult
 from src.services.storage import recovery_key
-from tests.fakes import FakeSandboxClient, FakeStorage, a_git_bundle, a_sandbox_name
+from tests.fakes import (
+    FakeSandboxClient,
+    FakeStorage,
+    a_git_bundle,
+    a_sandbox_name,
+    a_shared_sandbox_name,
+)
 
 USER = uuid.uuid4()
 OTHER = uuid.uuid4()
@@ -185,6 +192,23 @@ async def test_a_record_naming_something_that_is_not_a_sandbox_deletes_nothing(
     assert client.torn_down == [], "a name we cannot vouch for must never reach ARM"
     assert await locks.read_registry(fake_redis, USER) is None, "the bogus record is cleared"
     assert any("not a sandbox name" in str(entry.get("event", "")) for entry in logs)
+
+
+async def test_reap_user_tears_down_a_shared_sandbox_in_the_slot(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """#198: the one per-user slot `reap_user` reaps can hold EITHER lineage. Before the gate
+    widened, a `shr-` name here fell into the "not a sandbox name" refusal above — the record
+    would be cleared while the container itself, which the platform provably minted, kept
+    running and billing forever, unowned by any registry entry."""
+    shared_name = a_shared_sandbox_name("colleague")
+    await _seed(fake_redis, USER, app_name=shared_name)
+    client = FakeSandboxClient()
+
+    assert await reaper.reap_user(fake_redis, USER, client) is True
+
+    assert shared_name in client.torn_down
+    assert await locks.read_registry(fake_redis, USER) is None
 
 
 async def test_reconcile_reaps_on_expired_lock(fake_redis: aioredis.Redis) -> None:
@@ -626,6 +650,165 @@ async def test_a_normal_build_session_is_unaffected_by_the_stay_check(
         await reaper.sweep_all(fake_redis, client)
     ).reaped == 1  # lapsed heartbeat → still reaped
     assert await locks.read_registry(fake_redis, OTHER) is None
+
+
+# #198 — a shared-runtime view's traffic-based stay renewal and its absolute session ceiling.
+# Both are no-ops for an ordinary build sandbox: `is_a_shared_sandbox_name` gates both, so
+# nothing above this section could have exercised either path.
+
+
+async def _seed_shared_view(
+    redis: aioredis.Redis,
+    user: uuid.UUID,
+    *,
+    app_name: str = a_shared_sandbox_name("colleague"),
+    created_at: str | None = None,
+    stay: str | None = None,
+) -> None:
+    """A launched shared view as it actually sits in Redis: registry + (optionally) a stay, NO
+    lock and NO heartbeat — the same shape a relaunched preview leaves, `_seed_preview`'s own
+    sibling.
+
+    `created_at` DEFAULTS TO NOW, deliberately NOT `_seed`'s own fixed 2026-07-14 default: this
+    section's ceiling check is age-sensitive, and every other test in this file is free to use
+    that fixed historical stamp only because none of them read age at all. A test that means to
+    exercise the ceiling passes its own stale `created_at` explicitly."""
+    await _seed(
+        redis,
+        user,
+        app_name=app_name,
+        with_lock=False,
+        with_heartbeat=False,
+        created_at=created_at or datetime.now(UTC).isoformat(),
+    )
+    if stay is not None:
+        await redis.hset(registry_key(user), REGISTRY_FIELD_PREVIEW_STAY_UNTIL, stay)
+
+
+def _reachable_shared_view_client(app_name: str, *, served: int | None) -> FakeSandboxClient:
+    client = FakeSandboxClient()
+    client.attach_handle = SandboxHandle(
+        fqdn=f"{app_name}.example",
+        token="tok",  # noqa: S106 - a fake, never a real bearer
+        app_name=app_name,
+        preview_url=f"https://{app_name}.example/",
+        ready=True,
+    )
+    client.served_count_value = served
+    return client
+
+
+async def test_the_sweep_renews_a_shared_views_stay_when_traffic_increased(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The whole mechanism, end to end: a shared view with NO standing stay at all (fresh from
+    Launch) survives a sweep purely because the supervisor reports new traffic."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name)
+    client = _reachable_shared_view_client(name, served=3)
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
+    assert client.torn_down == []
+    reg = await locks.read_registry(fake_redis, USER)
+    assert reg is not None
+    assert reg[REGISTRY_FIELD_SHARED_SERVED_COUNT] == "3"
+    assert await locks.stay_of_execution_is_current(fake_redis, USER) is True
+
+
+async def test_the_sweep_does_not_renew_on_an_unchanged_served_count(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """A steady background poll from an idle, forgotten tab is still traffic to a naive counter
+    — the count must have INCREASED since the last pass, or a container nobody is reading would
+    renew itself forever."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))  # already lapsed
+    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_SHARED_SERVED_COUNT, "5")
+    client = _reachable_shared_view_client(name, served=5)  # same count as last seen
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
+    assert name in client.torn_down
+
+
+async def test_the_sweep_never_reads_served_count_as_a_regression(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """A count that somehow reads LOWER than last seen (a restarted supervisor, a corrupted
+    field) must never renew — `<=`, not `!=`, is the comparison this pins."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))
+    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_SHARED_SERVED_COUNT, "9")
+    client = _reachable_shared_view_client(name, served=2)
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
+    assert name in client.torn_down
+
+
+async def test_the_sweep_treats_an_unreachable_shared_view_as_no_new_evidence(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """`served_count` returning `None` (could not ask) must not renew, and must not be read as
+    a confirmed absence of traffic either — the standing stay, if any, is what decides."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))
+    client = FakeSandboxClient()  # no attach_handle: attach_existing raises SandboxGoneError
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
+    assert name in client.torn_down
+
+
+async def test_a_shared_view_past_its_ceiling_is_reaped_despite_a_current_stay(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """Requirement 20: the absolute ceiling is independent of the renewable stay. A container
+    whose supervisor keeps reporting traffic — a wedged loop, or a spoofed report — must still
+    end at the ceiling, not live forever on the strength of it."""
+    from src.api.v1.build_sessions.schemas import SHARED_PREVIEW_ABSOLUTE_CEILING_SECONDS
+
+    name = a_shared_sandbox_name("colleague")
+    stale_created_at = (
+        datetime.now(UTC) - timedelta(seconds=SHARED_PREVIEW_ABSOLUTE_CEILING_SECONDS + 60)
+    ).isoformat()
+    await _seed_shared_view(
+        fake_redis, USER, app_name=name, created_at=stale_created_at, stay=_in(600)
+    )
+    client = _reachable_shared_view_client(name, served=None)  # no probe needed to prove this
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
+    assert name in client.torn_down
+
+
+async def test_a_shared_view_within_its_ceiling_and_a_current_stay_is_spared(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The ceiling only ever SUBTRACTS from what a stay would otherwise spare — sanity-checked
+    the other direction so the two tests can't both pass on a classifier that ignores the age
+    entirely."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(600))
+    client = _reachable_shared_view_client(name, served=None)
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
+    assert client.torn_down == []
+
+
+async def test_the_ceiling_never_touches_an_ordinary_build_preview(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """Regression guard: `_shared_view_past_its_ceiling` gates on `is_a_shared_sandbox_name`,
+    so an `sbx-` preview old enough to trip the SAME age threshold must be unaffected by it —
+    its own (much longer) `RELAUNCH_PREVIEW_STAY_SECONDS` stay is what governs it."""
+    from src.api.v1.build_sessions.schemas import SHARED_PREVIEW_ABSOLUTE_CEILING_SECONDS
+
+    stale_created_at = (
+        datetime.now(UTC) - timedelta(seconds=SHARED_PREVIEW_ABSOLUTE_CEILING_SECONDS + 60)
+    ).isoformat()
+    await _seed_preview(fake_redis, USER, stay=_in(600))
+    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_CREATED_AT, stale_created_at)
+    client = FakeSandboxClient()
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
+    assert client.torn_down == []
 
 
 async def test_a_malformed_stay_is_lapsed_not_a_reprieve(fake_redis: aioredis.Redis) -> None:

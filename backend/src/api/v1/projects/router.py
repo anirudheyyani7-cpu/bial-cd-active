@@ -69,7 +69,13 @@ from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth, teardown_handles
 from src.services.audit.log import append_audit
 from src.services.audit.teardown import record_what_survived
-from src.services.build_sessions import SessionManager, app_name_for, read_registry, reap_user
+from src.services.build_sessions import (
+    SessionManager,
+    app_name_for,
+    read_registry,
+    reap_user,
+    shr_name_for,
+)
 from src.services.build_sessions.manager import restorable_presence
 from src.services.deploy.liveness import live_app_ids
 from src.services.deploy.registry_delete import sweep_app_repositories
@@ -91,9 +97,9 @@ from src.services.projects import (
     search_colleagues,
 )
 from src.services.ratelimit import rate_limit
-from src.services.redis import get_redis
+from src.services.redis import build_coordination_or_503, coordination_is_gone, get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
-from src.services.sandbox import SandboxClient
+from src.services.sandbox import SandboxClient, SandboxError
 from src.services.storage import (
     AppContainerStore,
     ObjectStorage,
@@ -655,22 +661,55 @@ async def share_project(
 @router.post(
     "/{project_id}:unshare",
     response_model=OkResponse,
-    responses=error_responses(AUTH_401, (404, ErrorEnvelope, "Project not found")),
+    responses=error_responses(
+        AUTH_401,
+        (404, ErrorEnvelope, "Project not found"),
+        (503, ErrorEnvelope, "The colleague's live container could not be closed"),
+    ),
 )
 async def unshare_project(
-    project_id: uuid.UUID, body: ShareRequest, user: CurrentUser, db: DbSession
+    project_id: uuid.UUID,
+    body: ShareRequest,
+    user: CurrentUser,
+    db: DbSession,
+    sandbox: OptionalSandbox,
+    manager: SessionManagerDep,
 ) -> OkResponse:
-    """Revoke a project's share with a colleague (#198 R1). Owner-only, same reasoning as
+    """Revoke a project's share with a colleague (#198 R1, R25). Owner-only, same reasoning as
     `share_project`. `{"ok": true}` either way, whether or not the share still existed —
     revoking an already-gone share is a normal double-click/retry, not an error (mirrors
-    `release_project_sandbox`'s own "released: false is a success" posture). Tearing down the
-    recipient's live container is wired in once the shared runtime exists (R25); today this
-    only ever removes the membership row and its audit trail."""
+    `release_project_sandbox`'s own "released: false is a success" posture).
+
+    THE MEMBERSHIP ROW IS DROPPED FIRST, TEARDOWN SECOND — the same ordering `delete_project`
+    uses for its own sandbox reap: an access grant that outlives the container it once pointed
+    at is a stale row a later Launch would simply 404 against, while a container that outlives
+    a dropped grant is a live billing leak AND a continuing information exposure. Revoked
+    access must never wait on a container coming down.
+
+    Tearing down is skipped, not refused, when no sandbox is configured — the same posture
+    `release_project_sandbox`'s own route takes; a sandbox-off deployment has nothing running
+    for the row to have pointed at."""
     project = await owned_project_or_404(db, user.id, project_id)
-    await revoke_share(
+    revoked = await revoke_share(
         db, project=project, actor_id=user.id, colleague_id=body.shared_with_user_id
     )
     await db.commit()
+    if revoked and sandbox is not None:
+        app_id, _app_status = await _project_app(db, project.user_id, project.id)
+        if app_id is not None:
+            with build_coordination_or_503():
+                try:
+                    await manager.revoke_shared_preview(
+                        body.shared_with_user_id, app_id, sandbox_client=sandbox
+                    )
+                except SandboxError as exc:
+                    raise AppApiError(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "The share was revoked, but the colleague's container could not be "
+                        "closed just now. It will be cleared automatically.",
+                    ) from exc
+                return OkResponse(ok=True)
+            raise coordination_is_gone()
     return OkResponse(ok=True)
 
 
@@ -1017,6 +1056,65 @@ async def _reap_the_project_sandbox_or_shrug(
     return None
 
 
+async def _reap_a_shared_views_container_or_shrug(
+    sandbox: SandboxClient | None,
+    *,
+    recipient_id: uuid.UUID,
+    owner_app_id: uuid.UUID,
+) -> str | None:
+    """Take down ONE recipient's live view of a just-deleted project's shared app, best-effort.
+    NEVER RAISES — `delete_project`'s own sibling to `_reap_the_project_sandbox_or_shrug`
+    above, for the cascade-delete decision (#198): a project's live shares are torn down along
+    with it, exactly as the owner's own sandbox is.
+
+    KEPT SEPARATE from that function rather than generalizing it: this runs once per LIVE
+    SHARE — there can be several recipients — and the two containers it and its sibling tear
+    down belong to genuinely different people. Folding them into one parameterized function
+    would put the owner's own already-shipped teardown path at risk for a code-sharing
+    tidiness this path does not need.
+
+    NO LOCK-TIMEOUT FALLBACK, unlike its sibling, and that omission is deliberate rather than a
+    shortcut: by the time this runs, the project row AND its `project_shares` rows are already
+    committed gone, so a concurrent Launch/Refresh for this exact project fails at the access
+    check before it ever reaches a container — the race the sibling's lock exists to close is
+    already closed here by the DB state alone.
+
+    Returns the surviving container's name, or `None` when nothing of the recipient's shared
+    view is left running."""
+    if sandbox is None:
+        return None
+    shared_name = shr_name_for(owner_app_id, recipient_id)
+    try:
+        redis = get_redis()
+        reg = await read_registry(redis, recipient_id)
+        if reg is None or reg.get(REGISTRY_FIELD_APP_NAME) != shared_name:
+            # Nothing registered, or the recipient's slot holds something else of THEIRS
+            # (their own build, or a different colleague's shared project) — not ours to touch.
+            return None
+        if await reap_user(redis, recipient_id, sandbox, strict=False):
+            return None
+        logger.warning(
+            TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+            artefact="shared_sandbox_container",
+            artefact_id=shared_name,
+            reason="the teardown did not remove the registered container",
+            recipient_id=str(recipient_id),
+            owner_app_id=str(owner_app_id),
+        )
+        return shared_name
+    except Exception:  # noqa: BLE001 — post-commit: an alarm and a record, never a 500
+        logger.warning(
+            TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+            artefact="shared_sandbox_container",
+            artefact_id=shared_name,
+            reason="the reap raised",
+            recipient_id=str(recipient_id),
+            owner_app_id=str(owner_app_id),
+            exc_info=True,
+        )
+        return shared_name
+
+
 @router.delete(
     "/{project_id}",
     response_model=OkResponse,
@@ -1131,6 +1229,13 @@ async def delete_project(
     # cascades its `project_databases` row away, so post-commit there is nothing left to
     # read them from — the same reason `app_container_ids` are plain UUIDs.
     handles = await teardown_handles(db, project.id)
+    # EVERY LIVE RECIPIENT, for the SAME reason and at the SAME point (#198): `project_shares`
+    # rows cascade away with the project (`ON DELETE CASCADE`), so post-commit there is nothing
+    # left in the database naming who to tear a container down for. Plain UUIDs, not ORM rows —
+    # `entry.recipient` would need a session read past the commit below.
+    shared_recipient_ids = [
+        entry.recipient.id for entry in await list_shares_for_project(db, project.id)
+    ]
     # Captured before the cascade, for the same reason as the chat count: `handles` is read
     # from a row the cascade deletes.
     db.add(
@@ -1269,5 +1374,16 @@ async def delete_project(
     )
     if standing is not None:
         survivors.append(("sandbox_container", standing))
+    # ...and every recipient's shared view of it (#198) — the cascade-delete decision: a
+    # project's live shares end with it, not merely their access-grant rows. `app_id` is
+    # already known non-None here whenever `shared_recipient_ids` is non-empty: `create_share`
+    # (slice 1) refuses to create a share unless the owner's app exists with a saved snapshot.
+    if app_id is not None:
+        for recipient_id in shared_recipient_ids:
+            recipient_standing = await _reap_a_shared_views_container_or_shrug(
+                sandbox, recipient_id=recipient_id, owner_app_id=app_id
+            )
+            if recipient_standing is not None:
+                survivors.append(("shared_sandbox_container", recipient_standing))
     await record_what_survived(db, actor_id=user.id, project_id=project_id, survivors=survivors)
     return OkResponse(ok=True)

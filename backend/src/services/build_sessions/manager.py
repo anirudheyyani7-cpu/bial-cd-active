@@ -371,8 +371,9 @@ _UNKNOWN_REPORT_SILENCE_SECONDS: float = 60.0
 
 # WHICH DOOR into the one-per-user workspace a claim came through, for the claim log line. A
 # closed Literal rather than a bare `str` so a typo cannot invent a fourth arm that no alert
-# rule has ever heard of.
-_ClaimArm = Literal["relaunch", "ensure_sandbox"]
+# rule has ever heard of. `shared_launch` (#198) is the recipient's own door: a colleague's
+# read-only view of a project shared with them, occupying the SAME per-user slot a build would.
+_ClaimArm = Literal["relaunch", "ensure_sandbox", "shared_launch"]
 
 
 # The end sequence's own DB session factory (it outlives the starting request). Typed as what this
@@ -829,6 +830,19 @@ async def _recovery_written_at(app_id: uuid.UUID) -> datetime | None:
     return meta.last_modified if meta else None
 
 
+async def _snapshot_written_at(app_id: uuid.UUID) -> datetime | None:
+    """When the app's SAVED snapshot was last written (#198) — best-effort, for
+    `SharedPreview`'s "as of" line, `_recovery_written_at`'s own sibling. `None` on any failure
+    to ask, including a confirmed-absent snapshot: by the time a caller wants this, the restore
+    it feeds into has ALREADY confirmed presence via `snapshot_exists_or_bust`, so a `None`
+    here is a missing DETAIL, never a missing snapshot."""
+    try:
+        meta = await get_storage().head(snapshot_key(app_id))
+    except StorageError, StorageUnconfiguredError:
+        return None
+    return meta.last_modified if meta else None
+
+
 async def _sandbox_name_for_existing_app(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> str | None:
@@ -1014,6 +1028,46 @@ class RelaunchedPreview:
     app_id: uuid.UUID
     preview_url: str
     restored_from_failed_build: bool
+    ready: bool
+    """Whether the readiness wait actually confirmed the app answering (`shows_a_page`), not
+    merely that a container exists. Pre-existing field the router (`RelaunchPreviewResponse`)
+    and this module's own `_relaunch_under_one_build_id` already read/write — the dataclass
+    itself was simply missing it (found while adding `SharedPreview`, its sibling, immediately
+    below; unrelated to #198, fixed here rather than left red for every future mypy run)."""
+
+
+@dataclass(frozen=True)
+class SharedPreview:
+    """What `launch_shared_preview` hands the router: the OWNER's durable app id (never the
+    recipient's — a shared view mints no app row of its own), the framable preview URL, whether
+    it is actually SERVING yet, and when the snapshot being served was taken.
+
+    `ready` mirrors `RelaunchedPreview`'s own field and for the identical reason: `preview_url`
+    is always framable, but an attached container whose readiness wait timed out hands back
+    `ready=False` rather than a 503 — the alternative, condemning the container, would cost a
+    colleague's view of it for a slow root route that may simply need a moment. `snapshot_taken_at`
+    is `None` only when the store could not be asked for the timestamp — the restore itself
+    already confirmed the snapshot's PRESENCE before this dataclass is ever built, so a `None`
+    here is a missing detail, never a missing snapshot."""
+
+    app_id: uuid.UUID
+    preview_url: str
+    ready: bool
+    snapshot_taken_at: datetime | None
+
+
+class SharedProjectHasNoAppError(Exception):
+    """The shared project's owner has no app row at all — UNREACHABLE in practice: `create_share`
+    (#198 slice 1) refuses to create a share unless the owner's app exists with a saved
+    snapshot, and deleting the project cascades the share away with it, so a live share always
+    implies a live app row for its owner. Defensive only; the router maps it to the same 404
+    `NoSnapshotToRelaunchError` gets — from the recipient's side, "nothing to launch" reads
+    identically whichever of the two facts is missing."""
+
+    def __init__(self, project_id: uuid.UUID) -> None:
+        super().__init__("shared project's owner has no app to launch")
+        self.project_id = project_id
+
     # Is the dev server actually SERVING this URL yet? False on either reading that says the URL
     # is framable with nothing painting behind it: the attach arm's readiness wait lapsing
     # (`_ATTACHED_READY_BUDGET_SECONDS` elapsed with the app still not answering), or the app root
@@ -2437,6 +2491,37 @@ class SessionManager:
                 return False
             return await reap_user(redis, user.id, sandbox_client, strict=True)
 
+    async def revoke_shared_preview(
+        self,
+        recipient_id: uuid.UUID,
+        owner_app_id: uuid.UUID,
+        *,
+        sandbox_client: SandboxClient,
+    ) -> bool:
+        """Tear down `recipient_id`'s live view of a project shared with them, if their
+        per-user slot currently holds exactly that container — #198's fill-in for Slice 1's
+        `:unshare` teardown seam (requirement 25). `release_project_sandbox`'s own shape,
+        with the two differences a revoke's caller demands: the OWNER calls this, never the
+        recipient, so there is no `_active_by_user` conflict to raise here — nobody is
+        competing for their own slot. And it must NOT refuse merely because the recipient is
+        mid-build on a project of their OWN: that build's container simply is not the shared
+        name being asked about, so the identity check below already answers False for it,
+        which is the correct "nothing of this share's to revoke" outcome, not an error.
+
+        Holds the recipient's OWN start lock — the same one `launch_shared_preview` and any
+        build of theirs would hold — so this can never race a concurrent Launch/Refresh into
+        tearing down a container mid-provision. `strict=True`, matching
+        `release_project_sandbox`: the router is about to act on the outcome, and a failed
+        teardown must reach it as a 503 rather than a silent False."""
+        redis = get_redis()
+        shared_name = shr_name_for(owner_app_id, recipient_id)
+        async with self._start_lock_for(recipient_id):
+            if not await _the_live_sandbox_is_already_the_one_we_want(
+                redis, recipient_id, shared_name
+            ):
+                return False
+            return await reap_user(redis, recipient_id, sandbox_client, strict=True)
+
     def _live_session_for(self, user_id: uuid.UUID, app_id: uuid.UUID) -> BuildSession | None:
         """The in-process session holding THIS app's container, if there is one.
 
@@ -3313,6 +3398,250 @@ class SessionManager:
             await count(HarnessCounter.APP_COLD_START_MS, value=cold_elapsed_ms, app_id=app_id)
         return relaunched
 
+    # --- a colleague's shared-runtime view (#198) -----------------------------
+
+    async def launch_shared_preview(
+        self,
+        db: AsyncSession,
+        recipient: User,
+        project: Project,
+        sandbox_client: SandboxClient,
+        *,
+        force_refresh: bool = False,
+    ) -> SharedPreview:
+        """Put a READY, read-only container in front of a project SHARED WITH `recipient` — the
+        recipient's own door into the same one-per-user slot `relaunch_preview` uses for a
+        builder's own project. The ROUTER has already established `recipient` may see this
+        project (`resolve_project_access` returning SHARED); this trusts that and re-checks
+        nothing about access — only about the container.
+
+        SNAPSHOT-ONLY, ALWAYS (requirement 21). Deliberately NEVER `newest_restore_source`,
+        which would prefer the OWNER's crash-recovery bundle over their last deliberate Save —
+        a shared view is restored from what the owner chose to publish to their colleagues, not
+        from whatever their build container happened to hold when it last crashed.
+
+        `force_refresh=True` is Refresh (requirement 22): skip the attach-and-reuse arm even
+        when a live container already answers for this exact (project, recipient) pair, and
+        restore again from whatever is CURRENTLY saved — which may have moved since Launch.
+        `False` is Launch: attach if already up (the common case — a reopened tab, a second
+        click), else cold-restore.
+
+        SAME SLOT, SAME GUARDS AS A BUILD — requirement 27 (never touching the recipient's own
+        `sbx-` container) falls out of reusing them rather than needing its own check:
+        `_refuse_if_reclaim_would_destroy_work` protects the recipient's OWN unsaved build if
+        one currently holds their slot before this ever reaches the lock, `_holding_user_lock`
+        is the identical skeleton `relaunch_preview` runs under, and a build the recipient
+        starts on their own project afterward reaps straight through an unattended shared view
+        exactly as it would through a relaunched preview — no separate teardown path to keep in
+        step with this one.
+
+        DELIBERATELY NARROWER THAN `relaunch_preview` in two ways, both scope decisions rather
+        than oversights: no build-outcome/harness-counter instrumentation (`APP_START_ATTEMPTED`
+        and siblings measure the BUILD funnel; folding a passive viewer's launches into that
+        funnel would corrupt what it measures — a dedicated counter is a later, additive
+        change), and no `REGISTRY_FIELD_SERVING_SINCE` proof-of-first-paint stamping (that
+        signal feeds the builder's own `AppStatusPanel`; a shared view's liveness is instead
+        `reaper.py::_renew_shared_view_from_traffic`'s own `shared_served_count`, a genuinely
+        different signal for a genuinely different viewer)."""
+        with _one_relaunch_in_the_log(
+            build_id=str(uuid.uuid7()), user_id=str(recipient.id), project_id=str(project.id)
+        ):
+            return await self._launch_shared_preview_under_one_build_id(
+                db, recipient, project, sandbox_client, force_refresh=force_refresh
+            )
+
+    async def _launch_shared_preview_under_one_build_id(
+        self,
+        db: AsyncSession,
+        recipient: User,
+        project: Project,
+        sandbox_client: SandboxClient,
+        *,
+        force_refresh: bool,
+    ) -> SharedPreview:
+        """The whole of `launch_shared_preview` — go there for what it does and why; this half
+        is the same code, one indent level out, for the same correlation-binding reason
+        `_relaunch_under_one_build_id` is split from `relaunch_preview`."""
+        async with self._start_lock_for(recipient.id):
+            redis = get_redis()
+            if recipient.id in self._active_by_user:
+                # The recipient is mid-build on one of THEIR OWN projects — the identical
+                # refusal `relaunch_preview` gives a builder caught the same way. A shared view
+                # is never worth pre-empting a build the recipient is actively watching.
+                blocking_id = self._active_by_user.get(recipient.id)
+                raise await self._slot_conflict_for(
+                    recipient.id,
+                    self._sessions.get(blocking_id) if blocking_id is not None else None,
+                    blocking_id,
+                    db,
+                    project.id,
+                )
+            owner_app_id = await _existing_app_id(db, project.user_id, project.id)
+            if owner_app_id is None:
+                raise SharedProjectHasNoAppError(project.id)
+            shared_name = shr_name_for(owner_app_id, recipient.id)
+            # `spare_app=None` on a forced refresh: the point is to NOT treat the currently-live
+            # container as already the one we want, so the reconcile below reclaims it and the
+            # restore arm runs unconditionally — even though the name it would produce is
+            # identical to what is already there.
+            spare_app = None if force_refresh else shared_name
+            await self._refuse_if_reclaim_would_destroy_work(
+                db, recipient, spare_app=spare_app, sandbox_client=sandbox_client
+            )
+            async with self._holding_user_lock(
+                redis,
+                recipient.id,
+                sandbox_client,
+                project.id,
+                arm="shared_launch",
+                spare_app=spare_app,
+            ) as scope:
+                # THE SNAPSHOT GATE — the saved bundle ONLY, never the recovery/autosave copy
+                # (requirement 21). `newest_restore_source` is never called on this path.
+                if not await self._snapshot_exists_or_bust(owner_app_id):
+                    raise NoSnapshotToRelaunchError(owner_app_id)
+                snapshot_taken_at = await _snapshot_written_at(owner_app_id)
+                attached = False
+                if not force_refresh:
+                    try:
+                        scope.handle = await self._attach_for_shared_view(
+                            recipient.id, shared_name, sandbox_client
+                        )
+                        attached = True
+                        scope.spare()
+                    except NoLiveSandboxError:
+                        pass
+                if not attached:
+                    env = {
+                        **build_app_env(owner_app_id),
+                        **await provision_app_storage(owner_app_id),
+                        **await provision_app_database(db, project.id),
+                    }
+                    try:
+                        scope.handle = await self._restore_or_bust(
+                            sandbox_client,
+                            recipient.id,
+                            shared_name,
+                            owner_app_id,
+                            env,
+                            source_key=snapshot_key(owner_app_id),
+                            kind="shared_sandbox",
+                        )
+                    except StorageNotFoundError as exc:
+                        # The bundle vanished between the head-check above and the pull — the
+                        # same 404 bucket `relaunch_preview` maps this into.
+                        raise NoSnapshotToRelaunchError(owner_app_id) from exc
+                    # THE RESTORE ARM'S LEASE STARTS HERE, before the wait, for the identical
+                    # reason `_relaunch_under_one_build_id` grants one at this exact point:
+                    # `_restore_or_bust` has already written the registry hash, so from this
+                    # instant the sweep can see lock-held-without-a-heartbeat, which
+                    # `reconcile_user`'s AND is happy to reap. Nothing else protects a
+                    # freshly-restored container until the heartbeat below.
+                    await grant_stay_of_execution(
+                        redis, recipient.id, writer=DeadlineWriter.BUILDER_ACTED
+                    )
+                # NARROWED HERE, ONCE: both branches above set `scope.handle` on every path
+                # that reaches this line (the attach arm's `NoLiveSandboxError` falls through
+                # to the restore arm, and the restore arm's own failures already raised past
+                # this point) — a local variable lets the type checker carry that certainty
+                # through the awaits below, which a mutable dataclass attribute cannot.
+                assert scope.handle is not None
+                handle = scope.handle
+                try:
+                    await sandbox_client.dev_start(handle)
+                except SandboxError:
+                    if not attached:
+                        raise  # a fresh container with no dev server has nothing to preview
+                    _log.warning(
+                        "shared_launch_dev_start_refused_on_attached_container",
+                        user_id=str(recipient.id),
+                        app_id=str(owner_app_id),
+                        exc_info=True,
+                    )
+                ready = True
+                try:
+                    handle = await sandbox_client.wait_ready(
+                        handle,
+                        timeout_s=(
+                            _ATTACHED_READY_BUDGET_SECONDS
+                            if attached
+                            else _COLD_READY_BUDGET_SECONDS
+                        ),
+                    )
+                    scope.handle = handle
+                except SandboxNotReadyError:
+                    # THE SAME ASYMMETRY `_relaunch_under_one_build_id` draws, and for the same
+                    # reason: a readiness timeout is a statement about the APP, not the
+                    # container. The ATTACH arm fails OPEN — keep the container, hand back the
+                    # framable URL with `ready=False`, let the next Launch/Refresh attach again
+                    # rather than restore over a container that may simply be rendering slowly.
+                    # The COLD arm still raises: a container just provisioned that never came up
+                    # holds no work worth preserving and has nothing framable to offer.
+                    if not attached:
+                        raise
+                    ready = False
+                    _log.warning(
+                        "shared_launch_attached_container_not_serving_degraded_to_unready",
+                        user_id=str(recipient.id),
+                        app_id=str(owner_app_id),
+                        budget_s=_ATTACHED_READY_BUDGET_SECONDS,
+                    )
+                # Past here the container is up and registered — the same state a SUCCESSFUL
+                # launch leaves behind — so a later blip destroying it is no longer a rollback.
+                scope.spare()
+                # …and where the ATTACH arm's OWN lease is spent: granted only once the
+                # container has earned it by answering, not merely by being attempted — a
+                # lease handed out before that point is a lease every failed re-attach would
+                # re-grant, refreshing a wedged container's reprieve on each retry for free.
+                if attached:
+                    await grant_stay_of_execution(
+                        redis, recipient.id, writer=DeadlineWriter.BUILDER_ACTED
+                    )
+                if ready:
+                    # Pays the app's first route compile so the recipient's own browser does
+                    # not — the identical courtesy `relaunch_preview` extends its builder.
+                    await sandbox_client.someone_has_to_go_first(handle)
+                preview_url = handle.preview_url
+                # Seeded INSIDE the protected region for the same reason `relaunch_preview`
+                # seeds one here: a failure past this point tears the container down rather
+                # than 500ing with a live container behind a held lock. Nothing RENEWS this
+                # heartbeat afterward — the stay of execution above (and
+                # `reaper.py`'s traffic-based renewal of it) is what actually owns this
+                # container's lifetime from here on.
+                await write_heartbeat(redis, recipient.id)
+                # …and the FINAL re-grant, re-basing the reprieve on the instant the preview
+                # actually became viewable rather than the instant either arm merely attempted
+                # it — the warm request above can take seconds, long enough for a sweep to
+                # reap a container whose earlier lease happened to lapse mid-wait.
+                await grant_stay_of_execution(
+                    redis, recipient.id, writer=DeadlineWriter.BUILDER_ACTED
+                )
+            return SharedPreview(
+                app_id=owner_app_id,
+                preview_url=preview_url,
+                ready=ready,
+                snapshot_taken_at=snapshot_taken_at,
+            )
+
+    async def _attach_for_shared_view(
+        self, recipient_id: uuid.UUID, shared_name: str, sandbox_client: SandboxClient
+    ) -> SandboxHandle:
+        """A handle on an already-live shared view, or `NoLiveSandboxError`. Registry-only —
+        unlike `_attach_for_read`, there is no in-process session to check first, because
+        `launch_shared_preview` never adopts one: a shared view has no chat turn and mints no
+        `BuildSession`."""
+        if not await _the_live_sandbox_is_already_the_one_we_want(
+            get_redis(), recipient_id, shared_name
+        ):
+            raise NoLiveSandboxError(recipient_id)
+        try:
+            return await sandbox_client.attach_existing(str(recipient_id))
+        except SandboxGoneError as exc:
+            # CERTAIN absence — the client raises this only when it has confirmed the container
+            # is gone (ARM says the revision does not exist, the registry is empty, or the
+            # reaper already marked it ending). The restore arm above is the honest next step.
+            raise NoLiveSandboxError(recipient_id) from exc
+
     # --- the Write turn's sandbox --------------------------------------------
 
     async def ensure_sandbox(
@@ -3681,6 +4010,7 @@ class SessionManager:
         env: dict[str, str],
         *,
         source_key: str | None = None,
+        kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
     ) -> SandboxHandle:
         """Pull the known-present snapshot into a fresh container, with bounded retry.
         `source_key` selects WHICH bundle (default the saved snapshot; relaunch passes the
@@ -3689,13 +4019,17 @@ class SessionManager:
         EXISTS here and finalize would overwrite it. A PERSISTENT failure deliberately strands
         the session instead: a 503 with the user's work intact beats a start that silently
         destroys it. Self-cleans on every exception, so each attempt starts from no container;
-        `StorageNotFoundError` must not retry — it is the caller's fresh-provision arm."""
+        `StorageNotFoundError` must not retry — it is the caller's fresh-provision arm.
+
+        `kind` (#198) forwards to `SandboxClient.restore_from_snapshot` unchanged — every
+        existing caller means the default (a build sandbox); `launch_shared_preview` is the
+        one caller that passes `shared_sandbox`."""
         attempt = 0
         while True:
             attempt += 1
             try:
                 return await sandbox_client.restore_from_snapshot(
-                    str(user_id), app_name, app_env=env, source_key=source_key
+                    str(user_id), app_name, app_env=env, source_key=source_key, kind=kind
                 )
             except StorageNotFoundError:
                 # Discriminated by TYPE, and this clause MUST stay first: `StorageNotFoundError`

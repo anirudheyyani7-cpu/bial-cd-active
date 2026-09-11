@@ -10,17 +10,26 @@ instruction to test this).
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 import pytest
 
+from src.api.v1.build_sessions.deps import (
+    sandbox_dependency,
+    sandbox_or_none_dependency,
+    session_manager_dependency,
+)
+from src.db.models.project import Project
+from src.services.build_sessions import SessionManager
 from src.services.build_sessions.appdata import resolve_app_for_project
+from src.services.build_sessions.manager import shr_name_for
 from src.services.storage import accessor as storage_accessor
 from src.services.storage import snapshot_key
 from tests.api.v1.projects.conftest import _VALID_DESCRIPTION, DELETE_BODY
 from tests.api.v1.projects.test_projects_crud import _auth
 from tests.factories import UserFactory
-from tests.fakes import FakeStorage
+from tests.fakes import FakeSandboxClient, FakeStorage
 
 
 @pytest.fixture
@@ -226,6 +235,60 @@ async def test_unshare_404s_for_someone_else_s_project(client, db_session, bind_
         json={"sharedWithUserId": str(owner.id)},
     )
     assert resp.status_code == 404
+
+
+@pytest.fixture
+def wired_sandbox(app, db_session):
+    """#198 R25 — `unshare_project`'s teardown seam needs BOTH `OptionalSandbox` and
+    `SessionManagerDep` wired to fakes, mirroring `tests/api/v1/build_sessions/conftest.py`'s
+    own `wire` fixture: a manager bound to the ROLLED-BACK test session (never a real commit
+    outside it) plus one `FakeSandboxClient` both DI seams share, since some routes take the
+    raising dependency and others the None-tolerant one."""
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield db_session
+
+    manager = SessionManager(session_factory=lambda: _session())
+    sbx = FakeSandboxClient()
+    app.dependency_overrides[session_manager_dependency] = lambda: manager
+    app.dependency_overrides[sandbox_dependency] = lambda: sbx
+    app.dependency_overrides[sandbox_or_none_dependency] = lambda: sbx
+    return manager, sbx
+
+
+async def test_unshare_tears_down_the_colleagues_live_container(
+    client, db_session, bind_store, wired_sandbox
+) -> None:
+    """#198 R25 — Slice 1's teardown seam, filled in: revoking access tears down the
+    recipient's live view of the project, not merely the membership row."""
+    manager, sbx = wired_sandbox
+    headers, owner = await _auth(db_session)
+    project_id = await _mint_project_with_snapshot(client, headers, owner, db_session, bind_store)
+    colleague = await UserFactory.create(db_session, email="colleague@example.com")
+    await db_session.commit()
+    await client.post(
+        f"/v1/projects/{project_id}:share",
+        headers=headers,
+        json={"sharedWithUserId": str(colleague.id)},
+    )
+    app_id = await resolve_app_for_project(db_session, owner.id, uuid.UUID(project_id))
+    await db_session.commit()
+    project = await db_session.get(Project, uuid.UUID(project_id))
+    launched = await manager.launch_shared_preview(db_session, colleague, project, sbx)
+    assert launched.app_id == app_id
+    shared_name = shr_name_for(app_id, colleague.id)
+    assert shared_name in sbx.restored
+
+    resp = await client.post(
+        f"/v1/projects/{project_id}:unshare",
+        headers=headers,
+        json={"sharedWithUserId": str(colleague.id)},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert shared_name in sbx.torn_down
 
 
 # --- GET /{project_id}/shares ---------------------------------------------------

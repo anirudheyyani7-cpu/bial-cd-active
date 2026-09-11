@@ -68,6 +68,7 @@ from src.services.sandbox.base import (
     ServedPage,
     base_path_for,
     sandbox_tags,
+    shared_sandbox_tags,
 )
 from src.services.sandbox.config import SandboxConfig
 from src.services.storage import get_storage, snapshot_key
@@ -544,6 +545,25 @@ class AcaSandboxClient(SandboxClient):
         except (KeyError, TypeError, ValueError):  # fmt: skip  # ruff py314 strips parens
             return CompileReport(state=CompileState.UNKNOWN, reason="malformed_body")
 
+    async def served_count(self, handle: SandboxHandle) -> int | None:
+        """Ask the supervisor how many requests the app has served — `GET /_sup/served`.
+
+        NEVER RAISES, same posture as `compile_state`: a transport failure, a pre-`/served`
+        supervisor image, or a malformed body all mean the same thing to the caller — this
+        probe could not answer — and `None` is that answer. Returning 0 on a failure would read
+        as "confirmed no new traffic" and let the reclamation sweep reap a container it simply
+        could not reach, which is the one direction this signal must never be wrong in."""
+        try:
+            resp = await self._get(handle, "served", timeout=_OP_TIMEOUT_SECONDS)
+        except SandboxError:
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            return int(resp.json()["served"])
+        except KeyError, TypeError, ValueError:
+            return None
+
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         """The app's public root: status plus a bounded head of the body.
 
@@ -892,7 +912,13 @@ class AcaSandboxClient(SandboxClient):
         raise SandboxError("ACA container provisioning failed") from last
 
     async def _provision_container(
-        self, user_uuid: uuid.UUID, app_name: str, app_env: dict[str, str], *, arm: _BirthArm
+        self,
+        user_uuid: uuid.UUID,
+        app_name: str,
+        app_env: dict[str, str],
+        *,
+        arm: _BirthArm,
+        kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
     ) -> SandboxHandle:
         """Create the container, write the registry hash at container-create (before
         any fallible post-create step, so a mid-provision death is reaper-visible), and
@@ -900,7 +926,11 @@ class AcaSandboxClient(SandboxClient):
 
         `arm` names WHICH birth this is, for the create notice. It is a `Literal` and not a
         bare `str` so a second spelling of either value is a type error rather than a field
-        that quietly stops matching in the log — the same discipline the event names get."""
+        that quietly stops matching in the log — the same discipline the event names get.
+
+        `kind` (#198) selects which ARM identity gets stamped — see
+        `SandboxClient.restore_from_snapshot`'s own docstring for why `user_uuid` means the
+        RECIPIENT, not the app's owner, on the `shared_sandbox` arm."""
         token = secrets.token_urlsafe(_SUPERVISOR_TOKEN_BYTES)
         # The supervisor bearer lives ONLY in the container env (the supervisor keeps it out of
         # the scrubbed child env) and in-process; Redis stores a token_ref, never the token.
@@ -923,7 +953,12 @@ class AcaSandboxClient(SandboxClient):
         # frozen client signature carries no app_id. A `KeyError` here means the env builder
         # upstream is broken, which is worth failing loudly on rather than provisioning an
         # anonymous container to paper over.
-        tags = sandbox_tags(user_id=user_uuid, app_id=uuid.UUID(app_env["BIAL_APP_ID"]))
+        app_id = uuid.UUID(app_env["BIAL_APP_ID"])
+        tags = (
+            shared_sandbox_tags(recipient_id=user_uuid, app_id=app_id)
+            if kind == "shared_sandbox"
+            else sandbox_tags(user_id=user_uuid, app_id=app_id)
+        )
         fqdn = await self._create_with_retry(app_name, env, tags, arm=arm)
         token_ref = self._register_token(token)
         self._app_owners[app_name] = user_uuid
@@ -1064,6 +1099,7 @@ class AcaSandboxClient(SandboxClient):
         *,
         app_env: dict[str, str],
         source_key: str | None = None,
+        kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
     ) -> SandboxHandle:
         user_uuid = uuid.UUID(user_id)
         # The caller supplies the app_id via app_env (the frozen client signature carries no
@@ -1108,7 +1144,7 @@ class AcaSandboxClient(SandboxClient):
                     "provisioning over it would orphan it"
                 )
         handle = await self._provision_container(
-            user_uuid, app_name, app_env, arm="restore_from_snapshot"
+            user_uuid, app_name, app_env, arm="restore_from_snapshot", kind=kind
         )
         try:
             await self._restore_snapshot_into(handle, bundle)

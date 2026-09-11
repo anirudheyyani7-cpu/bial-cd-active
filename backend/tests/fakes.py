@@ -104,6 +104,13 @@ def a_sandbox_name(marker: str = "x") -> str:
     return "sbx-" + (marker.encode().hex() + "0" * 28)[:28]
 
 
+def a_shared_sandbox_name(marker: str = "x") -> str:
+    """The `shr-` sibling of `a_sandbox_name` (#198) — a shape `manager.shr_name_for` could
+    actually have minted, for the same reason: a fixture no code path produces would let a
+    missing shape guard on the ARM delete path go unnoticed."""
+    return "shr-" + (marker.encode().hex() + "0" * 28)[:28]
+
+
 def a_fleet_member(
     name: str,
     *,
@@ -242,6 +249,8 @@ class FakeSandboxClient(SandboxClient):
         self.provisioned: list[str] = []
         self.restored: list[str] = []
         self.restored_from: list[str | None] = []
+        # #198 — the `kind` each restore was called with, parallel to `restored`.
+        self.restored_as_kind: list[Literal["build_sandbox", "shared_sandbox"]] = []
         self.torn_down: list[str] = []
         # The env dict each BIRTH arm actually handed the container, recorded separately from the
         # names so "was the SAS / the per-project DSN injected on THIS arm" stays answerable. The
@@ -281,6 +290,9 @@ class FakeSandboxClient(SandboxClient):
         # `client.root_status = 404` out loud, and one that wants the pre-`root_status` fleet
         # says `None` and means it.
         self.root_status: int | None = None
+        # #198 — the supervisor's `/served` count, scripted per test. `None` (the default)
+        # scripts the probe that could not answer, same convention as `served_page`.
+        self.served_count_value: int | None = None
 
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
@@ -324,11 +336,16 @@ class FakeSandboxClient(SandboxClient):
         *,
         app_env: dict[str, str],
         source_key: str | None = None,
+        kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
     ) -> SandboxHandle:
         self.restored.append(app_name)
         # Which bundle a restore PULLED is the whole question for the recovery flow, so record
         # it — `restored` only says a restore happened, never from what.
         self.restored_from.append(source_key)
+        # #198 — which ARM identity this restore would have stamped. The fake tracks no ARM
+        # tags at all (see `test_aca.py` for the real client's own tag-stamping coverage), so
+        # this is the one place a manager-level test can assert it asked for the right kind.
+        self.restored_as_kind.append(kind)
         self.restore_env = dict(app_env)
         handle = _fake_handle(app_name)
         await _hydrate_registry(user_id, handle)
@@ -409,6 +426,12 @@ class FakeSandboxClient(SandboxClient):
         the frame must still go out)."""
         self.warmed.append(handle.preview_url)
         return self.warm_status
+
+    async def served_count(self, handle: SandboxHandle) -> int | None:
+        """#198's shared-runtime traffic signal, scripted per test via `served_count_value`.
+        `None` (the default) is the probe that could not answer, same convention as
+        `served_page`."""
+        return self.served_count_value
 
     async def dev_logs(self, handle: SandboxHandle, *, since: int = 0) -> DevLogs:
         return DevLogs(lines=[], next_cursor=since)

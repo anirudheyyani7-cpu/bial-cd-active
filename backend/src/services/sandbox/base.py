@@ -55,6 +55,16 @@ list_sandbox_app_names` READS it back to tell our containers from the deployed a
 unrelated workloads sharing the resource group. A drift between those two would make the
 orphan reconciler quietly report nothing."""
 
+SHARED_SANDBOX_NAME_PREFIX = "shr-"
+"""The prefix every SHARED-RUNTIME container carries (`manager.shr_name_for`, #198) — a
+colleague's read-only, app-frame-only view of a project shared with them, restored from the
+builder's own saved snapshot. A THIRD lineage beside `sbx-` (the builder's own build sandbox)
+and `pub-` (a published app), never a variant of either: it is neither the builder's live
+workspace nor a citizen's shipped app, and every place that already tells those two apart by
+name (the portal edge's routing regex, the reaper, the fleet reclaimer) has to learn this
+third shape too, or a shared container becomes invisible to exactly the guards that keep the
+other two lineages from leaking money or access."""
+
 
 def base_path_for(app_name: str) -> str:
     """The path a generated app is served under, e.g. `/a/sbx-<28 hex>`.
@@ -83,8 +93,10 @@ def base_path_for(app_name: str) -> str:
 # reclaimed on a misunderstanding.
 
 TAG_KIND: Final = "bial-kind"
-"""What the resource IS. Today only the `sbx-`/`pub-` name prefix says this, which is a convention,
-rather than a record. Reclamation acts on `KIND_BUILD_SANDBOX` and nothing else."""
+"""What the resource IS. Today only the name prefix (`sbx-`/`pub-`/`shr-`) says this, which is a
+convention, rather than a record. Reclamation only ever DESTROYS `KIND_BUILD_SANDBOX` — a
+`KIND_SHARED_SANDBOX` container is recognized and escalated (never silently ignored), but has
+no destroy policy of its own yet (`reclaim.py::_judge_one`)."""
 
 TAG_USER_ID: Final = "bial-user-id"
 """The owning user's UUID, in plaintext. A container must be judgeable without the coordination
@@ -125,6 +137,13 @@ coming back to it must get their sandbox, not a refusal."""
 
 KIND_BUILD_SANDBOX: Final = "build-sandbox"
 KIND_PUBLISHED_APP: Final = "published-app"
+KIND_SHARED_SANDBOX: Final = "shared-sandbox"
+"""A colleague's read-only view of a project shared with them (#198). `TAG_USER_ID` on a
+container of this kind names the RECIPIENT, not the project's owner — the recipient is whose
+per-slot occupancy and whose access (revocable independent of the project) this container's
+lifecycle actually tracks; `TAG_APP_ID` still names the underlying app being viewed, same as
+every other kind. The owner is recoverable from `TAG_APP_ID` via the app row itself, so no
+third identity field is needed here."""
 
 MAX_TAG_VALUE_LENGTH: Final = 256
 """ARM's per-tag-value ceiling. Enforced HERE rather than discovered from an ARM 400 halfway
@@ -292,6 +311,24 @@ def sandbox_tags(*, user_id: uuid.UUID, app_id: uuid.UUID) -> dict[str, str]:
         {
             TAG_KIND: KIND_BUILD_SANDBOX,
             TAG_USER_ID: str(user_id),
+            TAG_APP_ID: str(app_id),
+            TAG_CONTROL_PLANE: control_plane_segment(),
+            TAG_CREATED_AT: _now_iso(),
+        }
+    )
+
+
+def shared_sandbox_tags(*, recipient_id: uuid.UUID, app_id: uuid.UUID) -> dict[str, str]:
+    """The full ARM-tag identity for a SHARED-RUNTIME sandbox, stamped at create (#198).
+
+    Same shape as `sandbox_tags` — every field the escalate-never-destroy rule needs, `
+    TAG_CREATED_AT` included, since this container's own absolute session ceiling (a Slice-3
+    concern) runs off the same age clock every other tier does. `user_id` is the RECIPIENT
+    (see `KIND_SHARED_SANDBOX`'s docstring for why), never the project's owner."""
+    return checked_tags(
+        {
+            TAG_KIND: KIND_SHARED_SANDBOX,
+            TAG_USER_ID: str(recipient_id),
             TAG_APP_ID: str(app_id),
             TAG_CONTROL_PLANE: control_plane_segment(),
             TAG_CREATED_AT: _now_iso(),

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import hashlib
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -131,6 +132,7 @@ from src.services.redis.keys import (
 )
 from src.services.sandbox import (
     SANDBOX_NAME_PREFIX,
+    SHARED_SANDBOX_NAME_PREFIX,
     CompileState,
     SandboxClient,
     SandboxError,
@@ -982,6 +984,20 @@ def app_name_for(app_id: uuid.UUID) -> str:
     letter-first, ends alphanumeric), stable per app: `sbx-` + 28 hex chars of the
     app_id (`str(app_id)` is an invalid ACA name — dots/length; the hex slug is safe)."""
     return f"{SANDBOX_NAME_PREFIX}{app_id.hex[:28]}"
+
+
+def shr_name_for(app_id: uuid.UUID, recipient_id: uuid.UUID) -> str:
+    """An ACA-compliant container name for a SHARED-RUNTIME sandbox (#198), stable per
+    (app, recipient) PAIR: `shr-` + 28 hex chars of a SHA-256 digest of both ids.
+
+    A hash, not a slice, unlike `app_name_for` — the same app shared with two colleagues must
+    mint two different containers, one per recipient's own restricted view, and 28 hex
+    characters is not room enough to losslessly encode two 128-bit UUIDs. FORWARD-MATCH-ONLY
+    like its two siblings (`app_name_for`, `deploy.names.published_app_name`): nothing may
+    ever reverse-parse an app id or a recipient id back out of this name; both are carried
+    losslessly instead on the container's own ARM tags (`shared_sandbox_tags`)."""
+    digest = hashlib.sha256(f"{app_id}:{recipient_id}".encode()).hexdigest()
+    return f"{SHARED_SANDBOX_NAME_PREFIX}{digest[:28]}"
 
 
 @dataclass(frozen=True)

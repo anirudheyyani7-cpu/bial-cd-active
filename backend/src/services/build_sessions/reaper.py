@@ -71,7 +71,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_STATE,
 )
 from src.services.sandbox import DevStatus, SandboxClient, SandboxError, SandboxHandle
-from src.services.sandbox.base import SANDBOX_NAME_PREFIX
+from src.services.sandbox.base import SANDBOX_NAME_PREFIX, SHARED_SANDBOX_NAME_PREFIX
 
 _log = structlog.get_logger()
 
@@ -165,6 +165,23 @@ def is_a_sandbox_name(app_name: str) -> bool:
     if not app_name.startswith(SANDBOX_NAME_PREFIX):
         return False
     slug = app_name[len(SANDBOX_NAME_PREFIX) :]
+    return len(slug) == _NAME_SLUG_LENGTH and all(c in _HEX_LOWER for c in slug)
+
+
+def is_a_shared_sandbox_name(app_name: str) -> bool:
+    """The `shr-` sibling of `is_a_sandbox_name` (#198) — same fail-closed shape check, same
+    reason: a name this platform will hand to an ARM delete has to be provably one it minted
+    (`manager.shr_name_for`), not assumed from a prefix alone.
+
+    NOT WIRED INTO `reap_user` — that function tears down the ONE per-user BUILD-sandbox slot
+    the registry it reads names, and a `shr-` name would only ever land there if a future
+    slice reuses that exact keyspace for a recipient's shared session, which is not yet
+    decided. This predicate exists so whichever teardown path Slice 3 builds for a shared
+    sandbox — reusing this reap orchestration or a sibling of it — inherits a shape check
+    instead of writing one from scratch, or skipping it."""
+    if not app_name.startswith(SHARED_SANDBOX_NAME_PREFIX):
+        return False
+    slug = app_name[len(SHARED_SANDBOX_NAME_PREFIX) :]
     return len(slug) == _NAME_SLUG_LENGTH and all(c in _HEX_LOWER for c in slug)
 
 

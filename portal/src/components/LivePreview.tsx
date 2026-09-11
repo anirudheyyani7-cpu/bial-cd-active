@@ -172,6 +172,12 @@ const HOLDING_SLOW_TEXT =
 // Pinned as a named constant BESIDE `FRAME_LOAD_CAP_MS` so it is testable and changeable in one
 // place — not because 20s is measured. The holding-state duration counter is what settles it.
 const HOLDING_ESCALATE_MS = 20000
+// How long a `building` verdict may hold the cover ONCE THE TURN IS OVER before the framed
+// document's own word outranks it. A compile takes seconds (a cold first route was measured at
+// 5–7 s); a `building` still standing half a minute after the build finished is a verdict nothing
+// will ever update. Mid-turn the running turn covers on its own account, so this clock starts only
+// when it ends.
+const BUILDING_COVER_MAX_MS = 30000
 
 // WHAT THE COVER SAYS WHEN NO TURN IS RUNNING. "Putting the latest change together…" is
 // true for exactly as long as one is; left up afterwards it becomes a progress state that never
@@ -789,6 +795,23 @@ export default function LivePreview({
     else if (compileState === 'clean') setVerdictCover(null)
     else if (!sameApp || reloaded) setVerdictCover(null)
   }, [previewUrl, compileState, externalReloadNonce])
+  // …AND A `building` COVER EXPIRES ONCE THE TURN IS OVER. The effect above latches it, and only
+  // a `clean`, a new app or the citizen's Reload clears it. The engine settles the verdict with ONE
+  // compile poll when a turn ends and, if that poll still reads `building`, leaves it standing
+  // (`engine.py::_settle_compile_state`: "the next turn resolves it"). So a finished build whose
+  // last read landed mid-compile kept "Putting this page together…" over a served app until the
+  // citizen sent another message — photographed in production on 2026-09-10 over a green build, a
+  // gateway with no 5xx and a container built from the beacon image. Only `building`: `failed` is a
+  // state, not a moment, and never expires. Only when no turn is running: mid-turn `flyingBlind`
+  // covers regardless. What follows is the document's own word — revealed if it vouched (it
+  // usually already has, under the cover), asked like any silent document if it has not.
+  // KEYED TO THE APP TOO: a new app whose first report is also `building` leaves `verdictCover`
+  // Object.is-equal, so without `previewUrl` here it would inherit the outgoing app's clock.
+  useEffect(() => {
+    if (verdictCover !== 'building' || turnRunning) return
+    const t = setTimeout(() => setVerdictCover(null), BUILDING_COVER_MAX_MS)
+    return () => clearTimeout(t)
+  }, [verdictCover, turnRunning, previewUrl])
 
   // WHY THE COVER NO LONGER TRUSTS A SINGLE SIGNAL.
   //

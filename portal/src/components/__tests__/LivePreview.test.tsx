@@ -75,6 +75,7 @@ const PINGS_BEFORE_RELOAD = 2
 const ALIVE_PINGS_BEFORE_STALL = 12
 const VOUCH_RETRY_LIMIT = 3
 const HEARTBEAT_MS = 15_000
+const BUILDING_COVER_MAX_MS = 30_000
 
 /**
  * The frame this pane rendered. Throws rather than returning null for the same reason
@@ -1035,6 +1036,7 @@ describe('★ the deletions, pinned structurally — because a rendered assertio
     )
     expect(source).toMatch(new RegExp(`const VOUCH_RETRY_LIMIT = ${VOUCH_RETRY_LIMIT}`))
     expect(source).toMatch(new RegExp(`const HEARTBEAT_MS = ${HEARTBEAT_MS}`))
+    expect(source).toMatch(new RegExp(`const BUILDING_COVER_MAX_MS = ${BUILDING_COVER_MAX_MS}`))
 
     // ★ AND THE WIRE ITSELF, WHICH IS MATCHED BY VALUE ON BOTH SIDES AND THEREFORE CANNOT BE
     // RENAMED SAFELY BY EITHER. This suite dispatches `bial:app-mounted` in `vouch()` and asserts
@@ -1620,52 +1622,164 @@ describe('★ a document nothing vouches for is covered, and a document nothing 
     expect(frameKeyOf(container)).toBe(keyWhileCovered)
   })
 
-  it('★ a `building` verdict that keeps being reported keeps its cover, however loudly the document vouches', () => {
-    // The other half of the yield, and the half a widened predicate eats silently. The cover gives
-    // way to the document only once NOBODY CAN RE-CONFIRM THE VERDICT; while the container is still
-    // reporting `building`, that verdict is live evidence about the app being compiled right now,
-    // and the beacon does not answer it — it says "something is on screen", never WHICH version of
-    // the app rendered.
+  it('★ a NEW app whose first report is also `building` gets a full expiry window of its own, not the clock of the app it replaced', () => {
+    // The expiry effect watched the verdict string, and a new app's first `building` is
+    // Object.is-equal to the outgoing app's, so the switch changed no dependency and the old
+    // clock kept running: the new app's cover came down early. Keyed to `previewUrl`, a new app
+    // gets the whole BUILDING_COVER_MAX_MS.
+    const SECOND_APP_URL = 'https://app-xyz.example.azurecontainerapps.io/apps/second/'
+    vi.useFakeTimers()
+    try {
+      const { container, rerender } = render(
+        <LivePreview
+          previewUrl={SANDBOX_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning={false}
+        />,
+      )
+      fireEvent.load(frameOf(container))
+      vouch(container)
+      // Two thirds of the first app's window go by, then the pane moves to another app that is
+      // also compiling, and that app's document vouches straight away.
+      act(() => { vi.advanceTimersByTime(20_000) })
+      rerender(
+        <LivePreview
+          previewUrl={SECOND_APP_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning={false}
+        />,
+      )
+      fireEvent.load(frameOf(container))
+      vouch(container, SANDBOX_ORIGIN, '/apps/second')
+
+      // Past the moment the first app's clock would have fired. Mutation check: drop `previewUrl`
+      // from the expiry effect's dependencies and this goes red, revealed ten seconds into the new
+      // app's compile.
+      act(() => { vi.advanceTimersByTime(BUILDING_COVER_MAX_MS - 20_000 + 1) })
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('false')
+
+      act(() => { vi.advanceTimersByTime(20_000) })
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('true')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('★ a `building` verdict that keeps being reported keeps its cover for as long as a compile takes — then the document`s word wins', () => {
+    // The other half of the yield, REVISED 2026-09-11. It used to hold for as long as the container
+    // kept saying `building`, on the reasoning that a live verdict is evidence about the app being
+    // compiled right now. It is — for the seconds a compile takes. Production showed the other
+    // case: a `building` never followed by anything, left standing over a FINISHED build while the
+    // citizen's own browser had the page on screen — "Putting this page together…" was all they
+    // could see, with no re-request, no escalation and no way out but a Reload nobody mentioned.
+    // So once the turn is over the verdict keeps its cover for BUILDING_COVER_MAX_MS, and then
+    // yields to the one witness on the citizen's side of the network.
     //
     // `turnRunning` is false throughout on purpose: it takes `flyingBlind` out of the expression so
-    // the verdict is the only thing holding this cover up, which is the only shape in which the
-    // mutant below is visible.
-    const { container, rerender } = render(
-      <LivePreview
-        previewUrl={SANDBOX_URL}
-        status="ready"
-        serving
-        previewState="alive"
-        compileState="building"
-        turnRunning={false}
-      />,
-    )
-    fireEvent.load(container.querySelector('iframe') as HTMLIFrameElement)
-    vouch(container)
+    // the verdict is the only thing holding this cover up.
+    vi.useFakeTimers()
+    try {
+      const { container, rerender } = render(
+        <LivePreview
+          previewUrl={SANDBOX_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning={false}
+        />,
+      )
+      fireEvent.load(container.querySelector('iframe') as HTMLIFrameElement)
+      vouch(container)
+      // …and the container reports the same thing again on the next poll, which is what "the signal
+      // keeps saying so" looks like from this side of the wire.
+      rerender(
+        <LivePreview
+          previewUrl={SANDBOX_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning={false}
+        />,
+      )
+      const keyWhileCovered = frameKeyOf(container)
 
-    // …and the container reports the same thing again on the next poll, which is what "the signal
-    // keeps saying so" looks like from this side of the wire.
-    rerender(
-      <LivePreview
-        previewUrl={SANDBOX_URL}
-        status="ready"
-        serving
-        previewState="alive"
-        compileState="building"
-        turnRunning={false}
-      />,
-    )
+      // Just short of a compile's plausible length: the verdict still wins, however loudly the
+      // document vouched. Mutation check: widen `verdictHasGoneDark` to `compileState !== 'clean'`
+      // and this goes red here — a half-compiled route revealed while the platform is still
+      // watching it compile.
+      act(() => { vi.advanceTimersByTime(BUILDING_COVER_MAX_MS - 1) })
+      expect(seenNotJustSaid(/putting this page together/i)).toHaveLength(1)
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('false')
+      expect(deviceCard(container).className).toMatch(/opacity-0/)
 
-    // Mutation check: widen `verdictHasGoneDark` to `compileState !== 'clean'`, or drop the
-    // `verdictHasGoneDark &&` conjunction so ANY vouched document lowers a latched verdict, and
-    // this goes red — a half-compiled route revealed while the platform is still watching it
-    // compile.
-    expect(seenNotJustSaid(/putting this page together/i)).toHaveLength(1)
-    expect(deviceCard(container).getAttribute('data-revealed')).toBe('false')
-    expect(deviceCard(container).className).toMatch(/opacity-0/)
-    // LIVENESS, PAIRED: the vouched frame is mounted under the cover, so the refusal above is the
-    // verdict winning rather than a beacon that never landed.
-    expect(container.querySelector('iframe')).toBeTruthy()
+      // Mutation check: drop the expiry effect and this goes red — the app hidden for as long as
+      // the container keeps repeating itself, which for a reader that missed the end of a compile
+      // is forever.
+      act(() => { vi.advanceTimersByTime(1) })
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('true')
+      expect(deviceCard(container).className).toMatch(/opacity-100/)
+      expect(screen.queryAllByText(/putting this page together/i)).toHaveLength(0)
+      // LIVENESS, PAIRED: the same document that vouched, not a re-request.
+      expect(container.querySelector('iframe')).toBeTruthy()
+      expect(frameKeyOf(container)).toBe(keyWhileCovered)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('★ the same expiry over an UNVOUCHED frame drops into the WAIT, never into a reveal — and never while the turn is running', () => {
+    // ★ THE SIBLING THAT MAKES THE TEST ABOVE MEAN SOMETHING. The expiry takes the VERDICT's word
+    // away; it gives the document nothing. A frame nobody has spoken for goes back to being asked,
+    // exactly as any silent document is, and a running turn keeps its own cover regardless.
+    vi.useFakeTimers()
+    try {
+      const { container, rerender } = render(
+        <LivePreview
+          previewUrl={SANDBOX_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning
+        />,
+      )
+      fireEvent.load(container.querySelector('iframe') as HTMLIFrameElement)
+      const keyWhileCovered = frameKeyOf(container)
+      // Mid-turn, ten expiries change nothing: the cover is the running turn's, and the wait's own
+      // sentence never shows through it.
+      act(() => { vi.advanceTimersByTime(10 * BUILDING_COVER_MAX_MS) })
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('false')
+      expect(screen.queryAllByText(/opening your app/i)).toHaveLength(0)
+      expect(frameKeyOf(container)).toBe(keyWhileCovered)
+
+      // The turn ends; the verdict is still `building`.
+      rerender(
+        <LivePreview
+          previewUrl={SANDBOX_URL}
+          status="ready"
+          serving
+          previewState="alive"
+          compileState="building"
+          turnRunning={false}
+        />,
+      )
+      expect(seenNotJustSaid(/putting this page together/i)).toHaveLength(1)
+      act(() => { vi.advanceTimersByTime(BUILDING_COVER_MAX_MS) })
+      // No witness spoke for this document, so it is NOT revealed — it is waited for, in words.
+      expect(deviceCard(container).getAttribute('data-revealed')).toBe('false')
+      expect(screen.queryAllByText(/putting this page together/i)).toHaveLength(0)
+      expect(seenNotJustSaid(/opening your app/i)).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('★ the citizen`s own Reload over a STANDING `failed` keeps the cover — the same render re-raises it', () => {

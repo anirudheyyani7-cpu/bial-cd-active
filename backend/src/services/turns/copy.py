@@ -279,3 +279,30 @@ confusing the two would tell them to wait until midnight when they can carry on 
 IT SAYS THE APP IS WORKING, because that is what the piece-at-a-time ordering buys and it is the
 fact that makes this ending survivable. `{kept}` is filled by the same securing function the
 daily-budget ending uses, so the reassurance is conditional on a copy actually landing."""
+
+
+MODEL_UNAVAILABLE_CODE: Final = "model_unavailable"
+"""The machine-readable half of a model service that failed mid-turn: the `reason` on the terminal
+frame, mirrored by the portal's `OUTCOME_COPY`. A token, never prose."""
+
+MODEL_UNAVAILABLE_TEXT: Final = (
+    "The assistant's service stopped responding partway through, {kept}. "
+    "Send your message again in a minute and it will carry on from here."
+)
+"""What a citizen is told when the model service fails mid-build: a retryable status that outlived
+the SDK's own retries, a connection that never answered, or a stream that ended in an error event.
+
+WHY NOT THE GENERIC SENTENCE. "The assistant hit a problem and this turn was stopped" is right for
+a platform bug and wrong here: the assistant is fine, the workspace is exactly as the last write
+left it, and the thing to do is send again. `{kept}` is filled by the same securing function the
+daily budget and the run bounds use, so the reassurance is verified rather than assumed.
+
+NOT A CLAIM ABOUT 2026-09-11. That incident's generic failure is still unexplained: Foundry's
+metrics for the minute show only status 200, no errors and no client-closed requests. The terminal
+row's `error` field (`engine.py::_error_signature`) is what records the real cause next time."""
+
+MODEL_UNAVAILABLE_PLAN_TEXT: Final = (
+    "The assistant's service stopped responding partway through. "
+    "Send your message again in a minute."
+)
+"""The same ending in a Plan chat, where there is no workspace to have kept a copy of."""

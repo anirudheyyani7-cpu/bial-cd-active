@@ -27,6 +27,7 @@ conversation shut.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from collections import deque
@@ -35,12 +36,12 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 import structlog
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai._agent_graph import AgentNode
-from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -197,6 +198,9 @@ from src.services.turns.copy import (
     COULD_NOT_CHECK_TEXT,
     COULD_NOT_CONFIRM_TEXT,
     DID_NOT_COME_TOGETHER_TEXT,
+    MODEL_UNAVAILABLE_CODE,
+    MODEL_UNAVAILABLE_PLAN_TEXT,
+    MODEL_UNAVAILABLE_TEXT,
     NOT_RECOVERED_TEXT,
     PLAN_NOT_KEPT_TEXT,
     RECOVERED_TEXT,
@@ -543,6 +547,81 @@ def _run_spend(usage: RunUsage) -> int:
     )
 
 
+def _is_transient_model_status(status_code: int) -> bool:
+    """The statuses the Anthropic SDK itself retries (`_should_retry` in `anthropic._base_client`):
+    408, 409, 429 and every 5xx. A failure with one of these has already been retried by the time
+    it reaches the engine, so it is the model service's problem and gets the named ending; any
+    other 4xx is a request the platform built wrong and keeps the generic one."""
+    return status_code in (408, 409, 429) or status_code >= 500
+
+
+_ERROR_CHAIN_LIMIT: Final = 5
+# The provider's error `type` (`overloaded_error`) is the one string in the signature that
+# arrives from outside the process, so anything but a short lowercase token is dropped.
+_PROVIDER_ERROR_TYPE: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _error_signature(exc: BaseException) -> str:
+    """What ended a failed turn, as a short record for the terminal row — class names, never text.
+
+    WHY THIS EXISTS. On 2026-09-11 a build turn ended through the generic arm and the only record
+    of the exception was the `turn_run_failed` log line, in an archive the team cannot read; the
+    database row said `reason: null` and nothing else. Foundry's metrics then ruled out a rate
+    limit or an HTTP error, which left the cause unrecoverable. Written onto the terminal row, the
+    same question is one query away next time.
+
+    CLASS NAMES ALONG THE CAUSE CHAIN, plus the HTTP status and the provider's error TYPE token
+    when the chain carries them (`ModelAPIError <- APIStatusError status=200 type=overloaded_error`
+    is what a stream that ended in an error event looks like), and WHERE it surfaced in the code
+    (`_raise_site`). NEVER THE MESSAGE: exception text
+    can carry bound SQL parameters, file content or a provider's echo of the prompt, and this
+    codebase already refuses to log bound parameters."""
+    names: list[str] = []
+    status: int | None = None
+    provider_type: str | None = None
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(names) < _ERROR_CHAIN_LIMIT:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        code: object = getattr(current, "status_code", None)
+        if status is None and isinstance(code, int):
+            status = code
+        body: object = getattr(current, "body", None)
+        if provider_type is None and isinstance(body, dict):
+            error = cast("dict[str, object]", body).get("error")
+            if isinstance(error, dict):
+                token = cast("dict[str, object]", error).get("type")
+                if isinstance(token, str) and _PROVIDER_ERROR_TYPE.fullmatch(token):
+                    provider_type = token
+        current = current.__cause__ or current.__context__
+    signature = " <- ".join(names)
+    if status is not None:
+        signature += f" status={status}"
+    if provider_type is not None:
+        signature += f" type={provider_type}"
+    site = _raise_site(exc)
+    if site is not None:
+        signature += f" at={site}"
+    return signature
+
+
+def _raise_site(exc: BaseException) -> str | None:
+    """Where `exc` surfaced, as `module:function:line`: the innermost frame in the platform's own
+    code when the traceback has one, otherwise the innermost frame at all. A class name alone
+    (`KeyError`) does not say which line to open, and the traceback that does sits in the log
+    archive; a place in the code carries no data, so it is safe on the row."""
+    site: str | None = None
+    tb = exc.__traceback__
+    while tb is not None:
+        module = str(tb.tb_frame.f_globals.get("__name__", "?"))
+        here = f"{module}:{tb.tb_frame.f_code.co_name}:{tb.tb_lineno}"
+        if site is None or module.startswith("src.") or not site.startswith("src."):
+            site = here
+        tb = tb.tb_next
+    return site
+
+
 def _sandbox_unavailable_message(exc: Exception) -> str:
     """Citizen copy for a workspace that would not come up.
 
@@ -766,6 +845,9 @@ class _TurnState:
     # FAILURE, not a quiet success. Nothing else about the two turns differs, so the caller
     # has to say which one this is — the engine cannot infer it from the prompt.
     expects_mutation: bool = False
+    # What ended a FAILED turn, when the platform did not name it — see `_error_signature`.
+    # Written onto the terminal row's meta as `error`; None on every other ending.
+    error_signature: str | None = None
     #: Did THIS turn bring a container up, rather than joining one already serving? Set at the
     #: attach seam from `BuildSession.attached`, and read only by the container-start success
     #: ratio's numerator — a turn that started nothing must not be able to report a start that
@@ -1105,7 +1187,7 @@ class TurnEngine:
                     turn_id=str(state.turn_id),
                 )
 
-        async def _fail_generically() -> None:
+        async def _fail_generically(exc: BaseException) -> None:
             """How a turn ends when it broke for a reason the citizen cannot act on.
 
             A CLOSURE BECAUSE THE SPECIFIC ARM HAS TO BE ABLE TO HAND AN ERROR BACK. The
@@ -1121,6 +1203,7 @@ class TurnEngine:
                 conversation_id=str(state.conversation_id),
                 turn_id=str(state.turn_id),
             )
+            state.error_signature = _error_signature(exc)
             # Partial spend before the failure still counts: bill what actually ran.
             await _bill_once()
             state.error_message = _TURN_FAILED_MESSAGE
@@ -1128,6 +1211,47 @@ class TurnEngine:
                 state,
                 lambda seq: TurnErrorFrame(seq=seq, message=_TURN_FAILED_MESSAGE),
             )
+            self._finish(state, "failed")
+
+        async def _end_model_unavailable(exc: Exception) -> None:
+            """The model service failed mid-turn — named, not generic.
+
+            NAMED for the reason the quota, the run bounds and the overflow are named: the
+            assistant is fine, the workspace is as the last write left it, and the thing to do is
+            send again — none of which "the assistant hit a problem" says. ONLY the service's own
+            failures count: a status the SDK retries (`_is_transient_model_status`) or a
+            `ModelAPIError` (a connection that never answered, or a stream that ended in an error
+            event). A 400 about a media type or a 401 keeps the generic ending. A Build turn
+            secures its tree through the function the run bounds use, so `{kept}` is verified
+            before it is said; a Plan turn has no tree."""
+            state.error_signature = _error_signature(exc)
+            _log.warning(
+                "turn_model_unavailable",
+                conversation_id=str(state.conversation_id),
+                turn_id=str(state.turn_id),
+                status_code=getattr(exc, "status_code", None),
+                error=state.error_signature,
+            )
+            await _bill_once()
+            if state.kind is ChatKind.BUILD:
+                # A STOP WHILE THE TREE IS SECURED STILL ENDS THE TURN. This runs inside an
+                # `except`, so a cancellation landing in this await (up to a minute of container
+                # round trips) is not the `except asyncio.CancelledError` arm's to catch, and
+                # escaping would skip `_finish`: no terminal frame, no terminal row, a turn
+                # "running" until every subscriber's stall timeout. The run bounds secure BEFORE
+                # they raise, inside the `try`, which is why they never needed this.
+                try:
+                    ending = await at_limit_ending(state.sandbox, sentence=MODEL_UNAVAILABLE_TEXT)
+                except asyncio.CancelledError:
+                    state.end_reason = STOPPED_BY_USER
+                    self._finish(state, "stopped")
+                    return
+                message = ending.message
+            else:
+                message = MODEL_UNAVAILABLE_PLAN_TEXT
+            state.end_reason = MODEL_UNAVAILABLE_CODE
+            state.error_message = message
+            self._emit(state, lambda seq: TurnErrorFrame(seq=seq, message=message))
             self._finish(state, "failed")
 
         try:
@@ -1427,10 +1551,18 @@ class TurnEngine:
                     lambda seq: TurnErrorFrame(seq=seq, message=CHAT_TOO_LONG_TEXT),
                 )
                 self._finish(state, "failed")
+            elif _is_transient_model_status(exc.status_code):
+                await _end_model_unavailable(exc)
             else:
-                await _fail_generically()
-        except Exception:
-            await _fail_generically()
+                await _fail_generically(exc)
+        except ModelAPIError as exc:
+            # A connection that never answered, or a stream that ended in an error event — both
+            # wrapped by pydantic-ai as `ModelAPIError`. AFTER the HTTP arm, necessarily:
+            # `ModelHTTPError` IS a `ModelAPIError`, so this arm first would swallow the overflow
+            # match above, and Python would say nothing about it.
+            await _end_model_unavailable(exc)
+        except Exception as exc:
+            await _fail_generically(exc)
         finally:
             # THE DURABLE TERMINAL, FIRST IN THE FINALLY. `_finish` emits the live
             # `TurnEndedFrame` and cannot write it — it is synchronous by design, so that a
@@ -3683,6 +3815,17 @@ class TurnEngine:
                         "turnId": str(state.turn_id),
                         "status": state.status,
                         "reason": state.end_reason,
+                        # WHAT BROKE IT, on a turn that reached the generic ending or the
+                        # model-service one (a stop that landed while that ending secured the tree
+                        # included) — class names, status, provider type and code location only
+                        # (`_error_signature`). Every other ending carries none, so a completed
+                        # turn's row is byte-identical to what it always was. The projection reads
+                        # named keys and never forwards this to a browser.
+                        **(
+                            {"error": state.error_signature}
+                            if state.error_signature is not None
+                            else {}
+                        ),
                     },
                 )
         except Exception:

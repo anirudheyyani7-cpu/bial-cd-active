@@ -3005,7 +3005,10 @@ describe('LivePreview — the holding state stops when the turn does', () => {
     vi.useFakeTimers()
     try {
       const { container } = setup({ compileState: 'building', turnRunning: false })
-      act(() => vi.advanceTimersByTime(ESCALATE_MS * 2))
+      // Past the escalation deadline but short of the idle cover's OWN expiry (30 s, since
+      // 2026-09-11 — a `building` that outlives a compile yields to the document; see
+      // `LivePreview.test.tsx`). Inside that window the sentence must not change at all.
+      act(() => vi.advanceTimersByTime(ESCALATE_MS + 1_000))
       expect(coverEl(container).textContent).toMatch(IDLE_BUSY)
       expect(coverEl(container).textContent).not.toMatch(HOLDING_SLOW)
     } finally {

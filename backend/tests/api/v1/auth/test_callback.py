@@ -13,12 +13,14 @@ from typing import Any
 import httpx
 import pytest
 from authlib.integrations.starlette_client import OAuthError
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from structlog.testing import capture_logs
 
 from src.config import settings
 from src.db.models.refresh_token import RefreshToken
 from src.db.models.user import User
+from src.services.auth.cookies import csrf_cookie_name, refresh_cookie_name, session_cookie_name
 from src.services.auth.oidc import get_oauth
 from src.services.auth.refresh import hash_refresh_token
 from tests.factories import UserFactory
@@ -50,12 +52,25 @@ class _FakeEntra:
     def __init__(self, *, token: dict[str, Any] | None, error: Exception | None) -> None:
         self._token = token
         self._error = error
+        self.redirects: list[dict[str, Any]] = []
+        self.redirect_error: Exception | None = None
 
     async def authorize_access_token(self, request: Any) -> dict[str, Any]:
         if self._error is not None:
             raise self._error
         assert self._token is not None
         return self._token
+
+    async def authorize_redirect(self, request: Any, redirect_uri: str, **kwargs: Any) -> Any:
+        # The step-up re-issue. Recorded rather than built, so a test reads exactly which
+        # parameters the callback asked Entra for.
+        if self.redirect_error is not None:
+            raise self.redirect_error
+        self.redirects.append({"redirect_uri": redirect_uri, **kwargs})
+        return RedirectResponse(
+            f"https://login.microsoftonline.com/{_TID}/oauth2/v2.0/authorize?prompt=login",
+            status_code=302,
+        )
 
 
 class _FakeOAuth:
@@ -65,8 +80,12 @@ class _FakeOAuth:
 
 def _use_fake_oauth(
     app: Any, *, token: dict[str, Any] | None = None, error: Exception | None = None
-) -> None:
-    app.dependency_overrides[get_oauth] = lambda: _FakeOAuth(_FakeEntra(token=token, error=error))
+) -> _FakeEntra:
+    # ONE fake per test, shared across requests, so a test can read what the callback asked
+    # Entra for and change the outcome between two callbacks.
+    entra = _FakeEntra(token=token, error=error)
+    app.dependency_overrides[get_oauth] = lambda: _FakeOAuth(entra)
+    return entra
 
 
 def _set_cookies(resp: httpx.Response) -> dict[str, str]:
@@ -294,3 +313,141 @@ async def test_each_failed_callback_gets_a_distinct_ref(app, client) -> None:
     first = _assert_login_error(await client.get("/v1/auth/callback"), "auth_failed")
     second = _assert_login_error(await client.get("/v1/auth/callback"), "auth_failed")
     assert first != second
+
+
+# --- MFA step-up: AADSTS50078 and its family ---------------------------------------------------
+
+
+def _aadsts(code: str) -> OAuthError:
+    return OAuthError(
+        error="invalid_grant",
+        description=(
+            f"AADSTS{code}: Presented multi-factor authentication has expired due to policies "
+            "configured by your administrator. Trace ID: 18659dd0 Correlation ID: fc25d9f7"
+        ),
+    )
+
+
+def _app_session_cookies(resp: httpx.Response) -> set[str]:
+    return {session_cookie_name(), refresh_cookie_name(), csrf_cookie_name()} & set(
+        _set_cookies(resp)
+    )
+
+
+@pytest.mark.parametrize("code", ["50076", "50078", "50079", "70044"])
+async def test_a_stale_mfa_session_is_sent_back_to_entra_once_with_prompt_login(
+    app, client, code: str
+) -> None:
+    """★ Production, 2026-09-11 (refs b005f1e8, d172da84): Entra silently re-minted a code from a
+    browser session whose MFA had expired, the token exchange refused it with AADSTS50078, and
+    every "try again" did the same. The callback now asks Entra for a FRESH sign-in instead of
+    bouncing to a retry that cannot work. Mutation check: drop the step-up arm and this goes red
+    on the auth_failed bounce."""
+    entra = _use_fake_oauth(app, error=_aadsts(code))
+    with capture_logs() as logs:
+        resp = await client.get("/v1/auth/callback")
+
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("https://login.microsoftonline.com/")
+    assert entra.redirects == [{"redirect_uri": settings.auth.redirect_uri, "prompt": "login"}]
+    assert _app_session_cookies(resp) == set()  # still no session: failing closed is unchanged
+    assert "oauth_transient" in _set_cookies(resp)  # the one-retry marker rides this cookie
+    step_up = [entry for entry in logs if entry["event"] == "auth_step_up_redirect"]
+    assert len(step_up) == 1
+    assert step_up[0]["aadsts"] == code
+    assert re.fullmatch(r"[0-9a-f]{8}", step_up[0]["trace_id"])
+
+
+async def test_a_second_rejection_after_the_step_up_bounces_to_reauth_required_never_loops(
+    app, client
+) -> None:
+    """★ One automatic retry, never a redirect loop between the callback and Entra."""
+    entra = _use_fake_oauth(app, error=_aadsts("50078"))
+    first = await client.get("/v1/auth/callback")
+    assert first.headers["location"].startswith("https://login.microsoftonline.com/")
+
+    second = await client.get("/v1/auth/callback")
+
+    assert second.status_code == 302
+    _assert_login_error(second, "reauth_required")
+    assert len(entra.redirects) == 1
+    assert _app_session_cookies(second) == set()
+
+
+async def test_a_successful_sign_in_after_the_step_up_clears_the_marker(app, client) -> None:
+    entra = _use_fake_oauth(app, error=_aadsts("50078"))
+    await client.get("/v1/auth/callback")
+    entra._error, entra._token = None, _token()
+
+    signed_in = await client.get("/v1/auth/callback")
+    assert signed_in.headers["location"] == settings.FRONTEND_URL
+    assert session_cookie_name() in _set_cookies(signed_in)
+
+    # A later stale session gets its one automatic retry again, because success cleared the marker.
+    entra._error = _aadsts("50078")
+    again = await client.get("/v1/auth/callback")
+    assert again.headers["location"].startswith("https://login.microsoftonline.com/")
+    assert len(entra.redirects) == 2
+
+
+async def test_other_entra_rejections_keep_the_generic_bounce(app, client) -> None:
+    entra = _use_fake_oauth(
+        app,
+        error=OAuthError(error="invalid_client", description="AADSTS7000215: Invalid client."),
+    )
+    resp = await client.get("/v1/auth/callback")
+    _assert_login_error(resp, "auth_failed")
+    assert entra.redirects == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx.ConnectError("entra unreachable"), id="network"),
+        pytest.param(OAuthError(error="server_error", description="metadata refused"), id="oauth"),
+        pytest.param(ValueError("malformed discovery document"), id="malformed"),
+    ],
+)
+async def test_a_step_up_that_cannot_reach_entra_falls_closed_to_the_banner(
+    app, client, failure: Exception
+) -> None:
+    entra = _use_fake_oauth(app, error=_aadsts("50078"))
+    entra.redirect_error = failure
+    resp = await client.get("/v1/auth/callback")
+    assert resp.status_code == 302
+    _assert_login_error(resp, "reauth_required")
+    assert _app_session_cookies(resp) == set()
+
+    # The marker went with the failed attempt, so once Entra answers again the next stale session
+    # still gets its one automatic retry. Mutation check: drop the pop in `_step_up`'s failure arm
+    # and this goes red on the banner.
+    entra.redirect_error = None
+    again = await client.get("/v1/auth/callback")
+    assert again.headers["location"].startswith("https://login.microsoftonline.com/")
+
+
+async def test_a_forced_sign_in_that_entra_refuses_again_goes_to_the_banner(app, client) -> None:
+    """The login page's own forced sign-in already spent the one retry: a refusal after it is the
+    banner, not a second trip to Entra."""
+    entra = _use_fake_oauth(app, error=_aadsts("50078"))
+    await client.get("/v1/auth/login", params={"prompt": "login"})
+
+    resp = await client.get("/v1/auth/callback")
+
+    _assert_login_error(resp, "reauth_required")
+    assert entra.redirects == [{"redirect_uri": settings.auth.redirect_uri, "prompt": "login"}]
+
+
+async def test_an_ordinary_sign_in_clears_a_forced_one_it_replaced(app, client) -> None:
+    """A forced sign-in that was abandoned for the ordinary button must not leave its marker
+    behind, or the next stale MFA session would go straight to the banner without its automatic
+    retry. Mutation check: drop the pop in `login` and this goes red on the banner."""
+    entra = _use_fake_oauth(app, error=_aadsts("50078"))
+    await client.get("/v1/auth/login", params={"prompt": "login"})
+    await client.get("/v1/auth/login")
+
+    resp = await client.get("/v1/auth/callback")
+
+    assert resp.headers["location"].startswith("https://login.microsoftonline.com/")
+    assert len(entra.redirects) == 3
+    assert entra.redirects[-1] == {"redirect_uri": settings.auth.redirect_uri, "prompt": "login"}

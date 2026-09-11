@@ -24,6 +24,10 @@ REASON_AUTH_FAILED = "auth_failed"
 # Local governance suspension: Entra authenticated the user fine, but a
 # super-admin has blocked them platform-side — the banner says so explicitly.
 REASON_ACCOUNT_SUSPENDED = "account_suspended"
+# Entra refused to redeem the code because the browser session no longer satisfies the tenant's
+# Conditional Access (an expired or missing MFA step, a sign-in frequency check). Retrying from the
+# same session cannot succeed — only a FRESH interactive sign-in can, so the banner says so.
+REASON_REAUTH_REQUIRED = "reauth_required"
 
 
 class AuthError(Exception):

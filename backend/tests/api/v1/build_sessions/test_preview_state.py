@@ -1329,6 +1329,11 @@ async def test_a_cold_relaunch_whose_root_shows_no_page_keeps_the_container_it_j
 
     assert restored.status_code == 200, "the citizen got an error over a container that is up"
     assert restored.json()["ready"] is False, "a 404 root was reported as a running app"
+    # AND THE WORD ON THE WIRE, NOT ONLY THE FLAG. `ready` and `status` are two fields the router
+    # derives from one value (`READY if relaunched.ready else PROVISIONING`), and every other test
+    # here reads the flag alone — so hardcoding that mapping back to READY left the whole suite
+    # green. Issue #49's acceptance criterion is written in terms of this field, not of `ready`.
+    assert restored.json()["status"] == "provisioning", "a page-less container was called READY"
     assert restored.json()["previewUrl"], "the URL is framable the moment a page exists"
     assert wire.sbx.torn_down == [], "the restored container was destroyed for answering 404"
     assert wire.sbx.restored == [app_name_for(app_id)], "guard the premise: this was the cold arm"

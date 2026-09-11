@@ -109,9 +109,14 @@ function LimitField({ name, label, hint, field, setField, defaultValue }: LimitF
 
 interface EditModalProps {
   user: MergedUser
-  // Partial: a field can be genuinely absent (undefined), not just null — every
-  // read below folds that back to null, which is init()'s and submit()'s
-  // existing "no override" fallback value.
+  // Partial, not LimitFields: the live endpoint always sends all three, but fetchUsers
+  // falls back to `{}` when the envelope carries no `defaults` at all (see its docblock in
+  // utils/admin.ts), so a field can arrive genuinely absent (undefined), not just null.
+  // The reads below do NOT fold that uniformly. init() and the JSX defaultValue passes
+  // leave it undefined deliberately — init()'s own comment says what that preserves.
+  // submit()'s `defaults.field ?? null` is NOT the value sent to the server: it only
+  // feeds the positive-integer check that decides whether "use default" may submit. The
+  // null the server stores as "no override" is the separate literal built in `patch`.
   defaults: Partial<LimitFields>
   onClose: () => void
   onSaved: (updated: { userId: string; limits: LimitFields; effectiveLimits: LimitFields }) => void

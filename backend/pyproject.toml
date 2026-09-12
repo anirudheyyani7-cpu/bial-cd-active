@@ -29,7 +29,6 @@ dependencies = [
     # encrypted-file short-circuit in `get_num_pages()` does not stand in front of (#194).
     # A major that renames or drops it turns every PDF into a 400 "malformed file".
     "pypdf>=6.17.0,<7",
-    "python-docx>=1.2.0",
     "sqlalchemy>=2.0.52",
     "structlog>=26.1.0",
     "taskiq>=0.12.6",
@@ -44,9 +43,6 @@ dependencies = [
 #   dev    = tooling + tests
 api = [
     "fastapi[standard]>=0.141.1",
-    "mammoth>=1.12.1",
-    "markdownify>=1.2.3",
-    "openpyxl>=3.1.5",
     # `openai` extra added for #191 slice 3 (hybrid search): `OpenAIEmbeddingModel` +
     # `AzureProvider` need the `openai` package pydantic-ai-slim vendors behind this extra.
     "pydantic-ai-slim[anthropic,openai]>=2.37.0",
@@ -132,10 +128,11 @@ module = ["authlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# The office-extraction stack ships no py.typed / stubs: mammoth (docx→html),
-# markdownify (html→markdown), and openpyxl (xlsx). Treat as untyped so the direct
-# imports in services/extract/office.py don't fail mypy --strict.
-module = ["mammoth.*", "markdownify.*", "openpyxl.*"]
+# openpyxl ships no py.typed / stubs. The override outlived the office-extraction stack it was
+# written for — #214 deleted that, and mammoth/markdownify with it — because openpyxl has a
+# second, unrelated consumer: `scripts/exception_register.py`. Dropping the library with its
+# extractor would have failed the build on a script that change never touched.
+module = ["openpyxl.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

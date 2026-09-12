@@ -24,7 +24,7 @@ from src.db.models.project import Project
 from src.main import create_app
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.build_sessions.appdata import resolve_app_for_project
-from src.services.extract.office import PPTX_MEDIA_TYPE
+from src.services.media.lanes import PPTX_MEDIA_TYPE
 from src.services.projects import delete_project_cascade
 from src.services.storage import AppContainerStore, recovery_key, snapshot_key
 from tests.api.v1.projects.conftest import _VALID_DESCRIPTION, DELETE_BODY
@@ -404,7 +404,6 @@ async def test_delete_cascades_children_and_sweeps_blobs(client, db_session, fak
     conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     att_id = await _attachment(db_session, user.id, "att/deck", media_type=PPTX_MEDIA_TYPE)
     fake_storage.objects["att/deck"] = b"deck"
-    fake_storage.objects["att/deck.pdf"] = b"pdf"
     await MessageFactory.create(
         db_session,
         user.id,
@@ -430,7 +429,7 @@ async def test_delete_cascades_children_and_sweeps_blobs(client, db_session, fak
     ) is None
     assert snapshot_key(app.id) not in fake_storage.objects
     assert "att/deck" not in fake_storage.objects
-    assert "att/deck.pdf" not in fake_storage.objects
+    # Audit written.
     audit = await db_session.scalar(
         select(AuditLog).where(
             AuditLog.action == "project:delete", AuditLog.resource_id == str(project.id)
@@ -555,7 +554,6 @@ async def test_cascade_deletes_rows_and_returns_blob_keys(db_session) -> None:
         snapshot_key(app.id),
         recovery_key(app.id),
         "att/k2",
-        "att/k2.pdf",
     }
     assert cleanup.app_container_ids == [app.id]
 
@@ -596,8 +594,11 @@ async def test_cascade_batches_many_conversations_and_dedups_shared_attachment(d
         assert await db_session.get(Conversation, conv.id) is None
     assert await db_session.get(Project, project.id) is None
     assert await db_session.scalar(select(Attachment).where(Attachment.user_id == user.id)) is None
-    assert sorted(cleanup.blob_keys) == ["att/deck", "att/deck.pdf", "att/shared"]
-    assert cleanup.app_container_ids == []
+    # Shared key returned exactly once; the deck contributes its blob + derived `.pdf`.
+    # ONE KEY PER ROW (#214). A .pptx used to carry a derived `{key}.pdf` from the converter,
+    # so a cascade had to sweep both. Nothing derives anything from an attachment now.
+    assert sorted(cleanup.blob_keys) == ["att/deck", "att/shared"]
+    assert cleanup.app_container_ids == []  # this project has no app → no container to sweep
 
 
 async def test_cascade_gathers_every_submission_key(db_session) -> None:

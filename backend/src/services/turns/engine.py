@@ -96,12 +96,17 @@ from src.db.models.harness_counter import HarnessCounter
 from src.db.models.message import MessageEntryKind, MessageVisibility
 from src.db.models.user import User
 from src.services.agent.agent import ChatDeps, chat_agent
+from src.services.agent.attachment_tools import AttachmentReader
 from src.services.agent.mode_prompts import PromptContext, workspace_note
 from src.services.agent.read_tools import (
     LiveSandboxWorkspace,
     ReadOnlyWorkspace,
 )
 from src.services.agent.toolsets import toolsets_for_kind
+from src.services.attachments.materialize import (
+    AttachmentDelivery,
+    AttachmentPlacementError,
+)
 from src.services.build_sessions.alarms import (
     APP_FIRST_SERVED_EVENT,
     APP_SERVING_LOST_EVENT,
@@ -787,6 +792,13 @@ class _TurnState:
     # terminal frame, or a late preview frame lands after `[DONE]`. All three are None only on a
     # turn whose attach never completed.
     sandbox: SandboxSession | None = None
+    # The conversation's code-lane attachments and the store they live in (#214 R20/R11a), or
+    # None when it holds none. Set by the send route, which is the only layer holding both the
+    # database session and the object store; used twice — once inside the attach, to put the
+    # files in the container before the agent's first read, and once at the top of the run, to
+    # tell the agent they are there. Carrying the storage HANDLE rather than the bytes is what
+    # keeps a detached turn from pinning tens of megabytes for its whole life.
+    attachments: AttachmentDelivery | None = None
     write_session: BuildSession | None = None
     preview_task: asyncio.Task[None] | None = None
     # The liveness lease renewal. Started where the container is attached,
@@ -945,6 +957,25 @@ def _sandbox_of(ctx: RunContext[ChatDeps]) -> SandboxSession:
     return session
 
 
+def _reader_of(ctx: RunContext[ChatDeps]) -> AttachmentReader:
+    """The ChatDeps accessor Plan's attachment reader resolves through (#214 R14).
+
+    It reads the same field `_sandbox_of` does, and that is the point rather than a duplication:
+    the reader runs `python3` inside the container, which is a capability no read-only workspace
+    can express — `LiveSandboxWorkspace` routes every command through `check_the_guest_list`, and
+    `python3` is deliberately absent from it. What keeps Plan read-only is the TOOLSET it is
+    handed, which contains nothing that writes; it was never the absence of this field.
+
+    Fail-first for the same reason as its neighbour: a run reaching this tool with no container is
+    a bug in the attach path, and the honest response is to say so rather than to answer about a
+    file nobody placed.
+    """
+    session = ctx.deps.sandbox
+    if session is None:
+        raise RuntimeError("attachment reader resolved on a turn with no attached sandbox")
+    return AttachmentReader(session=session)
+
+
 class TurnEngine:
     """The in-process turn registry + lifecycle (single-replica: this process is the sole
     writer, exactly the `SessionManager._active_by_user` invariant)."""
@@ -994,6 +1025,7 @@ class TurnEngine:
         manager: SessionManager,
         sandbox_client: SandboxClient | None = None,
         expects_mutation: bool = False,
+        attachments: AttachmentDelivery | None = None,
     ) -> uuid.UUID:
         """Claim the conversation, persist the user turn (caller-supplied writer, so the
         route's typed seq-contention mapping stays with the route), spawn the detached run,
@@ -1002,7 +1034,12 @@ class TurnEngine:
         shape now that both kinds attach a live container — the send route refuses a `None`
         sandbox outright, and `_attach_sandbox` fails loudly if one ever reaches it anyway.
         `expects_mutation` is the Build-it caller's declaration that this turn OWES a file
-        change; only the plan-card path opts in (see the mutation guard in `_run_write`)."""
+        change; only the plan-card path opts in (see the mutation guard in `_run_write`).
+
+        `attachments` is the conversation's code-lane files (#214). The ROUTE resolves them
+        because only the route holds the database session and the object store together; the
+        engine holds the container and the model's context, which is where both halves of the
+        delivery happen. None until someone attaches a spreadsheet."""
         claim_conversation(conversation.id)
         try:
             await persist_user_turn()
@@ -1012,6 +1049,7 @@ class TurnEngine:
                 user_id=user_id,
                 kind=conversation.kind,
                 expects_mutation=expects_mutation,
+                attachments=attachments,
             )
             self._by_conversation[conversation.id] = state
             # ANSWER THE SCREEN BEFORE ANYTHING CAN BE SLOW.
@@ -1273,6 +1311,23 @@ class TurnEngine:
             if workspace is not None:
                 note = await self._workspace_note(state)
                 history = [*history, ModelRequest(parts=[UserPromptPart(content=note)])]
+            # AND THE ATTACHED FILES, ON THE SAME CARRIER AND FOR THE SAME REASON (#214 R11a).
+            #
+            # An ephemeral tail rather than part of the citizen's own message: the paths are a
+            # fact about THIS container, and a container is not what a conversation is stored
+            # against. Persisting them would leave a transcript naming files at paths a later
+            # container may spell differently — and `new_messages()` never contains injected
+            # history, so this cannot reach the stored rows even by accident.
+            #
+            # UNCONDITIONAL WHENEVER THERE IS A FILE, on every turn rather than the turn it was
+            # uploaded on. The issue calls the agent writing its own parser the single failure
+            # this design exists to prevent, and an agent only knows not to when it is told —
+            # every time, because a model reads the turn in front of it.
+            if state.attachments is not None:
+                history = [
+                    *history,
+                    ModelRequest(parts=[UserPromptPart(content=state.attachments.note())]),
+                ]
             # WHAT WAS AGREED, READ OUT OF THE CONVERSATION ITSELF. No column, no
             # table, no project field: the agreement is the arguments of the last honourable
             # proposal call in these rows, which is the same bounded route the plan travels. A
@@ -1326,8 +1381,25 @@ class TurnEngine:
                         kind=state.kind,
                         prompt_context=prompt_context,
                         workspace=workspace,
+                        # SET ON THIS ARM TOO NOW (#214 R14). It used to be Build-only, and the
+                        # comment on the field said so — but the Plan arm's attachment reader
+                        # runs `python3` in the same container, which is a capability no
+                        # read-only workspace can express: `LiveSandboxWorkspace` routes through
+                        # `check_the_guest_list`, and `python3` is deliberately not on it.
+                        # Handing over the session does NOT widen what Plan may do: the toolset
+                        # built below is what decides that, and Plan's does not contain a single
+                        # tool that writes.
+                        sandbox=state.sandbox,
                     )
-                    toolsets = toolsets_for_kind(state.kind, _workspace_of).toolsets
+                    # THE READER IS OFFERED ONLY WHEN THERE IS SOMETHING TO READ. A tool named
+                    # `read_attachment` on a chat with no attachment is an invitation to invent a
+                    # path and then explain the failure; `toolsets_for_kind` takes the accessor as
+                    # optional for exactly this, and registration is per-run.
+                    toolsets = toolsets_for_kind(
+                        state.kind,
+                        _workspace_of,
+                        reader_of=_reader_of if state.attachments is not None else None,
+                    ).toolsets
                     # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT. A run can only
                     # end deferred if a tool that DEFERS was registered on it, and
                     # `present_plan_options` — the one `CallDeferred` in the tree — is on the
@@ -1870,6 +1942,39 @@ class TurnEngine:
             # and a second feed would draw every step twice.
             emitter=None,
         )
+        # THE ATTACHED FILES GO IN NOW — BEFORE THE AGENT'S FIRST READ (#214 R20/R20a).
+        #
+        # HERE, RATHER THAN ANYWHERE ELSE, because this is the one place a turn of either kind
+        # first holds a live container, and because the container it holds may be a NEW one. The
+        # attachments root is a sibling of the app tree precisely so no snapshot or restore
+        # carries it, and the price of that is that a recycled container comes back empty — so a
+        # conversation's files are placed on every turn, not on the turn they were uploaded.
+        # `place` skips what is already there at the right size, so the ordinary second turn on a
+        # surviving container transfers nothing.
+        #
+        # A FAILURE ENDS THE TURN. Carrying on would answer a question about a file the agent
+        # cannot see, and every failure mode of that is silent: the reader says `missing`, and the
+        # model either apologises or describes the file from its name. Neither is recoverable by
+        # the citizen, and the second is indistinguishable from a real answer.
+        if state.attachments is not None:
+            try:
+                await state.attachments.place(state.sandbox)
+            except AttachmentPlacementError as exc:
+                _log.warning(
+                    "attachment_placement_failed",
+                    conversation_id=str(state.conversation_id),
+                    turn_id=str(state.turn_id),
+                    app_id=str(session.app_id),
+                )
+                # The sentence is already citizen-facing — `place` words its own refusals for
+                # the person who attached the file, naming it.
+                unplaced = str(exc)
+                state.workspace_state = "unavailable"
+                self._emit(
+                    state,
+                    lambda seq: WorkspaceFrame(seq=seq, state="unavailable", message=unplaced),
+                )
+                raise _WriteEndedError("attachment_unavailable", unplaced) from exc
         # FENCE OFF ANY BROWSER CRASH REPORT THAT PREDATES THIS TURN. A report describes
         # the tree the browser was rendering when it crashed, and this turn is about to change
         # that tree; draining it at the end would fail a verify on a fault the agent may have

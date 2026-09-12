@@ -36,19 +36,6 @@ export interface WireMessage {
   attachmentIds?: string[]
 }
 
-/** Strip characters from a filename that could break out of the `name="..."`
- * attribute (quotes, angle brackets, newlines). Mirrors server `sanitizeFenceName`. */
-function sanitizeFenceName(name: string): string {
-  return String(name || '').replace(/[\r\n"<>]/g, ' ').slice(0, 200)
-}
-
-/** Neutralise any literal `</attachment>` inside fenced DATA so attacker-controlled
- * content (filename or file body) can't close the fence early and have the rest
- * read as instructions. Mirrors server `neutralizeFence`. */
-function neutralizeFence(text: string): string {
-  return String(text || '').replace(/<\/(attachment)/gi, '<\\/$1')
-}
-
 /**
  * Decode stored base64 bytes back to text via Uint8Array → TextDecoder (UTF-8)
  * so multibyte content (accents, €, CJK) round-trips; bare `atob` yields latin1.
@@ -123,11 +110,15 @@ export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
   if (Array.isArray(parts)) {
     for (const p of parts) {
       if (p?.type === 'text') {
-        if (p.attachment) {
-          attachmentTexts.push(
-            `<attachment name="${sanitizeFenceName(p.attachment.name)}" type="text">\n${neutralizeFence(p.text)}\n</attachment>`,
-          )
-        } else if (typeof p.text === 'string') {
+        // NO FENCE BRANCH ANY MORE (#214). A text attachment used to be read in the browser and
+        // pushed into the prompt as an `<attachment ...>` block; every attachment is an uploaded
+        // file now, so nothing mints a text part carrying `.attachment`.
+        //
+        // THE FILTER STAYS, and it is not the same thing as the producer. Conversations already
+        // on disk carry these parts, and `convertMessage`'s twin is the only thing keeping a
+        // stored CSV body out of the citizen's own message bubble - the server-side fence check
+        // has the same job and the same reason for outliving its producer.
+        if (!p.attachment && typeof p.text === 'string') {
           prose.push(p.text)
         }
       } else if (p?.type === 'file') {
@@ -149,12 +140,15 @@ export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
  * returning a file ref) and inlines each csv/txt as a text-attachment part; typed prose
  * becomes the final text part. Attachment parts come first (chips above text, and
  * Anthropic file-before-text ordering). An upload failure propagates so the caller can
- * abort the send.
+ * abort the send. `conversationId` stamps each upload with the thread it belongs to, which
+ * is what scopes the per-conversation budget and what the reader is later pointed at
+ * (#214 R7a/R7b).
  */
 export async function buildUserParts(
   text: string,
   pendingAttachments: PendingAttachment[] = [],
   upload: typeof defaultUpload = defaultUpload,
+  conversationId?: string,
 ): Promise<MessagePart[]> {
   const parts: MessagePart[] = []
   for (const a of pendingAttachments) {
@@ -175,7 +169,7 @@ export async function buildUserParts(
     // and extraction ran before storage, so a rejected file never orphaned a blob — an ordering
     // that survives because there is no extraction left to order.
     } else {
-      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
+      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64, conversationId })
       // UNCHECKED, matching pre-migration behaviour: `AttachmentRef`'s fields are what the server
       // actually guarantees for an upload — trusted here, not re-validated. (This note used to
       // say "see the office branch above"; there is no office branch any more.)

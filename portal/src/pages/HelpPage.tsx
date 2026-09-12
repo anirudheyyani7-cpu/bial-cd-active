@@ -76,11 +76,11 @@ export const FAQS = [
   },
   {
     q: 'How does my app get its data?',
-    a: 'Apps work with the data you provide — upload a CSV file to view and analyze it, or let the app capture and store records in its own private database, which the platform creates for each project automatically. The portal does not connect to external airport systems during this pilot.',
+    a: 'Apps work with the data you provide. Attach a spreadsheet (Excel .xlsx, CSV or TSV), a Word document (.docx) or a slide deck (.pptx) and the assistant opens it to see the shape of your data — the columns, the types, the vocabulary — and builds the app to match. The file itself is not loaded into the app: you enter your own records through the app once it exists, into the private database the platform creates for each project. The portal does not connect to external airport systems during this pilot.',
   },
   {
     q: 'What files can I attach in chat?',
-    a: 'Images (PNG, JPEG, GIF, WebP), PDFs, and text files (CSV, TXT) — up to 4 MB each. Images and PDFs are attached as they are; a CSV or TXT rides inside the message itself, so the assistant reads its contents directly. The original file is always kept and can be re-downloaded from its chip. Anything else is not accepted — save the part you need as a PDF, or export a spreadsheet as CSV.',
+    a: "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide deck and I'll open it with code. That means images (PNG, JPEG, GIF, WebP), PDFs, Excel (.xlsx), Word (.docx), PowerPoint (.pptx), CSV and TSV — up to 4 MB each. A picture or a PDF is read directly. A spreadsheet, document or deck is opened by a reader running in your project's workspace, which reports what the whole file contains rather than a sample of it. The original is always kept and can be re-downloaded from its chip. Older formats (.doc, .xls, .ppt) are not accepted — save them in the newer format, or export to PDF.",
   },
   {
     q: 'Is there a limit to how many apps I can build?',

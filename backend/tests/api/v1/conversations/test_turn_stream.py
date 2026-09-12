@@ -1350,6 +1350,89 @@ async def _post_first_message(
     )
 
 
+async def test_the_first_message_of_a_new_chat_can_carry_a_spreadsheet(
+    client, db_session, set_chat_model, fake_redis, fake_storage, app, _fresh_engine
+) -> None:
+    """★ AGC129'S B1 — this was a hard 500, and it is the demo's opening move.
+
+    The upload stores NULL, because the chat's row does not exist until the first send; the
+    composer then posts `create` and `attachmentIds` together. `code_lane_attachments` used to
+    adopt that row into the unwritten conversation, and `enforce_context_limit`'s SELECT
+    autoflushed the UPDATE into a non-deferrable foreign key — so the first message of every new
+    chat carrying a spreadsheet failed, and every retry failed identically.
+
+    Every adoption test used a conversation the fixture had already committed, so none met this
+    ordering. This one drives the real route with the conversation row genuinely absent.
+
+    Mutation receipt: move adoption back into `code_lane_attachments` and this is a 500.
+    """
+    import base64
+    import io
+
+    from openpyxl import Workbook
+
+    from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
+    from src.api.v1.conversations._shared import chat_storage
+    from src.db.models.attachment import Attachment
+    from tests.fakes import FakeSandboxClient
+
+    set_chat_model(_streaming_text("ok"))
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    await db_session.commit()
+    headers = _headers(user)
+
+    # A real workbook, because the upload door checks that it is one.
+    book = io.BytesIO()
+    Workbook().save(book)
+    uploaded = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_first_book",
+            "name": "roster.xlsx",
+            "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "base64": base64.b64encode(book.getvalue()).decode(),
+            # No conversationId — the chat's row does not exist yet.
+        },
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    chat_id = uuid.uuid4()
+    text = "what is in this roster?"
+    # The turn route reads its store through `chat_storage`, not the upload's
+    # `storage_dependency` the conftest binds — an attachment id with no store is a typed 503.
+    app.dependency_overrides[chat_storage] = lambda: fake_storage
+    app.dependency_overrides[sandbox_or_none_dependency] = lambda: FakeSandboxClient()
+    try:
+        resp = await client.post(
+            f"/v1/conversations/{chat_id}/turns",
+            headers=headers,
+            json={
+                "message": {
+                    "text": text,
+                    "attachmentTexts": [],
+                    "attachmentIds": ["att_first_book"],
+                },
+                "create": {"projectId": str(project.id), "kind": "plan", "title": text},
+            },
+        )
+        assert resp.status_code == 202, resp.text
+        # The turn runs on after the 202, on the session the test shares with the app — wait for
+        # it before reading, as every other first-message test in this file does.
+        await _settle(_fresh_engine, chat_id)
+    finally:
+        app.dependency_overrides.pop(sandbox_or_none_dependency, None)
+        app.dependency_overrides.pop(chat_storage, None)
+
+    # And the file now belongs to the chat it was sent in, so turn two still finds it.
+    db_session.expire_all()
+    linked = await db_session.scalar(
+        sa.select(Attachment.conversation_id).where(Attachment.attachment_id == "att_first_book")
+    )
+    assert linked == chat_id
+
+
 async def test_a_first_message_refused_by_the_workspace_leaves_no_conversation_behind(
     client, db_session, set_chat_model, fake_redis, fake_storage, app
 ) -> None:

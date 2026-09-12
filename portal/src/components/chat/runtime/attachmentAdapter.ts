@@ -83,6 +83,20 @@ export interface AttachmentAdapterOptions {
    * throws so the library discards it; this callback is how the reason reaches a screen.
    */
   onRefused: (message: string) => void
+  /**
+   * HOW MANY FILES ARE BEING READ RIGHT NOW, published on every change (#214 R21a).
+   *
+   * A file is not staged until `fileToBase64` has finished with it, and on a large workbook over
+   * a slow disk that is a real window with nothing on screen in it. Send is pressable throughout
+   * — the composer's own view is "no attachments and maybe some text" — so a citizen who attaches
+   * a spreadsheet and presses Enter sends their question WITHOUT the file and gets an answer that
+   * never mentions it. Nothing about that reads as a failure.
+   *
+   * The count is what the composer needs and the claim list already tracks; it is published rather
+   * than exposed because the composer must RE-RENDER when it changes, and a ref cannot ask for
+   * that.
+   */
+  onReadingChanged?: (count: number) => void
 }
 
 /** `image` for an image, `document` for a PDF, `file` for the text kinds. The library uses this
@@ -93,7 +107,7 @@ function kindOf(mediaType: string): PendingAttachment['type'] {
   return 'file'
 }
 
-export function createAttachmentAdapter({ accept, staged, onRefused }: AttachmentAdapterOptions): AttachmentAdapter {
+export function createAttachmentAdapter({ accept, staged, onRefused, onReadingChanged }: AttachmentAdapterOptions): AttachmentAdapter {
   /**
    * A local `claimed` count above `staged()`, because concurrent `add()` calls (one drop
    * gesture is N parallel calls) all read `staged()` before any of them publish — without
@@ -104,6 +118,12 @@ export function createAttachmentAdapter({ accept, staged, onRefused }: Attachmen
    */
   const claimed = new Map<string, { mediaType: string; size: number }>()
   let reading = 0
+
+  /** Move the in-flight count and tell whoever is drawing the composer (R21a). */
+  function readingBy(delta: number): void {
+    reading += delta
+    onReadingChanged?.(reading)
+  }
 
   /** What the caps must count right now: what the composer holds, plus what is still being read. */
   function countable(): { mediaType: string; size: number }[] {
@@ -135,7 +155,7 @@ export function createAttachmentAdapter({ accept, staged, onRefused }: Attachmen
       // attachment have to be the same thing under the same name, or they are counted twice.
       const id = newAttachmentId()
       claimed.set(id, { mediaType, size: file.size })
-      reading += 1
+      readingBy(1)
 
       try {
         const payload: OurAttachment = {
@@ -164,7 +184,7 @@ export function createAttachmentAdapter({ accept, staged, onRefused }: Attachmen
         claimed.delete(id)
         throw err
       } finally {
-        reading -= 1
+        readingBy(-1)
       }
     },
 

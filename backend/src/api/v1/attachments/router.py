@@ -34,25 +34,14 @@ from src.api.v1.conversations._shared import PDF_MEDIA_TYPE
 from src.core.errors import AppApiError
 from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
-from src.db.models.user import User
 from src.schemas import AUTH_401, ErrorEnvelope, OkResponse, error_responses
-from src.services.extract.deck import (
-    DeckConvertError,
-    convert_deck_to_pdf,
-    deck_attachments_enabled,
-)
-from src.services.extract.office import (
-    OFFICE_MEDIA_TYPES,
-    PPTX_MEDIA_TYPE,
-    office_format_for,
-)
-from src.services.extract.zip_safety import FileParseError
-from src.services.media.magic import ALLOWED_MEDIA, magic_matches
+from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
+from src.services.media.lanes import code_lane_refusal, is_code_lane, is_opc_archive
+from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
 from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
 from src.services.storage import (
     ObjectStorage,
-    StorageError,
     StorageNotFoundError,
     assert_owned,
     attachment_key,
@@ -69,8 +58,42 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # Per-file decoded cap (Express `ATTACHMENT_MAX_BYTES`) and per-user total (Express
 # `ATTACHMENT_TOTAL_CAP`), plus the request-body ceiling (Express mount `limit:'6mb'`).
 ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024
-ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
 _BODY_LIMIT_BYTES = 6 * 1024 * 1024
+
+# THE STORAGE BUDGET IS PER CONVERSATION, NOT PER CITIZEN (#214 R7a). It used to sum every
+# attachment a person had ever uploaded, across every conversation, with no conversation filter
+# — a lifetime account budget of roughly a dozen full-size files. Two or three working sessions
+# exhausted it, and the only way to reclaim any was to delete whole conversations, because
+# nothing lets a citizen remove a single attachment from an old one. The message was "Attachment
+# storage is full" with no action behind it.
+#
+# Scoped to the conversation it becomes something a citizen can act on: this chat is full, a new
+# one has room, and starting one is a real remedy rather than advice that changes nothing.
+#
+# THE TRADE, STATED: this removes the only ceiling on a citizen's TOTAL stored bytes, because
+# many conversations now means many budgets. Taken deliberately — a lifetime cap that cannot be
+# reclaimed is the worse failure — and worth watching rather than pre-solving.
+ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
+
+# How many attachments one conversation may hold, counted SERVER-SIDE (#214 R7b). The browser
+# has had this number since the beginning and it was never enforced here — the portal's
+# `validateConversationAttachmentCap` tallies attachments by walking the messages the browser has
+# loaded, so it reset to zero on every page reload. A cap a refresh clears is not a cap.
+MAX_ATTACHMENTS_PER_CONVERSATION = 20
+
+
+ATTACHMENT_LANES_SENTENCE: Final = (
+    "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide "
+    "deck and I'll open it with code."
+)
+"""ONE SENTENCE, EVERYWHERE (#214 R21). The composer, the help page and every unsupported-format
+refusal carry these exact words — three sentences that drift is how the removed rule failed. Its
+portal twin is `ATTACHMENT_LANES_SENTENCE` in `portal/src/utils/attachmentInput.ts`, and a test
+holds the two byte-identical.
+
+IT DESCRIBES WHAT HAPPENS TO A FILE, not which extensions are on a list. A list of ten formats
+goes stale the moment the allowlist moves, and tells a citizen nothing about why a spreadsheet
+behaves differently from a photograph."""
 
 
 MAX_PDF_PAGES: Final = 30
@@ -158,13 +181,21 @@ Storage = Annotated[ObjectStorage, Depends(storage_dependency)]
 
 
 def _validate_attachment_bytes(media_type: str, b64: Any) -> str | None:
-    """Validate an image/PDF upload against the allowlist + magic bytes (+ WebP form-type),
-    matching Express `validateAttachmentBytes`. Returns the error string, or None if valid."""
+    """Validate a MODEL-LANE upload (image/PDF) against the allowlist + magic bytes.
+
+    THE CODE LANE IS NOT CHECKED HERE, and that is the point rather than a gap. `ALLOWED_MEDIA` is
+    the magic-byte gate, and it is applied on both paths that end at the
+    model — this route, the store's rehydrator and `build_sessions/attachments.py`. Widening it to
+    admit Office would make every one of them answer True for a deck, and a spreadsheet would reach
+    the model as raw ZIP bytes on whichever path lost its refusal first. Office, CSV and TSV are
+    admitted by `code_lane_refusal` instead, which runs only where an attachment is stored, so the
+    model-facing consumers keep refusing them without a line changing in either of them.
+    """
     if not isinstance(b64, str) or not b64:
         return "Invalid attachment: missing bytes."
     magic = ALLOWED_MEDIA.get(media_type)
     if magic is None:
-        return f"Unsupported attachment type: {media_type}. Allowed: PNG, JPEG, GIF, WebP, PDF."
+        return f"Unsupported attachment type: {media_type}. {ATTACHMENT_LANES_SENTENCE}"
     # 24 base64 chars → 18 bytes: enough for any magic prefix + the WebP form-type at offset 8.
     try:
         prefix = base64.b64decode(b64[:24])
@@ -210,8 +241,24 @@ async def _resolve_conversation_link(
     Absent (or explicit `null`) → `None` and the row stores `conversation_id = NULL`, so a
     client that sends no conversationId keeps working. Resolving a PRESENT one is referential
     integrity, NOT the tenancy boundary — the row is written and read under the caller's own
-    `user_id` either way; what it buys is that an upload cannot be hung off a stranger's, or a
-    nonexistent, conversation."""
+    `user_id` either way; what it buys is that an upload cannot be hung off a STRANGER's
+    conversation.
+
+    ★ A CONVERSATION THAT DOES NOT EXIST YET IS NOT AN ERROR, and getting this wrong made the
+    first attachment of every NEW chat impossible (#214). The composer mints the id in the browser
+    and navigates to it; the conversation ROW is created by the first send, which by definition
+    happens AFTER the file is uploaded — the send route stages that row and writes it only once
+    every side-effect-free refusal has passed (R-18). So at upload time the id is real, owned by
+    nobody yet, and simply unwritten. Refusing it 404s the opening move of the whole feature.
+
+    It stores `NULL` instead, which is the state this column was made nullable FOR, and nothing
+    downstream is weakened: `code_lane_attachments` finds the file by its ID as well as by the
+    link precisely because this case exists, and the reclaimer reads NULL as legacy rather than as
+    a deletion signal.
+
+    THE STRANGER CHECK IS UNCHANGED, which is why the owner is READ rather than filtered on: a row
+    that exists under another user is still a 404. Only genuine absence is admitted.
+    """
     if raw is None:
         return None
     if not isinstance(raw, str) or not _ID_RE.match(raw):
@@ -221,10 +268,10 @@ async def _resolve_conversation_link(
     except ValueError:
         # An ID_RE-valid token that isn't a UUID can key no stored conversation.
         raise AppApiError(404, "Conversation not found.") from None
-    owned = await db.scalar(
-        sa.select(Conversation.id).where(Conversation.id == cid, Conversation.user_id == user_id)
-    )
-    if owned is None:
+    owner = await db.scalar(sa.select(Conversation.user_id).where(Conversation.id == cid))
+    if owner is None:
+        return None  # not written yet — the first send creates it
+    if owner != user_id:
         raise AppApiError(404, "Conversation not found.")
     return cid
 
@@ -248,10 +295,28 @@ async def _store_attachment_bytes(
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
     existing link to NULL (the link is set-once-then-refreshable, never silently dropped)."""
     size = len(data)
+    # BOTH BUDGETS ARE SCOPED TO THE CONVERSATION when there is one, and to the UNLINKED POOL when
+    # there is not (#214, agc129's B4).
+    #
+    # ★ THE FALLBACK USED TO BE THE WHOLE ACCOUNT, and that refused a new chat's first file for
+    # anyone who had attached twenty things anywhere. The first upload of every new chat is
+    # unlinked — its conversation row is written by the first send — so it was counted against
+    # every sent attachment in every other chat: "This conversation has reached its limit of 20
+    # attachments" on a chat holding zero, with "start a new chat" as the remedy, which was the one
+    # move that could not help.
+    #
+    # Scoped to `conversation_id IS NULL`, an unlinked upload competes only with files that are
+    # ALSO still unsent. The pool stays bounded — nothing uploaded without a chat is ever free —
+    # and every file leaves it the moment the message carrying it is sent
+    # (`materialize.adopt_unlinked_attachments`).
+    link = (
+        Attachment.conversation_id == conversation_id
+        if conversation_id is not None
+        else Attachment.conversation_id.is_(None)
+    )
+    scope = [Attachment.user_id == user_id, link]
     used_raw = await db.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(
-            Attachment.user_id == user_id
-        )
+        sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(*scope)
     )
     used = int(used_raw or 0)
     existing = await db.scalar(
@@ -259,13 +324,37 @@ async def _store_attachment_bytes(
             Attachment.user_id == user_id, Attachment.attachment_id == attachment_id
         )
     )
-    old_size = existing.size if existing is not None else 0
+    # ONLY A ROW IN THE SAME SCOPE OFFSETS THE SUM. `existing` is looked up by (owner, id) alone,
+    # so a row from a DIFFERENT scope was never in `used` — subtracting its size drove the total
+    # negative and handed the citizen free headroom. Both scopes reduce to one comparison: the row
+    # counts iff its link equals the one being checked, and `None == None` is the unlinked pool.
+    # (The previous `conversation_id is None or …` form subtracted a LINKED row's size from the
+    # unlinked sum, which would have reopened exactly that hole under the scope above.)
+    counts_toward_used = existing is not None and existing.conversation_id == conversation_id
+    old_size = existing.size if (existing is not None and counts_toward_used) else 0
     if used - old_size + size > ATTACHMENT_TOTAL_CAP:
         raise AppApiError(
             413,
-            "Attachment storage is full. Remove some attachments and try again.",
+            "This conversation has no room for more attachments. Start a new chat to add more.",
             code="ATTACHMENT_STORE_FULL",
         )
+    # THE COUNT, and only for a file this conversation does not already hold — a re-upload of the
+    # same id replaces a row rather than adding one, so counting it would refuse an idempotent
+    # retry at the boundary.
+    #
+    # IT DOES NOT SKIP AN UNLINKED UPLOAD: gated on `conversation_id is not None` the cap was
+    # bypassable on the ordinary path, since every new chat's first file is unlinked. It counts the
+    # unlinked pool instead — the same population the byte budget above uses for that case.
+    if existing is None:
+        held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
+        # `scope` is the conversation when there is one and the unlinked pool when there is not.
+        if int(held or 0) + 1 > MAX_ATTACHMENTS_PER_CONVERSATION:
+            raise AppApiError(
+                413,
+                f"This conversation has reached its limit of "
+                f"{MAX_ATTACHMENTS_PER_CONVERSATION} attachments. Start a new chat to add more.",
+                code="CONVERSATION_ATTACHMENTS_FULL",
+            )
 
     if existing is not None:
         key = existing.storage_key
@@ -354,90 +443,6 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
         raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE)
 
 
-async def _handle_office_upload(
-    db: DbSession,
-    storage: ObjectStorage,
-    user: User,
-    attachment_id: str,
-    media_type: str,
-    name: str,
-    conversation_id: uuid.UUID | None,
-    body: dict[str, Any],
-) -> JSONResponse:
-    """docx/xlsx: extract to Markdown BEFORE storing (a corrupt file is rejected without orphaning
-    an object), then store the original bytes and return the `kind:'office'` part.
-
-    The extraction runs in the shared killable parse governor (`run_parse`) — NOT in-process —
-    so an untrusted docx/xlsx whose compressed bytes pass the 4 MB cap but inflate to gigabytes
-    can never OOM the shared API worker; a contained OOM/timeout maps to 413, a corrupt file
-    to 400."""
-    data = _decode_bounded(body.get("base64"))
-    office_format = office_format_for(media_type)
-    if office_format is None:
-        raise AppApiError(400, f"Unsupported Office type: {media_type}")
-    kind = "extract_word" if office_format == "word" else "extract_excel"
-    try:
-        extracted = await run_parse(data, kind, name, None)
-    except FileParseError as exc:
-        raise AppApiError(exc.status, str(exc), code=exc.code) from exc
-    ref = await _store_attachment_bytes(
-        db, storage, user.id, attachment_id, media_type, name, conversation_id, data
-    )
-    return JSONResponse(
-        status_code=201,
-        content={
-            "attachment": {
-                **ref,
-                "kind": "office",
-                "format": extracted["format"],
-                "text": extracted["text"],
-                "truncated": extracted["truncated"],
-                "truncationNote": extracted["truncationNote"],
-            }
-        },
-    )
-
-
-async def _handle_deck_upload(
-    db: DbSession,
-    storage: ObjectStorage,
-    user: User,
-    attachment_id: str,
-    media_type: str,
-    name: str,
-    conversation_id: uuid.UUID | None,
-    body: dict[str, Any],
-) -> JSONResponse:
-    """pptx: gated on a configured Gotenberg. Convert FIRST (validates structure/zip-bomb/page-cap
-    without storing), then store the original .pptx and the derived PDF. Azure-hosted Foundry has
-    no Files API, so a deck cannot be handed over by reference: the PDF lives in the object store
-    and the chat path rehydrates and inlines it. Deck is off by default (unset GOTENBERG_URL)."""
-    if not deck_attachments_enabled():
-        raise AppApiError(501, "PowerPoint attachments aren't enabled.")
-    data = _decode_bounded(body.get("base64"))
-    try:
-        converted = await convert_deck_to_pdf(data, name=name)
-    except DeckConvertError as exc:
-        raise AppApiError(exc.status, str(exc), code=exc.code) from exc
-    ref = await _store_attachment_bytes(
-        db, storage, user.id, attachment_id, media_type, name, conversation_id, data
-    )
-    pdf_key = f"{ref['key']}.pdf"
-    await storage.put(pdf_key, converted.pdf, content_type="application/pdf")
-    return JSONResponse(
-        status_code=201,
-        content={
-            "attachment": {
-                **ref,
-                "kind": "deck",
-                "pdfFileId": pdf_key,
-                "pageCount": converted.page_count,
-                "truncated": False,
-            }
-        },
-    )
-
-
 @router.post(
     "",
     status_code=201,
@@ -452,7 +457,6 @@ async def _handle_deck_upload(
         # later. It is 415 and not 413 for the reason given there: nothing about the SIZE was
         # wrong. (This route's own contract test asserts a SUBSET, so it did not catch the gap.)
         (415, ErrorEnvelope, "The PDF is password-protected and cannot be read"),
-        (501, ErrorEnvelope, "PowerPoint attachments are not enabled"),
         (429, ErrorEnvelope, "Too many attachment requests"),
         AUTH_401,
     ),
@@ -482,26 +486,38 @@ async def upload_attachment(
     media_type = body.get("mediaType")
     if not isinstance(media_type, str):
         raise AppApiError(400, "mediaType is required.")
-    if media_type.startswith("text/"):
-        raise AppApiError(400, "Text attachments are sent inline, not uploaded.")
+    # THE `text/*` REFUSAL INVERTS FOR THE TWO DELIMITED FORMATS (#214). It used to refuse every
+    # text type, because text rode inside the prompt rather than being uploaded. That lane is
+    # gone: every attachment is now an uploaded file with a stored identity, which is what lets a
+    # chip be rebuilt on reload for every format by one fix. CSV and TSV are ordinary uploads.
+    #
+    # `text/plain` stays refused, and that is a WITHDRAWAL rather than an oversight — it works on
+    # the branch today and stops. The mechanism argument for refusing it died with the inline
+    # lane; the surviving reason is that no client requirement names it, and every format costs a
+    # reader arm, refusal copy, a test and a line in the help page.
+    if media_type.startswith("text/") and not is_code_lane(media_type):
+        raise AppApiError(400, f"That file type is not supported. {ATTACHMENT_LANES_SENTENCE}")
     # Parsed ONCE here, before the branch, so every upload kind shares the same contract. The
     # optional conversation link is resolved owner-scoped here too (a bad conversationId 404s
     # before any bytes are parsed or stored — no orphaned object on the reject path).
     name = _attachment_name(body.get("name"))
     conversation_id = await _resolve_conversation_link(db, user.id, body.get("conversationId"))
-    if media_type in OFFICE_MEDIA_TYPES:
-        return await _handle_office_upload(
-            db, storage, user, attachment_id, media_type, name, conversation_id, body
-        )
-    if media_type == PPTX_MEDIA_TYPE:
-        return await _handle_deck_upload(
-            db, storage, user, attachment_id, media_type, name, conversation_id, body
-        )
-
+    # THE THREE ADMISSION ARMS COLLAPSE INTO TWO (#214). Office and deck each had their own,
+    # because each ran a different server-side conversion before storing: docx/xlsx were extracted
+    # to Markdown, and a deck was rendered to PDF by a converter that was never deployed. Both are
+    # gone. A file is now stored as itself and read where it can actually be read, so what is left
+    # is the routing rule and nothing else — the model reads these bytes, or code does.
     b64 = body.get("base64")
-    err = _validate_attachment_bytes(media_type, b64)
-    if err is not None:
-        raise AppApiError(400, err)
+    # WHICH LANE, decided once. The model reads images and PDFs itself; code in the workspace
+    # reads everything else. Neither branch is a list of extensions the other has to stay in step
+    # with — `is_code_lane` is the single answer both use.
+    if is_code_lane(media_type):
+        if not isinstance(b64, str) or not b64:
+            raise AppApiError(400, "Invalid attachment: missing bytes.")
+    else:
+        err = _validate_attachment_bytes(media_type, b64)
+        if err is not None:
+            raise AppApiError(400, err)
     # Validation guarantees a non-empty str; this redundant narrow satisfies the type checker.
     if not isinstance(b64, str):
         raise AppApiError(400, "Invalid attachment: missing bytes.")
@@ -520,21 +536,41 @@ async def upload_attachment(
     # a real regression in the common path.
     if media_type == PDF_MEDIA_TYPE:
         await _assert_pdf_within_page_cap(data, name)
+    if is_code_lane(media_type):
+        # AFTER the size check and BEFORE the store, like the page cap above: a refused file
+        # leaves no object and no row. Password protection is checked in here too, for every
+        # format that can carry it — a locked workbook gets the same sentence a locked PDF does,
+        # rather than being stored, charged, and failing inside the sandbox several turns later.
+        refusal = code_lane_refusal(media_type, name, data)
+        if refusal is not None:
+            raise AppApiError(415, refusal)
+        # THE ARCHIVE BOUND, ON THE HALF OF THE LANE THAT ACTUALLY CARRIES ARCHIVES (R18b).
+        # Office files are ZIPs, and a 4 MB one can declare 300 MB uncompressed.
+        #
+        # `is_opc_archive`, NOT `is_code_lane`, and the difference was a live defect: gated on the
+        # whole lane this refused every CSV and TSV with "Malformed archive (no ZIP
+        # end-of-central-directory)" — true about a file that was never an archive, and
+        # unactionable to a citizen holding a normal spreadsheet export. Delimited files are bytes
+        # of text with no central directory to bound; the size cap is their bound.
+        #
+        # Its previous three
+        # callers were all server-side extraction arms that this work deletes, and its own suite
+        # calls it directly — so it proves the algorithm and would never have told us it had gone
+        # unwired. This path is stricter than what it replaces, not looser: the old office lane
+        # extracted inside a killable, memory-capped subprocess and never stored a file it could
+        # not read, while this one stores the archive and hands it to a reader in the citizen's
+        # own sandbox, where neither that ceiling nor that deadline reaches.
+        if is_opc_archive(media_type):
+            try:
+                assert_zip_not_bomb(data)
+            except FileParseError as exc:
+                raise AppApiError(413, str(exc)) from None
 
     ref = await _store_attachment_bytes(
         db, storage, user.id, attachment_id, media_type, name, conversation_id, data
     )
-    kind = "document" if media_type == PDF_MEDIA_TYPE else "image"
+    kind = chip_kind_for(media_type)
     return JSONResponse(status_code=201, content={"attachment": {**ref, "kind": kind}})
-
-
-async def _safe_delete_pdf(storage: ObjectStorage, pdf_key: str) -> None:
-    """Best-effort delete of a deck's derived `{key}.pdf` sibling — a genuine store error is
-    swallowed (never fails the parent delete); a missing object is already idempotent."""
-    try:
-        await storage.delete(pdf_key)
-    except StorageError:
-        pass
 
 
 async def _load_owned(db: DbSession, user_id: uuid.UUID, attachment_id: str) -> Attachment | None:
@@ -594,10 +630,9 @@ async def delete_attachment(
     if att is not None:
         assert_owned(att.storage_key, user.id)
         await storage.delete(att.storage_key)  # idempotent on a missing object
-        # A deck attachment also wrote a derived `{key}.pdf` sibling — sweep it best-effort
-        # so it doesn't leak (idempotent on a missing object; never fails the delete).
-        if att.media_type == PPTX_MEDIA_TYPE:
-            await _safe_delete_pdf(storage, att.storage_key + ".pdf")
+        # NO DERIVED SIBLING TO SWEEP ANY MORE (#214). A deck used to be rendered to PDF and the
+        # `{key}.pdf` stored beside the original, so a delete had to remove both or leak one.
+        # Nothing derives anything from an attachment now.
         await db.delete(att)
         await db.commit()
     # Delete is always idempotent and 200, even when the id is unknown (Express behavior).

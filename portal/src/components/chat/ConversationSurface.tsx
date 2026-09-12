@@ -89,7 +89,7 @@ import { fetchSaveState, saveProject, handOverWorkspace, asReclaimBlocked, fetch
 import type { HandoverStep, ReclaimBlocked, PreviewState } from '../../utils/buildSessionApi'
 import { resolvePlanOptions } from '../../utils/turnStreamApi'
 import { wireMessageFromParts, buildUserParts, partsToText, countAttachments, releaseUploadedAttachments } from '../../utils/attachmentStore'
-import { validateConversationAttachmentCap, validatePdfPerMessageCap } from '../../utils/attachmentInput'
+import { validateConversationAttachmentCap } from '../../utils/attachmentInput'
 import { announceDeploymentChanged } from '../../hooks/usePublishState'
 
 import { loadBuilds, getBuild, deriveTitle } from '../../utils/builderHistory'
@@ -1422,7 +1422,10 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
 
     let parts
     try {
-      parts = await buildUserParts(text, attachments)
+      // `activeId` is a REQUIRED parameter of this function, so an upload can never happen
+      // without a thread to hang it on — which is what makes a conversation-scoped limit
+      // countable at all (#214 R7a/R7b).
+      parts = await buildUserParts(text, attachments, undefined, activeId)
     } catch (err) {
       // ABORT — never fall through to a turn that silently forgets the attachment. The user
       // attached a spreadsheet; answering as if they hadn't is the wrong-build bug in miniature.
@@ -1811,11 +1814,6 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     if (attachments.length > 0) {
       const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
       if ('error' in cap) throw new SendRefusal(cap.error)
-      // The DOCUMENT limit, checked before the token gate can reach the same conclusion with the
-      // wrong advice. The server refuses this too, at `resolve_binaries`; this is the same
-      // refusal one step earlier so the composer does not accept a message it knows will bounce.
-      const docs = validatePdfPerMessageCap(attachments)
-      if ('error' in docs) throw new SendRefusal(docs.error)
     }
 
     // THE CHAT THE COMPOSER STAMPED AT PRESS TIME, not whichever one is open when this

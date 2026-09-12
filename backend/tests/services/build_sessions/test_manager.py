@@ -98,7 +98,12 @@ from src.services.storage import (
     StorageNotFoundError,
     snapshot_key,
 )
-from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.factories import (
+    AppRegistryFactory,
+    ConversationFactory,
+    ProjectFactory,
+    UserFactory,
+)
 from tests.fakes import FakeSandboxClient, FakeStorage, a_sandbox_name
 
 
@@ -3016,3 +3021,75 @@ async def test_attaching_to_a_live_container_does_not_re_copy_the_window(
 
     assert client.provisioned == [], "this took the BIRTH arm; the assertion below proves nothing"
     assert fired == []
+
+
+# --- release refuses for the project holding the container, and only that one -------------
+
+
+async def test_releasing_an_idle_project_is_allowed_while_another_one_is_live(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """The slot is per person; a container belongs to ONE project. So a session holding one
+    project's container cannot answer for another project's release — and must not, because
+    giving up an idle project is how a citizen frees the slot for the live one.
+
+    Mutation-check: refuse on any entry in `_active_by_user` and this goes red with a
+    `BuildSessionConflictError` raised for a project that holds nothing."""
+    user, live_project = await _mk(db_session, "m90@rvaiglobal.com")
+    idle_project = (await ProjectFactory.create(db_session, user.id)).id
+    await AppRegistryFactory.create(db_session, user_id=user.id, project_id=idle_project)
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    live = await manager.ensure_sandbox(
+        db_session, user, live_project, sandbox_client=client, may_write=True
+    )
+    # LIVENESS: the release below proves nothing unless something really is holding the slot.
+    assert manager._live_session_holds(user.id, live.app_id) is True
+
+    released = await manager.release_project_sandbox(
+        db_session, user, idle_project, sandbox_client=client
+    )
+
+    assert released is False  # nothing of this project's to release — a plain success
+    assert client.torn_down == []  # and the live project's container was left alone
+    assert manager._live_session_holds(user.id, live.app_id) is True
+
+
+async def test_releasing_the_project_whose_container_is_live_is_still_refused(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """The case the refusal exists for: pulling a container out from under the session working
+    in it destroys whatever is not yet saved, so this one is a conflict however the citizen
+    asks for it."""
+    user, project_id = await _mk(db_session, "m91@rvaiglobal.com")
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    live = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
+    )
+
+    with pytest.raises(BuildSessionConflictError) as refusal:
+        await manager.release_project_sandbox(db_session, user, project_id, sandbox_client=client)
+
+    assert refusal.value.session_id == live.session_id
+    assert client.torn_down == []  # refused BEFORE the teardown, so the work is still there
+
+
+async def test_releasing_a_project_with_nothing_running_is_a_plain_success(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """No session anywhere, no container registered: the workspace is already in the state the
+    caller asked for, which is a success reported as `False`, never a refusal."""
+    user, project_id = await _mk(db_session, "m92@rvaiglobal.com")
+    await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_id)
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    released = await manager.release_project_sandbox(
+        db_session, user, project_id, sandbox_client=client
+    )
+
+    assert released is False
+    assert client.torn_down == []

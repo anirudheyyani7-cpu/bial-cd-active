@@ -2494,17 +2494,21 @@ class SessionManager:
         """Give up this project's container, on the user's explicit say-so — the teardown the
         start path used to do behind their back, moved into an action they take. `reap_user`
         is reused verbatim (mark-ending, teardown, clear registry, release lock). Refuses
-        while a build is genuinely running for this user; returns False when there is
-        nothing to release, reported as a plain success. `strict=True` keeps that true: the
-        lenient default would collapse "nothing registered" and "teardown failed" into the
-        same False, sending the caller straight back into a reclaim refusal it was told had
-        been cleared — strict re-raises instead, and the router turns it into a 503."""
+        while a session is genuinely holding THIS project's container; returns False when
+        there is nothing to release, reported as a plain success. `strict=True` keeps that
+        true: the lenient default would collapse "nothing registered" and "teardown failed"
+        into the same False, sending the caller straight back into a reclaim refusal it was
+        told had been cleared — strict re-raises instead, and the router answers 503."""
         async with self._start_lock_for(user.id):
-            if user.id in self._active_by_user:
-                raise BuildSessionConflictError(self._active_by_user.get(user.id))
             app_id = await _existing_app_id(db, user.id, project_id)
             if app_id is None:
                 return False
+            # THE APP ID IS RESOLVED BEFORE THE REFUSAL so the refusal can compare. The slot is
+            # per-user but a container belongs to one project, and a session holding a DIFFERENT
+            # project's container is no reason to refuse this one — giving up an idle project is
+            # precisely how a citizen frees the slot the live one is occupying.
+            if self._live_session_holds(user.id, app_id):
+                raise BuildSessionConflictError(self._active_by_user.get(user.id))
             redis = get_redis()
             if not await _the_live_sandbox_is_already_the_one_we_want(
                 redis, user.id, app_name_for(app_id)

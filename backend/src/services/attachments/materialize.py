@@ -204,7 +204,13 @@ async def code_lane_attachments(
     sent = set(wanted) | await _ids_already_sent(
         db, user_id=user_id, conversation_id=conversation_id
     )
-    return _named_without_collisions([row for row in rows if row.attachment_id in sent])
+    # NAMED OVER EVERY ROW, THEN FILTERED — not filtered and then named. The collision rule falls
+    # back to the row's position, and a row joins `sent` on the turn its message becomes durable,
+    # so numbering the filtered list would renumber every later same-named file each time one
+    # more is sent. A path that moves between turns is a path the container already holds under
+    # its old name, with the note naming the new one.
+    placed = _named_without_collisions(rows)
+    return [item for item in placed if item.attachment_id in sent]
 
 
 async def _ids_already_sent(

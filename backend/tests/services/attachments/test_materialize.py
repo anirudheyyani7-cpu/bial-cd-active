@@ -159,6 +159,40 @@ def test_two_files_that_land_on_the_same_name_stay_distinct(names: list[str]) ->
     assert first.container_path != second.container_path
 
 
+def test_the_escape_from_a_collision_cannot_itself_collide() -> None:
+    """★ THE DISAMBIGUATOR IS A NAME A FILE CAN HAVE.
+
+    Prefixing the position once is not enough. Attach `3-report.csv` and two files called
+    `report.csv`: the third takes the position prefix and lands on `3-report.csv`, which the first
+    already holds. Two attachments on one container path is the overwrite this function exists to
+    prevent, reached through the mechanism meant to prevent it.
+
+    Asserted on the SIZE of the set rather than on the names, so a different bumping scheme stays
+    green and only an actual overwrite goes red.
+
+    Mutation receipt: replace the re-check loop with a single `f"{index}-{file_name}"` and the
+    distinct count drops to two.
+    """
+    from src.services.attachments.materialize import _named_without_collisions
+
+    rows = [
+        Attachment(
+            user_id=uuid.uuid4(),
+            attachment_id=f"att_{i}",
+            media_type=CSV_MEDIA_TYPE,
+            name=name,
+            size=1,
+            storage_key=f"att/x/{i}",
+        )
+        for i, name in enumerate(["3-report.csv", "report.csv", "report.csv"], start=1)
+    ]
+
+    placed = _named_without_collisions(rows)
+
+    assert len({item.file_name for item in placed}) == 3
+    assert len({item.container_path for item in placed}) == 3
+
+
 def test_the_two_paths_are_the_same_file_addressed_two_ways() -> None:
     """The container writes an absolute path (the supervisor's second root is reachable only by
     naming it absolutely); the agent is given the `.attachments/` prefix its read surface vets and
@@ -492,7 +526,14 @@ async def _stored(
     storage.objects[key] = b"PK\x03\x04"
 
 
-async def _sent(db_session, *, user_id: uuid.UUID, conversation_id: uuid.UUID, ids: list[str]):
+async def _sent(
+    db_session,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    ids: list[str],
+    seq: int = 0,
+):
     """A committed user message that CARRIED these attachments.
 
     ★ A STORED ROW IS NOT A SENT FILE, which is what this helper exists to say. An upload
@@ -508,7 +549,7 @@ async def _sent(db_session, *, user_id: uuid.UUID, conversation_id: uuid.UUID, i
         Message(
             user_id=user_id,
             conversation_id=conversation_id,
-            seq=len(ids) and 0 or 0,
+            seq=seq,
             entry_kind=MessageEntryKind.TURN,
             kind=ChatKind.BUILD,
             visibility=MessageVisibility.VISIBLE,
@@ -672,6 +713,67 @@ async def test_a_sent_file_is_still_found_on_the_second_turn(db_session) -> None
     # Turn two — no ids on the message at all.
     second = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
     assert [f.attachment_id for f in second] == ["linked"], "the file vanished on the second turn"
+
+
+async def test_a_files_path_does_not_move_when_an_earlier_file_is_sent_later(db_session) -> None:
+    """★ A PATH THAT MOVES BETWEEN TURNS IS A PATH THE CONTAINER ALREADY HOLDS UNDER THE OLD NAME.
+
+    The collision rule falls back to the row's position, and a row joins the sent set on the turn
+    its message becomes durable. Numbering the SENT-FILTERED list therefore renumbers every later
+    same-named file each time one more is sent: the third `report.xlsx` moves from `2-report.xlsx`
+    to `3-report.xlsx`, the second takes the name it vacated, and — because placement skips a file
+    already there at the right size — the container keeps the old bytes while the note tells the
+    agent they belong to the new file.
+
+    Mutation receipt: name the filtered list instead of filtering the named one and the second
+    assertion goes red.
+    """
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    for n in (1, 2, 3):
+        await _stored(
+            db_session,
+            storage,
+            user_id=user.id,
+            attachment_id=f"att_{n}",
+            media_type=EXCEL_MEDIA_TYPE,
+            name="report.xlsx",
+            conversation_id=conv.id,
+        )
+
+    await _sent(
+        db_session, user_id=user.id, conversation_id=conv.id, ids=["att_1", "att_3"], seq=0
+    )
+    before = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+    third = next(f.file_name for f in before if f.attachment_id == "att_3")
+
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["att_2"], seq=1)
+    after = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+
+    assert len({f.file_name for f in after}) == 3, "two files on one path"
+    assert next(f.file_name for f in after if f.attachment_id == "att_3") == third
+
+
+async def test_a_conversation_with_no_code_lane_file_never_reads_its_transcript(
+    db_session, monkeypatch
+) -> None:
+    """Most conversations carry no spreadsheet at all, and every turn was reading the whole
+    transcript to filter an empty list with it.
+
+    Mutation receipt: delete the early return and this raises out of the stub.
+    """
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+
+    async def _never(*_args, **_kwargs):
+        raise AssertionError("the transcript was read for a chat holding no code-lane file")
+
+    monkeypatch.setattr("src.services.attachments.materialize._ids_already_sent", _never)
+
+    assert await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id) == []
 
 
 async def test_a_file_uploaded_but_never_sent_is_neither_placed_nor_announced(db_session) -> None:

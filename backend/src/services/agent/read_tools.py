@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets.function import FunctionToolset
 
+from src.core.prompt_blocks import ATTACHMENT_READ_TOOL
 from src.core.redaction import (
     cut_before_an_open_credential,
     leaves_a_credential_value_open,
@@ -104,6 +105,13 @@ IGNORED_DIRS = frozenset({".git", "node_modules", ".next", "dist", ".turbo"})
 # path that passes those checks, and only `LiveSandboxWorkspace` — the Plan/Build side — maps it
 # onto the container's second root. The reviewer resolves an extracted snapshot that has no such
 # directory, so the same string simply finds nothing there.
+#
+# ★ WHICH IS EXACTLY WHY `run_command` MAY NOT SIMPLY ADMIT IT. The tools above translate this
+# prefix; a COMMAND does not — it runs inside the app's folder, where `.attachments/` does not
+# exist. So `cat .attachments/roster.csv` passed every check and then reported a file that was
+# there the whole time as missing, which is the shape an agent answers from the file's name.
+# `_refuse_an_attachment_operand` below turns that silence into a sentence, on the read surface
+# rather than in the path guard — see its own note for why the distinction is load-bearing.
 #
 # DOTTED SO IT CANNOT COLLIDE. A bare `attachments/` would shadow an app that happened to contain
 # a directory of that name, silently reading somebody's chat files when they asked for their own
@@ -702,6 +710,46 @@ def _vet_path_token(token: str) -> str | None:
     return None
 
 
+def _refuse_an_attachment_operand(token: str) -> str | None:
+    """Why a command may not name an attached file, or None when the token is not one.
+
+    ★ TEACHING, NOT FAILING (R14). A command runs inside the app's folder; attachments live in a
+    sibling of it. So an operand naming one either resolves to nothing (`.attachments/roster.csv`,
+    relative, admitted, then missing) or is refused for its leading slash
+    (`/workspace/attachments/roster.csv`) — and both answers send the agent back to describing the
+    file from its name, which is the single outcome the whole attachment feature exists to remove.
+    Both spellings are caught because the turn note deliberately hands the model BOTH: the
+    `.attachments/` one for tools, the absolute one for commands.
+
+    IT IS NOT IN `_vet_path_token`, and that is the load-bearing half. That guard is shared with
+    `read_file` and `search_files`, which resolve this prefix perfectly well — refusing there would
+    take out `read_file(".attachments/…")` and `search_files(".attachments")` alongside the
+    reader itself. This is a fact about COMMANDS, so it lives in the command door.
+
+    A `..` SEGMENT FALLS THROUGH, deliberately. `.attachments/../../etc/passwd` satisfies
+    `is_an_attachment_path` and is a traversal attempt, not a citizen naming their spreadsheet;
+    returning None here hands it to `_vet_path_token`, whose wording is the precise one.
+
+    THE SECOND CLAUSE IS FOR THE AGENT THAT CANNOT TAKE THE FIRST. This string is handed
+    byte-for-byte to the classification reviewer, which shares this surface and can never hold the
+    reader tool — so "use the reader" alone would leave it a refusal with no next action, the exact
+    failure this refusal exists to remove.
+    """
+    if ".." in token.split("/"):
+        return None
+    absolute = token == _CONTAINER_ATTACHMENTS_ROOT or token.startswith(
+        f"{_CONTAINER_ATTACHMENTS_ROOT}/"
+    )
+    if not (is_an_attachment_path(token) or absolute):
+        return None
+    return (
+        f"`{token}` is an attached file, not app source — a command runs inside the app's folder "
+        f"and attachments live outside it. Use the `{ATTACHMENT_READ_TOOL}` tool if you have it, "
+        "passing that same path; otherwise say the file could not be read rather than describing "
+        "it from its name."
+    )
+
+
 def _denied_flag_in(flag: str, policy: CommandPolicy) -> str | None:
     """The denied flag this token carries, or None. Exact match catches the long forms; the
     per-character sweep catches short flags that hide in a cluster or wear their value
@@ -749,10 +797,21 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
             # A path also rides in on `--flag=<path>`; vetting only bare tokens let
             # `grep --file=../../x .` walk straight out of the jail.
             if separator:
+                # BEFORE the lexical guard, on BOTH operand branches. Before, because the
+                # absolute spelling of an attachment path starts with `/` and the guard's
+                # leading-slash arm would otherwise answer first, with advice ("drop the leading
+                # `/`") that leads nowhere. Both branches, because an attachment path rides in on
+                # `grep --file=.attachments/patterns` exactly as it does bare.
+                attachment_refusal = _refuse_an_attachment_operand(value)
+                if attachment_refusal is not None:
+                    return attachment_refusal
                 path_refusal = _vet_path_token(value)
                 if path_refusal is not None:
                     return path_refusal
         else:
+            attachment_refusal = _refuse_an_attachment_operand(token)
+            if attachment_refusal is not None:
+                return attachment_refusal
             path_refusal = _vet_path_token(token)
             if path_refusal is not None:
                 return path_refusal

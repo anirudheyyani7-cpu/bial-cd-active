@@ -160,7 +160,10 @@ def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
     entry = sheet_path.lstrip("/")
     if not entry:
         return []
-    ranges: list[str] = []
+    # A DICT, SO THE CAP COUNTS DISTINCT RANGES AND BOTH EXITS DE-DUPLICATE. The overlap can
+    # re-match a tag that straddled a chunk boundary, so a list would let duplicates consume the
+    # budget and would return them raw on the capped path.
+    ranges: dict[str, None] = {}
     try:
         with zipfile.ZipFile(path) as bundle, bundle.open(entry) as part:
             tail = b""
@@ -170,14 +173,13 @@ def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
                     break
                 window = tail + chunk
                 for match in _MERGE_CELL_REF.finditer(window):
-                    ranges.append(match.group(1).decode("ascii", "replace"))
+                    ranges[match.group(1).decode("ascii", "replace")] = None
                     if len(ranges) >= _MERGE_SCAN_LIMIT:
-                        return ranges
+                        return list(ranges)
                 tail = window[-_MERGE_SCAN_OVERLAP:]
     except (KeyError, OSError, zipfile.BadZipFile):
         return []
-    # The overlap can re-match a tag that straddled a boundary; de-duplicate while keeping order.
-    return list(dict.fromkeys(ranges))
+    return list(ranges)
 
 
 def read_xlsx(path: Path) -> dict[str, Any]:
@@ -221,8 +223,23 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     for name in formulas.sheetnames:
         fsheet, vsheet = formulas[name], values[name]
         try:
+            # MEASURE THE SHEET, DO NOT BELIEVE IT. `calculate_dimension(force=True)` computes only
+            # when the dimension is UNSET, so a workbook that DECLARES a wrong `<dimension>` wins:
+            # a 50-row, 3-column sheet claiming `A1:A1` is summarised as one row and one column,
+            # with `ok: true` and no sign anything was missed. Discarding the declared record first
+            # is what makes the scan actually happen. A file with no dimension record at all was
+            # always fine — only a lying one bites, which is why a differential harness built from
+            # openpyxl-written fixtures cannot produce the case.
+            #
+            # Read-only rows are truncated to `max_column`, so believing a short dimension also
+            # silently drops columns from every row — the padding below cannot recover them.
+            fsheet.reset_dimensions()
             fsheet.calculate_dimension(force=True)
         except (ValueError, TypeError):
+            # A sheet whose stored dimension record is absent or malformed leaves the row and
+            # column counts at zero rather than failing the read: the header, the type probe and
+            # the merged ranges below do not depend on them, and reporting a shape of 0 x 0 beside
+            # a real header is a smaller lie than refusing a file that opens perfectly well.
             pass
         rows, cols = fsheet.max_row or 0, fsheet.max_column or 0
 
@@ -282,7 +299,12 @@ def read_xlsx(path: Path) -> dict[str, Any]:
                 "name": name,
                 "rows": rows,
                 "columns": cols,
-                "header": header,
+                # BOUNDED LIKE EVERY OTHER LIST HERE. A wide sheet — genuinely wide, or one
+                # declaring 16,384 columns — otherwise emits one clipped cell per column with no
+                # ceiling, and this manifest is returned to the model verbatim: a 7.7 MB workbook
+                # that passes every door check produced a 10 MB reply built almost entirely of
+                # header. It was the only list in the manifest that did not state its own whole.
+                "header": _listing(header),
                 "columnDetail": _listing(columns),
                 "mergedRanges": _listing(_merged_ranges(path, _sheet_part(fsheet))),
             }
@@ -382,7 +404,9 @@ def read_docx(path: Path) -> dict[str, Any]:
         body = [[_clip(c.text.strip()) for c in r.cells] for r in rows[1:]]
         tables.append(
             {
-                "header": header,  # kept as a HEADER, not folded into the body
+                # Kept as a HEADER, not folded into the body — and bounded, because a table can
+                # be arbitrarily wide and this manifest goes to the model whole.
+                "header": _listing(header),
                 "rows": len(body),
                 "columns": len(header),
                 "sampleRows": body[:MAX_SAMPLE_ROWS],
@@ -427,7 +451,7 @@ def read_pptx(path: Path) -> dict[str, Any]:
             if getattr(shape, "has_table", False):
                 rows = shape.table.rows
                 header = [_clip(c.text.strip()) for c in rows[0].cells] if len(rows) else []
-                tables.append({"header": header, "rows": max(0, len(rows) - 1)})
+                tables.append({"header": _listing(header), "rows": max(0, len(rows) - 1)})
             if getattr(shape, "has_chart", False):
                 plots = shape.chart.plots
                 categories = list(plots[0].categories) if len(plots) else []

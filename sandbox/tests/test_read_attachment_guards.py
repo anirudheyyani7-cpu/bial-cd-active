@@ -229,3 +229,53 @@ def test_a_cell_containing_merge_markup_cannot_forge_a_range() -> None:
     escaped = b'<c r="A1" t="inlineStr"><is><t>&lt;mergeCell ref="Z1:Z9"/&gt;</t></is></c>'
 
     assert reader._MERGE_CELL_REF.findall(escaped) == []
+
+
+def test_the_reader_measures_the_sheet_rather_than_believing_its_dimension_record() -> None:
+    """★ A WORKBOOK CAN LIE ABOUT ITS OWN SHAPE, and the streaming read believed it.
+
+    `calculate_dimension(force=True)` recomputes only when the dimension record is UNSET, so a
+    sheet that DECLARES `A1:A1` over fifty rows of real data was summarised as one row and one
+    column — with `ok: true`, no error, and nothing to suggest anything had been missed. It reads
+    exactly like a nearly-empty file. Declaring a huge range fails the other way, reporting a
+    six-cell sheet as a million rows.
+
+    `reset_dimensions()` discards the declared record so the scan actually happens.
+
+    NOT REACHABLE FROM AN OPENPYXL-WRITTEN FIXTURE, which is why the differential harness that
+    checked the streaming rewrite could not catch it: openpyxl always writes a truthful record.
+    The bytes have to be rewritten afterwards, so the source is asserted here and the behaviour is
+    pinned in the sandbox image where the libraries live.
+
+    Mutation receipt: drop the `reset_dimensions()` call and a lying workbook reports the shape it
+    claims instead of the shape it has.
+    """
+    tree = ast.parse(READER.read_text(encoding="utf-8"))
+    calls = [
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+
+    assert "reset_dimensions" in calls, (
+        "the declared dimension record must be discarded before the shape is read, or a workbook "
+        "that misdeclares its own extent is summarised as the shape it claims"
+    )
+    assert calls.index("reset_dimensions") < calls.index("calculate_dimension"), (
+        "reset must come first: calculate_dimension only recomputes an UNSET record"
+    )
+
+
+def test_every_list_in_a_manifest_states_its_own_whole() -> None:
+    """★ THE MANIFEST GOES TO THE MODEL VERBATIM, so an unbounded list in it is unbounded context.
+
+    `header` was the one list emitted raw. A workbook that is genuinely wide — or one declaring
+    16,384 columns — turned a 7.7 MB upload that passed every door check into a ~10 MB reply built
+    almost entirely of header cells, which the read tool returns without truncating.
+
+    Mutation receipt: emit `header` bare instead of through `_listing` and this goes red.
+    """
+    source = READER.read_text(encoding="utf-8")
+
+    assert '"header": header' not in source, "a manifest list must carry its true total"
+    assert source.count('"header": _listing(header)') == 3

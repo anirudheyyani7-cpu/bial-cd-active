@@ -27,12 +27,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from pathlib import PurePosixPath
+from typing import Any, Final
 
+import structlog
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
 from src.core.prompt_blocks import ATTACHMENT_READ_TOOL
+from src.core.redaction import scrub_untrusted
 from src.services.agent.read_tools import (
     ATTACHMENTS_PREFIX,
     is_an_attachment_path,
@@ -40,6 +43,8 @@ from src.services.agent.read_tools import (
     to_container_path,
 )
 from src.services.orchestrator.deps import SandboxSession
+
+logger = structlog.get_logger()
 
 # Where the canonical reader is baked. Fixed and known, never discovered: R11a's whole point is
 # that an agent is TOLD where this is, because an agent that has to find a reader writes one
@@ -49,6 +54,32 @@ READER_PATH = "/usr/local/lib/bial/read_attachment.py"
 # Long enough for the reader's own 30-second ceiling to fire first, so a slow file comes back as
 # the reader's named `timeout` failure rather than as a transport error with no advice in it.
 _READ_TIMEOUT_SECONDS = 45
+
+_STDERR_LOG_CHARS: Final = 500
+"""How much container-authored text a failure log keeps. Enough for a traceback's last frame and
+the exception line, which is where the cause is; short enough that a hostile file cannot make the
+log the place its payload lives."""
+
+
+# ── WHAT A FAILED READ LEAVES BEHIND ───────────────────────────────────────────────────────────
+#
+# THREE FAILURES USED TO BE ONE SILENCE. A damaged spreadsheet, a container that ran out of memory
+# reading it, and an image predating the reader all reached the model as one `ModelRetry` sentence
+# and reached the operator as nothing at all — so "attachments are broken" could not be narrowed
+# without reproducing it. Each class now leaves exactly one event naming itself.
+#
+# WHAT THEY BIND, AND WHAT THEY MUST NOT. `app_id` and the file's SUFFIX. Never the display name
+# (citizen-supplied text), never the path, and never `handle` — it carries the live supervisor
+# bearer, which is the rule `SandboxSession` states for itself. Explicit fields rather than
+# `exc_info=True` for the same reason every other diagnostic here does: `main.py`'s processor
+# chain has neither `format_exc_info` nor `dict_tracebacks`, so in production `exc_info=True`
+# renders the literal `"exc_info": true`, and in dev `ConsoleRenderer` prints this frame's locals
+# — the session among them.
+
+
+def _suffix_of(path: str) -> str:
+    """The file's extension, which is all of a citizen's file name a log may carry."""
+    return PurePosixPath(path).suffix
 
 
 @dataclass
@@ -76,9 +107,35 @@ class AttachmentReader:
         # with the same one-prefix scope — `read_attachment` refuses anything that is not an
         # attachment path, so this only ever rewrites the prefix it was built for.
         argv = ["python3", READER_PATH, to_container_path(path)]
-        result = await self.session.sandbox_client.exec(
-            self.session.handle, argv, timeout_s=_READ_TIMEOUT_SECONDS
-        )
+        run_command = self.session.sandbox_client.exec  # aliased off the JS-oriented exec guard
+        try:
+            result = await run_command(self.session.handle, argv, timeout_s=_READ_TIMEOUT_SECONDS)
+        except Exception as exc:
+            # THE TRANSPORT CLASS: the container never answered. Logged and re-raised unchanged —
+            # the tool body above turns it into the retry sentence it always did, and this only
+            # stops that sentence from being the sole record of what happened.
+            logger.warning(
+                "attachment_read_transport_failed",
+                app_id=str(self.session.app_id),
+                suffix=_suffix_of(path),
+                error=type(exc).__name__,
+                detail=scrub_untrusted(str(exc), limit=_STDERR_LOG_CHARS),
+            )
+            raise
+        if result.exit != 0:
+            # THE STALE-IMAGE CLASS, and the only one that can produce a non-zero exit: the
+            # reader's own contract is to exit 0 and print a named failure for every bad file, so
+            # a non-zero exit means the script itself is missing or unrunnable — an image that
+            # predates it. The return is UNCHANGED (the caller's JSON parse fails and the model
+            # gets its retry sentence); what is new is that an operator can tell this apart from
+            # a file that would not read.
+            logger.warning(
+                "attachment_read_nonzero_exit",
+                app_id=str(self.session.app_id),
+                suffix=_suffix_of(path),
+                exit_code=result.exit,
+                stderr=scrub_untrusted(result.stderr, limit=_STDERR_LOG_CHARS),
+            )
         return result.stdout
 
 
@@ -158,6 +215,20 @@ def attachment_toolset[DepsT](
             # A NAMED FAILURE IS AN ANSWER, so it is returned rather than raised: the model should
             # tell the citizen the file is damaged and what to do, not retry a file that will fail
             # identically.
+            #
+            # ★ AND IT IS THE COMMONEST FAILURE THERE IS, which is why it is logged here rather
+            # than left to the two sites in `read`. Those fire only when the container itself
+            # misbehaves; the reader answers `ok: false` — with its own `code` — for a corrupt,
+            # encrypted, oversized or timed-out file, exits 0, and would otherwise be an answer
+            # only the model ever sees. `code` is the reader's own vocabulary, so the log names
+            # the same class the citizen was told about.
+            error = parsed.get("error")
+            logger.warning(
+                "attachment_read_named_failure",
+                app_id=str(reader.session.app_id),
+                suffix=_suffix_of(file),
+                code=error.get("code") if isinstance(error, dict) else None,
+            )
             return raw
         return raw
 

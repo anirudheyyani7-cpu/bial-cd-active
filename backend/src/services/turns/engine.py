@@ -276,28 +276,79 @@ _PERSIST_FAILED_MESSAGE = (
 # is allowed to write does not.
 _CONTEXT_OVERFLOW_MARKERS: Final = ("prompt is too long", "exceed context limit")
 
+# THE OTHER 400 A DOCUMENT CAN EARN, and it is not the same fact as a full chat.
+#
+# The provider refuses any PDF over 600 pages outright — `messages.0.content.0.pdf.source.
+# base64.data: A maximum of 600 PDF pages may be provided.` — measured through this exact stack
+# against the deployment in use. It is not a size refusal: a 0.84 MB PDF of 601 text pages is
+# refused while a 10 MB scan of forty is not, so no byte cap at the upload door can see it
+# coming, and #214's D3/D7 retired the page cap that could.
+#
+# WHY IT IS NAMED RATHER THAN LEFT GENERIC. This is a permanent property of the file the citizen
+# just attached, and "the assistant hit a problem and this turn was stopped" invites the one
+# thing that cannot work — sending again. It is also NOT the overflow sentence: "this chat is
+# full, start a new chat" would send them to a new chat where the same document fails
+# identically, which is the loop the overflow arm's own comment warns about. Different cause,
+# different remedy, different sentence.
+#
+# In practice the window usually bites first — a page costs ~2,900 tokens measured, so a
+# ~175-page document already fills the conversation — and that path is the overflow arm above.
+# This arm is for the documents that reach 600 pages while staying cheap enough per page not to
+# have overflowed on the way.
+_PDF_TOO_MANY_PAGES_MARKERS: Final = ("maximum of 600 pdf pages", "pdf pages may be provided")
 
-def _is_context_overflow(exc: ModelHTTPError) -> bool:
-    """Whether this provider refusal means the prompt did not fit, rather than any other 400.
+DOCUMENT_TOO_LONG_TEXT: Final = (
+    "That PDF has too many pages for the assistant to read. "
+    "Attach a shorter document, or split it and attach the part you need."
+)
+"""What the citizen reads when the provider refuses a document on its page count.
+
+Names the file as the cause and gives the two things that actually work. Deliberately quotes no
+page number: the limit is the provider's, not the platform's, and a number stated here would be
+one more thing to keep true across a deployment change."""
+
+DOCUMENT_TOO_LONG_CODE: Final = "DOCUMENT_TOO_MANY_PAGES"
+"""The machine-readable half, riding out on the terminal frame beside the sentence."""
+
+
+def _provider_refusal_message(exc: ModelHTTPError) -> str:
+    """The provider's own sentence for a 400, or "" when there is not one to read.
 
     Defensive on the body's SHAPE while staying narrow on its CONTENT: the documented shape is
     a parsed `{"error": {"message": ...}}`, and a body that is a bare string (a gateway that
     answered with something other than the provider's JSON) is read as the message itself.
-    Anything else yields no message and therefore no match — an unreadable body is not evidence
-    that a chat is full."""
+    Anything else yields no message, and therefore matches nothing — an unreadable body is not
+    evidence of any particular cause."""
     if exc.status_code != 400:
-        return False
+        return ""
     body: object = exc.body
-    message = ""
     if isinstance(body, Mapping):
         error: object = body.get("error")
         if isinstance(error, Mapping):
             candidate: object = error.get("message")
-            message = candidate if isinstance(candidate, str) else ""
-    elif isinstance(body, str):
-        message = body
-    lowered = message.lower()
-    return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)
+            return candidate.lower() if isinstance(candidate, str) else ""
+        return ""
+    if isinstance(body, str):
+        return body.lower()
+    return ""
+
+
+def _is_document_too_long(exc: ModelHTTPError) -> bool:
+    """Whether this 400 means the attached PDF has more pages than the provider will read.
+
+    THE STATUS IS NOT THE MATCH, for the same reason it is not the match for the overflow above:
+    every malformed request is a 400, and answering an unsupported media type with "that PDF has
+    too many pages" is the same class of untrue sentence read from the other end."""
+    return any(marker in _provider_refusal_message(exc) for marker in _PDF_TOO_MANY_PAGES_MARKERS)
+
+
+def _is_context_overflow(exc: ModelHTTPError) -> bool:
+    """Whether this provider refusal means the prompt did not fit, rather than any other 400.
+
+    Narrow on CONTENT, and defensive about the body's shape through
+    `_provider_refusal_message`: a body it cannot read yields no message and therefore no match,
+    because an unreadable body is not evidence that a chat is full."""
+    return any(marker in _provider_refusal_message(exc) for marker in _CONTEXT_OVERFLOW_MARKERS)
 
 
 # THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING.
@@ -1621,6 +1672,24 @@ class TurnEngine:
                 self._emit(
                     state,
                     lambda seq: TurnErrorFrame(seq=seq, message=CHAT_TOO_LONG_TEXT),
+                )
+                self._finish(state, "failed")
+            elif _is_document_too_long(exc):
+                # A PROPERTY OF THE FILE, NOT OF THE CHAT, so it gets its own sentence rather
+                # than the overflow's. Same shape as the arm above otherwise: bill what ran,
+                # name the cause, finish failed.
+                _log.info(
+                    "turn_document_too_many_pages",
+                    conversation_id=str(state.conversation_id),
+                    turn_id=str(state.turn_id),
+                    status_code=exc.status_code,
+                )
+                await _bill_once()
+                state.end_reason = DOCUMENT_TOO_LONG_CODE
+                state.error_message = DOCUMENT_TOO_LONG_TEXT
+                self._emit(
+                    state,
+                    lambda seq: TurnErrorFrame(seq=seq, message=DOCUMENT_TOO_LONG_TEXT),
                 )
                 self._finish(state, "failed")
             elif _is_transient_model_status(exc.status_code):

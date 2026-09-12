@@ -49,7 +49,14 @@ from src.services.build_sessions.manager import SessionManager
 from src.services.sandbox.config import SandboxConfig
 from src.services.turns import engine as engine_module
 from src.services.turns.copy import CHAT_TOO_LONG_CODE, CHAT_TOO_LONG_TEXT
-from src.services.turns.engine import TurnEngine, _is_context_overflow, set_turn_engine_for_tests
+from src.services.turns.engine import (
+    DOCUMENT_TOO_LONG_CODE,
+    DOCUMENT_TOO_LONG_TEXT,
+    TurnEngine,
+    _is_context_overflow,
+    _is_document_too_long,
+    set_turn_engine_for_tests,
+)
 from src.services.turns.guard import _mid_reply
 from tests.factories import ConversationFactory, UserFactory
 from tests.fakes import FakeSandboxClient
@@ -66,6 +73,22 @@ OVERFLOW_BODY: dict[str, Any] = {
         "message": "prompt is too long: 1963668 tokens > 1000000 maximum",
     },
     "request_id": "req_011CepLWJmgUvgxV5mq4rij5",
+}
+
+# THE REAL REFUSAL, COPIED FROM A LIVE CALL rather than composed here — a 601-page PDF sent
+# through this exact stack (pydantic-ai `AnthropicModel` over `AsyncAnthropicFoundry`) against
+# the deployment in use. A hand-written approximation of a provider's wording is the one thing
+# a marker match must not be tested against.
+PDF_PAGES_BODY: dict[str, Any] = {
+    "type": "error",
+    "error": {
+        "type": "invalid_request_error",
+        "message": (
+            "messages.0.content.0.pdf.source.base64.data: "
+            "A maximum of 600 PDF pages may be provided."
+        ),
+    },
+    "request_id": "req_011Ceyz4nptDfF5aTYkZmURj",
 }
 
 # A 400 from the same provider, the same error type, about something else entirely. This is the
@@ -438,3 +461,96 @@ def test_a_conversation_id_is_never_needed_to_tell_the_citizen_this() -> None:
     signature = inspect.signature(_is_context_overflow)
     assert list(signature.parameters) == ["exc"]
     assert uuid.UUID not in {p.annotation for p in signature.parameters.values()}
+
+
+# --- a document the provider will not read ---------------------------------------------------
+
+
+async def test_a_pdf_refused_on_page_count_names_the_document_not_the_chat(
+    _fresh_engine, db_session, session_factory
+) -> None:
+    """★ THE OTHER 400 A DOCUMENT CAN EARN, and it must not borrow the overflow's sentence.
+
+    The provider refuses any PDF over 600 pages outright. Measured against the live deployment:
+    a 0.84 MB PDF of 601 text pages is refused while a 10 MB scan of forty is not — so this is
+    not a size refusal and no byte cap at the upload door can see it coming. #214's D3/D7
+    retired the page cap that could, deliberately, which is what leaves this arm as the only
+    place the citizen can be told what happened.
+
+    IT IS NOT "THIS CHAT IS FULL". That sentence sends them to a new chat where the same
+    document fails identically — the loop `_CONTEXT_OVERFLOW_MARKERS`' own comment warns about.
+    The cause is a permanent property of the file, so the remedy names the file.
+
+    Mutation check: delete the `_is_document_too_long` arm and this goes red on the generic
+    sentence; point it at `CHAT_TOO_LONG_TEXT` and it goes red on the wrong remedy.
+    """
+    conv_id, state = await _run_until_settled(
+        _fresh_engine,
+        db_session,
+        session_factory,
+        _refusing_model(ModelHTTPError(status_code=400, model_name="opus", body=PDF_PAGES_BODY)),
+    )
+
+    assert state.status == "failed"
+    assert _last_error(state) == DOCUMENT_TOO_LONG_TEXT
+    assert _terminal(state).reason == DOCUMENT_TOO_LONG_CODE
+    # Emphatically NOT the chat-full remedy — a new chat cannot help.
+    assert CHAT_TOO_LONG_TEXT not in (_last_error(state) or "")
+    assert _terminal(state).reason != CHAT_TOO_LONG_CODE
+    # The ending is still an ENDING: one terminal, and the conversation is not left wedged.
+    assert conv_id not in _mid_reply
+
+
+async def test_the_page_refusal_leaks_no_provider_internals(
+    _fresh_engine, db_session, session_factory
+) -> None:
+    """The provider's message names a request id and a JSON path into the wire format
+    (`messages.0.content.0.pdf.source.base64.data`). None of it may reach the citizen, and the
+    sentence quotes no page number either: the limit is the provider's, not the platform's, and
+    a number stated in copy is one more thing to keep true across a deployment change."""
+    _, state = await _run_until_settled(
+        _fresh_engine,
+        db_session,
+        session_factory,
+        _refusing_model(ModelHTTPError(status_code=400, model_name="opus", body=PDF_PAGES_BODY)),
+    )
+
+    said = _last_error(state) or ""
+    for leak in ("messages.0", "base64", "req_011", "600"):
+        assert leak not in said, f"{leak!r} reached the citizen"
+
+
+def test_only_the_providers_own_page_sentence_matches() -> None:
+    """THE STATUS IS NOT THE MATCH. Every malformed request is a 400 — an unsupported media
+    type, a bad tool schema — and answering any of them with "that PDF has too many pages" is
+    the same untrue-sentence defect read from the other end.
+
+    Mutation check: widen `_is_document_too_long` to `exc.status_code == 400` and the last three
+    cases go red."""
+    assert _is_document_too_long(
+        ModelHTTPError(status_code=400, model_name="o", body=PDF_PAGES_BODY)
+    )
+    # A bare-string body (a gateway that answered with something other than provider JSON).
+    assert _is_document_too_long(
+        ModelHTTPError(
+            status_code=400, model_name="o", body="A maximum of 600 PDF pages may be provided."
+        )
+    )
+    # Another 400 entirely.
+    assert not _is_document_too_long(
+        ModelHTTPError(status_code=400, model_name="o", body=OVERFLOW_BODY)
+    )
+    # An unreadable body is not evidence of anything.
+    assert not _is_document_too_long(ModelHTTPError(status_code=400, model_name="o", body=None))
+    # The right sentence on the wrong status is not this failure.
+    assert not _is_document_too_long(
+        ModelHTTPError(status_code=500, model_name="o", body=PDF_PAGES_BODY)
+    )
+
+
+def test_the_two_document_refusals_never_both_match() -> None:
+    """They take different arms and give different remedies, so an overlap would make the
+    citizen's sentence depend on the order the arms happen to be written in."""
+    for body in (OVERFLOW_BODY, PDF_PAGES_BODY):
+        error = ModelHTTPError(status_code=400, model_name="o", body=body)
+        assert not (_is_context_overflow(error) and _is_document_too_long(error))

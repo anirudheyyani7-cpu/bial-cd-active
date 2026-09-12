@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(),
   resolvePlanOptions: vi.fn(),
   stop: vi.fn(), getStatus: vi.fn(), relaunchPreview: vi.fn(),
-  notifyUsageChanged: vi.fn(),
+  notifyUsageChanged: vi.fn(), releaseUploadedAttachments: vi.fn(),
 }))
 
 vi.mock('../../utils/usage', () => ({ notifyUsageChanged: h.notifyUsageChanged }))
@@ -37,7 +37,11 @@ vi.mock('../../utils/conversationApi', async (importOriginal) => ({
   listProjectConversations: h.listProjectConversations,
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
-vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), buildUserParts: h.buildUserParts }))
+vi.mock('../../utils/attachmentStore', async (orig) => ({
+  ...(await orig()),
+  buildUserParts: h.buildUserParts,
+  releaseUploadedAttachments: (...a) => h.releaseUploadedAttachments(...a),
+}))
 // `switchMode` is GONE from this list: the route it posted to no longer exists, and a
 // chat's kind can't change after creation, so there is nothing left for a mock to intercept.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
@@ -888,6 +892,77 @@ describe('a refused send leaves the citizen holding their message', () => {
 
     // It actually sent. Before the fix this press matched the stale guard and vanished.
     await waitFor(() => expect(h.startTurn).toHaveBeenCalledTimes(2))
+  })
+
+  it('an upload that fails after the reader has moved on frees Send without speaking over the chat they are in', async () => {
+    // THE SAME WEDGE, ONE ARM EARLIER. `startTurn`'s abort was already unconditional; the upload
+    // arm's was gated on `stillHere()`, so an upload that failed after a chat switch settled
+    // nothing. `ComposerBox` is one long-lived instance, so its `sending` stayed true and greyed
+    // Send in EVERY chat until the page was reloaded.
+    h.getBuild.mockResolvedValue(continuing())
+    let failUpload = () => {}
+    h.buildUserParts.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { failUpload = () => reject(new Error('the store refused it')) }),
+    )
+    const { deps: d } = deps()
+    const { rerender } = renderAt('build-X', d)
+    await waitForGateOpen()
+
+    type('what does this say?')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    rerender(
+      <MemoryRouter initialEntries={['/x']}>
+        <ConversationSurface chatId="build-Y" projectId="p1" projectName="VIP Movement" buildSessionDeps={d} />
+      </MemoryRouter>,
+    )
+    await waitForGateOpen()
+    await act(async () => { failUpload() })
+
+    // THE CHAT THEY LEFT DOES NOT TALK OVER THE ONE THEY ARE READING. Asserted as an absence with
+    // a liveness assertion beside it, so a surface that never rendered cannot pass by being empty.
+    expect(composer()).toBeTruthy()
+    expect(screen.queryByTestId('urgent-banner')).toBeNull()
+
+    // AND SEND WORKS HERE, which is the half the gated abort broke.
+    h.startTurn.mockResolvedValue({ turnId: 't1', contextTokens: null })
+    type('a message in the chat I am actually in')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+    await waitFor(() => expect(h.startTurn).toHaveBeenCalledTimes(1))
+  })
+
+  it('an upload that lands after the reader has moved on is given back rather than left behind', async () => {
+    // The files are on the server by then, linked to the chat that was left, and no message will
+    // ever reference them — but they still count against that conversation's twenty. Four switches
+    // and the next upload there is refused with "this conversation has reached its limit of 20
+    // attachments" on a chat displaying none, with only an aged-out reclaimer to take them back.
+    h.getBuild.mockResolvedValue(continuing())
+    const uploaded = [
+      { type: 'file', attachmentId: 'att_1', kind: 'document', name: 'a.pdf', mediaType: 'application/pdf' },
+      { type: 'text', text: 'what does this say?' },
+    ]
+    let landUpload = () => {}
+    h.buildUserParts.mockImplementationOnce(
+      () => new Promise((resolve) => { landUpload = () => resolve(uploaded) }),
+    )
+    const { deps: d } = deps()
+    const { rerender } = renderAt('build-X', d)
+    await waitForGateOpen()
+
+    type('what does this say?')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    rerender(
+      <MemoryRouter initialEntries={['/x']}>
+        <ConversationSurface chatId="build-Y" projectId="p1" projectName="VIP Movement" buildSessionDeps={d} />
+      </MemoryRouter>,
+    )
+    await waitForGateOpen()
+    await act(async () => { landUpload() })
+
+    await waitFor(() => expect(h.releaseUploadedAttachments).toHaveBeenCalledWith(uploaded))
+    // AND NOTHING WAS SENT INTO THE CHAT THEY MOVED TO, which is the other half of abandoning.
+    expect(h.startTurn).not.toHaveBeenCalled()
   })
 })
 

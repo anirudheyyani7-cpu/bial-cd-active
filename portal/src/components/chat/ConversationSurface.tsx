@@ -1452,10 +1452,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // THE BANNER IS A PAINT DECISION AND THE SETTLE IS NOT, which is why only one of them is
       // gated. A failure that lands after the reader moved on belongs to the chat they left, so
       // its sentence must not appear over the one they are reading — but the promise
-      // `handleSubmit` is awaiting has to settle wherever they are. Leaving it pending never runs
-      // that function's `finally`, so `sendingRef` keeps naming the abandoned chat and Send stays
-      // unavailable in EVERY chat, because the composer is one long-lived instance rather than
-      // one per conversation. The `startTurn` arm below settles unconditionally for this reason.
+      // `handleSubmit` is awaiting has to settle wherever they are. Left pending it never runs
+      // `ComposerBox`'s own `finally`, so that box's `sending` stays true and greys Send in EVERY
+      // chat, because the composer is one long-lived instance rather than one per conversation;
+      // `sendingRef` stays stamped too, which holds the abandoned chat's double-Enter guard shut.
+      // The `startTurn` arm below settles unconditionally for the same reason.
       if (stillHere()) {
         setUrgent(
           err instanceof Error ? err.message : 'Could not upload the attachment. Please try again.',
@@ -1609,8 +1610,9 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // path, and exactly when losing the message would be least forgivable.
       //
       // OUTSIDE `stillHere()`, because settling is not a rendering decision. An unsettled promise
-      // never runs `handleSubmit`'s `finally`, so `sendingRef` keeps naming this chat and every
-      // later press there matches the double-Enter guard and returns as though it had sent.
+      // never runs `ComposerBox`'s `finally`, so its `sending` stays true and greys Send in every
+      // chat; `sendingRef` also keeps naming this one, so a later press here matches the
+      // double-Enter guard and returns as though it had sent.
       //
       // `posted` is the one case that must NOT abort: the server has the message, `onSent` already
       // fired above, and this is only the subscription breaking afterwards.

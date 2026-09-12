@@ -58,6 +58,7 @@ const PROJECT: Project = {
   isServing: false,
   createdAt: '2026-07-10T00:00:00Z',
   updatedAt: '2026-07-10T00:00:00Z',
+  access: 'owner',
 }
 
 /** The refusal the server raises when the one workspace is held by another project. */

@@ -22,6 +22,7 @@ import type {
   BuildSessionStatusResponse,
   RelaunchPreviewRequest,
   RelaunchPreviewResponse,
+  SharedPreviewResponse,
   StopBuildRequest,
   StopBuildResponse,
 } from './buildSessionTypes'
@@ -370,6 +371,54 @@ export async function releaseProject(
     deps,
   )
   return isRecord(body) && body.released === true
+}
+
+function toSharedPreviewResponse(value: unknown): SharedPreviewResponse {
+  if (!isRecord(value)) throw new ApiError('The server returned a preview we could not read.', 500)
+  return {
+    appId: typeof value.appId === 'string' ? value.appId : '',
+    previewUrl: typeof value.previewUrl === 'string' ? value.previewUrl : '',
+    ready: value.ready === true,
+    snapshotTakenAt: typeof value.snapshotTakenAt === 'string' ? value.snapshotTakenAt : null,
+  }
+}
+
+/**
+ * Open a project a colleague shared with you (#198). Attaches to an already-live view if one
+ * is up (a reopened tab, a second click); otherwise restores one from the owner's latest
+ * SAVED snapshot. Registers no build session, exactly like `relaunchPreview` — nothing here
+ * occupies the caller's own one-per-user build slot.
+ */
+export async function launchSharedPreview(
+  projectId: string,
+  deps: AuthFetchDeps = {},
+): Promise<SharedPreviewResponse> {
+  const body = await postJson(
+    `${BASE}/projects/${encodeURIComponent(projectId)}/shared-launch`,
+    undefined,
+    'Could not open this shared project',
+    deps,
+  )
+  return toSharedPreviewResponse(body)
+}
+
+/**
+ * Re-restore a shared project from whatever is CURRENTLY saved (#198) — unlike Launch, never
+ * attaches to an already-live view even when one is up, since the owner may have saved
+ * something newer since it came up. `snapshotTakenAt` on the response is how the caller
+ * learns whether anything actually moved.
+ */
+export async function refreshSharedPreview(
+  projectId: string,
+  deps: AuthFetchDeps = {},
+): Promise<SharedPreviewResponse> {
+  const body = await postJson(
+    `${BASE}/projects/${encodeURIComponent(projectId)}/shared-refresh`,
+    undefined,
+    'Could not refresh this shared project',
+    deps,
+  )
+  return toSharedPreviewResponse(body)
 }
 
 /**

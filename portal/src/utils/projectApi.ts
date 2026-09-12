@@ -55,6 +55,14 @@ export interface Project {
   isServing: boolean
   createdAt: string
   updatedAt: string
+  /**
+   * Whether the caller owns this project or is viewing it because a colleague shared it with
+   * them (#198). `'owner'` for every project fetched before this field existed — the historic
+   * contract, and the only reading that keeps every existing owner-oriented screen unchanged
+   * for a caller who is, in fact, the owner. `ProjectPage` reads this to route a shared
+   * viewer to the restricted workspace instead of the full build/save/publish one.
+   */
+  access: 'owner' | 'shared'
 }
 
 /**
@@ -137,6 +145,13 @@ function asAppStatus(value: unknown): AppStatus | null {
     : null
 }
 
+/** Anything but the literal `'shared'` reads as `'owner'` — the historic contract for every
+ *  server response that predates this field, and the fail-safe direction: a caller must
+ *  never be shown fewer build/save/publish controls than they actually own. */
+function asAccess(value: unknown): 'owner' | 'shared' {
+  return value === 'shared' ? 'shared' : 'owner'
+}
+
 /**
  * Narrow one untrusted `ProjectResponse` into the typed `Project` shape.
  *
@@ -163,6 +178,7 @@ function toProject(value: unknown): Project {
     isServing: value.isServing === true,
     createdAt: asString(value.createdAt),
     updatedAt: asString(value.updatedAt),
+    access: asAccess(value.access),
   }
 }
 

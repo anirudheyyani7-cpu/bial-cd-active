@@ -34,8 +34,9 @@ describe('listProjects', () => {
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/projects')
     // The wire sample carries no `hasRelaunchableSnapshot` — the list never computes one —
     // and the narrower defaults it to `null`, the "cannot say" answer that withholds the claim.
+    // It carries no `access` either, and `asAccess` fails safe to `'owner'` for exactly that case.
     expect(page).toEqual({
-      items: [{ ...sampleProject, hasRelaunchableSnapshot: null, isServing: false }],
+      items: [{ ...sampleProject, hasRelaunchableSnapshot: null, isServing: false, access: 'owner' }],
       page: 1,
       pageSize: 25,
       total: 1,

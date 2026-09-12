@@ -36,6 +36,7 @@ const makeProject = (over: Partial<Project> = {}): Project => ({
   isServing: false,
   createdAt: '2026-07-10T00:00:00Z',
   updatedAt: '2026-07-10T00:00:00Z',
+  access: 'owner',
   ...over,
 })
 

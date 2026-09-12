@@ -62,6 +62,24 @@ export interface RelaunchPreviewResponse {
   ready: boolean
 }
 
+/**
+ * `POST …/projects/{id}/shared-launch` and `.../shared-refresh` → 200 (#198).
+ * `RelaunchPreviewResponse`'s sibling for a colleague's read-only view of a project shared
+ * with them — no `status`/`restoredFromFailedBuild`: a shared view registers no build
+ * session and has no build-outcome history of its own to qualify.
+ */
+export interface SharedPreviewResponse {
+  appId: string
+  previewUrl: string
+  /** Is the app actually SERVING `previewUrl` yet? False only on a degraded attach — the
+   *  container is alive, the app is just slow to answer. The URL is framable either way. */
+  ready: boolean
+  /** When the snapshot NOW BEING SERVED was saved — `null` only when the server could not
+   *  ask the store for the timestamp; the restore itself already confirmed the snapshot
+   *  exists. Refresh's whole point is moving this forward. */
+  snapshotTakenAt: string | null
+}
+
 /** `POST …/stop` body — an optional free-text reason for the audit / activity feed. */
 export interface StopBuildRequest {
   reason?: string | null

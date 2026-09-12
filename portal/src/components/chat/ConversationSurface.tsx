@@ -813,7 +813,10 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // shell's two exit guards arm on, and it is KEPT across an unmount, while these two are cleared
   // with their publisher. THE ROW WANTS THE FLAG ALONE, deliberately: its chip reports whether a
   // version exists, which is the question `dirty` answers, and a recovery copy is not one.
-  usePublishSave({ dirty: saveDirty, saving, error: saveError }, { save: handleSave, rename: null })
+  usePublishSave(
+    { dirty: saveDirty, saving, error: saveError },
+    { save: handleSave, rename: null, share: null },
+  )
 
   // A genuine unmount must cancel the in-flight turn-stream reader — a chat switch already
   // aborts it before resubscribing, but nothing did on unmount, leaking the reader (and its

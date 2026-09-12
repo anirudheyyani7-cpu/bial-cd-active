@@ -35,6 +35,7 @@ const project: Project = {
   isServing: false,
   createdAt: '',
   updatedAt: '',
+  access: 'owner',
 }
 
 beforeEach(() => {

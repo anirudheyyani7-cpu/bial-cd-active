@@ -632,7 +632,7 @@ async def test_approving_a_person_switches_their_rows_on_without_writing_to_them
     assert await _tuple_version() == before_ctid
 
 
-# --- R11a: the settings are locked while a session is live -------------------------------------
+# --- the settings are locked while a session is live -------------------------------------
 #
 # A CONTAINER RECEIVES ITS ENVIRONMENT EXACTLY ONCE, AT BIRTH. The attach arm — which is the
 # steady state for every message after the first — forwards none, so a connector switched on
@@ -827,7 +827,7 @@ async def test_a_redis_that_answers_badly_refuses_the_change_rather_than_allowin
     configured means no sandbox coordination, so there is no live session to protect and the write
     is allowed — that is the supported dev posture. A CONFIGURED Redis that raises is the opposite
     situation: the platform cannot tell whether a session is live, and a guess in that state is
-    the half-configured container the whole R11a lock exists to prevent.
+    the half-configured container the whole lock exists to prevent.
 
     Refusing costs nothing real, which is why this is the right posture rather than a cautious
     one: if Redis cannot answer, `acquire_lock` cannot take a lock either, so no build the refusal

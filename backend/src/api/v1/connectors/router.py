@@ -37,6 +37,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, status
 from redis.exceptions import RedisError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.deps_csrf import RequireCsrf
@@ -81,7 +82,7 @@ _ALREADY_ASKED = "You have already asked for access to this. An administrator is
 _ALREADY_DECIDED = "An administrator has already answered this request."
 _NOTHING_TO_CANCEL = "There is no waiting request to cancel."
 
-# R11a. A CONTAINER RECEIVES ITS ENVIRONMENT EXACTLY ONCE, AT BIRTH, so a connector switched on
+# A CONTAINER RECEIVES ITS ENVIRONMENT EXACTLY ONCE, AT BIRTH, so a connector switched on
 # while a build or a conversation is running would leave the rail saying "on" over a container
 # that cannot reach anything — and the attach arm, which is the steady state, forwards no
 # environment at all. Rather than reconciling that state, the owner ruled it out of existence:
@@ -457,7 +458,7 @@ async def _refuse_while_a_session_is_live(
     project_name: str,
     connector: Connector,
 ) -> None:
-    """R11a: refuse a settings change while this project has a turn in flight.
+    """Refuse a settings change while this project has a turn in flight.
 
     THREE SIGNALS, ANY OF WHICH MEANS LIVE, because they cover the whole of a session's shape:
     the one-per-user LOCK is held for the duration of a turn; the liveness LEASE is the one signal
@@ -490,7 +491,11 @@ async def _refuse_while_a_session_is_live(
         ) and await _the_live_session_is_this_project(
             db, redis, user_id, project_id, starting_project_id
         )
-    except RedisError as exc:
+    except (RedisError, SQLAlchemyError) as exc:
+        # BOTH stores, because the question now needs both: the three signals come from Redis
+        # and the project's app id from Postgres. A database fault reaching the caller as a 500
+        # would still block the write, but it would break the fail-closed CONTRACT this
+        # docstring states and hand the citizen an error with nothing to do about it.
         raise AppApiError(
             status.HTTP_409_CONFLICT,
             _SESSION_IS_LIVE.format(project=project_name, name=connector.display_name),
@@ -746,7 +751,7 @@ async def set_project_connector(
             code="access_not_approved",
         )
 
-    # R11a — AFTER the approval check and BEFORE anything is written. Ordered that way on
+    # AFTER the approval check and BEFORE anything is written. Ordered that way on
     # purpose: an unapproved citizen gets the 403 they would always have got, rather than a
     # confusing "stop your build" for a setting they were never allowed to change.
     await _refuse_while_a_session_is_live(db, user.id, project_id, project_name, connector)

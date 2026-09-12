@@ -186,9 +186,9 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     STREAMED, NOT MATERIALISED, and the difference is the whole reason a 10 MB workbook is
     readable at all. `read_only=True` walks the sheet XML a row at a time instead of building a
     cell object per cell: measured on a dense 9.99 MB workbook (23,000 x 40 = 920,000 cells) in
-    the shipped image, the full-model load peaked at 829 MB and took 9.4s, and this one peaks at
-    36 MB and takes 4.1s for byte-identical output. The old shape did not merely cost more — it
-    exceeded `MEMORY_LIMIT_BYTES` and the citizen was told to attach a smaller file.
+    the shipped image at 1 vCPU / 2 GiB, the full-model load peaked at 829 MB and took 9.4s, and
+    this one peaks at 46 MB and takes 5.8s for byte-identical output. The old shape did not merely
+    cost more — it exceeded `MEMORY_LIMIT_BYTES` and the citizen was told to attach a smaller file.
 
     LOADED TWICE ON PURPOSE, and this is the requirement that costs the second pass. openpyxl
     reads either the FORMULAS (`data_only=False`) or the values Excel last CACHED for them

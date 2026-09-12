@@ -29,12 +29,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from sqlalchemy import event
 
 from src.api.v1.build_sessions.schemas import BuildSessionStatus, ErrorSource
 from src.api.v1.conversations.schemas import DiagnosticFrame
+from src.db.models.attachment import Attachment
 from src.db.models.conversation import ChatKind
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.services.build_sessions.outcome import write_build_outcome
+from src.services.media.lanes import EXCEL_MEDIA_TYPE
+from src.services.media.magic import chip_kind_for
 from src.services.messages.projection import (
     PROPOSE_SLICE_TOOL,
     TELL_THE_USER_TOOL,
@@ -53,6 +57,7 @@ from src.services.messages.projection import (
     classify_file_step,
     classify_tool_call,
     command_only_inspects,
+    project_conversation,
     project_rows,
 )
 from src.services.messages.store import (
@@ -2204,3 +2209,120 @@ async def test_a_turn_with_nothing_left_after_the_dedupe_is_not_drawn(db_session
 
     assert [[a.attachment_id for a in i.attachments] for i in items] == [["att_sheet"]]
     assert [i.text for i in items] == ["here it is"]
+
+
+# --- the enrichment entry point -----------------------------------------------------------
+
+
+async def _stored_attachment(db_session, user_id, attachment_id: str, name: str, media_type: str):
+    row = Attachment(
+        user_id=user_id,
+        attachment_id=attachment_id,
+        media_type=media_type,
+        name=name,
+        size=1,
+        storage_key=f"att/{user_id}/{attachment_id}",
+    )
+    db_session.add(row)
+    await db_session.flush()
+    return row
+
+
+async def test_a_chip_is_filled_in_from_the_attachment_row(db_session) -> None:
+    """`project_rows` is pure and carries only the id; the name and media type live in the
+    attachments table. This is the seam that joins them, and it is what every route calls."""
+    user, _, conversation = await _thread(db_session)
+    await _stored_attachment(db_session, user.id, "att_sheet", "movements.xlsx", EXCEL_MEDIA_TYPE)
+    await _code_lane_turn(db_session, user, conversation, "what is in this?", ["att_sheet"])
+
+    rows = await _rows(db_session, user, conversation)
+    items = [
+        i
+        for i in await project_conversation(db_session, user_id=user.id, rows=rows)
+        if isinstance(i, UserTextItem)
+    ]
+
+    chip = items[0].attachments[0]
+    assert (chip.name, chip.media_type) == ("movements.xlsx", EXCEL_MEDIA_TYPE)
+    assert chip.kind == chip_kind_for(EXCEL_MEDIA_TYPE)
+
+
+async def test_a_transcript_naming_another_citizens_attachment_learns_nothing_about_it(
+    db_session,
+) -> None:
+    """★ THE PREDICATE THIS QUERY CANNOT LOSE.
+
+    An attachment id is a client-supplied string that is stored verbatim into the payload, so a
+    transcript can name any id at all. Without the `user_id` predicate the enrichment would hand
+    back the OWNER's filename and media type — one citizen reading another's file names out of
+    their own chat.
+
+    Mutation receipt: drop `Attachment.user_id == user_id` from the select in
+    `project_conversation` and this goes red on the stranger's filename appearing.
+    """
+    owner = await UserFactory.create(db_session)
+    await _stored_attachment(db_session, owner.id, "att_theirs", "payroll.xlsx", EXCEL_MEDIA_TYPE)
+
+    reader, _, conversation = await _thread(db_session)
+    await _code_lane_turn(db_session, reader, conversation, "what is in this?", ["att_theirs"])
+
+    rows = await _rows(db_session, reader, conversation)
+    items = [
+        i
+        for i in await project_conversation(db_session, user_id=reader.id, rows=rows)
+        if isinstance(i, UserTextItem)
+    ]
+
+    chip = items[0].attachments[0]
+    assert chip.attachment_id == "att_theirs"  # the reference survives — it is in their payload
+    assert chip.name == ""
+    assert chip.media_type == ""
+
+
+async def test_a_reference_whose_row_is_gone_reads_as_unavailable_rather_than_failing(
+    db_session,
+) -> None:
+    """A reclaimed attachment leaves its reference in the payload forever. The chip has to render
+    as unavailable, which the browser draws from exactly this empty-name state."""
+    user, _, conversation = await _thread(db_session)
+    await _code_lane_turn(db_session, user, conversation, "what is in this?", ["att_reclaimed"])
+
+    rows = await _rows(db_session, user, conversation)
+    items = [
+        i
+        for i in await project_conversation(db_session, user_id=user.id, rows=rows)
+        if isinstance(i, UserTextItem)
+    ]
+
+    assert [a.attachment_id for a in items[0].attachments] == ["att_reclaimed"]
+    assert items[0].attachments[0].name == ""
+
+
+async def test_the_whole_transcript_costs_one_attachment_read(db_session) -> None:
+    """★ THE ANTI-N+1 THE DOCSTRING CLAIMS, asserted rather than trusted.
+
+    Ids are collected across every item before the read, so forty attachments cost one query.
+    Counted by instrumenting the session, because the alternative — trusting the comment — is how
+    a later edit moves the select inside the loop without anyone noticing.
+
+    Mutation receipt: move the select into the per-item loop and the count goes above one.
+    """
+    user, _, conversation = await _thread(db_session)
+    for n in range(4):
+        await _stored_attachment(db_session, user.id, f"att_{n}", f"f{n}.xlsx", EXCEL_MEDIA_TYPE)
+        await _code_lane_turn(db_session, user, conversation, f"file {n}", [f"att_{n}"])
+
+    rows = await _rows(db_session, user, conversation)
+    reads: list[str] = []
+
+    @event.listens_for(db_session.sync_session, "do_orm_execute")
+    def _count(state) -> None:
+        if state.is_select and "attachments" in str(state.statement).lower():
+            reads.append("read")
+
+    try:
+        await project_conversation(db_session, user_id=user.id, rows=rows)
+    finally:
+        event.remove(db_session.sync_session, "do_orm_execute", _count)
+
+    assert len(reads) == 1, f"expected one attachment read for the transcript, got {len(reads)}"

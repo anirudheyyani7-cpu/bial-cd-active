@@ -56,6 +56,22 @@ it belongs to, and what the model does with it.
 - **A spreadsheet the reader cannot parse reports the failure instead of an empty file.** Three
   failure paths in the in-container reader swallowed their own errors and returned nothing, which
   the model read as "the file is empty" and answered from the file's name.
+- **A dense 10 MB spreadsheet can actually be read.** The reader was building an object for every
+  cell — twice — to report a file's shape, so a 920,000-cell workbook needed 829 MB and was refused
+  as too large for the workspace. It streams now: 46 MB and under six seconds for the same file.
+- **A PDF with more pages than the assistant can read now says so.** Such a document used to end the
+  turn with "the assistant hit a problem", which named nothing and invited sending it again. The
+  refusal now names the document and offers the two things that work — attach a shorter one, or
+  split it.
+
+### Known limitations
+
+- **A long PDF is limited by pages, not by megabytes, and the limit is lower than the 10 MB cap
+  suggests.** A PDF page costs the assistant roughly 2,900 tokens, so a document of about 175 pages
+  fills a conversation's entire context on its own regardless of how small the file is; beyond
+  roughly 600 pages the assistant will not accept the document at all. Both refusals are now clearly
+  worded, but neither is caught at upload — the file is accepted and the refusal arrives on the
+  turn. Attaching an excerpt rather than a full report is the reliable approach for long documents.
 
 ## [1.7.0-beta.13] - 2026-09-11
 

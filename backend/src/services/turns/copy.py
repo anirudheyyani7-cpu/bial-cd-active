@@ -323,3 +323,67 @@ where the person who can act on it looks.
 IT SAYS NOTHING WAS PUBLISHED rather than that a previous version is still running, which is the
 reassurance the other build failures carry: on a first publish there is no previous version, and
 this failure happens before anything the citizen could be looking at has changed."""
+
+
+STILL_OPEN_WITH_CHANGES_TEXT: Final = (
+    "“{project}” is still open and has changes that are not saved yet."
+)
+"""Another project of this person's holds the one workspace, and it was read as having work in
+it.
+
+Stated as a fact because it is one — the tree was questioned and it answered. It borrows the
+hand-over dialog's own words for the same situation, so a citizen who meets both is not asked
+to work out whether they are being told about one thing or two."""
+
+
+STILL_OPEN_ALL_SAVED_TEXT: Final = "“{project}” is still open, and everything in it is saved."
+"""The same project, questioned and answered clean.
+
+THE STATE THIS EXISTS FOR. The answer is three-valued and one hedge used to cover two of them,
+so a project the platform had just proven saved was described as one that might have unsaved
+work — sending the citizen to look for changes that are not there, and teaching them that what
+the platform says about their work is a guess. A hedge is honest only where something is
+genuinely unknown."""
+
+
+STILL_OPEN_MAY_HAVE_CHANGES_TEXT: Final = (
+    "“{project}” is still open and may have changes that are not saved yet."
+)
+"""The third answer: the project could not be questioned at all, or would not say.
+
+The hedge leans towards unsaved on purpose. Nothing was read, and of the two ways to be wrong
+here only one costs the citizen their work."""
+
+
+SAVE_OR_CLOSE_IT_TEXT: Final = "Save or close it, then send this again."
+"""The one action to offer beside a project that has, or may have, work in it."""
+
+
+CLOSE_IT_TEXT: Final = "Close it, then send this again."
+"""The same action with the save dropped, for the arm where there is nothing to save. Asking
+someone to save a project the platform has just proven saved is the same untruth as the hedge,
+wearing a verb instead of an adjective."""
+
+
+def still_open_text(project_name: str, *, dirty: bool | None) -> str:
+    """Which of the three a citizen reads about the project holding their workspace.
+
+    THE THREE-WAY SPLIT LIVES HERE rather than at the refusals, because there are two of them —
+    the conflict a client renders as a choice, and the sentence a turn ends on — and a split
+    written out twice is a split that gets corrected once."""
+    if dirty is None:
+        template = STILL_OPEN_MAY_HAVE_CHANGES_TEXT
+    elif dirty:
+        template = STILL_OPEN_WITH_CHANGES_TEXT
+    else:
+        template = STILL_OPEN_ALL_SAVED_TEXT
+    return template.format(project=project_name)
+
+
+def still_open_send_again_text(project_name: str, *, dirty: bool | None) -> str:
+    """The same sentence for a reader with no buttons beside it, so it carries the action too.
+
+    Built ON `still_open_text` rather than beside it: the two surfaces make one claim about the
+    work, and only what the citizen can do next differs."""
+    next_step = CLOSE_IT_TEXT if dirty is False else SAVE_OR_CLOSE_IT_TEXT
+    return f"{still_open_text(project_name, dirty=dirty)} {next_step}"

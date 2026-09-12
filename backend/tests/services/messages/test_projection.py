@@ -2135,3 +2135,72 @@ async def test_an_attachment_reference_becomes_a_chip_id_not_prose(db_session) -
     # stays deliberate rather than looking like an unfinished item.
     assert items[0].attachments[0].name == ""
     assert items[0].attachments[0].media_type == ""
+
+
+async def _code_lane_turn(db_session, user, conversation, text, ids) -> None:
+    """One citizen turn carrying code-lane file markers, as the send route stamps them."""
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[ModelRequest(parts=[UserPromptPart(content=text)])],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.PLAN,
+        meta={},
+        file_attachment_ids=ids,
+    )
+
+
+async def test_a_code_lane_chip_is_drawn_once_across_the_whole_transcript(db_session) -> None:
+    """★ U7 — ONE CHIP PER FILE, ON THE TURN THAT CARRIED IT.
+
+    The marker used to be stamped with the conversation's WHOLE code-lane set on every turn, so a
+    citizen who attached one spreadsheet and then sent three more messages saw the same chip four
+    times on reload — once under each bubble, including bubbles whose message never mentioned it.
+    The send route narrows the stamp now, but rows written before that narrowing are already on
+    disk and are indistinguishable from narrowed ones, so the projection dedupes as well.
+
+    Seeded in the PRE-narrowing shape deliberately: that is the shape the dedupe exists for, and
+    a test seeded in the post-narrowing shape would pass with the dedupe deleted.
+
+    Mutation receipt: drop `seen_attachments` from `project_rows` and the second and third
+    bubbles regrow `att_sheet`, and the third regrows `att_roster` as well.
+    """
+    user, _, conversation = await _thread(db_session)
+    await _code_lane_turn(db_session, user, conversation, "what is in this sheet?", ["att_sheet"])
+    # The old writer re-stamped everything the conversation had so far, every time.
+    await _code_lane_turn(
+        db_session, user, conversation, "and now the roster too", ["att_sheet", "att_roster"]
+    )
+    await _code_lane_turn(
+        db_session, user, conversation, "no file on this one", ["att_sheet", "att_roster"]
+    )
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert [[a.attachment_id for a in i.attachments] for i in items] == [
+        ["att_sheet"],
+        ["att_roster"],
+        [],
+    ]
+    # THE BUBBLE ITSELF SURVIVES its chips being taken away. A third turn whose every marker was
+    # already spent still has prose, and dropping it would delete the citizen's own message.
+    assert [i.text for i in items] == [
+        "what is in this sheet?",
+        "and now the roster too",
+        "no file on this one",
+    ]
+
+
+async def test_a_turn_with_nothing_left_after_the_dedupe_is_not_drawn(db_session) -> None:
+    """The other side of the guard above: a bubble with no prose AND no fresh chip is nothing to
+    draw, so it must not become an empty one. The composer sends bare-attachment turns with a
+    stand-in sentence, but the pre-narrowing rows on disk include genuinely empty re-stamps."""
+    user, _, conversation = await _thread(db_session)
+    await _code_lane_turn(db_session, user, conversation, "here it is", ["att_sheet"])
+    await _code_lane_turn(db_session, user, conversation, "", ["att_sheet"])
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert [[a.attachment_id for a in i.attachments] for i in items] == [["att_sheet"]]
+    assert [i.text for i in items] == ["here it is"]

@@ -1107,6 +1107,20 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
             merged[answered] = entry
     results = {answered: (text, was_retry) for answered, (text, was_retry, _) in merged.items()}
     items: list[DisplayItem] = []
+    # ★ ONE CHIP PER FILE, ON THE MESSAGE THAT CARRIED IT — first wins across the transcript.
+    #
+    # THE STORED MARKER CHANGED MEANING AND THE ROWS DID NOT. It used to be stamped with the whole
+    # conversation's code-lane set on every turn, so two files across four turns rendered eight
+    # chips on reload; the send route narrows it to what the message actually carried now. But a
+    # pre-narrowing row and a post-narrowing row are indistinguishable on disk — there is nothing
+    # in the payload to branch on — so `SCHEMA_VERSION` cannot discriminate them and this dedupe
+    # is a permanent heuristic rather than a migration.
+    #
+    # IT IS CORRECT ON BOTH SHAPES for one reason worth stating: `code_lane_attachments` orders by
+    # the attachment's UUIDv7 primary key, which is upload order, so an id first appears on the
+    # message that carried it whichever way the marker was written. Nothing else asserts that
+    # ordering — the projection test below is what pins it.
+    seen_attachments: set[str] = set()
 
     for row in rows:
         if row.entry_kind is MessageEntryKind.SYSTEM_EVENT:
@@ -1205,13 +1219,15 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
                 for part in message.get("parts", []):
                     if isinstance(part, dict) and part.get("part_kind") == "user-prompt":
                         text, refs = _user_text_and_refs(part.get("content"))
-                        if text or refs:
+                        fresh = [ref for ref in refs if ref not in seen_attachments]
+                        seen_attachments.update(fresh)
+                        if text or fresh:
                             items.append(
                                 UserTextItem(
                                     seq=row.seq,
                                     text=text,
                                     attachments=[
-                                        AttachmentRefItem(attachment_id=ref) for ref in refs
+                                        AttachmentRefItem(attachment_id=ref) for ref in fresh
                                     ],
                                 )
                             )

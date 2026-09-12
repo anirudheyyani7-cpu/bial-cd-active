@@ -1448,11 +1448,36 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     } catch (err) {
       // ABORT — never fall through to a turn that silently forgets the attachment. The user
       // attached a spreadsheet; answering as if they hadn't is the wrong-build bug in miniature.
-      setUrgent(err instanceof Error ? err.message : 'Could not upload the attachment. Please try again.')
-      if (stillHere()) onAbort?.()
+      //
+      // THE BANNER IS A PAINT DECISION AND THE SETTLE IS NOT, which is why only one of them is
+      // gated. A failure that lands after the reader moved on belongs to the chat they left, so
+      // its sentence must not appear over the one they are reading — but the promise
+      // `handleSubmit` is awaiting has to settle wherever they are. Leaving it pending never runs
+      // that function's `finally`, so `sendingRef` keeps naming the abandoned chat and Send stays
+      // unavailable in EVERY chat, because the composer is one long-lived instance rather than
+      // one per conversation. The `startTurn` arm below settles unconditionally for this reason.
+      if (stillHere()) {
+        setUrgent(
+          err instanceof Error ? err.message : 'Could not upload the attachment. Please try again.',
+        )
+      }
+      onAbort?.()
       return
     }
-    if (!stillHere()) return // switched chats mid-upload — abandon, don't clobber the new chat
+    if (!stillHere()) {
+      // Switched chats mid-flight — abandon rather than clobber the new chat, but neither leave
+      // the uploads behind nor leave the promise pending.
+      //
+      // THE FILES ARE ALREADY ON THE SERVER by this point, linked to the chat that was left, and
+      // no message will ever reference them. Unreleased they still count against that
+      // conversation's twenty, so a citizen who does this four times is refused with "this
+      // conversation has reached its limit of 20 attachments" on a chat showing no attachments at
+      // all — and nothing but an aged-out reclaimer ever takes them back. The `startTurn` arm
+      // below releases for the same reason.
+      releaseUploadedAttachments(parts)
+      onAbort?.()
+      return
+    }
 
     // `prior` is passed by the handoff, which fires in the same tick as the `setMessages` that
     // restores the transcript — `messagesRef` is only refreshed on the next render, so reading it

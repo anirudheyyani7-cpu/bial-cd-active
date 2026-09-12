@@ -160,6 +160,52 @@ async def test_a_failure_whose_sentence_names_the_fault_writes_only_one_row(db_s
     assert len(every) == 1, [row.meta for row in every]
 
 
+async def test_a_diagnosis_is_not_filed_against_a_failure_the_citizen_was_never_shown(
+    db_session, monkeypatch
+) -> None:
+    """The hidden row opens by telling the model the failure "was reported to the person in
+    plain words that name nothing technical". When the visible row never landed, that sentence
+    is false — the model would repair from a diagnosis whose paired message does not exist.
+
+    A retry is the other case and keeps the diagnosis: there the message really is on record
+    from the first pass, which is why "already written" and "failed" cannot share one answer."""
+    user, conversation = await _chat(db_session)
+    deployment_id, app_id = uuid.uuid4(), uuid.uuid4()
+    failure = _DeployFailedError.from_build(
+        ImageBuildError("the image build failed", log_tail=_DEPENDENCY_DRIFT_LOG)
+    )
+    attempts = 0
+
+    async def the_visible_row_never_lands(*args: object, **kwargs: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("the chat write went down")
+
+    monkeypatch.setattr("src.services.deploy.outcome.append_batch", the_visible_row_never_lands)
+
+    wrote = await write_deploy_outcome(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        deployment_id=deployment_id,
+        app_id=app_id,
+        succeeded=False,
+        message=failure.citizen_message,
+        detail=failure.detail,
+        model_detail=failure.model_detail,
+    )
+
+    assert wrote is False
+    # LIVENESS: the visible write really was attempted. Without this, "one attempt" could mean
+    # the whole function returned early and the test would pass on a path it never exercised.
+    assert attempts == 1, "the diagnostic row was written anyway"
+
+    every = await load_rows(
+        db_session, user_id=user.id, conversation_id=conversation.id, include_hidden=True
+    )
+    assert every == []
+
+
 async def test_a_reconciler_racing_the_pipeline_double_writes_neither_row(db_session) -> None:
     """Both rows are guarded on their own marker, so a retry of the whole write adds nothing."""
     user, conversation = await _chat(db_session)

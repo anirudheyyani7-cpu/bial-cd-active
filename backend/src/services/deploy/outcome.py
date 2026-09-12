@@ -17,6 +17,7 @@ so that row is the one channel the model reads and the citizen never sees."""
 
 from __future__ import annotations
 
+import enum
 import uuid
 from typing import Any
 
@@ -48,6 +49,19 @@ _DIAGNOSTIC_PREAMBLE = (
 )
 
 
+class _OutcomeRow(enum.Enum):
+    """What became of the visible row, which the hidden diagnostic row has to know.
+
+    `ALREADY_THERE` and `FAILED` both mean "this call wrote nothing", and collapsing them into
+    one `False` is what let a diagnosis be filed against a failure the citizen was never shown:
+    the hidden row's own preamble tells the model a message was reported to the person above it.
+    A retry still files the diagnosis, because the message really is there from the first pass."""
+
+    WRITTEN = "written"
+    ALREADY_THERE = "already_there"
+    FAILED = "failed"
+
+
 async def write_deploy_outcome(
     db: AsyncSession,
     *,
@@ -77,7 +91,7 @@ async def write_deploy_outcome(
         # deployment row is the record of truth and it has already been written.
         return False
 
-    written = await _write_outcome_row(
+    outcome = await _write_outcome_row(
         db,
         user_id=user_id,
         conversation_id=conversation_id,
@@ -88,10 +102,11 @@ async def write_deploy_outcome(
         url=url,
         detail=detail,
     )
-    if model_detail:
+    if model_detail and outcome is not _OutcomeRow.FAILED:
         # AFTER the visible row, and guarded on its OWN marker: the two rows are written
         # independently, so a retry that finds one already present still writes the other
-        # rather than deciding the whole outcome was recorded.
+        # rather than deciding the whole outcome was recorded. But never after a visible row
+        # that FAILED — the preamble below it says the failure was reported to the person.
         await _write_diagnostic_row(
             db,
             user_id=user_id,
@@ -100,7 +115,7 @@ async def write_deploy_outcome(
             app_id=app_id,
             model_detail=model_detail,
         )
-    return written
+    return outcome is _OutcomeRow.WRITTEN
 
 
 async def _write_outcome_row(
@@ -114,14 +129,14 @@ async def _write_outcome_row(
     message: str,
     url: str | None,
     detail: str | None,
-) -> bool:
+) -> _OutcomeRow:
     if await _already_recorded(
         db,
         conversation_id=conversation_id,
         deployment_id=deployment_id,
         kind=DEPLOY_OUTCOME_KIND,
     ):
-        return False
+        return _OutcomeRow.ALREADY_THERE
 
     meta: dict[str, Any] = {
         "kind": DEPLOY_OUTCOME_KIND,
@@ -152,8 +167,8 @@ async def _write_outcome_row(
         _log.warning(
             "deploy_outcome_write_failed", deployment_id=str(deployment_id), exc_info=True
         )
-        return False
-    return True
+        return _OutcomeRow.FAILED
+    return _OutcomeRow.WRITTEN
 
 
 async def _write_diagnostic_row(

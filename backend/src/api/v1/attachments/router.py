@@ -62,6 +62,7 @@ from src.services.storage import (
     assert_owned,
     attachment_key,
     get_storage,
+    sweep_blobs,
 )
 
 logger = structlog.get_logger()
@@ -577,11 +578,31 @@ async def delete_attachment(
     att = await _load_owned(db, user.id, attachment_id)
     if att is not None:
         assert_owned(att.storage_key, user.id)
-        await storage.delete(att.storage_key)  # idempotent on a missing object
+        key = att.storage_key
+        # ★ ROW FIRST, BLOB SECOND — the same rollback discipline every other delete here follows.
+        #
+        # The old order deleted the object and then the row, so a commit that failed afterwards
+        # left a row pointing at a blob that was already gone: the chip stays in the composer, the
+        # file opens to nothing, and the only way out is another delete. That is the one
+        # composer-reachable path to a dead row, and it is what this closes.
+        #
+        # THE TRADE IS REAL AND IS NOT FREE. Once the row is committed-deleted the blob is
+        # invisible to every cleanup path we have — `reclaim_orphaned_attachments` is row-driven
+        # and nothing anywhere lists the object store — so a failed sweep leaks the object for
+        # good. `sweep_blobs` never raises and returns what survived, so the leak is at least
+        # written down with the id it belonged to, which is the most a post-commit sweep can owe.
+        #
         # NO DERIVED SIBLING TO SWEEP ANY MORE (#214). A deck used to be rendered to PDF and the
         # `{key}.pdf` stored beside the original, so a delete had to remove both or leak one.
         # Nothing derives anything from an attachment now.
         await db.delete(att)
         await db.commit()
+        survived = await sweep_blobs(storage, [key])
+        if survived:
+            logger.warning(
+                "attachment_blob_sweep_survived",
+                attachment_id=attachment_id,
+                key_count=len(survived),
+            )
     # Delete is always idempotent and 200, even when the id is unknown (Express behavior).
     return JSONResponse(content={"ok": True})

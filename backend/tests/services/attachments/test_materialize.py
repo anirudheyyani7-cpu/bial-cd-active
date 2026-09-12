@@ -38,6 +38,7 @@ from src.services.messages.store import ATTACHMENT_FILE_REF_KIND
 from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import SandboxError
 from src.services.sandbox.base import ExecResult
+from src.services.storage.errors import StorageAuthError, StorageNotFoundError
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.fakes import FakeStorage
 from tests.services.orchestrator.fake_sandbox import FakeSandbox
@@ -296,7 +297,14 @@ async def test_the_operator_half_names_the_image_a_400_really_points_at() -> Non
 
 async def test_a_blob_that_has_gone_missing_raises_too() -> None:
     """Same rule, other side of the transfer: a row whose object is gone is not a file the turn
-    can quietly proceed without."""
+    can quietly proceed without — and the sentence must not promise that retrying will help.
+
+    A missing object is permanent: nothing puts it back. "Please try again" would cost the
+    citizen the turn a second time before they learn the only thing that works is re-attaching.
+
+    Mutation receipt: delete the `except StorageNotFoundError` arm so the broad `StorageError`
+    one catches the absence, and the retry sentence comes back.
+    """
     sandbox = FakeSandbox()
     storage = FakeStorage()  # the object is deliberately never seeded
     file = _file(name="gates.csv", media_type=CSV_MEDIA_TYPE)
@@ -305,6 +313,38 @@ async def test_a_blob_that_has_gone_missing_raises_too() -> None:
         await AttachmentDelivery(files=(file,), storage=storage).place(_session(sandbox))
 
     assert "gates.csv" in str(caught.value)
+    assert "attach it again" in str(caught.value)
+    assert "try again" not in str(caught.value).lower()
+    assert isinstance(caught.value.__cause__, StorageNotFoundError)
+
+
+async def test_a_transient_storage_failure_still_says_try_again() -> None:
+    """★ THE RECEIPT THAT ONLY THE ABSENCE CASE WAS NARROWED.
+
+    `StorageNotFoundError` is one of five `StorageError` subclasses, and the other four —
+    auth, signing, upload, unconfigured — are the ordinary transient shapes. A thirty-second
+    Azure credential blip reported as "attach it again" is the same untrue-sentence defect
+    read from the other end: the file is fine, and the citizen is told to redo work.
+
+    Mutation receipt: collapse the two arms back into one and this goes red whichever sentence
+    survives — the narrow arm loses the retry copy, the broad arm loses the absence copy.
+    """
+
+    class _AuthFailingStorage(FakeStorage):
+        async def get(self, key: str) -> bytes:
+            raise StorageAuthError("the credential was rejected")
+
+    sandbox = FakeSandbox()
+    file = _file(name="gates.csv", media_type=CSV_MEDIA_TYPE)
+
+    with pytest.raises(AttachmentPlacementError) as caught:
+        await AttachmentDelivery(files=(file,), storage=_AuthFailingStorage()).place(
+            _session(sandbox)
+        )
+
+    assert "Please try again" in str(caught.value)
+    assert "attach it again" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, StorageAuthError)
 
 
 # --- the note (R11a) ------------------------------------------------------------------------

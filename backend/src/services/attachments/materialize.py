@@ -46,7 +46,7 @@ from src.services.media import CODE_LANE_MEDIA, canonical_suffix
 from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import FileCreateBytes, SandboxError
 from src.services.storage.base import ObjectStorage
-from src.services.storage.errors import StorageError
+from src.services.storage.errors import StorageError, StorageNotFoundError
 
 #: The container-absolute root, matching the supervisor's `ATTACHMENTS`. Named here rather than
 #: imported: `sandbox/supervisor` is a separate deployable with no shared package, and
@@ -246,7 +246,19 @@ class AttachmentDelivery:
                 continue
             try:
                 data = await self.storage.get(file.storage_key)
+            # ★ SUBCLASS FIRST, OR IT IS PERMANENTLY DEAD. `StorageNotFoundError` is a
+            # `StorageError`, so the broad arm below would swallow every absence if it came first.
+            except StorageNotFoundError as exc:
+                # A MISSING BLOB IS NOT A BLIP, and telling someone to try again is a lie that
+                # costs them the turn twice. The object is gone — the row outlived it — so the
+                # only true next step is to attach the file again.
+                raise AttachmentPlacementError(
+                    f'"{file.display_name}" is no longer in storage. Please attach it again.'
+                ) from exc
             except StorageError as exc:
+                # EVERY OTHER SUBCLASS KEEPS "Please try again", and that is the point of the
+                # split: auth, signing, and transport failures are usually transient, and a
+                # thirty-second Azure blip must not be reported as permanent.
                 raise AttachmentPlacementError(
                     f'"{file.display_name}" could not be read from storage. Please try again.'
                 ) from exc

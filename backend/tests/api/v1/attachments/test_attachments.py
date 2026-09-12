@@ -819,6 +819,66 @@ async def test_delete_removes_object_and_row(client, db_session, fake_storage) -
     )
     assert row is None
 
+    # A SECOND DELETE OF THE SAME ID IS STILL 200. The composer retries on a dropped response,
+    # and a 404 on the retry would tell the citizen the delete failed when it had succeeded.
+    again = await client.delete("/v1/attachments/att_del", headers=headers)
+    assert again.status_code == 200
+    assert again.json() == {"ok": True}
+
+
+async def test_a_blob_the_sweep_could_not_remove_is_recorded_against_its_id(
+    client, db_session, fake_storage, monkeypatch
+) -> None:
+    """★ U8 — THE ROW GOES FIRST, AND THE LEAK IS WRITTEN DOWN.
+
+    Deleting the object before committing the row meant a commit failure left a row pointing at
+    a blob that was already gone: the chip stays in the composer and the file opens to nothing.
+    The order is reversed, which trades that loud dead row for a silent orphaned object — and
+    the trade is only defensible because nothing else can find that object afterwards.
+    `reclaim_orphaned_attachments` is row-driven and no listing pass over the object store
+    exists anywhere, so a survivor that is not logged here is a leak nobody will ever see.
+
+    Mutation receipt: drop the `if survived:` log and this goes red on the empty log list, while
+    the delete still answers 200 — which is exactly how invisible the leak would be.
+    """
+    headers, user, conv = await _auth(db_session)
+    await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_stuck",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
+    )
+
+    async def _refuse(key: str) -> None:
+        raise RuntimeError("the object store is unreachable")
+
+    monkeypatch.setattr(fake_storage, "delete", _refuse)
+
+    with capture_logs() as logs:
+        resp = await client.delete("/v1/attachments/att_stuck", headers=headers)
+
+    # THE CITIZEN'S SIDE IS UNAFFECTED: the row is gone and the delete succeeded. A sweep that
+    # surfaced its failure would 500 an already-committed delete.
+    assert resp.status_code == 200
+    row = await db_session.scalar(
+        select(Attachment).where(
+            Attachment.user_id == user.id, Attachment.attachment_id == "att_stuck"
+        )
+    )
+    assert row is None
+    # The object really did survive — asserting only the log would pass against a sweep that
+    # never ran.
+    assert len(fake_storage.objects) == 1
+
+    survived = [e for e in logs if e["event"] == "attachment_blob_sweep_survived"]
+    assert len(survived) == 1
+    assert survived[0]["attachment_id"] == "att_stuck"
+    assert survived[0]["key_count"] == 1
+
 
 async def test_delete_missing_is_idempotent(client, db_session) -> None:
     headers, _, conv = await _auth(db_session)

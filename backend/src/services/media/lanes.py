@@ -16,8 +16,8 @@ as raw ZIP bytes: expensive, unreadable, and exactly the confident-wrong-answer 
 exists to remove.
 
 (There was a third — the build session's own attachment resolver, which refused a deck by name.
-It went with the whole legacy build-sessions attachment surface in #218. The count moves; the
-reasoning does not, which is the point of routing by lane rather than by a list of types.)
+It went with the whole legacy build-sessions attachment surface. The count moves; the reasoning
+does not, which is the point of routing by lane rather than by a list of types.)
 
 So the second lane is its own set, admitted only where an attachment is STORED. The three
 model-facing consumers keep the narrow gate they already had, and they refuse the code lane without
@@ -168,7 +168,11 @@ the dictionary and report every large encrypted document as unlocked. Sixty-four
 # is always `/Encrypt <num> <gen> R`. Matching the reference rather than the bare word is what
 # keeps the literal characters "/Encrypt" inside a content stream from reading as a locked file.
 _PDF_ENCRYPT_ENTRY: Final = re.compile(rb"/Encrypt\s+\d+\s+\d+\s+R")
-_STARTXREF_OFFSET: Final = re.compile(rb"startxref\s+(\d+)")
+# BOUNDED, AND THE BOUND IS LOAD-BEARING. `int()` refuses a string of more than 4300
+# digits, so an unbounded capture lets a crafted digit run raise `ValueError` out of a
+# door whose whole contract is to answer yes or no. No real byte offset is twenty digits
+# long; a longer run matches nothing and falls to the fail-open branch below.
+_STARTXREF_OFFSET: Final = re.compile(rb"startxref\s+(\d{1,20})(?!\d)")
 
 
 def pdf_looks_password_protected(data: bytes) -> bool:

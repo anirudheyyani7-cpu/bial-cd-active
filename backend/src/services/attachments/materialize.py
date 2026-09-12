@@ -118,7 +118,17 @@ def _named_without_collisions(rows: list[Attachment]) -> list[CodeLaneAttachment
     for index, row in enumerate(rows, start=1):
         file_name = safe_file_name(row.name, row.media_type)
         if file_name in taken:
-            file_name = f"{index}-{file_name}"
+            # THE DISAMBIGUATOR IS ITSELF A NAME A FILE CAN HAVE, so it is re-checked rather than
+            # trusted. Prefixing the position once is not enough: a citizen who attaches
+            # `3-report.csv` and two files called `report.csv` lands the third on `3-report.csv`,
+            # which the first already holds — two attachments on one path, which is the exact
+            # overwrite this function exists to prevent.
+            bumped = f"{index}-{file_name}"
+            attempt = index
+            while bumped in taken:
+                attempt += 1
+                bumped = f"{attempt}-{file_name}"
+            file_name = bumped
         taken.add(file_name)
         placed.append(
             CodeLaneAttachment(
@@ -187,6 +197,10 @@ async def code_lane_attachments(
         .scalars()
         .all()
     )
+    if not rows:
+        # Nothing to filter, so the transcript scan below would be read and thrown away. Most
+        # conversations never carry a code-lane file and take this exit on every turn.
+        return []
     sent = set(wanted) | await _ids_already_sent(
         db, user_id=user_id, conversation_id=conversation_id
     )

@@ -295,16 +295,12 @@ async def start_conversation_turn(
             ReclaimBlockedEnvelope,
             "The agent is already working here, or another project holds the workspace",
         ),
-        # TWO DIFFERENT REFUSALS SHARE THIS STATUS, and naming only one of them made the schema
-        # read as though the other could not happen. `resolve_binaries` (`_shared.py`) answers a
-        # third document on one message with the same 413 and its own `too_many_documents` code —
-        # a per-MESSAGE document cap, not the cumulative size limit. The `code` field is what
-        # tells them apart; the description now admits both exist.
+        # ONE REFUSAL ON THIS STATUS. A per-message document cap used to share it and is gone;
+        # a message carrying too many files is refused by the request validator instead.
         (
             413,
             ErrorEnvelope,
-            "This conversation has grown past its per-conversation limit, "
-            "or the message carries more than two documents",
+            "This conversation has grown past its per-conversation limit",
         ),
         (429, DailyTokenLimitBody, "Daily token limit exceeded"),
         (503, ErrorEnvelope, "Claude client not configured"),

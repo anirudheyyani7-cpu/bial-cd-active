@@ -100,20 +100,23 @@ PDF_MEDIA_TYPE = "application/pdf"
 
 # --- the per-document limit, and why it is gone -------------------------------------------
 #
-# THERE IS NO DOCUMENT COUNT ANY MORE. It was two, and it shipped in the batch-1
-# burndown as the stopgap that stopped a 61-page PDF blowing the context budget (#194). The real
-# fix was the 30-page cap and the flat charge sized to it; both stay. The count was the belt
-# beside those braces.
+# THERE IS NO DOCUMENT COUNT ANY MORE. It was two, a stopgap against a long PDF blowing the
+# context budget, and it sat beside a page cap and a flat per-document charge sized to that cap.
+# All three are gone: nothing prices a document before it is sent, so there is no estimate left
+# for a count to protect.
 #
 # It goes because a citizen attaching five files should not have to know which of them the
 # platform considers expensive. One rule governs every attachment on a message now —
 # `MAX_FILES_PER_MESSAGE`, any mix of formats — the same reasoning that sends a spreadsheet to
 # the code lane at every size rather than above a threshold.
 #
-# WHAT REPLACES IT IS NOT ANOTHER COUNT. A message the conversation cannot hold is refused on the
-# room it needs, before it is sent. The failure this guarded against was never really "too
-# many documents": it was a citizen landing on a context-limit refusal whose only advice is to
-# start a new chat, which then refuses the identical message.
+# WHAT REPLACES IT IS NOT ANOTHER COUNT, AND IT IS NOT A PRE-SEND CHECK EITHER. The admission
+# gate reads what the provider reported for the conversation's LAST served turn, so it bounds a
+# thread that has already grown too large; it cannot size the message about to be sent, because
+# only the provider can count a prompt. A single long document therefore reaches the provider on
+# its first turn whatever its length, and the refusal comes back from there — which is why
+# `turns/engine.py` translates the provider's own two refusals into sentences of ours rather
+# than leaving them generic.
 
 
 # --- dependencies -------------------------------------------------------------------------

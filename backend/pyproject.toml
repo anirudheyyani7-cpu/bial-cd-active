@@ -123,10 +123,7 @@ module = ["authlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# openpyxl ships no py.typed / stubs. The override outlived the office-extraction stack it was
-# written for — #214 deleted that, and mammoth/markdownify with it — because openpyxl has a
-# second, unrelated consumer: `scripts/exception_register.py`. Dropping the library with its
-# extractor would have failed the build on a script that change never touched.
+# openpyxl ships no py.typed / stubs, and `scripts/exception_register.py` imports it.
 module = ["openpyxl.*"]
 ignore_missing_imports = true
 

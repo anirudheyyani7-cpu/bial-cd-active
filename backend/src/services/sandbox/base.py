@@ -584,8 +584,9 @@ class FileCreateBytes(_FileOpBase):
     that byte pair constantly. A separate op rather than a flag, so the no-normalisation rule
     belongs to the op a caller chose rather than to a branch they might miss.
 
-    `file_b64` is base64 of the real bytes. The supervisor bounds the DECODED length; anything
-    larger is refused before a file is created, so an over-cap push leaves nothing behind.
+    `file_b64` is base64 of the real bytes. The supervisor holds NO size ceiling of its own —
+    the decoded length is bounded once, at the upload door, and a second number here would be a
+    limit nobody could see from the place that produces the bytes.
     """
 
     action: Literal["create_bytes"] = "create_bytes"

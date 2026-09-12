@@ -1378,7 +1378,7 @@ async def _post_first_message(
 async def test_the_first_message_of_a_new_chat_can_carry_a_spreadsheet(
     client, db_session, set_chat_model, fake_redis, fake_storage, app, _fresh_engine
 ) -> None:
-    """★ AGC129'S B1 — this was a hard 500, and it is the demo's opening move.
+    """★ THIS WAS A HARD 500, on the opening move of a demo.
 
     The 500 was an adoption UPDATE autoflushed into a foreign key that did not exist yet: the
     upload stored NULL because the chat's row was written by the first send, and the send route

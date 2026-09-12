@@ -42,9 +42,9 @@ def test_the_model_allowlist_was_not_widened() -> None:
     model's context.
 
     IT WAS THREE PATHS WHEN THIS WAS WRITTEN — the build session's own attachment resolver refused
-    a deck by name, and that whole surface was retired in #218. The count moving is the argument
-    rather than a correction to it: a lane is a property of the media type, so a consumer
-    appearing or disappearing changes nothing about what this asserts.
+    a deck by name, and that whole surface is retired. The count moving is the argument rather
+    than a correction to it: a lane is a property of the media type, so a consumer appearing or
+    disappearing changes nothing about what this asserts.
 
     So the code lane is its own set, and the model-facing consumers keep refusing it with no
     line changing in either of them. Widen `ALLOWED_MEDIA` and this test says so.

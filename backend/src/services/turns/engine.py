@@ -270,7 +270,8 @@ _PERSIST_FAILED_MESSAGE = (
 # THE STATUS IS NOT THE MATCH, AND THAT IS THE WHOLE CARE HERE. Every malformed request Foundry
 # refuses is a 400 — an unsupported media type, a bad tool schema, a password-protected PDF —
 # and answering any of them with "this chat is full, start a new chat" sends the citizen to a
-# new chat that fails identically, which is exactly the loop `MAX_PDF_BLOCKS` exists to avoid.
+# new chat that fails identically — a loop the citizen cannot leave by following the advice they
+# were given.
 # So the provider's own sentence decides and the status only narrows it. The second marker is
 # the provider's other phrasing for the same fact: the prompt fits, the prompt plus the reply it
 # is allowed to write does not.

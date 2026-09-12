@@ -373,7 +373,7 @@ def test_the_note_names_the_file_the_path_and_the_reader() -> None:
 
 
 def test_the_note_gives_commands_a_path_they_can_open() -> None:
-    """★ AGC129'S B2 — Build was told a path nothing on its arm could resolve.
+    """★ BUILD WAS TOLD A PATH NOTHING ON ITS ARM COULD RESOLVE.
 
     Build has no `read_attachment` tool (R15: it runs, and may edit, the reader through
     `run_command`), and `run_command` executes inside the app folder. The note offered only
@@ -594,7 +594,7 @@ async def test_a_row_with_no_conversation_link_is_still_found_by_its_id(db_sessi
 
 
 async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
-    """★ AGC129'S B1 — reading must never write, because the chat does not exist yet.
+    """★ READING MUST NEVER WRITE, because the chat does not exist yet.
 
     `code_lane_attachments` runs in the send route BEFORE the conversation row is written. It used
     to adopt NULL-linked rows into that not-yet-written conversation, and the route's next query

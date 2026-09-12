@@ -80,9 +80,9 @@ async def gather_and_delete_conversation(
     db: AsyncSession, conversation: Conversation, *, user_id: uuid.UUID
 ) -> list[str]:
     """Delete a conversation, its messages (DB `ON DELETE CASCADE`), and its attachment
-    ROWS inside the caller's transaction; return the object-store keys (attachment blobs
-    plus each deck attachment's derived `{key}.pdf` sibling) to sweep AFTER the caller
-    commits. Commit-less: the caller owns both the commit and the post-commit blob sweep.
+    ROWS inside the caller's transaction; return the object-store keys to sweep AFTER the
+    caller commits — one key per attachment, nothing derived. Commit-less: the caller owns
+    both the commit and the post-commit blob sweep.
     Owner-scoped by `user_id` — attachments hang off `user_id`, not the
     conversation, so the caller must pass the owning user id, not trust the row."""
     payloads = (

@@ -1118,8 +1118,9 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
     #
     # IT IS CORRECT ON BOTH SHAPES for one reason worth stating: `code_lane_attachments` orders by
     # the attachment's UUIDv7 primary key, which is upload order, so an id first appears on the
-    # message that carried it whichever way the marker was written. Nothing else asserts that
-    # ordering — the projection test below is what pins it.
+    # message that carried it whichever way the marker was written. That ordering is this dedupe's
+    # load-bearing assumption and nothing here can check it — the tests below pin the dedupe, not
+    # the ordering it rests on.
     seen_attachments: set[str] = set()
 
     for row in rows:

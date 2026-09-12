@@ -494,7 +494,7 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
 async def test_twenty_files_sent_elsewhere_do_not_block_a_new_chats_first_upload(
     client, db_session, fake_storage
 ) -> None:
-    """★ AGC129'S B4 — the budget used to be the whole account.
+    """★ THE BUDGET USED TO BE THE WHOLE ACCOUNT.
 
     Twenty files in old chats, and the next chat's first upload was refused with "This conversation
     has reached its limit of 20 attachments" — on a chat holding zero, naming "start a new chat" as

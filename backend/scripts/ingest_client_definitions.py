@@ -81,9 +81,11 @@ SOURCE_ANSWERED: Final = "Client — answered {round}"
 SOURCE_MERGED: Final = "Client — answered {round}, plus our measured note"
 SOURCE_UNDEFINED: Final = "INFERRED — BIAL could not define ({round})"
 QUESTION_UNDEFINED: Final = (
-    "BIAL was asked to define this column and answered that they do not know. The text above is "
-    "ours, not theirs. Do not rely on it."
+    "BIAL was asked to define this column and could not. The meaning stated here is ours, not "
+    "theirs; do not rely on it."
 )
+"""Rendered into the schema block beside the definition it warns about, so it is written for that
+position -- the model is looking at the sentence it doubts, not at a file it cannot see."""
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,12 @@ def fold(column: dict[str, Any], answered: dict[str, str], tag: str) -> Change |
         column["source"] = SOURCE_UNDEFINED.format(round=tag)
         column["client_status"] = status or column.get("client_status", "")
         column["question"] = QUESTION_UNDEFINED
+        # WITHOUT THIS MARK THE WARNING NEVER REACHES THE MODEL. The renderer shows a definition
+        # when the column's NAME looks opaque, which is a fact about the name and not about our
+        # confidence in the text: unmarked, five of the nine render as a bare value list, and
+        # `DOM_INT_OPS = 'DOM', 'INT'` invites the domestic/international reading BIAL declined
+        # to confirm.
+        column["gloss"] = True
         return Change(name, "client cannot define it", before, before, status)
 
     if answer == before:

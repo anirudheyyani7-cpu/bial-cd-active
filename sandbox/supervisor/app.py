@@ -50,7 +50,8 @@ WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace/app"))
 # Keeping it out of the tree means there is nothing to exclude.
 #
 # A SIBLING, NOT A CHILD. `/workspace/attachments` shares the volume — the sandbox is already there
-# and can already run code, which is the whole reason attachments are here at all — but no snapshot,
+# and can already run code, which is the whole reason attachments are here at all — but no
+# snapshot,
 # restore or deploy walks it.
 ATTACHMENTS = Path(os.environ.get("ATTACHMENTS_DIR", "/workspace/attachments"))
 APP_USER = os.environ.get("APP_USER", "appuser")

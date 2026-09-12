@@ -6,7 +6,8 @@ be wrong the same way.
 
 The fixtures are built here rather than checked in, so what each test proves is visible in the
 test itself — a checked-in .xlsx whose formulas have no cached values looks identical to one whose
-formulas do, and the difference is the entire point of `test_a_formula_column_with_no_stored_result`.
+formulas do, and the difference is the entire point of
+`test_a_formula_column_with_no_stored_result`.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ READER = Path(__file__).resolve().parents[1] / "scripts" / "read_attachment.py"
 # The canonical 1x1 transparent PNG. Base64 here so the fixture is a real image the
 # libraries accept; the assertions below check this text never reaches the MANIFEST.
 _ONE_PIXEL_PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
+    "DUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
 openpyxl = pytest.importorskip("openpyxl", reason="reader libraries live in the sandbox image")
@@ -219,7 +221,9 @@ def test_every_outcome_exits_zero_and_prints_one_json_object(tmp_path: Path) -> 
 
 
 def test_no_arguments_is_answered_rather_than_traced() -> None:
-    proc = subprocess.run([sys.executable, str(READER)], capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [sys.executable, str(READER)], capture_output=True, text=True, timeout=120
+    )
 
     assert proc.returncode == 0
     assert json.loads(proc.stdout)["error"]["code"] == "usage"

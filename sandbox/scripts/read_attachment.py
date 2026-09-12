@@ -71,7 +71,11 @@ MAX_SAMPLE_ROWS = 5
 MAX_TEXT_CHARS = 300
 
 
-class ReadFailure(Exception):
+# N818 asks for an `Error` suffix. The name is deliberate and the distinction is the design:
+# this script EXITS 0 and prints a named failure, because a non-zero exit reads to the agent as
+# "the command broke" and invites a retry or a hand-written parser (see `main`). Calling it
+# `ReadError` would describe the thing the design exists to avoid being.
+class ReadFailure(Exception):  # noqa: N818
     """A failure the citizen can be told about, with something they can do next."""
 
     def __init__(self, code: str, message: str, next_step: str) -> None:
@@ -126,7 +130,9 @@ def read_xlsx(path: Path) -> dict[str, Any]:
         fsheet, vsheet = formulas[name], values[name]
         rows, cols = fsheet.max_row or 0, fsheet.max_column or 0
         header = [
-            _clip(c.value) for c in next(fsheet.iter_rows(min_row=1, max_row=1), ()) if c is not None
+            _clip(c.value)
+            for c in next(fsheet.iter_rows(min_row=1, max_row=1), ())
+            if c is not None
         ]
 
         columns = []
@@ -135,7 +141,9 @@ def read_xlsx(path: Path) -> dict[str, Any]:
             # text in almost every real file and would make every column look like a string.
             probe = fsheet.cell(row=2, column=index) if rows >= 2 else None
             cached = vsheet.cell(row=2, column=index) if rows >= 2 else None
-            is_formula = isinstance(probe.value, str) and probe.value.startswith("=") if probe else False
+            is_formula = (
+                isinstance(probe.value, str) and probe.value.startswith("=") if probe else False
+            )
             column: dict[str, Any] = {
                 "name": header[index - 1] if index - 1 < len(header) else None,
                 "isFormula": is_formula,
@@ -150,7 +158,9 @@ def read_xlsx(path: Path) -> dict[str, Any]:
                         "for it — the workbook has not been opened by Excel since it was written."
                     )
             else:
-                column["type"] = type(probe.value).__name__ if probe and probe.value is not None else None
+                column["type"] = (
+                    type(probe.value).__name__ if probe and probe.value is not None else None
+                )
             columns.append(column)
 
         sheets.append(
@@ -193,7 +203,8 @@ def read_delimited(path: Path, separator: str) -> dict[str, Any]:
     # own next step (`too_large` → attach a smaller file; `timeout` → fewer sheets or rows).
     except (ReadFailure, MemoryError):
         raise
-    except Exception as exc:  # polars raises a family of parse errors; all mean the same thing here
+    # polars raises a family of parse errors; all mean the same thing here.
+    except Exception as exc:
         raise ReadFailure(
             "unreadable",
             f"This file could not be read as delimited text ({type(exc).__name__}).",
@@ -324,8 +335,13 @@ def read_pptx(path: Path) -> dict[str, Any]:
             notes = _clip(slide.notes_slide.notes_text_frame.text.strip())
 
         slides.append(
-            {"number": number, "text": _listing(text), "notes": notes,
-             "tables": _listing(tables), "charts": _listing(charts)}
+            {
+                "number": number,
+                "text": _listing(text),
+                "notes": notes,
+                "tables": _listing(tables),
+                "charts": _listing(charts),
+            }
         )
 
     return {"slides": _listing(slides), "media": _zip_media(path)}
@@ -424,7 +440,11 @@ def describe(path: Path) -> dict[str, Any]:
     except Exception as exc:
         # ENCRYPTION LANDS HERE, among other things. Every library refuses a password-protected
         # file in its own way, so the shape is named rather than the exception type guessed at.
-        hint = "encrypted" if "encrypt" in str(exc).lower() or "password" in str(exc).lower() else "unreadable"
+        hint = (
+            "encrypted"
+            if "encrypt" in str(exc).lower() or "password" in str(exc).lower()
+            else "unreadable"
+        )
         raise ReadFailure(
             hint,
             f"This file could not be read ({type(exc).__name__}).",
@@ -437,9 +457,18 @@ def describe(path: Path) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print(json.dumps({"ok": False, "error": {"code": "usage",
-                                                 "message": "Give the reader exactly one file path.",
-                                                 "next": f"Run: python3 {argv[0]} <path>"}}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "usage",
+                        "message": "Give the reader exactly one file path.",
+                        "next": f"Run: python3 {argv[0]} <path>",
+                    },
+                }
+            )
+        )
         return 0
     _apply_bounds()
     path = Path(argv[1])

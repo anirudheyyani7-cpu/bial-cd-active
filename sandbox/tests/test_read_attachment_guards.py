@@ -62,9 +62,7 @@ def _raise_from_the_library(
     def boom(*_args: Any, **_kwargs: Any) -> Any:
         raise failure
 
-    monkeypatch.setitem(
-        reader_module.sys.modules, library, SimpleNamespace(**{attribute: boom})
-    )
+    monkeypatch.setitem(reader_module.sys.modules, library, SimpleNamespace(**{attribute: boom}))
 
 
 def _a_file(tmp_path: Path, suffix: str) -> Path:

@@ -10,8 +10,7 @@ risks it carries are both about placement rather than about wording.
 THE FIRST RISK IS SWALLOWING. The new arm catches an exception CLASS — every 4xx/5xx the
 provider returns — of which only one member is its business. An arm that answered a bad media
 type or a rate limit with "this chat is full, start a new chat" would send the citizen to a new
-chat that fails identically, which is verbatim the loop `_shared.MAX_PDF_BLOCKS` exists to
-avoid.
+chat that fails identically — a loop they cannot leave by following the advice they were given.
 
 THE SECOND IS ORDER. `ModelHTTPError` is an `Exception`, so both arms match every payload this
 file sends: with the arms the other way round the specific one is unreachable dead code, and

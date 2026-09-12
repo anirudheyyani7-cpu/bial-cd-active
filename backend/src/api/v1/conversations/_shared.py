@@ -243,9 +243,8 @@ async def resolve_binaries(
     anything else are a 400 (their content travels as `attachmentTexts`), and an unknown/foreign
     id fails the same typed way the rehydrator words it.
 
-    It no longer counts documents. That gate was `MAX_PDF_BLOCKS`: one file count now governs
-    every format, and the room a message needs is checked before it is sent rather than by
-    refusing a second PDF here.
+    It no longer counts documents. One file count governs every format at the upload door, and a
+    document too long for the provider is refused by the provider, in a sentence of ours.
 
     `skip` NAMES THE CODE LANE, AND IT IS APPLIED BEFORE THE REHYDRATOR RATHER THAN AFTER IT.
     A code-lane file is not refused and not lost — it travels by being written into the

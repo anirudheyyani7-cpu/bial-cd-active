@@ -36,7 +36,7 @@ import type { BuildHandoff } from './OfferStrip'
 import ScrollToLatest from './ScrollToLatest'
 import SessionBanners from './SessionBanners'
 import TurnBanner from './TurnBanner'
-import { listProjectConversations } from '../../utils/conversationApi'
+import { createConversation, listProjectConversations } from '../../utils/conversationApi'
 import type { ConversationHeader } from '../../utils/conversationApi'
 import { ApiError } from '../../utils/apiError'
 import { markAppVisible } from '../../utils/observe'
@@ -1419,12 +1419,31 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     if (!text) return
 
     const stillHere = () => isAlive() && buildIdRef.current === activeId
+    // READ BEFORE THE AWAITS BELOW, not after: `seqRef` is what tells a first message from a
+    // continuation, and the create call has to be decided before the upload it precedes.
+    const isFirstMessage = seqRef.current === 0 && Boolean(projectId)
 
     let parts
     try {
-      // `activeId` is a REQUIRED parameter of this function, so an upload can never happen
-      // without a thread to hang it on — which is what makes a conversation-scoped limit
-      // countable at all (#214 R7a/R7b).
+      // ★ THE CHAT EXISTS BEFORE ITS FILES DO, and the order is the point (#214 D1).
+      //
+      // The server requires an upload to name the conversation it belongs to, and it must be a
+      // conversation that is already written — which is what makes the per-conversation count
+      // answerable at the door and leaves no file without an owner. `activeId` was already a
+      // required parameter here, so the id was never in doubt; what is new is that the ROW
+      // behind it is created first.
+      //
+      // ONLY ON THE FIRST MESSAGE. Every later turn is sending into a chat that plainly exists,
+      // and a create call there would be a round trip bought for nothing.
+      //
+      // IT SHARES THE UPLOAD'S CATCH, so a create that fails behaves exactly as a failed upload
+      // does: the banner names the server's own sentence, nothing is uploaded, the composer keeps
+      // its text and every staged chip, and Send comes back. The round trip sits inside the same
+      // pending window that already keeps Send unavailable, so nothing leaves the composer
+      // silently (R21a).
+      if (isFirstMessage && projectId) {
+        await createConversation({ id: activeId, projectId, kind })
+      }
       parts = await buildUserParts(text, attachments, undefined, activeId)
     } catch (err) {
       // ABORT — never fall through to a turn that silently forgets the attachment. The user
@@ -1445,31 +1464,16 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     const userMsg: ChatMessage = { id: `local_${Date.now()}`, role: 'user', parts, seq: userSeq, createdAt: new Date().toISOString() }
     setMessages([...priorMessages, userMsg])
 
-    // THE ROW'S PARENTAGE RIDES THE TURN, AND THERE IS NO SEPARATE CREATE CALL.
+    // THE TITLE IS STILL DERIVED HERE, AND IT IS THE ONLY THING LEFT OF THE PARENTAGE BLOCK.
     //
-    // This used to be a `createBuild` round trip: the conversation was COMMITTED here, a full
-    // request before the turn — and that route's only workspace awareness was a project-ownership
-    // check. So a first message the workspace then refused left a real, titled, empty conversation
-    // in the project's list, named by `deriveTitle` after the very text that had been refused.
-    // Observed live: a citizen submitted a build, watched it run for nearly two minutes, and was
-    // then asked whether they wanted the workspace at all.
-    //
-    // The server now creates the row inside the turn's own transaction, AFTER every side-effect-free
-    // refusal and with a flush rather than a commit — so a refusal rolls it back. The whole change
-    // on this side is that one round trip is gone and its arguments moved onto the next one.
+    // The conversation row was created above, before the upload, with NO title: `deriveTitle`
+    // reads the draft, and the draft is not known a round trip earlier. So the heading the board
+    // draws comes from the same place it always did — the text being sent — and the row is named
+    // by the first message the server actually accepts.
     const derivedTitle = userSeq === 0 && projectId ? deriveTitle(partsToText(parts)) : null
-    const parentage =
-      userSeq === 0 && projectId
-        ? {
-            projectId,
-            kind,
-            title: derivedTitle ?? '',
-          }
-        : undefined
-    // OPTIMISTIC, AND DELIBERATELY SO. The row is created inside the turn's own transaction and a
-    // refusal rolls it back, so this can name a chat that never came to exist. That is the right
-    // trade for a heading: the board draws the title the moment the message is sent, and a chat
-    // whose creation was refused is one the citizen is being told about in the same breath.
+    // OPTIMISTIC, AND DELIBERATELY SO. A refused send leaves the row untitled, so this can name a
+    // chat the citizen is being told about a refusal for in the same breath. That is the right
+    // trade for a heading: it appears the moment the message is sent rather than a reply later.
     if (derivedTitle) onTitleDerived?.(derivedTitle)
     dropTransientQuery(activeId)
     refreshBuilds()
@@ -1495,18 +1499,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // is read below — after the guard that decides whether anything may be painted at all.
     let outcome: StreamOutcome
     try {
-      const started = await startTurn(
-        activeId,
-        {
-          text: wire.text ?? '',
-          attachmentTexts: wire.attachmentTexts ?? [],
-          attachmentIds: wire.attachmentIds ?? [],
-        },
-        {},
-        // Present only on a first message, and the whole reason this call can now be the
-        // ONE server call the send path makes.
-        parentage,
-      )
+      const started = await startTurn(activeId, {
+        text: wire.text ?? '',
+        attachmentTexts: wire.attachmentTexts ?? [],
+        attachmentIds: wire.attachmentIds ?? [],
+      })
       posted = true
       // THE METER, FROM THE ADMISSION THAT JUST PASSED. This is the number the server measured
       // to decide whether to accept this very turn — one token higher and the call above would

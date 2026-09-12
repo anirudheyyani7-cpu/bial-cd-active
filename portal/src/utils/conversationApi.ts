@@ -514,6 +514,42 @@ export function deriveTitle(text: string): string {
 }
 
 /**
+ * Create the conversation row, BEFORE its first file is uploaded and before its first turn.
+ *
+ * ★ THIS CLIENT CAME BACK ON PURPOSE, AND IT COSTS SOMETHING. It was retired when a chat's
+ * parentage moved onto its first turn, and that move bought a real guarantee: a first message
+ * refused by the workspace gate left NOTHING behind, because the row was flushed inside the turn's
+ * own transaction and rolled back with it. An upload now names the conversation it belongs to, so
+ * the row has to exist a round trip earlier than the send — and two orderings cannot both be true.
+ * The trade is recorded rather than hidden: a refused first send leaves an empty chat.
+ *
+ * NO TITLE IS PASSED, deliberately. `deriveTitle` runs on the draft at SEND time, which is one
+ * round trip later than this call, and stamping refused text into a row nobody can delete would
+ * be worse than leaving it unnamed. The first message that actually lands titles the chat.
+ *
+ * IDEMPOTENT PER OWNER: re-posting the same id with the same parentage answers 200 with the
+ * existing header, which is what makes a retry after a refused first send work — the leftover chat
+ * must not refuse its own second attempt.
+ */
+export async function createConversation(
+  { id, projectId, kind }: { id: string; projectId: string; kind: string },
+  deps: AuthFetchDeps = {},
+): Promise<ConversationHeader | null> {
+  const res = await authFetch(
+    '/api/conversations',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, projectId, kind }),
+    },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'The chat could not be started. Try again.')
+  const data = (await res.json()) as { conversation?: unknown }
+  return normalizeHeader(data.conversation)
+}
+
+/**
  * Build an async READ store for one conversation `kind` (plan | build), preserving the names
  * `builderHistory` re-exports. `newConversation` stays SYNCHRONOUS — it mints a UUID with no
  * network. There is no create member: a row's parentage rides its first turn now (see the

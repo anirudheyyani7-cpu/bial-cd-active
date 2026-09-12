@@ -24,7 +24,7 @@ from src.db.models.attachment import Attachment
 from src.db.models.audit import AuditLog
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.storage import StorageError, attachment_key, snapshot_key, submission_key
-from tests.factories import AppRegistryFactory, UserFactory
+from tests.factories import AppRegistryFactory, ConversationFactory, UserFactory
 from tests.fakes import FakeStorage
 
 _TTL = settings.auth.access_ttl_seconds
@@ -48,8 +48,14 @@ async def _admin(db: AsyncSession) -> dict[str, str]:
 
 
 async def _citizen(db: AsyncSession):
+    """A signed-in citizen, and the conversation their uploads belong to.
+
+    The upload door requires `conversationId` — a file names the chat it was attached to — so a
+    test that uploads needs a real, owned, already-written conversation to name.
+    """
     user = await UserFactory.create(db, email="nobody@rvaiglobal.com")
-    return _cookie(mint_session_jwt(user.id, user.token_version, _TTL)), user
+    conv = await ConversationFactory.create(db, user.id)
+    return _cookie(mint_session_jwt(user.id, user.token_version, _TTL)), user, conv
 
 
 def _wire_shared_storage(app) -> FakeStorage:
@@ -67,11 +73,12 @@ def _past_grace() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=48)
 
 
-async def _upload_image(client, headers: dict[str, str], attachment_id: str):
+async def _upload_image(client, headers: dict[str, str], conv, attachment_id: str):
     return await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": attachment_id,
             "mediaType": "image/png",
             "base64": _b64(_PNG),
@@ -94,10 +101,10 @@ async def _row(db: AsyncSession, user_id: uuid.UUID, attachment_id: str) -> Atta
 
 async def test_owned_attachment_survives_any_age(client, app, db_session) -> None:
     store = _wire_shared_storage(app)
-    citizen, user = await _citizen(db_session)
+    citizen, user, conv = await _citizen(db_session)
     admin = await _admin(db_session)
 
-    assert (await _upload_image(client, citizen, "att_owned")).status_code == 201
+    assert (await _upload_image(client, citizen, conv, "att_owned")).status_code == 201
     att = await _row(db_session, user.id, "att_owned")
     store.mtimes[att.storage_key] = _past_grace()
 
@@ -113,10 +120,10 @@ async def test_derived_key_regression_pin(client, app, db_session) -> None:
     # The owned-set MUST come from the persisted storage_key, not attachment_key(user, PK). Prove
     # the two differ, age the blob past grace, sweep — and the object survives + still downloads.
     store = _wire_shared_storage(app)
-    citizen, user = await _citizen(db_session)
+    citizen, user, conv = await _citizen(db_session)
     admin = await _admin(db_session)
 
-    assert (await _upload_image(client, citizen, "att_derived")).status_code == 201
+    assert (await _upload_image(client, citizen, conv, "att_derived")).status_code == 201
     att = await _row(db_session, user.id, "att_derived")
     # The trap this pins: a PK-derived key matches NO stored object.
     assert att.storage_key != attachment_key(user.id, att.id)
@@ -132,11 +139,11 @@ async def test_many_owned_attachments_yield_zero_eligible(client, app, db_sessio
     # N attachments all via the real upload path, all past grace. A non-zero att eligible/deleted
     # count means the owned-set is being built from a derived (PK) key.
     store = _wire_shared_storage(app)
-    citizen, user = await _citizen(db_session)
+    citizen, user, conv = await _citizen(db_session)
     admin = await _admin(db_session)
 
     for i in range(4):
-        assert (await _upload_image(client, citizen, f"att_{i}")).status_code == 201
+        assert (await _upload_image(client, citizen, conv, f"att_{i}")).status_code == 201
         att = await _row(db_session, user.id, f"att_{i}")
         store.mtimes[att.storage_key] = _past_grace()
 
@@ -159,10 +166,10 @@ async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_sessi
     # is reclaimed by the operator sweep. The blob-vs-row pass alone cannot close this — it treats
     # any still-rowed upload as OWNED — so this pins the reclaim fold that now runs in prod.
     store = _wire_shared_storage(app)
-    citizen, user = await _citizen(db_session)
+    citizen, user, conv = await _citizen(db_session)
     admin = await _admin(db_session)
 
-    assert (await _upload_image(client, citizen, "att_never_sent")).status_code == 201
+    assert (await _upload_image(client, citizen, conv, "att_never_sent")).status_code == 201
     att = await _row(db_session, user.id, "att_never_sent")
     storage_key = att.storage_key  # capture before the aging commit (avoid a post-commit reload)
     # Age the ROW past the 48h reclaim window — the endpoint takes no injectable `now`, and the
@@ -282,7 +289,7 @@ async def test_response_body_carries_no_key_list(client, app, db_session) -> Non
 
 async def test_citizen_is_forbidden(client, app, db_session) -> None:
     _wire_shared_storage(app)
-    citizen, _ = await _citizen(db_session)
+    citizen, _, _ = await _citizen(db_session)
     assert (await client.post(_RECONCILE, headers=citizen)).status_code == 403
 
 

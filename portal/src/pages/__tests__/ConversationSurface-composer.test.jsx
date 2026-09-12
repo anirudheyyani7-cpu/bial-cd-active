@@ -32,6 +32,8 @@ vi.mock('../../utils/builderHistory', () => ({
 // export, so a factory naming only `listProjectConversations` would leave it undefined.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
   ...(await importOriginal()),
+  // The send path creates the chat before its first upload; stubbed so no network is reached.
+  createConversation: async () => ({ id: 'conv-created' }),
   listProjectConversations: h.listProjectConversations,
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
@@ -291,12 +293,12 @@ describe('an in-flight turn belongs to ONE chat', () => {
     await waitForGateOpen()
     type('a question')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    // FOUR ARGS, ALWAYS: `startTurn(id, message, deps, create)`. `toHaveBeenCalledWith` checks
-    // argument COUNT too, so pinning fewer — as the old two-call protocol's assertion did —
-    // would pass against a differently-shaped call. `expect.anything()` for the rest: this test
-    // is about which chat the call belongs to, not the payload shape.
+    // TWO ARGS: `startTurn(id, message)`. The `create` block is gone — the row is created by its
+    // own call before the upload now — and `deps` is left to its default. `toHaveBeenCalledWith`
+    // checks argument COUNT too, so this also catches a call that quietly regrows a third.
+    // `expect.anything()` for the payload: this test is about which chat the call belongs to.
     await waitFor(() =>
-      expect(h.startTurn).toHaveBeenCalledWith('chat-A', expect.anything(), expect.anything(), expect.anything()),
+      expect(h.startTurn).toHaveBeenCalledWith('chat-A', expect.anything()),
     )
 
     // The SAME instance moves to a sibling chat (flat routing — only the chatId prop changes).
@@ -313,9 +315,9 @@ describe('an in-flight turn belongs to ONE chat', () => {
     h.startTurn.mockClear()
     type('a different question')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    // Same four-arg shape as chat A's assertion above.
+    // Same two-arg shape as chat A's assertion above.
     await waitFor(() =>
-      expect(h.startTurn).toHaveBeenCalledWith('chat-B', expect.anything(), expect.anything(), expect.anything()),
+      expect(h.startTurn).toHaveBeenCalledWith('chat-B', expect.anything()),
     )
   })
 
@@ -331,7 +333,7 @@ describe('an in-flight turn belongs to ONE chat', () => {
     await waitForGateOpen()
     type('a question')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    await waitFor(() => expect(h.startTurn).toHaveBeenCalledWith('chat-A', expect.anything(), expect.anything(), expect.anything()))
+    await waitFor(() => expect(h.startTurn).toHaveBeenCalledWith('chat-A', expect.anything()))
 
     // They open a sibling while A's reply is still coming — the same instance, flat routing.
     h.getBuild.mockResolvedValue({
@@ -482,15 +484,13 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
     h.startTurn.mockClear()
     type('add a dark mode toggle')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    // Not this chat's first message (the reattached build turn already occupies seq 0), so
-    // `create` is `undefined` here — but still a real 4th positional argument, so
-    // `toHaveBeenCalledWith` still needs a slot for it (see the four-arg suite above).
+    // Two args, as everywhere else: the turn carries the message and nothing about the row.
+    // Not this chat's first message either (the reattached build turn already occupies seq 0),
+    // so no create call precedes it — pinned below.
     await waitFor(() =>
       expect(h.startTurn).toHaveBeenCalledWith(
         NEW_BUILD_CHAT,
         expect.objectContaining({ text: 'add a dark mode toggle' }),
-        expect.anything(),
-        undefined,
       ),
     )
   })

@@ -38,8 +38,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.attachment import Attachment
+from src.db.models.message import Message
 from src.services.agent.attachment_tools import READER_PATH
 from src.services.agent.read_tools import ATTACHMENTS_PREFIX
+from src.services.conversations.delete import _referenced_attachment_ids
 from src.services.media import CODE_LANE_MEDIA, canonical_suffix
 from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import FileCreateBytes, SandboxError
@@ -140,17 +142,27 @@ async def code_lane_attachments(
 ) -> list[CodeLaneAttachment]:
     """Every code-lane file this turn can see, oldest first.
 
-    OWNER-SCOPED FIRST, AND THAT IS NOT IMPLIED BY EITHER OF THE OTHER TWO. `user_id` is the
-    ownership axis (ADR-0004) and is ANDed with everything below, so a row is reachable here only
-    if it belongs to the caller — the same shape every other attachment read in the tree uses.
+    OWNER-SCOPED FIRST, AND THAT IS NOT IMPLIED BY ANYTHING BELOW IT. `user_id` is the ownership
+    axis (ADR-0004) and is ANDed with every other predicate, so a row is reachable here only if it
+    belongs to the caller — the same shape every other attachment read in the tree uses.
 
-    TWO WAYS IN, BECAUSE THE CONVERSATION LINK IS NULLABLE. The link is what makes a file attached
-    three turns ago still readable today, and it is what a re-placed container is rebuilt from. But
-    `attachments.conversation_id` is `NULL`-able on purpose (`ON DELETE SET NULL`, and a client
-    that sends no `conversationId` at upload), and a file the citizen just attached to THIS message
-    must be readable whether or not its link was stamped. Skipping the ids would produce the worst
-    outcome available: a file accepted at the door, charged against the quota, and then invisible
-    to the agent with nothing on screen saying so.
+    ★ THE LINK ALONE IS NOT ENOUGH TO DELIVER A FILE, and that is the half this function got wrong
+    the moment uploads started linking at insert. A row belongs to the conversation from the
+    instant it is stored, whether or not any message ever carried it — so a citizen whose first
+    send was refused, who then removes the files and types "hello", would have five spreadsheets
+    written into their container and the agent told they attached them. `place()` and `note()` act
+    on whatever this returns, so the narrowing has to happen here.
+
+    A ROW QUALIFIES IF IT WAS ACTUALLY SENT: named by THIS message's `attachment_ids`, or
+    referenced by a message already in the conversation. The second half is read with the same
+    `_referenced_attachment_ids` scan the conversation cascade and the never-sent reclaimer use,
+    so the three cannot drift about what "still referenced" means.
+
+    WHY THE CONVERSATION SCOPE STAYS IN THE QUERY AT ALL, rather than selecting by id alone:
+    `/workspace/attachments` is a sibling of the app tree so no snapshot or restore carries it,
+    which means a recycled container comes back empty and every turn re-places what the
+    conversation holds. The ids arm covers the two cases the link cannot — a row unlinked by
+    `ON DELETE SET NULL`, and a pre-ordering row that was never linked at all.
 
     Ordered by the primary key, which is a UUIDv7: attach order is upload order, so the numbering
     the collision rule falls back to is stable across turns rather than dependent on how the
@@ -175,56 +187,34 @@ async def code_lane_attachments(
         .scalars()
         .all()
     )
-    # ★ A PURE READ, AND THAT IS THE FIX FOR A 500 (#214, agc129's B1). This used to adopt
-    # NULL-linked rows into the conversation right here — but it runs in the send route BEFORE the
-    # conversation row is written, so the route's next query autoflushed the pending UPDATE into a
-    # non-deferrable foreign key that did not exist yet. The first message of every new chat that
-    # carried a spreadsheet was a 500, and every retry failed identically. Adoption now lives in
-    # `adopt_unlinked_attachments`, which the route calls once the conversation demonstrably
-    # exists.
-    return _named_without_collisions(rows)
-
-
-async def adopt_unlinked_attachments(
-    db: AsyncSession,
-    *,
-    user_id: uuid.UUID,
-    conversation_id: uuid.UUID,
-    attachment_ids: Sequence[str],
-) -> None:
-    """Link this message's not-yet-linked uploads to the conversation they were sent in.
-
-    ★ WITHOUT IT THE FILE WORKS ON TURN ONE AND VANISHES ON TURN TWO (#214 R7a). The composer
-    uploads before the first send, so on a new chat there is no conversation row to link to and
-    the upload stores NULL. Turn one finds the file by the message's own ids; turn two carries
-    none, so a file that was never linked is not placed, not named to the agent, and
-    `read_attachment` is not even registered.
-
-    ★ AND IT MAY RUN ONLY ONCE THE CONVERSATION ROW EXISTS. It used to run inside
-    `code_lane_attachments`, before the send route had written that row, and the next query
-    autoflushed it into the foreign key — the 500 agc129 reproduced on the demo's opening move.
-    The caller invokes this after the conversation is flushed or loaded, never before.
-
-    EVERY ID THE MESSAGE CARRIES, NOT ONLY THE CODE LANE. A model-lane upload is NULL-linked for
-    the same reason, and the unlinked pool is what an upload with no conversation is budgeted
-    against (`attachments/router.py`) — rows left NULL forever would fill it and refuse the next
-    new chat's first file, which is B4 arriving slowly instead of at once.
-
-    ONE OWNER-SCOPED UPDATE, restricted to rows that are still NULL: it cannot move another user's
-    row, and it never re-links a file that already belongs to a conversation.
-    """
-    wanted = list(dict.fromkeys(attachment_ids))
-    if not wanted:
-        return
-    await db.execute(
-        sa.update(Attachment)
-        .where(
-            Attachment.user_id == user_id,
-            Attachment.attachment_id.in_(wanted),
-            Attachment.conversation_id.is_(None),
-        )
-        .values(conversation_id=conversation_id)
+    sent = set(wanted) | await _ids_already_sent(
+        db, user_id=user_id, conversation_id=conversation_id
     )
+    return _named_without_collisions([row for row in rows if row.attachment_id in sent])
+
+
+async def _ids_already_sent(
+    db: AsyncSession, *, user_id: uuid.UUID, conversation_id: uuid.UUID
+) -> set[str]:
+    """Attachment ids that a message in this conversation actually carried.
+
+    Read from the stored PAYLOADS rather than from the link, because the link now says only "this
+    file was uploaded here" — which is true of a file whose message was refused and never sent.
+    The payload marker is written by `append_batch` as part of the turn's own commit, so a row
+    appears here exactly when a message carrying it became durable.
+    """
+    payloads = (
+        (
+            await db.execute(
+                sa.select(Message.payload).where(
+                    Message.conversation_id == conversation_id, Message.user_id == user_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _referenced_attachment_ids(payloads)
 
 
 @dataclass(frozen=True, slots=True)

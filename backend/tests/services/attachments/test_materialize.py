@@ -17,6 +17,8 @@ import uuid
 
 import pytest
 
+from src.db.models.conversation import ChatKind
+from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.services.attachments.materialize import (
     CONTAINER_ATTACHMENTS_ROOT,
     AttachmentDelivery,
@@ -32,6 +34,7 @@ from src.services.media.lanes import (
     TSV_MEDIA_TYPE,
     WORD_MEDIA_TYPE,
 )
+from src.services.messages.store import ATTACHMENT_FILE_REF_KIND
 from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import SandboxError
 from src.services.sandbox.base import ExecResult
@@ -448,6 +451,45 @@ async def _stored(
     storage.objects[key] = b"PK\x03\x04"
 
 
+async def _sent(db_session, *, user_id: uuid.UUID, conversation_id: uuid.UUID, ids: list[str]):
+    """A committed user message that CARRIED these attachments.
+
+    ★ A STORED ROW IS NOT A SENT FILE (D1), which is what this helper exists to say. An upload
+    names its conversation at the door now, so a row is linked from the instant it is stored —
+    including one whose message was refused and never sent. `code_lane_attachments` therefore
+    reads the SENT set out of the message payloads, and a test that wants a file delivered has to
+    say a message carried it rather than only that the row exists.
+
+    The payload shape is the one `append_batch` writes: a user-prompt part whose content list ends
+    with one `ATTACHMENT_FILE_REF_KIND` marker per file.
+    """
+    db_session.add(
+        Message(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            seq=len(ids) and 0 or 0,
+            entry_kind=MessageEntryKind.TURN,
+            kind=ChatKind.BUILD,
+            visibility=MessageVisibility.VISIBLE,
+            payload=[
+                {
+                    "kind": "request",
+                    "parts": [
+                        {
+                            "part_kind": "user-prompt",
+                            "content": [
+                                {"kind": ATTACHMENT_FILE_REF_KIND, "attachment_id": ref}
+                                for ref in ids
+                            ],
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    await db_session.flush()
+
+
 async def test_the_query_takes_the_code_lane_and_leaves_the_model_lane(db_session) -> None:
     """★ THE LANE BOUNDARY, ON THE PATH THAT PLACES FILES. An image belongs to the model and its
     bytes ride in the prompt; only a code-lane file is written into the container. A widened query
@@ -474,6 +516,7 @@ async def test_the_query_takes_the_code_lane_and_leaves_the_model_lane(db_sessio
         name="shot.png",
         conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["a", "b"])
 
     found = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
 
@@ -552,18 +595,18 @@ async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
     assert link is None
 
 
-async def test_adoption_keeps_the_file_findable_on_the_second_turn(db_session) -> None:
+async def test_a_sent_file_is_still_found_on_the_second_turn(db_session) -> None:
     """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO (#214 R7a).
 
-    Turn one finds an unlinked file by the message's own ids. Turn two carries none, so a row whose
-    link is still NULL is not found at all — not placed, not named to the agent, `read_attachment`
-    not even registered. Adoption is now a separate step the send route calls once the conversation
-    demonstrably exists, which is what B1 requires.
+    Turn two carries no attachment ids at all, so what makes "the file you attached three turns
+    ago" still answerable is the conversation link — a container recycled between turns comes back
+    empty, and every turn re-places what the chat holds.
 
-    Mutation receipt: skip `adopt_unlinked_attachments` and the second read returns empty.
+    ADOPTION USED TO BE WHAT PUT THE LINK THERE, in a separate step the send route ran once the
+    conversation demonstrably existed, because the composer uploaded before the row was written.
+    An upload names its conversation at the door now, so the link is stamped at insert and there
+    is nothing left to adopt. The claim this test makes is unchanged.
     """
-    from src.services.attachments.materialize import adopt_unlinked_attachments
-
     storage = FakeStorage()
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, user.id)
@@ -572,77 +615,99 @@ async def test_adoption_keeps_the_file_findable_on_the_second_turn(db_session) -
         db_session,
         storage,
         user_id=user.id,
-        attachment_id="loose",
+        attachment_id="linked",
         media_type=EXCEL_MEDIA_TYPE,
         name="book.xlsx",
-        conversation_id=None,
+        conversation_id=conv.id,
     )
 
-    # Turn one — found by the message's own ids; the route then adopts it.
+    # Turn one — named by the message's own ids, and the message is recorded as carrying it.
     first = await code_lane_attachments(
-        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["linked"]
     )
-    assert [f.attachment_id for f in first] == ["loose"]
-    await adopt_unlinked_attachments(
-        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
-    )
+    assert [f.attachment_id for f in first] == ["linked"]
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["linked"])
 
     # Turn two — no ids on the message at all.
     second = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
-    assert [f.attachment_id for f in second] == ["loose"], "the file vanished on the second turn"
+    assert [f.attachment_id for f in second] == ["linked"], "the file vanished on the second turn"
 
 
-async def test_adoption_moves_only_the_callers_still_unlinked_rows(db_session) -> None:
-    """Adoption is one UPDATE over client-supplied ids, so it must be narrow in both directions: it
-    never re-links a file that already belongs to a conversation, and it never touches a row
-    belonging to someone else — even when that row's id is named."""
-    from sqlalchemy import select
+async def test_a_file_uploaded_but_never_sent_is_neither_placed_nor_announced(db_session) -> None:
+    """★ THE REVIEW'S SHARPEST FINDING, AND THE ONE THE NEW ORDERING CREATED (D1).
 
-    from src.services.attachments.materialize import adopt_unlinked_attachments
+    Linking at insert means a row belongs to the conversation from the instant it is stored —
+    before any message carries it, and whether or not one ever does. So a citizen whose first send
+    was refused by the workspace gate, who then removes the files and types "hello", would have
+    five spreadsheets written into their container and `note()` telling the agent "the person you
+    are talking to attached these files to this conversation". The agent would then reason from
+    files the citizen had taken back.
 
+    Before D1 those rows were NULL-linked and invisible to the delivery, so the new ordering
+    converts an invisible orphan into a live, announced, re-placed file. The guard is what keeps
+    the delivery scoped to what was actually sent.
+
+    Mutation check: drop the sent-set filter from `code_lane_attachments` and this goes red.
+    """
     storage = FakeStorage()
-    me = await UserFactory.create(db_session)
-    them = await UserFactory.create(db_session)
-    project = await ProjectFactory.create(db_session, me.id)
-    this_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
-    other_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     await _stored(
         db_session,
         storage,
-        user_id=me.id,
-        attachment_id="already",
+        user_id=user.id,
+        attachment_id="sent",
         media_type=CSV_MEDIA_TYPE,
-        name="a.csv",
-        conversation_id=other_chat.id,
+        name="carried.csv",
+        conversation_id=conv.id,
     )
     await _stored(
         db_session,
         storage,
-        user_id=them.id,
-        attachment_id="theirs",
+        user_id=user.id,
+        attachment_id="abandoned",
         media_type=CSV_MEDIA_TYPE,
-        name="b.csv",
-        conversation_id=None,
+        name="refused.csv",
+        conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["sent"])
 
-    await adopt_unlinked_attachments(
+    # A later turn carrying NOTHING — the "hello" after the refusal.
+    found = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+
+    assert [f.attachment_id for f in found] == ["sent"]
+    # And the note the agent is handed names only the file that was really attached.
+    note = AttachmentDelivery(files=tuple(found), storage=storage).note()
+    assert "carried.csv" in note
+    assert "refused.csv" not in note
+
+
+async def test_a_file_this_message_carries_is_delivered_before_any_message_records_it(
+    db_session,
+) -> None:
+    """The other half of the guard, and the half that would make it useless if it were missing:
+    on the turn that SENDS a file, no stored message references it yet — the marker is written by
+    the same commit that ends the turn. The message's own ids are what qualify it."""
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    await _stored(
         db_session,
-        user_id=me.id,
-        conversation_id=this_chat.id,
-        attachment_ids=["already", "theirs"],
+        storage,
+        user_id=user.id,
+        attachment_id="fresh",
+        media_type=CSV_MEDIA_TYPE,
+        name="rows.csv",
+        conversation_id=conv.id,
     )
 
-    links = dict(
-        (
-            await db_session.execute(
-                select(Attachment.attachment_id, Attachment.conversation_id).where(
-                    Attachment.attachment_id.in_(["already", "theirs"])
-                )
-            )
-        ).all()
+    found = await code_lane_attachments(
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["fresh"]
     )
-    assert links["already"] == other_chat.id  # not re-linked
-    assert links["theirs"] is None  # not someone else's to move
+
+    assert [f.attachment_id for f in found] == ["fresh"]
 
 
 async def test_another_owners_file_is_not_reachable_by_naming_its_id(db_session) -> None:
@@ -688,6 +753,7 @@ async def test_the_delivery_round_trips_a_stored_file_into_the_container(db_sess
         name="Gate roster.xlsx",
         conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["a"])
 
     files = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
     delivery = AttachmentDelivery(files=tuple(files), storage=storage)

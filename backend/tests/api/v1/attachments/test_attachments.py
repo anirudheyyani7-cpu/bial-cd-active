@@ -80,19 +80,32 @@ def _cookie(jwt: str) -> dict[str, str]:
 
 
 async def _auth(db_session):
+    """A signed-in user, and A CONVERSATION TO UPLOAD AGAINST.
+
+    ★ THE SECOND HALF IS NOT CONVENIENCE (D1). `conversationId` is required at the door now — an
+    upload names the chat it belongs to, because that is what makes the per-conversation count
+    answerable at the door and leaves no file without an owner. Every test that uploads therefore
+    needs a real, owned, already-written conversation, so this returns one rather than letting
+    forty-odd tests each mint their own.
+
+    The tests that deliberately upload WITHOUT one (or against a stranger's) build their bodies by
+    hand and are named for it.
+    """
     user = await UserFactory.create(db_session)
-    return _cookie(mint_session_jwt(user.id, user.token_version, _TTL)), user
+    conv = await ConversationFactory.create(db_session, user.id)
+    return _cookie(mint_session_jwt(user.id, user.token_version, _TTL)), user, conv
 
 
 # --- upload happy path + download ---------------------------------------------
 
 
 async def test_upload_image_then_download(client, db_session, fake_storage) -> None:
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_1",
             "name": "shot.png",
             "mediaType": "image/png",
@@ -116,11 +129,16 @@ async def test_upload_image_then_download(client, db_session, fake_storage) -> N
 
 
 async def test_upload_pdf_is_document_kind(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_pdf", "mediaType": "application/pdf", "base64": _b64(_PDF)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_pdf",
+            "mediaType": "application/pdf",
+            "base64": _b64(_PDF),
+        },
     )
     assert resp.status_code == 201
     assert resp.json()["attachment"]["kind"] == "document"
@@ -130,11 +148,16 @@ async def test_upload_pdf_is_document_kind(client, db_session) -> None:
 
 
 async def test_wrong_magic_rejected(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_x", "mediaType": "image/png", "base64": _b64(_PDF)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_x",
+            "mediaType": "image/png",
+            "base64": _b64(_PDF),
+        },
     )
     assert resp.status_code == 400
     assert resp.json() == {
@@ -143,22 +166,32 @@ async def test_wrong_magic_rejected(client, db_session) -> None:
 
 
 async def test_unsupported_type_rejected(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_x", "mediaType": "image/tiff", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_x",
+            "mediaType": "image/tiff",
+            "base64": _b64(_PNG),
+        },
     )
     assert resp.status_code == 400
     assert resp.json()["error"]["message"].startswith("Unsupported attachment type: image/tiff.")
 
 
 async def test_text_type_rejected(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_x", "mediaType": "text/plain", "base64": _b64(b"hi")},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_x",
+            "mediaType": "text/plain",
+            "base64": _b64(b"hi"),
+        },
     )
     # `text/plain` STAYS REFUSED, and that is a withdrawal rather than an oversight: it works on
     # the branch today and stops. The mechanism argument died with the inline lane — under the
@@ -178,12 +211,13 @@ async def test_a_csv_is_no_longer_refused_as_inline_text(client, db_session, fak
     uploaded. That lane is gone: every attachment is an uploaded file with a stored identity,
     which is what lets a chip be rebuilt on reload for every format by one fix.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_csv",
             "name": "movements.csv",
             "mediaType": "text/csv",
@@ -199,7 +233,7 @@ async def test_a_workbook_is_admitted_and_a_renamed_archive_is_not(
 ) -> None:
     """All OOXML shares the ZIP signature, so the OPC part is the only discriminator there is —
     without it a renamed `.zip` is stored as a workbook the reader then cannot open."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     # A REAL archive. `assert_zip_not_bomb` runs on this lane and reads the ZIP own
     # central directory, so a hand-built PK prefix is refused before any structure
     # check even matters - the guard working, not a fixture problem.
@@ -209,6 +243,7 @@ async def test_a_workbook_is_admitted_and_a_renamed_archive_is_not(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_xlsx",
             "name": "book.xlsx",
             "mediaType": EXCEL_MEDIA_TYPE,
@@ -221,6 +256,7 @@ async def test_a_workbook_is_admitted_and_a_renamed_archive_is_not(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_zip",
             "name": "book.xlsx",
             "mediaType": EXCEL_MEDIA_TYPE,
@@ -236,13 +272,14 @@ async def test_a_password_protected_workbook_is_refused_at_the_door(
     """★ R6/AE8c. A locked workbook gets the same treatment a locked PDF gets — refused before
     anything is stored, with the password named — rather than being accepted, charged, and failing
     inside the sandbox several turns later where nothing can explain it."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     locked = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + bytes(64)
 
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_locked",
             "name": "salaries.xlsx",
             "mediaType": EXCEL_MEDIA_TYPE,
@@ -256,20 +293,27 @@ async def test_a_password_protected_workbook_is_refused_at_the_door(
 
 
 async def test_invalid_id_rejected(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "bad id!", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "bad id!",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert resp.status_code == 400
     assert resp.json() == {"error": {"message": "Invalid attachment id."}}
 
 
 async def test_missing_media_type_rejected(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
-        "/v1/attachments", headers=headers, json={"attachmentId": "att_x", "base64": _b64(_PNG)}
+        "/v1/attachments",
+        headers=headers,
+        json={"conversationId": str(conv.id), "attachmentId": "att_x", "base64": _b64(_PNG)},
     )
     assert resp.status_code == 400
     assert resp.json() == {"error": {"message": "mediaType is required."}}
@@ -288,12 +332,17 @@ async def test_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_not(
     The accepted side matters as much as the refused one: an off-by-one that refuses a file
     exactly at the cap is the same defect wearing the other sign.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     at_cap = b"\x89PNG\r\n\x1a\n" + b"\x00" * (ATTACHMENT_MAX_BYTES - 8)
     ok = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_at_cap", "mediaType": "image/png", "base64": _b64(at_cap)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_at_cap",
+            "mediaType": "image/png",
+            "base64": _b64(at_cap),
+        },
     )
     assert ok.status_code == 201
 
@@ -301,6 +350,7 @@ async def test_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_not(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_big",
             "mediaType": "image/png",
             "base64": _b64(at_cap + b"\x00"),
@@ -326,7 +376,7 @@ async def test_a_request_body_over_the_wire_ceiling_is_refused_before_it_is_buff
     Sent with a Content-Length header and a tiny body: the branch reads the header, so the test
     does not have to move fifteen megabytes to reach it.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers={**headers, "content-length": str(64 * 1024 * 1024)},
@@ -342,14 +392,19 @@ async def test_the_wire_ceiling_clears_a_legal_file_encoded(
     """The other side of the same constant, and the one that would fail silently: a cap-sized file
     base64-encodes to about 13.3 MB on the wire, so a ceiling below that refuses every maximum
     upload before it is even decoded."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     at_cap = b"\x89PNG\r\n\x1a\n" + b"\x00" * (ATTACHMENT_MAX_BYTES - 8)
     body = _b64(at_cap)
     assert len(body) > ATTACHMENT_MAX_BYTES  # base64 really is bigger than the file
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_wire", "mediaType": "image/png", "base64": body},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_wire",
+            "mediaType": "image/png",
+            "base64": body,
+        },
     )
     assert resp.status_code == 201
 
@@ -371,13 +426,14 @@ async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake
     Mutation receipt: remove the `assert_zip_not_bomb` call from the upload lane and this is the
     only test that goes red.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     bomb = _lying_zip({"xl/workbook.xml": b"<workbook/>"}, 400 * 1024 * 1024)
 
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_bomb",
             "name": "book.xlsx",
             "mediaType": EXCEL_MEDIA_TYPE,
@@ -404,12 +460,13 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
     Mutation receipt: restore the `conversation_id is not None` gate and the 21st upload is
     accepted.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
         resp = await client.post(
             "/v1/attachments",
             headers=headers,
             json={
+                "conversationId": str(conv.id),
                 "attachmentId": f"att_unlinked_{index}",
                 "name": "shot.png",
                 "mediaType": "image/png",
@@ -422,6 +479,7 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_unlinked_over",
             "name": "shot.png",
             "mediaType": "image/png",
@@ -436,44 +494,25 @@ async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
 async def test_twenty_files_sent_elsewhere_do_not_block_a_new_chats_first_upload(
     client, db_session, fake_storage
 ) -> None:
-    """★ AGC129'S B4 — the unlinked fallback used to be the whole account.
+    """★ AGC129'S B4 — the budget used to be the whole account.
 
-    The first upload of every new chat is unlinked, because its conversation row is written by the
-    first send. Scoped to the account, it was counted against every attachment the citizen had ever
-    sent anywhere: twenty files in old chats, and the next new chat's first upload was refused with
-    "This conversation has reached its limit of 20 attachments" — on a chat holding zero, naming
-    "start a new chat" as the remedy, which was the one move that could not help. The demo account
-    had already been past it from rehearsal.
+    Twenty files in old chats, and the next chat's first upload was refused with "This conversation
+    has reached its limit of 20 attachments" — on a chat holding zero, naming "start a new chat" as
+    the remedy, which was the one move that could not help. The demo account had already been past
+    it from rehearsal.
+
+    THE FIXTURE MOVED WITH THE ORDERING, and the claim did not. It used to send NO conversationId,
+    because the first upload of a new chat happened before its row existed; the chat is created
+    first now, so the same question is asked with a real, empty conversation. What is being
+    asserted either way is that fullness is a fact about one chat rather than about the citizen.
 
     Mutation receipt: put the account-wide scope back and this upload 413s.
     """
-    headers, user = await _auth(db_session)
+    headers, user, fresh = await _auth(db_session)
     elsewhere = await _a_conversation(db_session, user)
-    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
-        db_session.add(
-            Attachment(
-                user_id=user.id,
-                attachment_id=f"att_sent_{index}",
-                media_type="image/png",
-                name="",
-                size=len(_PNG),
-                storage_key=f"att/{user.id}/sent_{index}",
-                conversation_id=elsewhere.id,
-            )
-        )
-    await db_session.flush()
+    await _fill_conversation(db_session, user, elsewhere.id, held=MAX_ATTACHMENTS_PER_CONVERSATION)
 
-    resp = await client.post(
-        "/v1/attachments",
-        headers=headers,
-        json={
-            "attachmentId": "att_new_chat_first",
-            "name": "roster.png",
-            "mediaType": "image/png",
-            "base64": _b64(_PNG),
-            # No conversationId — the first upload of a chat whose row does not exist yet.
-        },
-    )
+    resp = await _upload_into(client, headers, fresh.id, "att_new_chat_first")
 
     assert resp.status_code == 201, resp.text
 
@@ -495,12 +534,13 @@ async def test_a_csv_is_not_run_through_the_archive_bound(
     Mutation receipt: gate on `is_code_lane` instead of `is_opc_archive` and this goes red with a
     413 naming a ZIP.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_plaincsv",
             "name": "movements.csv",
             "mediaType": "text/csv",
@@ -568,7 +608,7 @@ async def test_a_full_conversation_does_not_exhaust_the_account(
     Mutation receipt: drop the conversation predicate from the count query and the second upload
     413s on files the other conversation is holding.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     first = await _a_conversation(db_session, user)
     await _fill_conversation(db_session, user, first.id, held=MAX_ATTACHMENTS_PER_CONVERSATION)
 
@@ -590,7 +630,7 @@ async def test_a_full_conversation_says_so_and_names_a_way_out(
     again." — advice a citizen cannot follow, because nothing lets them remove one attachment
     from an old conversation. The refusal names the thing that is full and the thing that
     works."""
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conversation = await _a_conversation(db_session, user)
     await _fill_conversation(
         db_session, user, conversation.id, held=MAX_ATTACHMENTS_PER_CONVERSATION
@@ -614,7 +654,7 @@ async def test_bytes_far_over_the_deleted_budget_are_accepted_while_the_count_is
 
     Mutation check: restore the `sum(Attachment.size)` budget and its refusal, and this goes red.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conversation = await _a_conversation(db_session, user)
     db_session.add(
         Attachment(
@@ -646,7 +686,7 @@ async def test_re_uploading_a_known_id_into_a_full_conversation_is_refused(
 
     Mutation check: narrow the predicate back to `if existing is None:` and this goes red.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     roomy = await _a_conversation(db_session, user)
     full = await _a_conversation(db_session, user)
     await _fill_conversation(db_session, user, full.id, held=MAX_ATTACHMENTS_PER_CONVERSATION)
@@ -672,7 +712,7 @@ async def test_the_conversation_attachment_count_is_enforced_on_the_server(
 
     Mutation receipt: remove the count check and the twenty-first upload is accepted.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conversation = await _a_conversation(db_session, user)
     for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
         db_session.add(
@@ -701,7 +741,7 @@ async def test_re_uploading_a_file_the_conversation_already_holds_is_not_a_new_o
     row rather than adding one, so counting it would break the retry the upload path is
     explicitly built to allow — a network hiccup mid-send would then wedge a full conversation
     permanently."""
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conversation = await _a_conversation(db_session, user)
     for index in range(MAX_ATTACHMENTS_PER_CONVERSATION - 1):
         db_session.add(
@@ -729,32 +769,42 @@ async def test_re_uploading_a_file_the_conversation_already_holds_is_not_a_new_o
 
 
 async def test_download_missing_404(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.get("/v1/attachments/att_nope", headers=headers)
     assert resp.status_code == 404
     assert resp.json() == {"error": {"message": "Attachment not found."}}
 
 
 async def test_download_cross_user_denied(client, db_session) -> None:
-    headers_a, _ = await _auth(db_session)
+    headers_a, _, conv_a = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers_a,
-        json={"attachmentId": "att_shared", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv_a.id),
+            "attachmentId": "att_shared",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert resp.status_code == 201
     # User B has no attachment with that id — owner-scoped lookup returns 404.
-    headers_b, _ = await _auth(db_session)
+    headers_b, _, _ = await _auth(db_session)
     resp_b = await client.get("/v1/attachments/att_shared", headers=headers_b)
     assert resp_b.status_code == 404
 
 
 async def test_delete_removes_object_and_row(client, db_session, fake_storage) -> None:
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_del", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_del",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert len(fake_storage.objects) == 1
 
@@ -771,7 +821,7 @@ async def test_delete_removes_object_and_row(client, db_session, fake_storage) -
 
 
 async def test_delete_missing_is_idempotent(client, db_session) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.delete("/v1/attachments/att_ghost", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
@@ -782,15 +832,20 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
 ) -> None:
     # Destructive-leak guard: B DELETEing A's attachmentId is a 200 no-op AND must NOT
     # touch A's row or blob — the `_load_owned(db, user.id, …)` scope predicate must hold.
-    a_headers, user_a = await _auth(db_session)
+    a_headers, user_a, conv = await _auth(db_session)
     await client.post(
         "/v1/attachments",
         headers=a_headers,
-        json={"attachmentId": "att_shared", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_shared",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert len(fake_storage.objects) == 1
 
-    b_headers, _ = await _auth(db_session)
+    b_headers, _, conv = await _auth(db_session)
     resp = await client.delete("/v1/attachments/att_shared", headers=b_headers)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}  # idempotent no-op — B owns nothing
@@ -806,11 +861,16 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
 
 async def test_malformed_base64_rejected(client, db_session) -> None:
     # Exercises the tuple-except branch in _validate_attachment_bytes.
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_b64", "mediaType": "image/png", "base64": "a"},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_b64",
+            "mediaType": "image/png",
+            "base64": "a",
+        },
     )
     assert resp.status_code == 400
     assert "do not match the declared type" in resp.json()["error"]["message"]
@@ -844,7 +904,7 @@ def test_attachments_openapi_documents_codes() -> None:
 
 
 async def test_upload_links_owned_conversation(client, db_session, fake_storage) -> None:
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conv = await ConversationFactory.create(db_session, user.id)
     resp = await client.post(
         "/v1/attachments",
@@ -866,31 +926,57 @@ async def test_upload_links_owned_conversation(client, db_session, fake_storage)
     assert row.conversation_id == conv.id
 
 
-async def test_upload_no_conversation_id_stores_null(client, db_session, fake_storage) -> None:
-    # Existing clients that send no conversationId keep working — the nullable path.
-    headers, user = await _auth(db_session)
+async def test_an_upload_with_no_conversation_id_is_refused_with_a_sentence(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE BREAKING CHANGE, AND ITS WORDS (D1). This test asserted the opposite: an upload with
+    no `conversationId` stored a NULL link and kept working, because the composer uploaded before
+    the chat existed. The order is inverted now — the chat is created, then its files go up
+    against it — so the absence is a client that has not been updated.
+
+    400, NOT 422, and the sentence matters as much as the status: this route hand-parses its body,
+    so every body error here renders the data-plane `{"error":{"message","code"}}` envelope, which
+    is the only shape `uploadAttachment` reads. A FastAPI 422 would render a different one and the
+    browser would show its generic fallback instead of this.
+
+    Mutation check: make the field optional again and this goes red on the status.
+    """
+    headers, user, _ = await _auth(db_session)
+
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_unlinked", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "attachmentId": "att_unlinked",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
-    assert resp.status_code == 201
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["code"] == "CONVERSATION_ID_REQUIRED"
+    assert body["error"]["message"] == (
+        "conversationId is required — create the conversation first, then upload its files "
+        "against it."
+    )
+    # Nothing is stored on the refusal path — no object, no row.
+    assert fake_storage.objects == {}
     row = await db_session.scalar(
         select(Attachment).where(
             Attachment.user_id == user.id, Attachment.attachment_id == "att_unlinked"
         )
     )
-    assert row is not None
-    assert row.conversation_id is None
+    assert row is None
 
 
 async def test_upload_cross_user_conversation_404(client, db_session, fake_storage) -> None:
     # A well-formed conversationId the caller does NOT own is the same non-leaking 404 as a
     # missing one, and nothing is written or stored.
-    a_headers, user_a = await _auth(db_session)
+    a_headers, user_a, conv = await _auth(db_session)
     conv_a = await ConversationFactory.create(db_session, user_a.id)
 
-    b_headers, user_b = await _auth(db_session)
+    b_headers, user_b, conv_b = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=b_headers,
@@ -910,27 +996,22 @@ async def test_upload_cross_user_conversation_404(client, db_session, fake_stora
     assert row is None
 
 
-async def test_upload_for_a_chat_not_written_yet_stores_null(
+async def test_an_upload_for_a_chat_that_does_not_exist_is_a_404(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE FIRST ATTACHMENT OF EVERY NEW CHAT (#214), and it used to be a 404.
+    """★ THE THIRD ASSERTION THIS TEST HAS CARRIED, and each one was right about its own ordering.
 
-    This test previously asserted the opposite — that a well-formed but unknown conversation id
-    is refused — and that assertion was wrong about the product rather than about the code. The
-    composer mints the id in the BROWSER and navigates to it; the conversation ROW is created by
-    the first send, which happens strictly AFTER the file is uploaded (the send route stages the
-    row and writes it only once every side-effect-free refusal has passed, R-18). So on the
-    opening move of any new chat the id is real, unwritten, and refusing it makes attaching a
-    file impossible until the citizen has sent a message without one.
+    It first said an unknown conversation id is refused. Then it said the opposite — that a
+    well-formed, unwritten id is ACCEPTED and stored NULL — because the composer minted the id in
+    the browser and the row was created by the first send, which happened strictly after the
+    upload. Refusing it then made attaching a file to a new chat impossible.
 
-    Found by driving the real UI, not by a test — every suite here passed while the feature's
-    first step was broken, because they all attached to a conversation the fixture had already
-    committed.
-
-    NULL is the state the column was made nullable for, and the reclaimer reads it as legacy
-    rather than as a deletion signal. `code_lane_attachments` still finds the file, by its id.
+    The row is created before the first upload now, so an unwritten id is once again a client that
+    is out of step, and it answers exactly what a stranger's id answers (ADR-0004): absence and
+    somebody else's chat are one non-leaking 404.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, _ = await _auth(db_session)
+
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
@@ -938,21 +1019,21 @@ async def test_upload_for_a_chat_not_written_yet_stores_null(
             "attachmentId": "att_newchat",
             "mediaType": "image/png",
             "base64": _b64(_PNG),
-            "conversationId": str(uuid.uuid4()),  # well-formed, not written yet
+            "conversationId": str(uuid.uuid4()),  # well-formed, never written
         },
     )
 
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 404, resp.text
+    assert resp.json() == {"error": {"message": "Conversation not found."}}
+    assert fake_storage.objects == {}
     row = await db_session.scalar(
         select(Attachment).where(Attachment.attachment_id == "att_newchat")
     )
-    assert row is not None
-    assert row.conversation_id is None
-    assert fake_storage.objects  # the bytes were stored, not refused
+    assert row is None
 
 
 async def test_upload_malformed_conversation_id_400(client, db_session, fake_storage) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
@@ -983,7 +1064,7 @@ async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
     is refused there instead. Red is the good outcome — the silent one would have been it passing
     for a different reason and quietly stopping proving anything.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     conv = await ConversationFactory.create(db_session, user.id)
     resp = await client.post(
         "/v1/attachments",
@@ -1003,12 +1084,17 @@ async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
 async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_storage) -> None:
     """THE RECLAIMER'S ONLY END-TO-END WIRING TEST, re-pointed from bytes to the count.
 
-    A citizen whose conversation is full of never-sent orphans can upload again after a sweep —
-    which is the whole reason the reclaimer exists, and the only test that drives it through the
-    door rather than calling it directly. It used to fill the deleted byte budget with one huge
-    row; it fills the file count with twenty old ones now. Same claim, live rule.
+    A citizen whose conversation is full of never-sent uploads can upload again after a sweep —
+    the whole reason the reclaimer exists, and the only test that drives it through the door rather
+    than calling it directly. It used to fill the deleted byte budget with one huge row; it fills
+    the file count with twenty old ones now.
+
+    ★ AND THE ORPHANS ARE LINKED, which is the shape D1 actually produces. An upload names its
+    conversation at the door, so a first send refused four times leaves twenty files linked to a
+    chat and carried by no message. The reclaimer never read the link — it asks whether any SENT
+    message references the row, and age — so it frees exactly these.
     """
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     old = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=30)
     keys = []
     for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
@@ -1022,6 +1108,7 @@ async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_
                 name="",
                 size=len(_PNG),
                 storage_key=key,
+                conversation_id=conv.id,
                 created_at=old,
             )
         )
@@ -1029,11 +1116,15 @@ async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_
     for key in keys:
         fake_storage.objects[key] = b"x"
 
-    # The unlinked pool is the scope an upload with no conversation is counted against.
     over = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_new", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_new",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert over.status_code == 413
     assert over.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
@@ -1047,7 +1138,12 @@ async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_
     ok = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_new", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_new",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert ok.status_code == 201
 
@@ -1058,8 +1154,13 @@ async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_
 async def test_rate_limit_enforced(client, db_session) -> None:
     from src.api.v1.attachments.router import ATTACHMENT_RATE_LIMIT
 
-    headers, _ = await _auth(db_session)
-    payload = {"attachmentId": "att_rl", "mediaType": "image/png", "base64": _b64(_PNG)}
+    headers, _, conv = await _auth(db_session)
+    payload = {
+        "conversationId": str(conv.id),
+        "attachmentId": "att_rl",
+        "mediaType": "image/png",
+        "base64": _b64(_PNG),
+    }
     for _ in range(ATTACHMENT_RATE_LIMIT):
         resp = await client.post("/v1/attachments", headers=headers, json=payload)
         assert resp.status_code == 201  # idempotent re-upload of the same id
@@ -1074,12 +1175,13 @@ async def test_rate_limit_enforced(client, db_session) -> None:
 
 
 async def test_upload_non_string_name_400(client, db_session, fake_storage) -> None:
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     for bad in (123, ["shot.png"], {"n": "x"}):
         resp = await client.post(
             "/v1/attachments",
             headers=headers,
             json={
+                "conversationId": str(conv.id),
                 "attachmentId": "att_badname",
                 "name": bad,
                 "mediaType": "image/png",
@@ -1094,11 +1196,12 @@ async def test_upload_non_string_name_400(client, db_session, fake_storage) -> N
 async def test_upload_over_long_name_400(client, db_session, fake_storage) -> None:
     # `Attachment.name` is String(512); 513 is one past the boundary — the check must catch
     # it here, 400ing where the client can fix it, rather than 500ing at the DB flush.
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_longname",
             "name": "n" * 513,
             "mediaType": "image/png",
@@ -1112,11 +1215,16 @@ async def test_upload_over_long_name_400(client, db_session, fake_storage) -> No
 
 async def test_upload_absent_name_defaults_to_empty(client, db_session) -> None:
     # Absent (and its `null` spelling) keeps the column's defined "" default — name is optional.
-    headers, user = await _auth(db_session)
+    headers, user, conv = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_noname", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_noname",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
     assert resp.status_code == 201
     assert resp.json()["attachment"]["name"] == ""
@@ -1130,7 +1238,7 @@ async def test_upload_absent_name_defaults_to_empty(client, db_session) -> None:
 
 async def test_office_upload_non_string_name_400(client, db_session) -> None:
     # The name is parsed ONCE at the boundary, so the office branch is covered by the same check.
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     workbook = Workbook()
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -1138,6 +1246,7 @@ async def test_office_upload_non_string_name_400(client, db_session) -> None:
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_office_badname",
             "mediaType": EXCEL_MEDIA_TYPE,
             "base64": _b64(buffer.getvalue()),
@@ -1169,11 +1278,12 @@ async def test_requires_auth(client) -> None:
 # dependency-free, neither reads text, and the structural one refuses only on positive evidence.
 
 
-async def _upload_pdf(client, headers, attachment_id: str, data: bytes, name: str = "doc.pdf"):
+async def _upload_pdf(client, headers, conv, attachment_id: str, data: bytes, name="doc.pdf"):
     return await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": attachment_id,
             "mediaType": "application/pdf",
             "base64": _b64(data),
@@ -1191,9 +1301,9 @@ async def test_a_long_pdf_is_accepted_now_that_nothing_counts_its_pages(
     THE POSITIVE CASE COMES FIRST because every other test in this section asserts a refusal, and
     a door that refused every PDF would satisfy all of them.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_long", pdf_with_pages(40))
+    resp = await _upload_pdf(client, headers, conv, "att_long", pdf_with_pages(40))
 
     assert resp.status_code == 201, resp.text
     assert len(fake_storage.objects) == 1
@@ -1208,9 +1318,9 @@ async def test_a_scanned_image_only_pdf_is_accepted(client, db_session, fake_sto
 
     Mutation check: add any text probe to the PDF arm and this goes red.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_scan", scanned_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_scan", scanned_pdf())
 
     assert resp.status_code == 201, resp.text
 
@@ -1224,9 +1334,9 @@ async def test_a_password_protected_pdf_is_refused_at_the_door(
     Rebuilt without the library that used to detect it: the door reads the trailer's `/Encrypt`
     entry, which is syntax.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_locked", encrypted_pdf(pages=3))
+    resp = await _upload_pdf(client, headers, conv, "att_locked", encrypted_pdf(pages=3))
 
     assert resp.status_code == 415, resp.text
     body = resp.json()
@@ -1247,9 +1357,9 @@ async def test_an_xref_stream_encrypted_pdf_is_refused_too(
 
     Mutation check: key the lock scan on the `trailer` keyword and only this test goes red.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_locked_xref", encrypted_xref_stream_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_locked_xref", encrypted_xref_stream_pdf())
 
     assert resp.status_code == 415, resp.text
     assert resp.json()["error"]["code"] == "PDF_ENCRYPTED"
@@ -1269,9 +1379,11 @@ async def test_a_document_that_merely_mentions_encryption_is_not_called_locked(
 
     Mutation check: match the bare word and this goes red.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_prose", pdf_mentioning_encrypt_in_its_content())
+    resp = await _upload_pdf(
+        client, headers, conv, "att_prose", pdf_mentioning_encrypt_in_its_content()
+    )
 
     assert resp.status_code == 201, resp.text
 
@@ -1284,9 +1396,9 @@ async def test_a_truncated_pdf_is_refused_and_not_stored(client, db_session, fak
 
     Mutation check: delete the structural scan and this is stored with a 201.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_cut", truncated_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_cut", truncated_pdf())
 
     assert resp.status_code == 415, resp.text
     assert fake_storage.objects == {}
@@ -1297,9 +1409,11 @@ async def test_a_pdf_naming_an_offset_past_its_own_end_is_refused(
 ) -> None:
     """The subtler shape of the same failure: terminator present, `startxref` pointing into bytes
     that are not there. Positive evidence, which is the only kind the scan acts on."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_past_end", pdf_pointing_past_its_own_end())
+    resp = await _upload_pdf(
+        client, headers, conv, "att_past_end", pdf_pointing_past_its_own_end()
+    )
 
     assert resp.status_code == 415, resp.text
     assert fake_storage.objects == {}
@@ -1309,9 +1423,9 @@ async def test_magic_valid_rubbish_is_still_refused(client, db_session, fake_sto
     """A file that passes the 18-byte prefix check and is plainly not a document. It used to be
     refused as "too long to work with", which was never true of it; the sentence it gets now says
     the readable thing instead."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_rubbish", unreadable_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_rubbish", unreadable_pdf())
 
     assert resp.status_code == 415, resp.text
     assert "could not be read as a PDF" in resp.json()["error"]["message"]
@@ -1331,9 +1445,9 @@ async def test_a_signed_pdf_with_incremental_updates_is_accepted(
 
     Mutation check: make the scan require the FIRST trailer to be findable and this goes red.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_signed", incrementally_updated_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_signed", incrementally_updated_pdf())
 
     assert resp.status_code == 201, resp.text
 
@@ -1356,11 +1470,11 @@ async def test_a_cross_reference_bomb_costs_the_door_nothing(
     between "scanned some bytes" and "walked eight million entries", which is three orders of
     magnitude, so a generous bound still fails loudly if a parse ever comes back.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     bomb = xref_bomb_pdf()
 
     started = time.monotonic()
-    resp = await _upload_pdf(client, headers, "att_bomb", bomb)
+    resp = await _upload_pdf(client, headers, conv, "att_bomb", bomb)
     elapsed = time.monotonic() - started
 
     assert resp.status_code == 201, resp.text
@@ -1379,14 +1493,15 @@ async def test_a_locked_pdf_and_a_locked_workbook_say_the_identical_sentence(
 
     Mutation check: fork either sentence and this goes red on the equality, not on a substring.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     ole2 = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + b"\x00" * 64
 
-    pdf = await _upload_pdf(client, headers, "att_lp", encrypted_pdf())
+    pdf = await _upload_pdf(client, headers, conv, "att_lp", encrypted_pdf())
     workbook = await client.post(
         "/v1/attachments",
         headers=headers,
         json={
+            "conversationId": str(conv.id),
             "attachmentId": "att_lx",
             "name": "book.xlsx",
             "mediaType": EXCEL_MEDIA_TYPE,
@@ -1405,9 +1520,9 @@ async def test_a_refused_pdf_leaks_no_internals_to_the_citizen(
     """The standing rule for every refusal here: name the file's problem, never the platform's
     machinery. A citizen holding a damaged scan should not meet the words trailer, xref or
     startxref."""
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_leak", truncated_pdf())
+    resp = await _upload_pdf(client, headers, conv, "att_leak", truncated_pdf())
 
     message = resp.json()["error"]["message"]
     for leak in ("trailer", "startxref", "xref", "byte", "parse", "encrypt", "/Encrypt"):
@@ -1428,7 +1543,7 @@ async def test_an_image_is_not_put_through_the_pdf_scans(
     # route body reads.
     from src.services.media.lanes import pdf_refusal as real_pdf_refusal
 
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
     calls: list[str] = []
 
     def _spy(name: str, data: bytes) -> str | None:
@@ -1440,9 +1555,14 @@ async def test_an_image_is_not_put_through_the_pdf_scans(
     image = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_png", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={
+            "conversationId": str(conv.id),
+            "attachmentId": "att_png",
+            "mediaType": "image/png",
+            "base64": _b64(_PNG),
+        },
     )
-    document = await _upload_pdf(client, headers, "att_pdf", pdf_with_pages(2))
+    document = await _upload_pdf(client, headers, conv, "att_pdf", pdf_with_pages(2))
 
     assert image.status_code == 201 and document.status_code == 201
     assert calls == ["doc.pdf"], "only the PDF should reach the PDF scans"
@@ -1458,10 +1578,10 @@ async def test_the_pdf_refusals_leave_a_trace_an_operator_can_act_on(
     operator half has to exist somewhere, and it is one event carrying the size and nothing that
     could identify the file.
     """
-    headers, _ = await _auth(db_session)
+    headers, _, conv = await _auth(db_session)
 
     with capture_logs() as logs:
-        resp = await _upload_pdf(client, headers, "att_logged", truncated_pdf())
+        resp = await _upload_pdf(client, headers, conv, "att_logged", truncated_pdf())
 
     assert resp.status_code == 415, resp.text
     events = [entry for entry in logs if entry["event"] == "pdf_refused_as_incomplete"]

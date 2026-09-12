@@ -221,34 +221,43 @@ def _sniff_media_type(data: bytes) -> str | None:
     return None
 
 
-async def _resolve_conversation_link(
-    db: DbSession, user_id: uuid.UUID, raw: Any
-) -> uuid.UUID | None:
-    """Resolve an optional client-supplied `conversationId` to an OWNED conversation's id.
+CONVERSATION_ID_REQUIRED_CODE: Final = "CONVERSATION_ID_REQUIRED"
+CONVERSATION_ID_REQUIRED_TEXT: Final = (
+    "conversationId is required — create the conversation first, then upload its files against it."
+)
+"""★ A BREAKING CHANGE, TAKEN ON PURPOSE (D1). The field was optional and no shipped client sent
+it, so every stored row was NULL-linked and adopted afterwards by the send route.
 
-    Absent (or explicit `null`) → `None` and the row stores `conversation_id = NULL`, so a
-    client that sends no conversationId keeps working. Resolving a PRESENT one is referential
-    integrity, NOT the tenancy boundary — the row is written and read under the caller's own
-    `user_id` either way; what it buys is that an upload cannot be hung off a STRANGER's
-    conversation.
+The order is inverted now: the chat exists, then its files are uploaded against it, then the
+message is sent. That deletes a whole class of orphan — a file uploaded for a message that is
+never sent used to have no owner at all — and it makes the per-conversation count answerable at
+the door rather than a scope that has to be reconstructed later.
 
-    ★ A CONVERSATION THAT DOES NOT EXIST YET IS NOT AN ERROR, and getting this wrong made the
-    first attachment of every NEW chat impossible (#214). The composer mints the id in the browser
-    and navigates to it; the conversation ROW is created by the first send, which by definition
-    happens AFTER the file is uploaded — the send route stages that row and writes it only once
-    every side-effect-free refusal has passed (R-18). So at upload time the id is real, owned by
-    nobody yet, and simply unwritten. Refusing it 404s the opening move of the whole feature.
+400 RATHER THAN 422, because this route hand-parses its body: every other body error here renders
+the data-plane `{"error":{"message","code"}}` envelope, which is what `uploadAttachment` reads. A
+FastAPI 422 would render a different shape and the browser would show its fallback sentence."""
 
-    It stores `NULL` instead, which is the state this column was made nullable FOR, and nothing
-    downstream is weakened: `code_lane_attachments` finds the file by its ID as well as by the
-    link precisely because this case exists, and the reclaimer reads NULL as legacy rather than as
-    a deletion signal.
+
+async def _resolve_conversation_link(db: DbSession, user_id: uuid.UUID, raw: Any) -> uuid.UUID:
+    """Resolve the client-supplied `conversationId` to an OWNED, EXISTING conversation's id.
+
+    ★ REQUIRED, AND THE ROW MUST ALREADY BE THERE (D1). This used to admit two absences: no field
+    at all, and a well-formed id whose row had not been written yet — both stored `NULL`, because
+    the composer uploaded before the first send and the conversation was created by that send.
+    Neither is admitted now, and the reason is what linking at insert buys: the count cap can be
+    asked at the door, no adoption pass has to run afterwards, and a refused first message leaves
+    no unowned file behind.
+
+    Resolving it is referential integrity, NOT the tenancy boundary — the row is written and read
+    under the caller's own `user_id` either way; what it buys is that an upload cannot be hung off
+    a STRANGER's conversation.
 
     THE STRANGER CHECK IS UNCHANGED, which is why the owner is READ rather than filtered on: a row
-    that exists under another user is still a 404. Only genuine absence is admitted.
+    under another user answers exactly what a missing one does (ADR-0004). Absence and a stranger
+    are one 404, and that must survive any future edit here.
     """
     if raw is None:
-        return None
+        raise AppApiError(400, CONVERSATION_ID_REQUIRED_TEXT, code=CONVERSATION_ID_REQUIRED_CODE)
     if not isinstance(raw, str) or not _ID_RE.match(raw):
         raise AppApiError(400, "Invalid conversation id.")
     try:
@@ -257,8 +266,6 @@ async def _resolve_conversation_link(
         # An ID_RE-valid token that isn't a UUID can key no stored conversation.
         raise AppApiError(404, "Conversation not found.") from None
     owner = await db.scalar(sa.select(Conversation.user_id).where(Conversation.id == cid))
-    if owner is None:
-        return None  # not written yet — the first send creates it
     if owner != user_id:
         raise AppApiError(404, "Conversation not found.")
     return cid
@@ -271,7 +278,7 @@ async def _store_attachment_bytes(
     attachment_id: str,
     media_type: str,
     name: str,
-    conversation_id: uuid.UUID | None,
+    conversation_id: uuid.UUID,
     data: bytes,
 ) -> dict[str, Any]:
     """Enforce the per-conversation COUNT and store the bytes owner-scoped; return the file-part
@@ -279,28 +286,16 @@ async def _store_attachment_bytes(
     conversation is full. NOTE: the check-then-store has a concurrent-overspend window (as in the
     daily gate) — hardening deferred.
 
-    `conversation_id` is stamped on the CREATE branch. On an idempotent re-upload it re-links
-    only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
-    existing link to NULL (the link is set-once-then-refreshable, never silently dropped)."""
+    `conversation_id` is stamped on the CREATE branch and refreshed on a re-upload — it is
+    required now, so there is no absence for either branch to preserve."""
     size = len(data)
-    # THE BUDGET IS SCOPED TO THE CONVERSATION when there is one, and to the UNLINKED POOL when
-    # there is not (#214, agc129's B4).
+    # THE BUDGET IS THE CONVERSATION, and there is no second scope any more (D1).
     #
-    # ★ THE FALLBACK USED TO BE THE WHOLE ACCOUNT, and that refused a new chat's first file for
-    # anyone who had attached twenty things anywhere. The first upload of every new chat is
-    # unlinked — its conversation row is written by the first send — so it was counted against
-    # every sent attachment in every other chat: "This conversation has reached its limit of 20
-    # attachments" on a chat holding zero, with "start a new chat" as the remedy, which was the one
-    # move that could not help.
-    #
-    # Scoped to `conversation_id IS NULL`, an unlinked upload competes only with files that are
-    # ALSO still unsent. The pool stays bounded — nothing uploaded without a chat is ever free.
-    link = (
-        Attachment.conversation_id == conversation_id
-        if conversation_id is not None
-        else Attachment.conversation_id.is_(None)
-    )
-    scope = [Attachment.user_id == user_id, link]
+    # An unlinked pool used to sit beside it: every new chat's first file was uploaded before the
+    # conversation row existed, so it stored NULL and was counted against `conversation_id IS
+    # NULL` until the send route adopted it. That whole arm is gone with the ordering — the chat
+    # is created first, so an upload always names a conversation that is already there.
+    scope = [Attachment.user_id == user_id, Attachment.conversation_id == conversation_id]
     existing = await db.scalar(
         sa.select(Attachment).where(
             Attachment.user_id == user_id, Attachment.attachment_id == attachment_id
@@ -315,11 +310,10 @@ async def _store_attachment_bytes(
     # DIFFERENT conversation finds `existing` and skips the count — moving the row into a chat
     # that already holds twenty. The predicate has to be "is this conversation gaining a file",
     # which is the same comparison the deleted byte budget made for the same reason, and
-    # `None == None` is the unlinked pool on both sides.
-    #
-    # IT DOES NOT SKIP AN UNLINKED UPLOAD: gated on `conversation_id is not None` the cap was
-    # bypassable on the ordinary path, since every new chat's first file is unlinked. It counts the
-    # unlinked pool instead.
+    # `existing.conversation_id` can still be NULL here: `ON DELETE SET NULL` unlinks a row when
+    # its conversation is deleted, and rows uploaded before this ordering landed are NULL too. A
+    # re-upload of one of those into a conversation IS that conversation gaining a file, and the
+    # comparison says so without a special case.
     if existing is None or existing.conversation_id != conversation_id:
         held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
         # `scope` is the conversation when there is one and the unlinked pool when there is not.
@@ -339,8 +333,7 @@ async def _store_attachment_bytes(
     await storage.put(key, data, content_type=media_type)
     if existing is not None:
         existing.media_type, existing.name, existing.size = media_type, name, size
-        if conversation_id is not None:
-            existing.conversation_id = conversation_id
+        existing.conversation_id = conversation_id
     else:
         db.add(
             Attachment(
@@ -397,7 +390,11 @@ def _assert_pdf_is_whole_and_unlocked(data: bytes, name: str) -> None:
     response_model=UploadResponse,
     dependencies=[Depends(_attachment_limiter)],
     responses=error_responses(
-        (400, ErrorEnvelope, "Invalid attachment id, conversation id, name, type, or bytes"),
+        (
+            400,
+            ErrorEnvelope,
+            "Missing or invalid conversationId, or an invalid attachment id, name, type or bytes",
+        ),
         (404, ErrorEnvelope, "conversationId not found (or not owned by the caller)"),
         (413, ErrorEnvelope, "Attachment too large, or the conversation already holds 20 files"),
         # DECLARED BECAUSE IT IS RAISED — the locked and incomplete arms answer 415, and a status

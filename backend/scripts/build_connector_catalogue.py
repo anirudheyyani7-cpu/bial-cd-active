@@ -402,6 +402,18 @@ def load_profile() -> dict[str, Any]:
     return parsed
 
 
+def _definitions_rows() -> tuple[dict[str, Any], ...]:
+    """The working column list. Three readers below take three different fields off it, and
+    each opening the file for itself is how one of them quietly grows a different idea of what
+    is in it — deliberately NOT cached, because this file is rewritten by the ingest between
+    runs and a reader holding the previous round's rows is the failure this consolidates."""
+    path = DATA_DIR / "definitions.json"
+    if not path.is_file():
+        raise SystemExit(f"cannot find {path} — it is the working column list")
+    rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["columns"]
+    return tuple(rows)
+
+
 def load_definitions() -> tuple[tuple[str, str], ...]:
     """(name, definition) for every column in the working set, in the workbook's own order.
 
@@ -409,11 +421,7 @@ def load_definitions() -> tuple[tuple[str, str], ...]:
     client has confirmed and which are ours; nothing here branches on them, nothing marks them and
     no test counts them (owner ruling, 2026-09-11) — the whole distinction ends the day the client
     returns the workbook, and a tiering system built for it would outlive it."""
-    path = DATA_DIR / "definitions.json"
-    if not path.is_file():
-        raise SystemExit(f"cannot find {path} — it is the working column list")
-    rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["columns"]
-    return tuple((str(row["name"]), str(row["definition"])) for row in rows)
+    return tuple((str(row["name"]), str(row["definition"])) for row in _definitions_rows())
 
 
 def marked_for_gloss() -> frozenset[str]:
@@ -427,9 +435,7 @@ def marked_for_gloss() -> frozenset[str]:
     would keep that silent because the name is long. The mark is written by the ingest script, so
     what the client teaches us reaches the agent without anyone remembering to edit this file, and
     a column the client could not define is marked too -- its warning needs text to warn about."""
-    path = DATA_DIR / "definitions.json"
-    rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["columns"]
-    return frozenset(str(row["name"]) for row in rows if row.get("gloss"))
+    return frozenset(str(row["name"]) for row in _definitions_rows() if row.get("gloss"))
 
 
 def recorded_caveats() -> dict[str, str]:
@@ -440,9 +446,11 @@ def recorded_caveats() -> dict[str, str]:
     exactly as confidently as the client's own, and nothing else in the block distinguishes them;
     the ingest already records which meanings they declined to confirm, and a warning nobody
     renders is a warning nobody reads."""
-    path = DATA_DIR / "definitions.json"
-    rows: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["columns"]
-    return {str(row["name"]): str(row["question"]) for row in rows if row.get("question")}
+    return {
+        str(row["name"]): str(row["question"])
+        for row in _definitions_rows()
+        if row.get("question")
+    }
 
 
 def load_abbreviations() -> tuple[tuple[str, str], ...]:

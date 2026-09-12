@@ -418,10 +418,12 @@ describe('a typed draft survives', () => {
   })
 
   it('a FAILED send keeps it — the toast says try again, so the text has to still be there', async () => {
-    // There is no separate create call left to fail. The row's parentage rides the
-    // turn's OWN request now, so a refused first message takes `startTurn`'s catch — the same
-    // path every later message's refusal takes — and it is what this test rejects.
-    h.getBuild.mockResolvedValue(null) // seq 0 → the FIRST message, which carries `create`
+    // A first message now makes TWO calls — `createConversation`, then `startTurn` — and this
+    // test is about the second one failing. The create is stubbed to succeed at the top of the
+    // file, so what is exercised here is `startTurn`'s catch, the same path every later
+    // message's refusal takes. (The create's own refusal is pinned in
+    // `ConversationSurface-projectfirst.test.jsx`.)
+    h.getBuild.mockResolvedValue(null) // seq 0 → the FIRST message, so the create runs too
     h.startTurn.mockRejectedValue(new Error('network down'))
     const { deps: d } = deps()
     renderAt('build-X', d)

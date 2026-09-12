@@ -552,8 +552,12 @@ export async function createConversation(
 /**
  * Build an async READ store for one conversation `kind` (plan | build), preserving the names
  * `builderHistory` re-exports. `newConversation` stays SYNCHRONOUS — it mints a UUID with no
- * network. There is no create member: a row's parentage rides its first turn now (see the
- * retirement note above), so there is nothing left here to create a row with.
+ * network, and minting an id is still all this store does about creation.
+ *
+ * STILL NO CREATE MEMBER, though the reason changed: `createConversation` came back above, but
+ * it belongs to the SEND path, which is the only place that knows a chat is about to receive its
+ * first file. A create member here would invite creating a row at the moment one is listed or
+ * navigated to, which is exactly the empty-chat problem the send path is careful to bound.
  */
 export interface ConversationStore {
   loadHistory: (deps?: AuthFetchDeps) => Promise<(ConversationHeader | null)[]>

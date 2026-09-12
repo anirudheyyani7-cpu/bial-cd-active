@@ -3,10 +3,13 @@ here; `test_progress` asserts it on the raw-log egress path."""
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 
 from src.api.v1.build_sessions.schemas import ErrorSource
 from src.services.orchestrator import constants, errors
+from src.services.turns.copy import DEPENDENCY_DRIFT_TEXT
 
 _TSC_RAW = (
     "\x1b[96m/workspace/app/app/records/page.tsx\x1b[0m:\x1b[93m12\x1b[0m:\x1b[93m5\x1b[0m - "
@@ -451,3 +454,129 @@ def test_a_real_diagnostic_still_wins_over_the_no_diagnostic_fallback() -> None:
 
     assert "error TS2551" in err.title
     assert err.title != errors._FALLBACK_TITLE
+
+
+# --- the dependency stage, inside a container build ----------------------------------------
+#
+# A publish builds the app in a container, and BuildKit prefixes EVERY line with its step
+# marker — `#10 ` for its own progress, `#10 5.696 ` for what the step's program printed. No
+# marker and no noise prefix reaches text through that, so the first line of the builder's own
+# preamble won every failure: a citizen was told their app failed because of
+# `#0 building with "desktop-linux" instance using docker driver`, and the model asked to repair
+# it was handed the same sentence as the diagnosis.
+#
+# `fixtures/publish_dependency_drift.log` is a real failed publish's log, copied unedited.
+
+_DEPENDENCY_DRIFT_LOG = (
+    Path(__file__).parent / "fixtures" / "publish_dependency_drift.log"
+).read_text()
+
+# BuildKit narrating itself and nothing else: an install that died without printing a word.
+_ONLY_BUILDER_CHATTER = (
+    '#0 building with "desktop-linux" instance using docker driver\n'
+    "\n"
+    "#1 [internal] load build definition from Dockerfile\n"
+    "#1 transferring dockerfile: 6.97kB done\n"
+    "#1 DONE 0.0s\n"
+    "\n"
+    "#8 [deps 2/4] WORKDIR /app\n"
+    "#8 CACHED\n"
+    "\n"
+    "#10 [deps 4/4] RUN npm ci --ignore-scripts --no-audit --no-fund --loglevel=error\n"
+    "#10 ERROR: process did not complete successfully: exit code: 1\n"
+)
+
+
+def test_a_lockfile_that_drifted_is_titled_on_the_package_that_drifted() -> None:
+    """What the repair model is handed. The title has to name the offending package, or the
+    run that follows is repairing a build step it was told nothing about."""
+    err = errors.from_next_build(_DEPENDENCY_DRIFT_LOG)
+
+    assert err.source == ErrorSource.NEXT_BUILD
+    assert "does not satisfy" in err.title, (
+        "the failure must be titled on npm's own diagnosis; got: " + err.title
+    )
+    assert "@azure/identity" in err.title, err.title
+    # The exact regression: the builder's own preamble must never become the title.
+    assert not err.title.startswith("#"), err.title
+    assert "desktop-linux" not in err.title
+
+
+def test_a_recovered_drift_does_not_outrank_the_failure_that_stopped_the_build() -> None:
+    """The interaction between the tolerated drift and the classifier, which is the whole reason
+    the dependency markers rank last.
+
+    The deps stage RECOVERS from a drifted lockfile: `npm ci` refuses, prints its block, and the
+    fallback install succeeds. So that block is in the log of every drifted app's build — and a
+    drifted app is the ordinary case, not an exotic one. When such a build then fails to compile,
+    the compile diagnostic is the failure; the npm block is residue from a step that worked."""
+    log = _DEPENDENCY_DRIFT_LOG + (
+        "\n#12 8.402 added 129 packages in 20s"
+        "\n#20 31.55 Error: useSearchParams() should be wrapped in a suspense boundary"
+    )
+
+    err = errors.from_next_build(log)
+
+    assert "useSearchParams" in err.title, (
+        "the compile failure is what stopped this build; got: " + err.title
+    )
+    assert "does not satisfy" not in err.title
+    assert not errors.is_dependency_failure(err), (
+        "a citizen sent to fix a manifest that already installed cleanly is the defect"
+    )
+
+
+def test_a_dependency_failure_with_no_compile_diagnostic_still_wins_the_title() -> None:
+    """The other direction, and the reason ranking them last is safe: a build that genuinely
+    died installing never reaches the compiler, so it carries no compile marker for the
+    dependency markers to lose to."""
+    err = errors.from_next_build(_DEPENDENCY_DRIFT_LOG)
+
+    assert "does not satisfy" in err.title, err.title
+    assert errors.is_dependency_failure(err)
+
+
+def test_the_sentence_a_citizen_reads_about_a_drifted_lockfile_names_nothing_technical() -> None:
+    """The other half of the same classification, and it must not be the same string.
+
+    A package name and two semantic versions is what the failure IS; it is also three pieces
+    of vocabulary the person who asked for a visitor log has never met."""
+    err = errors.from_next_build(_DEPENDENCY_DRIFT_LOG)
+
+    assert errors.is_dependency_failure(err), err.title
+    assert DEPENDENCY_DRIFT_TEXT != err.title
+    assert "@" not in DEPENDENCY_DRIFT_TEXT, DEPENDENCY_DRIFT_TEXT
+    assert not re.search(r"\d+\.\d+", DEPENDENCY_DRIFT_TEXT), DEPENDENCY_DRIFT_TEXT
+    for word in ("npm", "lock file", "identity", "dependenc"):
+        assert word not in DEPENDENCY_DRIFT_TEXT.lower(), word
+
+
+def test_a_compiler_diagnostic_is_not_mistaken_for_a_dependency_failure() -> None:
+    """`does not satisfy` is ALSO how tsc words an unmet generic constraint, which is why the
+    npm markers sit below the TypeScript ones. Read the wrong way round, every build with a
+    generic constraint error would tell the citizen their dependencies had drifted."""
+    raw = (
+        _NEXT_BUILD_BANNER + "Failed to compile.\n\n"
+        "./app/table.tsx:14:9\n"
+        "Type error: Type 'Row' does not satisfy the constraint 'Record<string, unknown>'.\n"
+    )
+
+    err = errors.from_next_build(raw)
+
+    assert err.title.startswith("Type error:")
+    assert not errors.is_dependency_failure(err)
+
+
+def test_a_container_build_that_printed_only_progress_says_it_has_no_diagnostic() -> None:
+    """The strip must not manufacture a diagnosis out of transfer lines.
+
+    Every line here is BuildKit talking about itself, and with the step marker gone the
+    likeliest survivor of the noise filters is `transferring dockerfile: 6.97kB done` — a
+    perfectly readable sentence that explains nothing about why the build failed."""
+    err = errors.from_next_build(_ONLY_BUILDER_CHATTER)
+
+    assert err.title == errors._FALLBACK_TITLE, (
+        f"a build with no readable diagnostic must say so; got {err.title!r}"
+    )
+    # The whole log is still there for whoever needs it — only the TITLE is withheld.
+    assert "transferring dockerfile" in err.cleaned_stack

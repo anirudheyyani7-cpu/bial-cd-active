@@ -2963,7 +2963,7 @@ async def test_save_still_succeeds_while_the_app_is_switched_off(
     nothing consumes it: publish still refuses, approval pins a submission rather than the
     saved head, and the app is off the live roster and out of the catalog.
 
-    Structurally this holds because Save reads its app id through `_existing_app_id`, never
+    Structurally this holds because Save reads its app id through `existing_app_id`, never
     through `resolve_app_for_project` — so wiring the gate into Save would take a deliberate
     edit. Making that edit turns this test red.
     """

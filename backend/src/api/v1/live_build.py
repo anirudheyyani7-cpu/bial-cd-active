@@ -140,12 +140,12 @@ async def refuse_while_build_session_live(
         redis = get_redis()
         if not await lock_is_held(redis, user_id):
             return  # nothing is building — proceed
-        if app_id is not None and not await _the_live_session_is_this_app(redis, user_id, app_id):
+        if app_id is not None and not await the_live_session_is_this_app(redis, user_id, app_id):
             return  # something IS building, but not this app — proceed
         raise AppApiError(status.HTTP_409_CONFLICT, conflict_message, code=conflict_code)
 
 
-async def _the_live_session_is_this_app(
+async def the_live_session_is_this_app(
     redis: aioredis.Redis, user_id: uuid.UUID, app_id: uuid.UUID
 ) -> bool:
     """Does the live session the lock represents belong to `app_id`?

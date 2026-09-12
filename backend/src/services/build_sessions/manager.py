@@ -767,7 +767,7 @@ class SandboxUnreachableError(NoLiveSandboxError):
     same silent destruction, just rarer."""
 
 
-async def _existing_app_id(
+async def existing_app_id(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> uuid.UUID | None:
     """The project's app id WITHOUT minting one (`resolve_app_for_project` upserts)."""
@@ -866,7 +866,7 @@ async def _sandbox_name_for_existing_app(
     `resolve_app_for_project` upserts, and a read that mints is a read that leaves a DRAFT row
     behind every time a turn is refused. None means the project has never been built, so there
     is nothing live that could belong to it."""
-    app_id = await _existing_app_id(db, user_id, project_id)
+    app_id = await existing_app_id(db, user_id, project_id)
     return app_name_for(app_id) if app_id is not None else None
 
 
@@ -1632,7 +1632,7 @@ class SessionManager:
         mid-write would bundle half-finished disk state as the saved bundle Relaunch restores.
         Scoped to WRITING sessions, not merely attached ones (Ask/Plan attach too), or the
         ordinary Save button would refuse mid-chat."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is None:
             raise NoLiveSandboxError(project_id)
         # A save mid-write bundles whatever half-written state is on disk — the switch
@@ -1673,7 +1673,7 @@ class SessionManager:
         frozen at NO container call (a browser tab on a 45-second timer); this is its own call,
         gated by the caller on a preview already framed. `UNKNOWN` for every unanswerable case
         — absent must never read as clean; `compile_state` never raises."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is None:
             return CompileState.UNKNOWN
         try:
@@ -1707,7 +1707,7 @@ class SessionManager:
         the registry, so over an exited process it goes on saying `alive`, or `starting` once the
         reaper retracts the serving proof, and the pane waits for a load that cannot come. Put
         away, the next reading is `asleep` with the work restorable."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is None:
             return WorkspaceState.INTACT  # nothing built yet: nothing to have lost
         remembered = _idle_checks.get(app_id)
@@ -1808,7 +1808,7 @@ class SessionManager:
         state while the two commits stay put. `dirty=None` means UNKNOWN, distinct from False:
         no live container (nothing to compare), or a store we could not read. A UI that renders
         unknown as clean tells the user their work is safe when nobody checked."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is None:
             return SaveState(app_id=None, dirty=None, container_head=None, saved_head=None)
         try:
@@ -2144,7 +2144,7 @@ class SessionManager:
         # but stopping is destructive, and stopping a different project than the one the
         # caller named just because it happened to hold the slot would be a silent-action
         # failure of its own.
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is None:
             return StopOutcome.NOTHING_WAS_RUNNING
         return await self._stop_the_held_session(
@@ -2224,7 +2224,7 @@ class SessionManager:
         when nothing was asked before, `STOPPED` when an earlier ask already settled. ONE STOP
         PER PROJECT: a racing second ask joins the first rather than starting a second, so two
         racing transfers end with one container."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         self._prune_settled_stop_records()
         key = (user.id, project_id)
         in_flight = self._stop_records.get(key)
@@ -2269,7 +2269,7 @@ class SessionManager:
         at most, an in-process dict lookup, nothing else, so a poll never manufactures
         activity of its own. `STOPPED` requires BOTH that nothing holds the app AND that a
         stop was asked for; absent the second, the answer is `NOTHING_WAS_RUNNING`."""
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         if app_id is not None and self._live_session_holds(user.id, app_id):
             # STILL UNWINDING — or something else took the slot in the meantime. Either way the
             # container is not free, and however long this goes on the answer stays this one.
@@ -2361,7 +2361,7 @@ class SessionManager:
         # and a container round trip, let a `RedisError` turn a poll into a 503, and make every
         # framed preview touch its container every 45 seconds — a manufactured activity signal
         # that would keep an unused sandbox looking busy forever.
-        app_id = await _existing_app_id(db, user.id, project_id)
+        app_id = await existing_app_id(db, user.id, project_id)
         try:
             reg, starting = await read_registry_and_starting_marker(get_redis(), user.id)
         except RedisNotConfiguredError:
@@ -2532,7 +2532,7 @@ class SessionManager:
         into the same False, sending the caller straight back into a reclaim refusal it was
         told had been cleared — strict re-raises instead, and the router answers 503."""
         async with self._start_lock_for(user.id):
-            app_id = await _existing_app_id(db, user.id, project_id)
+            app_id = await existing_app_id(db, user.id, project_id)
             if app_id is None:
                 return False
             # THE APP ID IS RESOLVED BEFORE THE REFUSAL so the refusal can compare. The slot is

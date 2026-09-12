@@ -55,10 +55,9 @@ from src.api.v1.connectors.schemas import (
     RelativeWindowChoice,
     StoredWindow,
 )
-from src.api.v1.live_build import _the_live_session_is_this_app
+from src.api.v1.live_build import the_live_session_is_this_app
 from src.core.connectors import CONNECTORS, Connector, resolve_window
 from src.core.errors import AppApiError
-from src.db.models.app_registry import AppRegistry
 from src.db.models.connector_access import ConnectorAccessRequest, ConnectorRequestStatus
 from src.db.models.project import Project
 from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
@@ -69,6 +68,7 @@ from src.services.build_sessions.locks import (
     read_registry,
     read_starting_marker,
 )
+from src.services.build_sessions.manager import existing_app_id
 from src.services.connectors import ConnectorPersonState, PersonAccess, current_access
 from src.services.redis import get_redis
 from src.services.redis.client import RedisNotConfiguredError
@@ -434,7 +434,7 @@ async def _the_live_session_is_this_project(
     outright and is written under the lock, so while one stands it IS the live session's
     identity — and it is the only one that can answer during a cold start, before a registry
     entry exists. The lock and the lease carry none: theirs comes from the registry hash's app
-    name, which `_the_live_session_is_this_app` compares and fails closed on.
+    name, which `the_live_session_is_this_app` compares and fails closed on.
 
     A PROJECT NOTHING WAS EVER BUILT IN HAS NO APP ROW, and so no container of its own — a
     registry naming an app is naming somebody else's work. A registry naming NOTHING is
@@ -442,17 +442,12 @@ async def _the_live_session_is_this_project(
     if starting_project_id is not None:
         return starting_project_id == project_id
     # Read, never mint: `resolve_app_for_project` upserts, and a settings write that minted a
-    # draft app would leave one behind for a project nobody has ever built in. The `user_id`
-    # predicate is the isolation boundary — dropping it is a cross-user leak.
-    app_id: uuid.UUID | None = await db.scalar(
-        sa.select(AppRegistry.id).where(
-            AppRegistry.project_id == project_id, AppRegistry.user_id == user_id
-        )
-    )
+    # draft app would leave one behind for a project nobody has ever built in.
+    app_id = await existing_app_id(db, user_id, project_id)
     if app_id is None:
         registry = await read_registry(redis, user_id)
         return not (registry or {}).get(REGISTRY_FIELD_APP_NAME, "")
-    return await _the_live_session_is_this_app(redis, user_id, app_id)
+    return await the_live_session_is_this_app(redis, user_id, app_id)
 
 
 async def _refuse_while_a_session_is_live(

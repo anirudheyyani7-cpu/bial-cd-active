@@ -306,3 +306,20 @@ MODEL_UNAVAILABLE_PLAN_TEXT: Final = (
     "Send your message again in a minute."
 )
 """The same ending in a Plan chat, where there is no workspace to have kept a copy of."""
+
+
+DEPENDENCY_DRIFT_TEXT: Final = (
+    "Your app couldn't be packaged up: the ready-made pieces it is built from no longer match "
+    "the list it was set up with. Nothing was published — ask me to put that right and try "
+    "again."
+)
+"""What a citizen is told when publishing stops while the app's pieces are being fetched.
+
+THE DIAGNOSTIC IS UNSAYABLE HERE. It is a package name and two version numbers, and that IS the
+whole of what went wrong — there is no honest way to shorten it into this register, so the
+sentence names the shape of the fault instead and the diagnostic goes to the operator detail,
+where the person who can act on it looks.
+
+IT SAYS NOTHING WAS PUBLISHED rather than that a previous version is still running, which is the
+reassurance the other build failures carry: on a first publish there is no previous version, and
+this failure happens before anything the citizen could be looking at has changed."""

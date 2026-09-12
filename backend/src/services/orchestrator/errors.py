@@ -28,6 +28,18 @@ _FALLBACK_TITLE = "The build reported an error with no readable diagnostic."
 # Absolute sandbox paths → workspace-relative. The app lives at /workspace/app.
 _WORKSPACE_ROOTS = ("/workspace/app/", "/workspace/")
 
+# npm's two lines for a dependency stage that could not install, in specificity order: the
+# first names the package that drifted, the second only names the class of misuse. Spliced into
+# the marker table below AND read by `is_dependency_failure`, so one list decides both the title
+# and the class rather than the two drifting apart. THE `npm error` PREFIX IS LOAD-BEARING and
+# not decoration: the diagnosis itself reads `… does not satisfy …`, which is also how tsc words
+# an unmet generic constraint, so matching on the diagnosis alone would route a compile failure
+# into the dependency sentence — where the citizen would be told to fix something that is fine.
+_DEPENDENCY_MARKERS: Final = (
+    "npm error Invalid:",
+    "npm error code EUSAGE",
+)
+
 # `next build` opens with a banner and progress spinners, so its FIRST line is reliably
 # "▲ Next.js 16.2.10" — noise. Scan for the line that actually names the failure, in
 # SPECIFICITY order (a later `Type error:` beats an earlier generic `TypeError:`), the same
@@ -53,6 +65,10 @@ _NEXT_BUILD_MARKERS = (
     # The build ran out of memory rather than finding a fault in the code. Surfacing it as
     # the TITLE matters: told "your code has an error", a citizen edits code that is fine.
     "JavaScript heap out of memory",
+    # Below the heap marker for the reason the heap marker exists: an install that ran out of
+    # memory is a resource failure, and telling a citizen their dependencies are wrong would
+    # send them editing a manifest that is fine.
+    *_DEPENDENCY_MARKERS,
     "ReferenceError:",
     "TypeError:",
     "SyntaxError:",
@@ -106,6 +122,31 @@ _NEXT_BUILD_NOISE_PREFIXES = (
 )
 
 
+# A container build wraps every line in BuildKit's step marker: `#10 ` where the builder is
+# narrating its own progress, `#10 5.696 ` where the step's program printed something. The
+# timing stamp is the only thing separating the two. Until the marker comes off, no noise
+# prefix and no `startswith` below can reach the text, which is how a failed dependency install
+# came to be titled `#0 building with "desktop-linux" instance using docker driver`.
+_BUILDKIT_STEP_RE = re.compile(r"^#\d+ (?:(?P<stamp>\d+\.\d+) )?")
+
+
+def _spoken_by_the_build(lines: list[str]) -> list[str]:
+    """The step marker off every line, and the builder's own narration dropped.
+
+    Layer transfers, CACHED and DONE are chatter no noise prefix lists, and they would
+    otherwise be the first lines to survive every filter and become the title. Anything
+    carrying no marker at all passes through untouched — which is every log that did not come
+    from a container build."""
+    spoken: list[str] = []
+    for line in lines:
+        marker = _BUILDKIT_STEP_RE.match(line)
+        if marker is None:
+            spoken.append(line)
+        elif marker.group("stamp") is not None:
+            spoken.append(line[marker.end() :])
+    return spoken
+
+
 def _relativize_paths(text: str) -> str:
     for root in _WORKSPACE_ROOTS:
         text = text.replace(root, "")
@@ -138,6 +179,7 @@ def _first_meaningful_line(text: str, source: ErrorSource) -> str:
             if "error TS" in line:
                 return _clip_title(line)
     elif source == ErrorSource.NEXT_BUILD:
+        lines = _spoken_by_the_build(lines)
         for marker in _NEXT_BUILD_MARKERS:
             for line in lines:
                 if marker in line:
@@ -200,6 +242,16 @@ def from_next_build(raw: str) -> BuildError:
     says an app can actually be built and shipped. `ErrorSource.NEXT_BUILD` sat unused since the
     taxonomy was written — this is the arm `declutter`'s docstring anticipated."""
     return declutter(raw, ErrorSource.NEXT_BUILD)
+
+
+def is_dependency_failure(error: BuildError) -> bool:
+    """Whether the build died installing the app's pieces rather than compiling its code.
+
+    Keyed on the TITLE the marker table already picked, so a package name quoted anywhere else
+    in the log cannot reclassify the failure. Callers need the class because the two halves of
+    a `BuildError` egress to different readers here: this title is a package name and two
+    version numbers, which is an operator's sentence and never a citizen's."""
+    return any(marker in error.title for marker in _DEPENDENCY_MARKERS)
 
 
 # --- the CLIENT arm -----------------------------------------------------------

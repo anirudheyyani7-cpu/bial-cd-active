@@ -258,7 +258,7 @@ def wired_sandbox(app, db_session):
 
 
 async def test_unshare_tears_down_the_colleagues_live_container(
-    client, db_session, bind_store, wired_sandbox
+    client, db_session, bind_store, wired_sandbox, fake_redis
 ) -> None:
     """#198 R25 — Slice 1's teardown seam, filled in: revoking access tears down the
     recipient's live view of the project, not merely the membership row."""

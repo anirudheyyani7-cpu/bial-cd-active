@@ -9,7 +9,6 @@ place (the router's dependency chain), matching `resolve.py`'s own stated design
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -151,6 +150,16 @@ async def revoke_share(
     return revoked
 
 
+def _escape_for_ilike(value: str) -> str:
+    """Escape `%`/`_` (and the escape character itself, first) so a HAND-BUILT `ILIKE` pattern
+    treats `value` as literal text rather than live wildcards — the backslash-order matters:
+    escaping `\\` before `%`/`_` is what stops a literal backslash in `value` from re-arming
+    one of them. `.istartswith(value, autoescape=True)` already does this for a value that IS
+    the whole pattern; this is for the one shape below that is not — a match anchored after a
+    literal space, which needs the delimiter concatenated onto an already-escaped core."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def search_colleagues(
     db: AsyncSession, *, requester_id: uuid.UUID, query: str
 ) -> list[User]:
@@ -160,23 +169,27 @@ async def search_colleagues(
     in it against any three characters of that shared domain. Excludes the requester (R2 —
     "the user search excludes the requester so they never appear in their own results").
 
+    ONE MECHANISM, ESCAPED ONCE — both arms are `ILIKE` prefix patterns now, not a Postgres
+    POSIX regex for the name and an unescaped `ILIKE` for the email. The email arm used to
+    interpolate `query` straight into a pattern (`f"{query}%"`): `%`/`_` in `query` were live
+    wildcards, so `q=%%%` matched every local part and `q=___` matched every one of three-plus
+    characters, defeating this exact anchoring rule in one keystroke. `.istartswith(...,
+    autoescape=True)` closes that on the prefix arms; `_escape_for_ilike` covers the one
+    pattern SQLAlchemy's convenience methods cannot build for you — "starts right after a
+    literal space", not "starts the whole value".
+
     `query` has already cleared `MIN_COLLEAGUE_QUERY_CHARS` and the character-cap paste
     backstop at the schema boundary (`ColleagueSearchQuery`) — this function trusts both.
     """
-    # `re.escape` for a POSIX-ERE literal match, not a Python/PCRE one — `~*` is Postgres's
-    # case-insensitive extended-regex operator. The handful of characters `re.escape` escapes
-    # that POSIX does not need (there is no PCRE/POSIX metacharacter this over-escapes into a
-    # DIFFERENT meaning) stay literal either way, so this is safe for the realistic input a
-    # colleague search actually sees — letters, spaces, hyphens, apostrophes.
-    name_token_pattern = rf"(^|\s){re.escape(query)}"
-    email_local_prefix = f"{query}%"
+    later_token_pattern = f"% {_escape_for_ilike(query)}%"
     rows = await db.scalars(
         sa.select(User)
         .where(
             User.id != requester_id,
             sa.or_(
-                User.display_name.op("~*")(name_token_pattern),
-                sa.func.split_part(User.email, "@", 1).ilike(email_local_prefix),
+                User.display_name.istartswith(query, autoescape=True),  # the first token
+                User.display_name.ilike(later_token_pattern, escape="\\"),  # any later token
+                sa.func.split_part(User.email, "@", 1).istartswith(query, autoescape=True),
             ),
         )
         .order_by(User.display_name, User.email)

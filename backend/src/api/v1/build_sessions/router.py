@@ -935,6 +935,47 @@ async def refresh_shared_project(
     )
 
 
+@router.post(
+    "/shared-view/release",
+    response_model=ReleaseResponse,
+    dependencies=[RequireCsrf],
+    responses=error_responses(
+        (403, ErrorEnvelope, "CSRF check failed"),
+        AUTH_401,
+        (409, ConflictEnvelope, "A build is running in this workspace"),
+        (503, ErrorEnvelope, "The sandbox or build coordination is temporarily unavailable"),
+    ),
+)
+async def release_shared_view(
+    user: CurrentUser,
+    manager: SessionManagerDep,
+    sandbox: OptionalSandbox,
+) -> ReleaseResponse | JSONResponse:
+    """Give up whatever colleague's shared view currently holds the caller's OWN slot (#198,
+    requirement 24's self-service exit) — no `project_id`, because the caller may not own one
+    that names it. The occupant `SandboxReclaimBlockedError` reports for a shared view is its
+    OWNER's project, which a recipient never owns, so `stopActiveBuild`/`release` (both gated on
+    `owned_project_or_404`) can never be the hand-over dialog's remedy for this case; this route
+    asks nothing but "is a shared view sitting in my slot right now" and needs no id to ask it.
+
+    `released: false` is a success — nothing was there to give up, or what was there was the
+    caller's OWN build sandbox (`release_project_sandbox`'s job, not this one's)."""
+    if sandbox is None:
+        raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
+    with build_coordination_or_503():
+        try:
+            released = await manager.give_up_shared_view(user.id, sandbox_client=sandbox)
+        except BuildSessionConflictError as exc:
+            return _conflict_response(exc)
+        except SandboxError as exc:
+            raise AppApiError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Could not close that shared app just now. Please try again.",
+            ) from exc
+        return ReleaseResponse(released=released)
+    raise _coordination_is_gone()
+
+
 @router.get(
     "/projects/{project_id}/preview-state",
     response_model=PreviewStateResponse,

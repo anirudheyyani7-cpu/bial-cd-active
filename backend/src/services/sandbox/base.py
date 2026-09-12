@@ -570,6 +570,23 @@ class ServedPage:
 
 
 @dataclass(frozen=True)
+class ServedCount:
+    """What `GET /_sup/served` actually answers — a count that is NOT monotonic, and the flag
+    that says why (#198).
+
+    The supervisor counts matching lines in a bounded TAIL of the access log (roll-limited to
+    1 MiB, read in a 256 KiB window) — `count` is the true total only up to that window's size.
+    Once traffic pushes the log past it, `count` plateaus or drops as older lines age out of the
+    tail, and `truncated=True` is the supervisor's own admission that this reading is a window,
+    not a total. Comparing two `truncated` readings as if they were cumulative is the bug this
+    type exists to make impossible to reintroduce silently — `count` alone answered a caller's
+    question wrong for as long as this shape did not exist to carry the caveat with it."""
+
+    count: int
+    truncated: bool
+
+
+@dataclass(frozen=True)
 class FileResult:
     """Mirrors the supervisor's `POST /files` per-action response. `detail` carries the
     action-specific body (`content` for view, `replacements` for str_replace, …)."""
@@ -787,18 +804,24 @@ class SandboxClient(abc.ABC):
         override must never raise, and no caller may gate a preview frame on its return."""
         return None
 
-    async def served_count(self, handle: SandboxHandle) -> int | None:
+    async def served_count(self, handle: SandboxHandle) -> ServedCount | None:
         """How many requests the generated app has served, per `GET /_sup/served` — Caddy's own
         count of real traffic through the app block, EXCLUDING every control-plane probe
         (`log_skip` on the `/_sup/*` block; see `sandbox/Caddyfile`). #198's shared-runtime
-        viewer has no chat turn and takes no mutating action, so this monotonically increasing
-        count is the ONLY evidence available that a colleague is still looking at a shared
-        preview — the reclamation sweep compares two readings of it to decide whether to renew
-        `DeadlineWriter.APP_SERVED_TRAFFIC`.
+        viewer has no chat turn and takes no mutating action, so this is the ONLY evidence
+        available that a colleague is still looking at a shared preview — the reclamation sweep
+        reads it to decide whether to renew `DeadlineWriter.APP_SERVED_TRAFFIC`.
+
+        NOT MONOTONIC — see `ServedCount`'s own docstring. The supervisor counts a bounded TAIL
+        of its access log, so `count` plateaus or drops once traffic pushes the log past that
+        window; `truncated=True` is what tells a caller the reading is a window, not a
+        cumulative total, and `reaper.py::_renew_shared_view_from_traffic` treats that flag as
+        proof of ongoing traffic in its own right rather than comparing a saturated number
+        against whatever was seen last.
 
         DELIBERATELY NOT abstract, same reason as `someone_has_to_go_first`: the pinned-contract
         test keeps the abstract set frozen, and every build-sandbox caller is unaffected by this
-        default. `None` (never 0) means "could not ask" — an unreachable container or a
-        pre-`/served` supervisor image — and must not be read as "definitely no new traffic",
-        which would let the sweep reap a container it simply failed to probe."""
+        default. `None` means "could not ask" — an unreachable container or a pre-`/served`
+        supervisor image — and must not be read as "definitely no new traffic", which would let
+        the sweep reap a container it simply failed to probe."""
         return None

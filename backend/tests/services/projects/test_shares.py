@@ -35,20 +35,26 @@ def bind_store(monkeypatch: pytest.MonkeyPatch):
     return _bind
 
 
-async def _saved_project(db_session, bind_store, *, owner_email="owner@example.com"):
+async def _saved_project(db_session, bind_store, *, owner_email="owner@example.com", store=None):
     """An owner with a project that has a saved snapshot — the one precondition `create_share`
-    gates on (R10)."""
-    store = bind_store(FakeStorage())
+    gates on (R10).
+
+    `store` lets a caller minting a SECOND project reuse the first's — `bind_store` REPLACES
+    `storage_accessor`'s singleton wholesale, so binding a second fresh `FakeStorage()` in the
+    same test does not add to the first project's store, it makes it unreachable, and a share
+    on that first project then refuses with "nothing saved" against a store that never held it."""
+    if store is None:
+        store = bind_store(FakeStorage())
     owner = await UserFactory.create(db_session, email=owner_email)
     project = await ProjectFactory.create(db_session, owner.id, description="A project")
     app_id = await resolve_app_for_project(db_session, owner.id, project.id)
     await db_session.flush()
     await store.put(snapshot_key(app_id), b"BUNDLE")
-    return project, owner
+    return project, owner, store
 
 
 async def test_sharing_with_yourself_is_refused(db_session, bind_store) -> None:
-    project, owner = await _saved_project(db_session, bind_store)
+    project, owner, _store = await _saved_project(db_session, bind_store)
     with pytest.raises(AppApiError) as exc_info:
         await create_share(db_session, project=project, actor_id=owner.id, colleague_id=owner.id)
     assert exc_info.value.status_code == 400
@@ -92,7 +98,7 @@ async def test_sharing_a_project_with_only_an_autosave_is_still_refused(
 
 
 async def test_a_normal_share_succeeds_and_is_returned(db_session, bind_store) -> None:
-    project, owner = await _saved_project(db_session, bind_store)
+    project, owner, _store = await _saved_project(db_session, bind_store)
     colleague = await UserFactory.create(db_session, email="colleague@example.com")
 
     share = await create_share(
@@ -103,7 +109,7 @@ async def test_a_normal_share_succeeds_and_is_returned(db_session, bind_store) -
 
 
 async def test_re_sharing_the_same_colleague_is_idempotent(db_session, bind_store) -> None:
-    project, owner = await _saved_project(db_session, bind_store)
+    project, owner, _store = await _saved_project(db_session, bind_store)
     colleague = await UserFactory.create(db_session, email="colleague@example.com")
 
     first = await create_share(
@@ -122,7 +128,7 @@ async def test_re_sharing_the_same_colleague_is_idempotent(db_session, bind_stor
 async def test_revoking_a_share_that_exists_returns_true_and_removes_it(
     db_session, bind_store
 ) -> None:
-    project, owner = await _saved_project(db_session, bind_store)
+    project, owner, _store = await _saved_project(db_session, bind_store)
     colleague = await UserFactory.create(db_session, email="colleague@example.com")
     await create_share(db_session, project=project, actor_id=owner.id, colleague_id=colleague.id)
     await db_session.flush()
@@ -182,14 +188,17 @@ async def test_colleague_search_excludes_the_requester(db_session) -> None:
 
 
 async def test_shared_with_me_lists_newest_grant_first(db_session, bind_store) -> None:
-    project_a, owner = await _saved_project(
+    project_a, owner, store = await _saved_project(
         db_session, bind_store, owner_email="owner-a@example.com"
     )
-    store_b = bind_store(FakeStorage())
+    # THE SAME STORE AS PROJECT A, NOT A SECOND `bind_store(FakeStorage())` — that call REPLACES
+    # `storage_accessor`'s singleton wholesale rather than adding to it, which made project A's
+    # already-saved snapshot unreachable and its `create_share` below refuse with "nothing saved"
+    # against a store that never held it in the first place.
     project_b = await ProjectFactory.create(db_session, owner.id, description="Second project")
     app_id_b = await resolve_app_for_project(db_session, owner.id, project_b.id)
     await db_session.flush()
-    await store_b.put(snapshot_key(app_id_b), b"BUNDLE")
+    await store.put(snapshot_key(app_id_b), b"BUNDLE")
 
     colleague = await UserFactory.create(db_session, email="colleague@example.com")
     await create_share(db_session, project=project_a, actor_id=owner.id, colleague_id=colleague.id)
@@ -202,7 +211,7 @@ async def test_shared_with_me_lists_newest_grant_first(db_session, bind_store) -
 
 
 async def test_shared_with_me_is_scoped_to_the_recipient(db_session, bind_store) -> None:
-    project, owner = await _saved_project(db_session, bind_store)
+    project, owner, _store = await _saved_project(db_session, bind_store)
     colleague = await UserFactory.create(db_session, email="colleague@example.com")
     stranger = await UserFactory.create(db_session, email="stranger@example.com")
     await create_share(db_session, project=project, actor_id=owner.id, colleague_id=colleague.id)

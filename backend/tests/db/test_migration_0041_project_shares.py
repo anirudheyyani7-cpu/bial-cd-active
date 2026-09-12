@@ -24,7 +24,11 @@ _FK_SQL = (
     "SELECT a.attname AS column, confrelid::regclass AS references_table, confdeltype "
     "FROM pg_constraint c "
     "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
-    "WHERE c.conrelid = :table::regclass AND c.contype = 'f' AND a.attname = :column"
+    # `CAST(:table AS regclass)`, not `:table::regclass` — SQLAlchemy's `text()` bind scanner
+    # does not treat `:table` as a parameter when a `::` cast follows it immediately, so the
+    # literal reached Postgres unbound and this assertion never actually ran (a syntax error,
+    # not a passing check). The unambiguous cast keeps the bind alive.
+    "WHERE c.conrelid = CAST(:table AS regclass) AND c.contype = 'f' AND a.attname = :column"
 )
 
 

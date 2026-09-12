@@ -42,6 +42,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_SHARED_OWNER_ID,
     REGISTRY_FIELD_SHARED_PROJECT_ID,
+    REGISTRY_FIELD_SHARED_SERVED_COUNT,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -67,6 +68,7 @@ from src.services.sandbox.base import (
     SandboxGoneError,
     SandboxHandle,
     SandboxNotReadyError,
+    ServedCount,
     ServedPage,
     base_path_for,
     sandbox_tags,
@@ -547,14 +549,18 @@ class AcaSandboxClient(SandboxClient):
         except (KeyError, TypeError, ValueError):  # fmt: skip  # ruff py314 strips parens
             return CompileReport(state=CompileState.UNKNOWN, reason="malformed_body")
 
-    async def served_count(self, handle: SandboxHandle) -> int | None:
+    async def served_count(self, handle: SandboxHandle) -> ServedCount | None:
         """Ask the supervisor how many requests the app has served — `GET /_sup/served`.
 
         NEVER RAISES, same posture as `compile_state`: a transport failure, a pre-`/served`
         supervisor image, or a malformed body all mean the same thing to the caller — this
-        probe could not answer — and `None` is that answer. Returning 0 on a failure would read
-        as "confirmed no new traffic" and let the reclamation sweep reap a container it simply
-        could not reach, which is the one direction this signal must never be wrong in."""
+        probe could not answer — and `None` is that answer. Returning a zeroed `ServedCount` on
+        a failure would read as "confirmed no new traffic" and let the reclamation sweep reap a
+        container it simply could not reach, which is the one direction this signal must never
+        be wrong in. `truncated` defaults to `True` on a malformed body for the identical
+        fail-closed reason — an unparseable `truncated` field must not silently read as "this
+        count is a trustworthy total" (`ServedCount`'s own docstring says what `truncated`
+        actually governs)."""
         try:
             resp = await self._get(handle, "served", timeout=_OP_TIMEOUT_SECONDS)
         except SandboxError:
@@ -562,7 +568,10 @@ class AcaSandboxClient(SandboxClient):
         if resp.status_code != 200:
             return None
         try:
-            return int(resp.json()["served"])
+            body = resp.json()
+            return ServedCount(
+                count=int(body["served"]), truncated=bool(body.get("truncated", True))
+            )
         except KeyError, TypeError, ValueError:
             return None
 
@@ -735,7 +744,17 @@ class AcaSandboxClient(SandboxClient):
                     REGISTRY_FIELD_SHARED_OWNER_ID: str(shared_owner_id),
                 },
             )
-        await get_redis().hdel(key, REGISTRY_FIELD_PREVIEW_STAY_UNTIL)
+        # `shared_served_count` DISOWNED UNCONDITIONALLY, on EVERY fresh container — unlike
+        # `shared_project_id`/`shared_owner_id` below, which only need clearing when THIS arm is
+        # an ordinary build sandbox. A high-water mark left behind survives into whatever comes
+        # next in this slot, whether that is a build sandbox or a REPLACEMENT shared view: the
+        # new container's first `/served` reading then compares against the OLD occupant's
+        # total, `count <= last_seen` reads as "no new traffic" immediately, and the sweep's
+        # `APP_SERVED_TRAFFIC` renewal (`reaper.py::_renew_shared_view_from_traffic`) never
+        # fires for it at all.
+        await get_redis().hdel(
+            key, REGISTRY_FIELD_PREVIEW_STAY_UNTIL, REGISTRY_FIELD_SHARED_SERVED_COUNT
+        )
         if shared_project_id is None:
             await get_redis().hdel(
                 key, REGISTRY_FIELD_SHARED_PROJECT_ID, REGISTRY_FIELD_SHARED_OWNER_ID

@@ -716,7 +716,17 @@ async def reap_user(
         await release_liveness_lease(redis, user_uuid)
         await reap_lock(redis, user_uuid)
         return False
-    if app_id is not None:
+    # THE DURABLE-COPY GATE NEVER RUNS FOR A SHARED VIEW (#198), whatever `app_id` the caller
+    # resolved. `sweep_all`'s own `_owning_app_id` currently maps a `shr-` registry record to the
+    # OWNER's app id (`_app_names_to_owners` keys every `shr-` name off the recipient, but the
+    # value it carries is still the shared app's id) — passing that here would gate this
+    # RECIPIENT's teardown against the OWNER's recovery slot, and R22 says that storage is
+    # read-never-write for a recipient. Worse, a diverted or first-write guarded write then
+    # REFUSES the reap outright, sparing the container forever — the exact bill-forever leak R16/
+    # R17 exist to close. A shared view holds nothing worth preserving in the first place: the
+    # recipient never edits its tree directly, and what they own of it is a restore of the
+    # owner's own snapshot, already durable at its source.
+    if app_id is not None and not is_a_shared_sandbox_name(registered_name):
         # THE REAL HEAD, not a hardcoded `None`. See `_reach_the_container`: a constant `None`
         # here made the gate's fallback its only branch, and the comparison it exists to perform
         # unreachable. A container that will not answer still falls back — it just has to
@@ -864,17 +874,28 @@ async def _renew_shared_view_from_traffic(
         return
     try:
         handle = await sandbox_client.attach_existing(str(user_uuid))
-        count = await sandbox_client.served_count(handle)
-        if count is None:
+        served = await sandbox_client.served_count(handle)
+        if served is None:
             return  # could not ask; the ceiling and the standing stay decide instead
         last_seen_raw = reg.get(REGISTRY_FIELD_SHARED_SERVED_COUNT)
         last_seen = int(last_seen_raw) if last_seen_raw else 0
-        if count <= last_seen:
+        # `truncated` IS ITS OWN EVIDENCE OF ONGOING TRAFFIC (`ServedCount`'s own docstring) —
+        # checked BEFORE the `<=` comparison, not folded into it. The supervisor's count is a
+        # bounded TAIL, not a cumulative total, so once real traffic pushes the log past that
+        # window `served.count` plateaus or drops: comparing it against `last_seen` as if it
+        # were monotonic made `count <= last_seen` come back True forever, the moment the
+        # window filled, for a session someone was actively using. A `truncated` reading means
+        # the log has substantial recent activity in it BY DEFINITION — enough to have filled
+        # the window — so it renews unconditionally rather than trusting a number that can no
+        # longer answer "did anything NEW happen".
+        if not served.truncated and served.count <= last_seen:
             # No NEW traffic since the last pass — a steady background poll from an idle tab
             # must not read as fresh evidence every five minutes forever, or the ceiling above
             # is the only thing that would ever end a session nobody is actually reading.
             return
-        await redis.hset(registry_key(user_uuid), REGISTRY_FIELD_SHARED_SERVED_COUNT, str(count))
+        await redis.hset(
+            registry_key(user_uuid), REGISTRY_FIELD_SHARED_SERVED_COUNT, str(served.count)
+        )
         await grant_stay_of_execution(redis, user_uuid, writer=DeadlineWriter.APP_SERVED_TRAFFIC)
     except Exception:
         _log.exception(

@@ -211,6 +211,29 @@ async def test_reap_user_tears_down_a_shared_sandbox_in_the_slot(
     assert await locks.read_registry(fake_redis, USER) is None
 
 
+async def test_reap_user_skips_the_durable_copy_gate_for_a_shared_view_even_with_an_app_id(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The bug a live Azure run found: `sweep_all`'s own `_owning_app_id` resolves a `shr-`
+    record to the OWNER's app id (`_app_names_to_owners` keys the name off the recipient but
+    carries the shared app's id as the value), so the scheduled sweep always calls `reap_user`
+    with `app_id is not None` for a shared view. Gating on that id would run the durable-copy
+    check against a recovery slot this container never wrote to (R22: read-never-write for a
+    recipient) — and a diverted or unreachable verdict then REFUSES the reap outright, sparing
+    the container forever. No storage is bound in this test at all: if the gate ran, touching
+    it would fail loudly rather than silently pass, which is exactly the point — a shared view
+    must never reach the gate regardless of which app_id a caller resolved for it."""
+    shared_name = a_shared_sandbox_name("colleague")
+    await _seed(fake_redis, USER, app_name=shared_name)
+    client = FakeSandboxClient()
+    some_unrelated_app_id = uuid.uuid4()  # stands in for the OWNER's app id, wrongly resolved
+
+    assert await reaper.reap_user(fake_redis, USER, client, app_id=some_unrelated_app_id) is True
+
+    assert shared_name in client.torn_down
+    assert await locks.read_registry(fake_redis, USER) is None
+
+
 async def test_reconcile_reaps_on_expired_lock(fake_redis: aioredis.Redis) -> None:
     await _seed(fake_redis, USER, with_lock=False, with_heartbeat=False)
     client = FakeSandboxClient()
@@ -685,7 +708,9 @@ async def _seed_shared_view(
         await redis.hset(registry_key(user), REGISTRY_FIELD_PREVIEW_STAY_UNTIL, stay)
 
 
-def _reachable_shared_view_client(app_name: str, *, served: int | None) -> FakeSandboxClient:
+def _reachable_shared_view_client(
+    app_name: str, *, served: int | None, truncated: bool = False
+) -> FakeSandboxClient:
     client = FakeSandboxClient()
     client.attach_handle = SandboxHandle(
         fqdn=f"{app_name}.example",
@@ -695,6 +720,7 @@ def _reachable_shared_view_client(app_name: str, *, served: int | None) -> FakeS
         ready=True,
     )
     client.served_count_value = served
+    client.served_count_truncated = truncated
     return client
 
 
@@ -742,6 +768,28 @@ async def test_the_sweep_never_reads_served_count_as_a_regression(
 
     assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
     assert name in client.torn_down
+
+
+async def test_a_truncated_reading_renews_even_with_a_saturated_count(
+    fake_redis: aioredis.Redis,
+) -> None:
+    """The bug a live run would eventually find: the supervisor's `served` count is a bounded
+    TAIL of the access log, not a cumulative total, so once real traffic pushes the log past
+    that window the count plateaus (or drops) even though someone is actively using the app.
+    Comparing it as if it were monotonic made `count <= last_seen` come back True forever from
+    that point on — `truncated=True` is the supervisor's own admission that the reading is a
+    window, and it must renew the stay on its own, without regard to whether the count itself
+    moved."""
+    name = a_shared_sandbox_name("colleague")
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))  # already lapsed
+    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_SHARED_SERVED_COUNT, "500")
+    # Same count as last seen, AND lower than it could plausibly be after this much traffic —
+    # exactly what a saturated tail-window reading looks like.
+    client = _reachable_shared_view_client(name, served=500, truncated=True)
+
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
+    assert client.torn_down == []
+    assert await locks.stay_of_execution_is_current(fake_redis, USER) is True
 
 
 async def test_the_sweep_treats_an_unreachable_shared_view_as_no_new_evidence(

@@ -48,6 +48,7 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_SERVING_SINCE,
     REGISTRY_FIELD_SHARED_OWNER_ID,
     REGISTRY_FIELD_SHARED_PROJECT_ID,
+    REGISTRY_FIELD_SHARED_SERVED_COUNT,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -63,6 +64,7 @@ from src.services.sandbox.base import (
     SandboxClient,
     SandboxGoneError,
     SandboxHandle,
+    ServedCount,
     ServedPage,
 )
 from src.services.storage.base import ListPage, ObjectMeta, ObjectStorage
@@ -257,7 +259,11 @@ async def _hydrate_registry(
                 REGISTRY_FIELD_SHARED_OWNER_ID: str(shared_owner_id),
             },
         )
-    else:
+    # `shared_served_count` disowned UNCONDITIONALLY — mirrors the real client's own fix: a
+    # high-water mark left behind by a PRIOR occupant of this slot (build sandbox or a
+    # replaced shared view) must never be compared against a fresh container's first reading.
+    await get_redis().hdel(key, REGISTRY_FIELD_SHARED_SERVED_COUNT)
+    if shared_project_id is None:
         await get_redis().hdel(
             key, REGISTRY_FIELD_SHARED_PROJECT_ID, REGISTRY_FIELD_SHARED_OWNER_ID
         )
@@ -320,6 +326,10 @@ class FakeSandboxClient(SandboxClient):
         # #198 — the supervisor's `/served` count, scripted per test. `None` (the default)
         # scripts the probe that could not answer, same convention as `served_page`.
         self.served_count_value: int | None = None
+        # #198 — whether that count is a windowed reading rather than a cumulative total
+        # (`ServedCount`'s own docstring). `False` by default: most tests script a small count
+        # that is meant to compare as a real total.
+        self.served_count_truncated: bool = False
 
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
@@ -460,11 +470,13 @@ class FakeSandboxClient(SandboxClient):
         self.warmed.append(handle.preview_url)
         return self.warm_status
 
-    async def served_count(self, handle: SandboxHandle) -> int | None:
-        """#198's shared-runtime traffic signal, scripted per test via `served_count_value`.
-        `None` (the default) is the probe that could not answer, same convention as
-        `served_page`."""
-        return self.served_count_value
+    async def served_count(self, handle: SandboxHandle) -> ServedCount | None:
+        """#198's shared-runtime traffic signal, scripted per test via `served_count_value`/
+        `served_count_truncated`. `None` (the default) is the probe that could not answer, same
+        convention as `served_page`."""
+        if self.served_count_value is None:
+            return None
+        return ServedCount(count=self.served_count_value, truncated=self.served_count_truncated)
 
     async def dev_logs(self, handle: SandboxHandle, *, since: int = 0) -> DevLogs:
         return DevLogs(lines=[], next_cursor=since)

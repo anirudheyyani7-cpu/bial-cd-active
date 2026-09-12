@@ -110,7 +110,7 @@ from src.services.build_sessions.outcome import (
     newest_build_outcome_status,
     write_build_outcome,
 )
-from src.services.build_sessions.reaper import reap_user, reconcile_user
+from src.services.build_sessions.reaper import is_a_shared_sandbox_name, reap_user, reconcile_user
 from src.services.build_sessions.snapshot import (
     SNAPSHOT_EXEC_TIMEOUT_SECONDS,
     SNAPSHOT_EXECS,
@@ -601,6 +601,14 @@ class SandboxReclaimBlockedError(Exception):
         # a question. `building` decides WHICH dialog; `agent_working` decides what it says is
         # happening right now.
         agent_working: bool = False,
+        # WHICH REMEDY ACTUALLY WORKS (#198). `project_id`/`project_name` above name a project
+        # the citizen owns for a `sbx-` occupant — `stopActiveBuild`/`release` both gate on
+        # `owned_project_or_404`, which that citizen satisfies. For a `shr-` occupant the id
+        # named is the SHARED PROJECT'S OWNER, which the caller (a recipient) never owns — the
+        # same two routes would 404 them out of their own slot. `is_shared_view=True` is the
+        # client's one signal to route to the self-scoped give-up-my-shared-view endpoint
+        # instead, which needs no project id or ownership check at all.
+        is_shared_view: bool = False,
     ) -> None:
         super().__init__("another project is holding the sandbox")
         self.project_id = project_id
@@ -609,6 +617,7 @@ class SandboxReclaimBlockedError(Exception):
         self.dirty = dirty
         self.building = building
         self.agent_working = agent_working
+        self.is_shared_view = is_shared_view
 
 
 @dataclass(frozen=True)
@@ -2047,6 +2056,7 @@ class SessionManager:
                 dirty=False,
                 building=False,
                 agent_working=False,
+                is_shared_view=True,
             )
         occupying = await _occupying_project(db, user.id, occupied_by)
         if occupying is None:
@@ -2545,7 +2555,16 @@ class SessionManager:
         nothing to release, reported as a plain success. `strict=True` keeps that true: the
         lenient default would collapse "nothing registered" and "teardown failed" into the
         same False, sending the caller straight back into a reclaim refusal it was told had
-        been cleared — strict re-raises instead, and the router turns it into a 503."""
+        been cleared — strict re-raises instead, and the router turns it into a 503.
+
+        ACCEPTS EITHER LINEAGE IN THE SLOT (#198, R16's acceptance example: "when the reaper
+        sweeps it OR the release path runs, the container is actually deleted"). The registry
+        this reads is keyed by `user.id` alone — there is exactly one entry per user — so
+        whatever name it holds is unambiguously THIS caller's, whether that is `project_id`'s
+        own `sbx-` container or a colleague's `shr-` view they have open. Before this, a `shr-`
+        occupant failed the `app_name_for(app_id)` comparison and the function returned False
+        without reaping anything: a recipient whose slot held a shared view had no route back
+        to their own build sandbox, and Azure/Redis both still showed the container live."""
         async with self._start_lock_for(user.id):
             if user.id in self._active_by_user:
                 raise BuildSessionConflictError(self._active_by_user.get(user.id))
@@ -2553,11 +2572,43 @@ class SessionManager:
             if app_id is None:
                 return False
             redis = get_redis()
-            if not await _the_live_sandbox_is_already_the_one_we_want(
-                redis, user.id, app_name_for(app_id)
-            ):
+            reg = await read_registry(redis, user.id)
+            if reg is None or reg.get(REGISTRY_FIELD_STATE) != REGISTRY_STATE_READY:
+                return False
+            occupied_by = reg.get(REGISTRY_FIELD_APP_NAME, "")
+            if occupied_by != app_name_for(app_id) and not is_a_shared_sandbox_name(occupied_by):
                 return False
             return await reap_user(redis, user.id, sandbox_client, strict=True)
+
+    async def give_up_shared_view(
+        self, user_id: uuid.UUID, *, sandbox_client: SandboxClient
+    ) -> bool:
+        """Give up whatever shared view currently holds the caller's own slot (#198, requirement
+        24's self-service exit). NEEDS NO `project_id` AND NO OWNERSHIP CHECK — the registry this
+        reads is keyed by `user_id` alone, so whatever it names is already unambiguously theirs to
+        release, and that is the whole reason this exists: `release_project_sandbox` still
+        requires a `project_id` the caller OWNS to even ask the question, which a recipient who
+        has never built anything of their own cannot supply, and `SandboxReclaimBlockedError`'s
+        occupant for a shared view names the OWNER's project — never the recipient's — so
+        neither `stopActiveBuild` nor `release` can be reached with an id that passes
+        `owned_project_or_404`. A recipient's hand-over dialog needs a door that asks nothing but
+        "is a shared view sitting in MY slot right now", and this is it.
+
+        Returns `False`, not an error, when the slot holds nothing (already gone) or holds the
+        caller's OWN build sandbox instead (nothing of this action's business — `sbx-` names are
+        `release_project_sandbox`'s job). `strict=True` mirrors that function's own reasoning:
+        the citizen is about to retry whatever the reclaim refusal blocked, and a still-standing
+        container would walk them right back into it."""
+        redis = get_redis()
+        async with self._start_lock_for(user_id):
+            if user_id in self._active_by_user:
+                raise BuildSessionConflictError(self._active_by_user.get(user_id))
+            reg = await read_registry(redis, user_id)
+            if reg is None or reg.get(REGISTRY_FIELD_STATE) != REGISTRY_STATE_READY:
+                return False
+            if not is_a_shared_sandbox_name(reg.get(REGISTRY_FIELD_APP_NAME, "")):
+                return False
+            return await reap_user(redis, user_id, sandbox_client, strict=True)
 
     async def revoke_shared_preview(
         self,
@@ -3548,14 +3599,23 @@ class SessionManager:
             if owner_app_id is None:
                 raise SharedProjectHasNoAppError(project.id)
             shared_name = shr_name_for(owner_app_id, recipient.id)
-            # `spare_app=None` on a forced refresh: the point is to NOT treat the currently-live
-            # container as already the one we want, so the reconcile below reclaims it and the
-            # restore arm runs unconditionally — even though the name it would produce is
-            # identical to what is already there.
-            spare_app = None if force_refresh else shared_name
+            # THE GUARD ALWAYS SPARES THE RECIPIENT'S OWN INCUMBENT — Refresh included. It asks
+            # "is anything of the recipient's about to be destroyed", and their own already-live
+            # shared view is never that, whatever button they pressed to get here. Bug fixed
+            # live: passing `None` here on a forced refresh also defeated the identity check
+            # (`_the_live_sandbox_is_already_the_one_we_want`/`occupied_by == spare_app`) the
+            # guard itself runs first, so Refresh on a live view fell through to the shared-
+            # occupant branch and reported the recipient's OWN open app as blocking them.
             await self._refuse_if_reclaim_would_destroy_work(
-                db, recipient, spare_app=spare_app, sandbox_client=sandbox_client
+                db, recipient, spare_app=shared_name, sandbox_client=sandbox_client
             )
+            # `_holding_user_lock` asks a NARROWER question than the guard above — not "would
+            # this destroy something" but "should the reconcile below treat the live container
+            # as the one we already want, or tear it down". Those answers diverge on exactly
+            # Refresh: `spare_app=None` here is what makes the reconcile reclaim a live view
+            # unconditionally, so the restore arm always runs even though the name it would
+            # produce is identical to what is already there.
+            spare_app = None if force_refresh else shared_name
             async with self._holding_user_lock(
                 redis,
                 recipient.id,

@@ -20,9 +20,18 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import { BusyGlyph } from '../components/ui/Waiting'
+import ReclaimWorkspaceDialog from '../components/projects/ReclaimWorkspaceDialog'
 import { getProject } from '../utils/projectApi'
 import type { Project } from '../utils/projectApi'
-import { launchSharedPreview, refreshSharedPreview } from '../utils/buildSessionApi'
+import {
+  asReclaimBlocked,
+  giveUpSharedView,
+  handOverWorkspace,
+  launchSharedPreview,
+  refreshSharedPreview,
+  type HandoverStep,
+  type ReclaimBlocked,
+} from '../utils/buildSessionApi'
 import type { SharedPreviewResponse } from '../utils/buildSessionTypes'
 import { ApiError } from '../utils/apiError'
 import { relativeTimeVerbose } from '../utils/relativeTime'
@@ -39,6 +48,18 @@ export default function SharedProjectPage(): React.JSX.Element {
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+
+  // THE HAND-OVER PROMPT (requirement 24, its frontend half). `launchSharedPreview`/
+  // `refreshSharedPreview` DO take the caller's own one-per-user slot — see their own
+  // corrected docstrings — so either can 409 `sandbox_reclaim_blocked` exactly as a relaunch
+  // can, and it must reach a citizen sitting on this standalone route the same way it reaches
+  // one inside the workspace shell. `pendingAction` remembers WHICH call to retry once the
+  // slot is freed — Launch and Refresh both funnel through here, and the dialog itself does
+  // not know or care which one asked.
+  const [blocked, setBlocked] = useState<ReclaimBlocked | null>(null)
+  const [pendingAction, setPendingAction] = useState<'launch' | 'refresh' | null>(null)
+  const [step, setStep] = useState<HandoverStep | null>(null)
+  const [resolving, setResolving] = useState(false)
 
   const bounceGone = useCallback(
     () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
@@ -87,6 +108,17 @@ export default function SharedProjectPage(): React.JSX.Element {
     launchSharedPreview(projectId)
       .then((res) => setPreview(res))
       .catch((err: unknown) => {
+        // THE HAND-OVER PROMPT, NOT A GENERIC FAILURE (requirement 24). This 409 means the
+        // caller's own slot is not free — either their own build, or another shared view they
+        // opened earlier — and a Retry that just calls Launch again would fail identically
+        // forever. `pendingAction` is what lets `resolve` below know to call THIS function
+        // again once the slot is freed.
+        const reclaim = asReclaimBlocked(err)
+        if (reclaim) {
+          setPendingAction('launch')
+          setBlocked(reclaim)
+          return
+        }
         setLaunchError(err instanceof Error ? err.message : 'Could not open this shared project.')
       })
       .finally(() => setLaunching(false))
@@ -110,10 +142,59 @@ export default function SharedProjectPage(): React.JSX.Element {
     refreshSharedPreview(projectId)
       .then((res) => setPreview(res))
       .catch((err: unknown) => {
+        const reclaim = asReclaimBlocked(err)
+        if (reclaim) {
+          setPendingAction('refresh')
+          setBlocked(reclaim)
+          return
+        }
         setLaunchError(err instanceof Error ? err.message : 'Could not refresh this shared project.')
       })
       .finally(() => setRefreshing(false))
   }, [projectId])
+
+  // Fresh sequencing every time the dialog opens — a hand-over that failed and was retried
+  // must not carry the PREVIOUS attempt's step forward.
+  const cancelBlocked = useCallback((): void => {
+    setBlocked(null)
+    setPendingAction(null)
+    setStep(null)
+  }, [])
+
+  const retryPendingAction = useCallback((): void => {
+    if (pendingAction === 'refresh') onRefresh()
+    else launch()
+  }, [pendingAction, onRefresh, launch])
+
+  // WHAT "GIVE UP THE INCUMBENT" ACTUALLY DOES — branches once, here, on the ONE fact that
+  // decides which remedy can even be reached (see `ReclaimBlocked.isSharedView`'s own
+  // docstring). A shared occupant's `dirty` is always `false`, so `ReclaimWorkspaceDialog`'s
+  // own `copyFor` never renders a Save button for it — `save` is accepted for symmetry with
+  // the dialog's two-button contract, and is unreachable on that arm.
+  const resolveBlocked = useCallback(
+    async (save: boolean): Promise<void> => {
+      if (blocked === null) return
+      setResolving(true)
+      setStep('stopping')
+      try {
+        if (blocked.isSharedView) {
+          await giveUpSharedView()
+        } else {
+          await handOverWorkspace(blocked.projectId, save, {}, (next) => setStep(next))
+        }
+        cancelBlocked()
+        retryPendingAction()
+      } catch (err) {
+        setLaunchError(
+          err instanceof Error ? err.message : 'Could not close the other app just now.',
+        )
+        cancelBlocked()
+      } finally {
+        setResolving(false)
+      }
+    },
+    [blocked, cancelBlocked, retryPendingAction],
+  )
 
   const busy = launching || refreshing
 
@@ -147,8 +228,13 @@ export default function SharedProjectPage(): React.JSX.Element {
           <button
             type="button"
             onClick={onRefresh}
-            aria-disabled={busy || project === null || project.hasSavedSnapshot === false}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+            // A REAL `disabled`, not `aria-disabled` — that attribute alone never actually
+            // stops a click, so Refresh fired while a launch was in flight, while a refresh
+            // was already running, and when the owner had nothing saved (the one case this
+            // was added for). Tailwind's `disabled:` variant also only matches the true
+            // `:disabled` pseudo-class, so the dim styling silently never applied either.
+            disabled={busy || project === null || project.hasSavedSnapshot === false}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline disabled:opacity-50 disabled:pointer-events-none"
           >
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : undefined} /> Refresh
           </button>
@@ -203,6 +289,17 @@ export default function SharedProjectPage(): React.JSX.Element {
           </div>
         )}
       </main>
+
+      {blocked !== null && (
+        <ReclaimWorkspaceDialog
+          blocked={blocked}
+          startingProjectName={project?.name ?? null}
+          onSaveAndSwitch={() => resolveBlocked(true)}
+          onSwitchAnyway={() => resolveBlocked(false)}
+          onCancel={cancelBlocked}
+          step={resolving ? step : null}
+        />
+      )}
     </div>
   )
 }

@@ -64,9 +64,10 @@ export interface RelaunchPreviewResponse {
 
 /**
  * `POST …/projects/{id}/shared-launch` and `.../shared-refresh` → 200 (#198).
- * `RelaunchPreviewResponse`'s sibling for a colleague's read-only view of a project shared
- * with them — no `status`/`restoredFromFailedBuild`: a shared view registers no build
- * session and has no build-outcome history of its own to qualify.
+ * `RelaunchPreviewResponse`'s sibling for a project a colleague shares with the viewer — "Can
+ * use", never "view only" (Key Decision 3): the viewer can create, update and delete the
+ * owner's records through the app's own UI. No `status`/`restoredFromFailedBuild`: this view
+ * registers no build session and has no build-outcome history of its own to qualify.
  */
 export interface SharedPreviewResponse {
   appId: string

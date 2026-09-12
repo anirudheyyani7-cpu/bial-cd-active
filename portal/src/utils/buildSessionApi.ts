@@ -386,8 +386,19 @@ function toSharedPreviewResponse(value: unknown): SharedPreviewResponse {
 /**
  * Open a project a colleague shared with you (#198). Attaches to an already-live view if one
  * is up (a reopened tab, a second click); otherwise restores one from the owner's latest
- * SAVED snapshot. Registers no build session, exactly like `relaunchPreview` — nothing here
- * occupies the caller's own one-per-user build slot.
+ * SAVED snapshot.
+ *
+ * IT DOES TAKE THE CALLER'S OWN ONE-PER-USER SLOT — the same slot a build occupies — via the
+ * identical `_holding_user_lock` skeleton `relaunchPreview` runs under. A prior docstring here
+ * said the opposite ("registers no build session... nothing here occupies the caller's own
+ * slot"), which was true of the build-SESSION bookkeeping and false of the thing that actually
+ * matters to a caller: whether pressing this can conflict with something else. It can — a
+ * `409 sandbox_reclaim_blocked` here means exactly what it means on a relaunch, and the caller
+ * has to handle it the same way (see `asReclaimBlocked` / `ReclaimBlocked.isSharedView`).
+ *
+ * NOT "READ-ONLY" EITHER, for the same Key Decision 3 reason the product copy already gets
+ * right: the recipient can create, update and delete the owner's records through the app's own
+ * UI. "Can use", never "view only" — these two functions open the door, nothing more.
  */
 export async function launchSharedPreview(
   projectId: string,
@@ -672,6 +683,17 @@ export interface ReclaimBlocked {
    * defaulting the other way would falsely mark every citizen's other project busy.
    */
   agentWorking: boolean
+  /**
+   * WHICH REMEDY ACTUALLY WORKS (#198). `projectId`/`projectName` above name a project the
+   * CALLER OWNS when this is an ordinary build occupant — `stopActiveBuild`/`release` both
+   * gate on `owned_project_or_404`, which that caller satisfies. When `isSharedView` is true,
+   * the occupant is a colleague's shared view and `projectId` names its OWNER instead, whom a
+   * recipient never owns — those same two routes would 404 them out of their own slot. Route
+   * to `giveUpSharedView` instead, which needs no project id at all.
+   *
+   * Absent reads as false: an older backend that omits it never produced a shared occupant.
+   */
+  isSharedView: boolean
 }
 
 /** Narrow a thrown error to the refusal, or `null` for anything else.
@@ -698,7 +720,27 @@ export function asReclaimBlocked(err: unknown): ReclaimBlocked | null {
     // nobody is building.
     building: d.building === true,
     agentWorking: d.agentWorking === true,
+    isSharedView: d.isSharedView === true,
   }
+}
+
+/**
+ * Give up whatever colleague's shared view currently holds the caller's OWN slot (#198,
+ * requirement 24's self-service exit). No `project_id`, because a `ReclaimBlocked` naming a
+ * shared occupant carries its OWNER's project — never the recipient's — so neither
+ * `stopActiveBuild` nor `release` can be reached with an id that passes `owned_project_or_404`;
+ * this is the one door a recipient can always use, regardless of whether they have ever built
+ * anything of their own. `released: false` is a success — nothing was there to give up, or what
+ * was there was the caller's own build sandbox instead (not this function's job).
+ */
+export async function giveUpSharedView(deps: AuthFetchDeps = {}): Promise<boolean> {
+  const body = await postJson(
+    `${BASE}/shared-view/release`,
+    undefined,
+    'Could not close that shared app',
+    deps,
+  )
+  return isRecord(body) && body.released === true
 }
 
 /** What is (or is not) serving a project's preview right now.

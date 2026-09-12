@@ -61,8 +61,9 @@ it belongs to, and what the model does with it.
   as too large for the workspace. It streams now: 46 MB and under six seconds for the same file.
 - **A PDF with more pages than the assistant can read now says so.** Such a document used to end the
   turn with "the assistant hit a problem", which named nothing and invited sending it again. The
-  refusal now names the document and offers the two things that work — attach a shorter one, or
-  split it.
+  refusal now names the document, says that the chat it landed in will keep hitting the same limit,
+  and offers the two things that work from there — start a new chat with a shorter document, or
+  split this one and attach the part you need.
 - **A spreadsheet is measured rather than taken at its word.** A workbook carries a record of its
   own extent, and some tools write one that is wrong. The reader believed it, so a sheet of fifty
   rows that declared itself one cell was summarised as one cell — no error, nothing to suggest

@@ -287,10 +287,14 @@ _CONTEXT_OVERFLOW_MARKERS: Final = ("prompt is too long", "exceed context limit"
 #
 # WHY IT IS NAMED RATHER THAN LEFT GENERIC. This is a permanent property of the file the citizen
 # just attached, and "the assistant hit a problem and this turn was stopped" invites the one
-# thing that cannot work — sending again. It is also NOT the overflow sentence: "this chat is
-# full, start a new chat" would send them to a new chat where the same document fails
-# identically, which is the loop the overflow arm's own comment warns about. Different cause,
-# different remedy, different sentence.
+# thing that cannot work — sending again.
+#
+# AND WHY THE REMEDY NAMES BOTH HALVES. The user turn is persisted before the model is called,
+# and `load_history` rehydrates its bytes into every later turn, so the document is a permanent
+# resident of the chat it landed in and that chat refuses identically for as long as it exists.
+# Naming only a new chat — the overflow sentence — sends them somewhere the same file fails
+# again. Naming only a shorter document leaves them in a chat that will refuse it. Neither half
+# works alone.
 #
 # In practice the window usually bites first — a page costs ~2,900 tokens measured, so a
 # ~175-page document already fills the conversation — and that path is the overflow arm above.
@@ -299,14 +303,15 @@ _CONTEXT_OVERFLOW_MARKERS: Final = ("prompt is too long", "exceed context limit"
 _PDF_TOO_MANY_PAGES_MARKERS: Final = ("maximum of 600 pdf pages", "pdf pages may be provided")
 
 DOCUMENT_TOO_LONG_TEXT: Final = (
-    "That PDF has too many pages for the assistant to read. "
-    "Attach a shorter document, or split it and attach the part you need."
+    "That PDF has too many pages for the assistant to read, and it stays in this chat, so "
+    "every message here will hit the same limit. Start a new chat and attach a shorter "
+    "document — or split this one and attach just the part you need."
 )
 """What the citizen reads when the provider refuses a document on its page count.
 
-Names the file as the cause and gives the two things that actually work. Deliberately quotes no
-page number: the limit is the provider's, not the platform's, and a number stated here would be
-one more thing to keep true across a deployment change."""
+Names the file as the cause and gives a remedy that works from where they are standing. Quotes no
+page number deliberately: the limit is the provider's, not the platform's, and a number stated
+here would be one more thing to keep true across a deployment change."""
 
 DOCUMENT_TOO_LONG_CODE: Final = "DOCUMENT_TOO_MANY_PAGES"
 """The machine-readable half, riding out on the terminal frame beside the sentence."""

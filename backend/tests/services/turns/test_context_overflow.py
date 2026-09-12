@@ -477,12 +477,15 @@ async def test_a_pdf_refused_on_page_count_names_the_document_not_the_chat(
     retired the page cap that could, deliberately, which is what leaves this arm as the only
     place the citizen can be told what happened.
 
-    IT IS NOT "THIS CHAT IS FULL". That sentence sends them to a new chat where the same
-    document fails identically — the loop `_CONTEXT_OVERFLOW_MARKERS`' own comment warns about.
-    The cause is a permanent property of the file, so the remedy names the file.
+    IT IS NOT "THIS CHAT IS FULL", WHICH NAMES ONLY HALF THE REMEDY. The user turn is persisted
+    before the model is called and its bytes are rehydrated into every later turn, so the document
+    is a permanent resident of this chat and every message here refuses identically. A new chat
+    alone does not help — they would attach the same file. A shorter document alone does not help
+    either — this chat still carries the old one. The sentence has to name both.
 
     Mutation check: delete the `_is_document_too_long` arm and this goes red on the generic
-    sentence; point it at `CHAT_TOO_LONG_TEXT` and it goes red on the wrong remedy.
+    sentence; point it at `CHAT_TOO_LONG_TEXT` and it goes red on the wrong remedy; drop either
+    half of the remedy and the last two assertions go red.
     """
     conv_id, state = await _run_until_settled(
         _fresh_engine,
@@ -494,9 +497,12 @@ async def test_a_pdf_refused_on_page_count_names_the_document_not_the_chat(
     assert state.status == "failed"
     assert _last_error(state) == DOCUMENT_TOO_LONG_TEXT
     assert _terminal(state).reason == DOCUMENT_TOO_LONG_CODE
-    # Emphatically NOT the chat-full remedy — a new chat cannot help.
+    # Emphatically NOT the chat-full sentence, whose remedy stops at the new chat.
     assert CHAT_TOO_LONG_TEXT not in (_last_error(state) or "")
     assert _terminal(state).reason != CHAT_TOO_LONG_CODE
+    said = _last_error(state) or ""
+    assert "new chat" in said, "this chat cannot recover — the remedy has to leave it"
+    assert "shorter" in said, "a new chat with the same file fails identically"
     # The ending is still an ENDING: one terminal, and the conversation is not left wedged.
     assert conv_id not in _mid_reply
 

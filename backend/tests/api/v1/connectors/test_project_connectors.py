@@ -763,8 +763,31 @@ async def test_the_project_the_build_is_running_in_is_still_refused(
     code, message = _refusal(resp)
     assert resp.status_code == 409, resp.text
     assert code == "session_is_live"
-    assert message == router._SESSION_IS_LIVE.format(name=_CONNECTOR.display_name)
+    assert message == router._SESSION_IS_LIVE.format(
+        project=building.name, name=_CONNECTOR.display_name
+    )
     assert await _stored_rows(db_session, building.id) == []
+
+
+async def test_the_refusal_names_the_project_whose_session_is_in_the_way(
+    client, db_session, fake_redis
+) -> None:
+    """★ The switch is reachable from a list of a person's projects, so a refusal that says only
+    "you have a build running" leaves the citizen to work out which workspace to go and finish.
+
+    Turn red by dropping the project from the sentence: the connector name alone identifies what
+    the citizen was changing, never where the work that blocks it is."""
+    user, building = await _approved(db_session)
+    building.name = "Visitor Log"
+    await db_session.flush()
+    await _registry_names(fake_redis, user, await _app_of(db_session, user, building))
+    await acquire_lock(fake_redis, user.id)
+
+    code, message = _refusal(await _put(client, user, building.id, {"enabled": True}))
+
+    assert code == "session_is_live"
+    assert "“Visitor Log”" in message, "the citizen is told WHICH project is holding the workspace"
+    assert _CONNECTOR.display_name in message, "and which connector they were switching"
 
 
 async def test_a_project_nothing_has_ever_been_built_in_is_settable_while_another_builds(

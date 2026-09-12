@@ -320,6 +320,29 @@ async def test_releasing_an_idle_project_is_not_refused_because_another_one_is_l
     assert wire.sbx.torn_down == []  # neither container was taken
 
 
+async def test_the_release_refusal_names_the_project_holding_the_workspace(
+    client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
+) -> None:
+    """★ A citizen who asked to close a workspace from a project list is told which project is
+    still working, so "finish or stop it" points somewhere.
+
+    Turn red by putting the bare "a build session is already active" back: it names no project,
+    and the code beside it is for the client rather than the person reading."""
+    user, project = await _user_project(db_session, "ctl-rel2@rvaiglobal.com")
+    project.name = "Visitor Log"
+    await db_session.flush()
+    await a_live_session(wire, db_session, user, project.id)
+
+    refused = await client.post(
+        f"/v1/build-sessions/projects/{project.id}/release", headers=auth_headers(user)
+    )
+
+    assert refused.status_code == 409, refused.text
+    error = refused.json()["error"]
+    assert error["code"] == "build_session_already_active", "the client still branches on this"
+    assert "“Visitor Log”" in error["message"]
+
+
 # --- the window between a turn's terminal and its release ------------------------------
 
 

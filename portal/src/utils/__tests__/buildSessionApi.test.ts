@@ -259,6 +259,7 @@ describe('asReclaimBlocked', () => {
       // ABSENT READS AS FALSE — an older backend with no such field has no agent to report,
       // and defaulting true would tell every citizen their other project is busy.
       agentWorking: false,
+      isSharedView: false,
     })
   })
 
@@ -279,6 +280,22 @@ describe('asReclaimBlocked', () => {
   it('keeps dirty TRI-STATE — a non-boolean is unknown, never clean', () => {
     const err = { code: 'sandbox_reclaim_blocked', details: { projectId: 'p-a', projectName: 'A', dirty: null } }
     expect(asReclaimBlocked(err)?.dirty).toBeNull()
+  })
+
+  it('★ carries `isSharedView` — the client\'s one signal to skip stopActiveBuild/release', () => {
+    // A colleague's shared view names its OWNER in `projectId`/`projectName`, which the
+    // recipient never owns — `stopActiveBuild`/`release` would 404 them on that id.
+    // `isSharedView` is what routes the client to `giveUpSharedView` instead.
+    const err = {
+      code: 'sandbox_reclaim_blocked',
+      details: { projectId: 'owner-p', projectName: 'Owner App', dirty: false, isSharedView: true },
+    }
+    expect(asReclaimBlocked(err)?.isSharedView).toBe(true)
+  })
+
+  it('isSharedView absent reads as false — an older backend never produced a shared occupant', () => {
+    const err = { code: 'sandbox_reclaim_blocked', details: { projectId: 'p-a', projectName: 'A', dirty: false } }
+    expect(asReclaimBlocked(err)?.isSharedView).toBe(false)
   })
 
   it('ignores the OTHER 409 — a running build has no remedy the user can act on', () => {
@@ -329,6 +346,7 @@ describe('asReclaimBlocked', () => {
       dirty: true,
       building: false,
       agentWorking: false,
+      isSharedView: false,
     })
   })
 
@@ -370,6 +388,7 @@ describe('asReclaimBlocked — a project that is still being built', () => {
       dirty: null,
       building: true,
       agentWorking: false,
+      isSharedView: false,
     })
   })
 

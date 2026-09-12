@@ -17,6 +17,7 @@ getting anywhere. `describe()` has always had the right arms; nothing ever reach
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -133,3 +134,98 @@ def test_the_guards_parse_under_the_version_the_image_actually_ships() -> None:
     assert "except (ReadFailure, MemoryError):" in source
     assert source.count("except (ReadFailure, MemoryError):") == 3
     assert "except ReadFailure, MemoryError:" not in source
+
+
+# --- the reader streams, and that is load-bearing (#214 U13) ------------------------------------
+
+
+def test_the_workbook_is_streamed_never_materialised() -> None:
+    """★ THE PROPERTY THE 10 MB CAP DEPENDS ON, pinned against the source.
+
+    `read_only=True` walks the sheet XML a row at a time; `read_only=False` builds a cell object
+    per cell. Measured in the shipped image on a dense 9.99 MB workbook (920,000 cells) at
+    1 vCPU / 2 GiB: materialising peaked at 829 MB and was REFUSED by `MEMORY_LIMIT_BYTES`;
+    streaming peaks at 46 MB and reads in 5.5s. Both loads must be streamed — the second one
+    (`data_only=True`, for cached formula results) is the same size as the first.
+
+    Read off the AST rather than the source text, because the text also contains this rule
+    written out in prose — the first version of this test matched its own docstring. Measured
+    rather than asserted is not an option here: the libraries are absent outside the image, and a
+    memory assertion is exactly the kind that goes quietly green when it is skipped.
+    `test_read_attachment.py` covers the OUTPUT; this covers the how.
+
+    Mutation receipt: flip either `read_only=True` back to `False` and this goes red.
+    """
+    loads = [
+        call
+        for call in ast.walk(ast.parse(READER.read_text(encoding="utf-8")))
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "load_workbook"
+    ]
+
+    assert len(loads) == 2, f"expected two workbook loads, found {len(loads)}"
+    for call in loads:
+        streamed = [k.value for k in call.keywords if k.arg == "read_only"]
+        assert streamed and all(
+            isinstance(v, ast.Constant) and v.value is True for v in streamed
+        ), (
+            "both workbook loads must stream; a materialising load cannot read a 10 MB workbook "
+            "inside MEMORY_LIMIT_BYTES"
+        )
+
+
+def test_the_merge_scan_does_not_build_a_tree() -> None:
+    """★ THE MISTAKE THIS ALREADY MADE ONCE, pinned so it cannot come back.
+
+    Merged ranges are not populated on a read-only worksheet, so they are read from the sheet part
+    directly. The first attempt used `ET.iterparse` with `element.clear()` — which does NOT unlink
+    the element from its parent, so the root accumulated every `<row>` and `<c>` in the sheet. On
+    the dense workbook that put the reader at 527 MB and straight back over the ceiling, while the
+    openpyxl half of the same read sat at 38 MB.
+
+    Read off the AST for the same reason as the test above: the explanation names the very call
+    it forbids.
+
+    Mutation receipt: reintroduce `iterparse` in `_merged_ranges` and this goes red.
+    """
+    tree = ast.parse(READER.read_text(encoding="utf-8"))
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    } | {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "iterparse" not in called
+    assert "_MERGE_SCAN_CHUNK" in {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def test_a_merge_ref_split_across_a_read_boundary_is_still_found() -> None:
+    """The chunked scan keeps a tail so a tag straddling two reads is not lost — and the overlap
+    must not double-count the tags it re-sees."""
+    reader = _load_reader()
+    ranges = reader._MERGE_CELL_REF.findall(
+        b'<mergeCells count="2"><mergeCell ref="A1:B1"/><mergeCell ref=\'C3:D9\'/></mergeCells>'
+    )
+
+    assert [r.decode() for r in ranges] == ["A1:B1", "C3:D9"]
+
+
+def test_a_cell_containing_merge_markup_cannot_forge_a_range() -> None:
+    """A citizen who types a literal `<mergeCell` tag into a cell has it stored XML-escaped, so
+    the bytes the scan matches cannot come from user data. Pinned because the scan reads bytes
+    rather than parsing, and this is the assumption that makes that safe."""
+    reader = _load_reader()
+    escaped = b'<c r="A1" t="inlineStr"><is><t>&lt;mergeCell ref="Z1:Z9"/&gt;</t></is></c>'
+
+    assert reader._MERGE_CELL_REF.findall(escaped) == []

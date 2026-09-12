@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import sys
 
@@ -51,8 +52,20 @@ from typing import Any
 # replaces ran inside a killable, memory-capped subprocess; moving the parsing into the sandbox
 # must not lose that, and neither `governor.py`'s rlimit nor its deadline reaches in here.
 TIME_LIMIT_SECONDS = 30
-# Sized against the platform's 4 MB per-file attachment cap with room for the object model a
-# parser builds around it, which is several times the file on disk for a dense spreadsheet.
+# HELD AT 512 MB ACROSS THE 4 MB -> 10 MB CAP RISE, and that is a measurement rather than an
+# oversight. The number used to be justified by "room for the object model a parser builds", which
+# made it a function of the door's cap; it is not one any more, because no reader here builds a
+# whole-file object model. Measured in this image on the worst case the door now admits — a dense
+# 9.99 MB workbook, 23,000 x 40 = 920,000 populated cells, in a 1 vCPU / 2 GiB container:
+#
+#     materialising (`read_only=False`, two loads)  829 MB peak, 9.4s  -> REFUSED at this ceiling
+#     streaming     (`read_only=True`,  two passes)  46 MB peak, 5.5s  -> reads, ~10x headroom
+#
+# So the ceiling stays and the reader was fixed instead. Raising it would have been the wrong
+# lever twice over: the container holds `next dev` as well, and 512 MB of headroom there is worth
+# more than a spreadsheet nobody could read anyway. If a future format genuinely needs more,
+# measure it the same way before moving this — a bound raised on argument rather than on evidence
+# trades a clean "attach a smaller file" for the OOM killer taking the citizen's live preview.
 #
 # BOUNDED WITH `RLIMIT_DATA`, NOT `RLIMIT_AS`, and the difference is the whole reason this is
 # commented. `RLIMIT_AS` caps VIRTUAL address space, which for a Rust allocator with a worker
@@ -101,23 +114,102 @@ def _listing(items: list[Any], limit: int = MAX_ITEMS) -> dict[str, Any]:
 # --- spreadsheets -----------------------------------------------------------------------------
 
 
+def _sheet_part(sheet: Any) -> str:
+    """Where this worksheet's XML lives inside the workbook zip.
+
+    `ReadOnlyWorksheet` exposes it only as the private `_worksheet_path` — openpyxl's public
+    `Worksheet.path` does not exist on the streaming class. Read through `getattr` so a rename in
+    a future openpyxl costs the merge list and nothing else: `_merged_ranges` treats an unknown
+    part as "no merges", which is the same answer it gives for a sheet that has none.
+    """
+    return str(getattr(sheet, "_worksheet_path", "") or "")
+
+
+# `<mergeCell ref="A1:B2"/>` in the sheet part. Matched on bytes, single-or-double quoted, with
+# arbitrary whitespace, which is the whole grammar this element has.
+_MERGE_CELL_REF = re.compile(rb"""<mergeCell\s[^>]*?\bref\s*=\s*["\']([^"\']{1,64})["\']""")
+# Read the part in slices and keep a small tail, so a tag straddling a boundary is still seen.
+_MERGE_SCAN_CHUNK = 1 << 20
+_MERGE_SCAN_OVERLAP = 256
+# A sheet with more merges than this is not going to be summarised usefully anyway, and the cap
+# keeps a hostile file from turning a bounded scan into an unbounded list.
+_MERGE_SCAN_LIMIT = 10_000
+
+
+def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
+    """The sheet's merged ranges, read from its XML as BYTES rather than as a tree.
+
+    `read_only=True` does not populate `worksheet.merged_cells`, and building the full object
+    model just to reach it is what used to cost most of a gigabyte.
+
+    NOT `ET.iterparse` EITHER, and that mistake is worth recording: clearing each element does not
+    unlink it from its parent, so the root accumulates every `<row>` and `<c>` in the sheet. On a
+    dense 10 MB workbook that walked the reader straight back over `MEMORY_LIMIT_BYTES` — 527 MB
+    measured — while the openpyxl half of the same read sat at 38 MB. A chunked scan holds one
+    slice at a time regardless of how large the part is.
+
+    SAFE AGAINST CELL CONTENT that looks like markup: a citizen who types a literal `<mergeCell`
+    tag into a cell has it stored XML-escaped (`&lt;mergeCell`), so the bytes this matches cannot
+    come from user data.
+
+    Never raises: a merge list is a nicety beside the shape, and a workbook whose part this cannot
+    walk is still one whose dimensions and header are worth reporting.
+    """
+    import zipfile
+
+    entry = sheet_path.lstrip("/")
+    if not entry:
+        return []
+    ranges: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as bundle, bundle.open(entry) as part:
+            tail = b""
+            while True:
+                chunk = part.read(_MERGE_SCAN_CHUNK)
+                if not chunk:
+                    break
+                window = tail + chunk
+                for match in _MERGE_CELL_REF.finditer(window):
+                    ranges.append(match.group(1).decode("ascii", "replace"))
+                    if len(ranges) >= _MERGE_SCAN_LIMIT:
+                        return ranges
+                tail = window[-_MERGE_SCAN_OVERLAP:]
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return []
+    # The overlap can re-match a tag that straddled a boundary; de-duplicate while keeping order.
+    return list(dict.fromkeys(ranges))
+
+
 def read_xlsx(path: Path) -> dict[str, Any]:
     """Sheets, real dimensions, column types, formulas, merges and media.
 
-    LOADED TWICE ON PURPOSE, and this is the requirement that costs the second load. openpyxl
+    STREAMED, NOT MATERIALISED, and the difference is the whole reason a 10 MB workbook is
+    readable at all. `read_only=True` walks the sheet XML a row at a time instead of building a
+    cell object per cell: measured on a dense 9.99 MB workbook (23,000 x 40 = 920,000 cells) in
+    the shipped image, the full-model load peaked at 829 MB and took 9.4s, and this one peaks at
+    36 MB and takes 4.1s for byte-identical output. The old shape did not merely cost more — it
+    exceeded `MEMORY_LIMIT_BYTES` and the citizen was told to attach a smaller file.
+
+    LOADED TWICE ON PURPOSE, and this is the requirement that costs the second pass. openpyxl
     reads either the FORMULAS (`data_only=False`) or the values Excel last CACHED for them
     (`data_only=True`) — never both from one load. A workbook written by a script has never been
     opened by Excel, so its formula cells have no cached value at all: with only the value load
     those columns come back blank, and the citizen is shown an empty column for data that is
     simply uncalculated. Reading both is how the manifest can say "this column is a formula and
-    carries no stored result" instead (R24).
+    carries no stored result" instead (R24). Two streamed passes are cheap; two materialised ones
+    were the 829 MB.
+
+    THE TWO THINGS `read_only` TAKES AWAY, and how each is given back:
+      * `max_row`/`max_column` are unset until asked for — `calculate_dimension(force=True)`
+        computes them from the sheet's own dimension record, scanning if it has to.
+      * `merged_cells` is never populated — `_merged_ranges` reads them from the sheet part.
     """
     import openpyxl
     from openpyxl.utils.exceptions import InvalidFileException
 
     try:
-        formulas = openpyxl.load_workbook(path, data_only=False, read_only=False)
-        values = openpyxl.load_workbook(path, data_only=True, read_only=False)
+        formulas = openpyxl.load_workbook(path, data_only=False, read_only=True)
+        values = openpyxl.load_workbook(path, data_only=True, read_only=True)
     except InvalidFileException as exc:
         raise ReadFailure(
             "unreadable",
@@ -128,39 +220,61 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     sheets = []
     for name in formulas.sheetnames:
         fsheet, vsheet = formulas[name], values[name]
+        try:
+            fsheet.calculate_dimension(force=True)
+        except (ValueError, TypeError):
+            pass
         rows, cols = fsheet.max_row or 0, fsheet.max_column or 0
-        header = [
-            _clip(c.value)
-            for c in next(fsheet.iter_rows(min_row=1, max_row=1), ())
-            if c is not None
-        ]
+
+        # ONE PASS FOR BOTH ROWS. A read-only sheet has no random `cell(row=, column=)` access —
+        # that is the API's way of saying it never holds the grid — so the header and the probe
+        # row are taken from the same forward walk rather than looked up per column.
+        frows = fsheet.iter_rows(min_row=1, max_row=2, values_only=True)
+        header_values = list(next(frows, ()) or ())
+        probe_values = list(next(frows, ()) or ())
+        vrows = vsheet.iter_rows(min_row=1, max_row=2, values_only=True)
+        next(vrows, ())
+        cached_values = list(next(vrows, ()) or ())
+
+        # `max_column` can under-report against a ragged first row; trust whichever is wider so a
+        # column present in the file is never dropped from the manifest.
+        cols = max(cols, len(header_values), len(probe_values))
+        # ONE HEADER ENTRY PER COLUMN, and both halves of that matter.
+        #
+        # A blank cell keeps its slot rather than being filtered out: a merge blanks every cell
+        # but the first (`A1:B1` leaves B1 empty), and dropping those shifts every later column's
+        # name one place left — a header that reads plausibly and is wrong, which is worse than a
+        # gap. `_clip(None)` is "", the placeholder the materialising reader produced.
+        #
+        # And a short row is padded out to `cols`. A materialised grid handed back one cell per
+        # column whether or not the row carried them; a streamed row stops at its last cell, so
+        # without this a sheet whose header row is shorter than the sheet is wide loses entries.
+        header = [_clip(v) for v in header_values] + [""] * max(cols - len(header_values), 0)
 
         columns = []
         for index in range(1, cols + 1):
             # The first data row is what the column's type is judged from — the header row is
             # text in almost every real file and would make every column look like a string.
-            probe = fsheet.cell(row=2, column=index) if rows >= 2 else None
-            cached = vsheet.cell(row=2, column=index) if rows >= 2 else None
-            is_formula = (
-                isinstance(probe.value, str) and probe.value.startswith("=") if probe else False
+            probe = probe_values[index - 1] if rows >= 2 and index <= len(probe_values) else None
+            cached = (
+                cached_values[index - 1] if rows >= 2 and index <= len(cached_values) else None
             )
+            is_formula = isinstance(probe, str) and probe.startswith("=")
             column: dict[str, Any] = {
                 "name": header[index - 1] if index - 1 < len(header) else None,
                 "isFormula": is_formula,
             }
             if is_formula:
                 # THE R24 CASE. A formula with no cached value is not an empty column; saying so
-                # is the whole point of the second load.
-                column["hasStoredResult"] = cached is not None and cached.value is not None
+                # is the whole point of the second pass.
+                column["hasStoredResult"] = cached is not None
                 if not column["hasStoredResult"]:
                     column["note"] = (
                         "This column is a formula and the file carries no calculated result "
                         "for it — the workbook has not been opened by Excel since it was written."
                     )
             else:
-                column["type"] = (
-                    type(probe.value).__name__ if probe and probe.value is not None else None
-                )
+                column["type"] = type(probe).__name__ if probe is not None else None
             columns.append(column)
 
         sheets.append(
@@ -170,7 +284,7 @@ def read_xlsx(path: Path) -> dict[str, Any]:
                 "columns": cols,
                 "header": header,
                 "columnDetail": _listing(columns),
-                "mergedRanges": _listing([str(r) for r in fsheet.merged_cells.ranges]),
+                "mergedRanges": _listing(_merged_ranges(path, _sheet_part(fsheet))),
             }
         )
 

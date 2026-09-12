@@ -151,7 +151,11 @@ it('shows the hand-over dialog, not a generic failure, when the slot holds anoth
   expect(screen.getByRole('dialog').textContent).toMatch(/Someone Else’s App/)
 })
 
-it('gives up the shared view (never handOverWorkspace) when the dialog resolves a shared occupant', async () => {
+it('routes a shared occupant through handOverWorkspace with isSharedView, never giveUpSharedView directly', async () => {
+  // `handOverWorkspace` itself owns the `isSharedView` branch (see buildSessionApi.test.ts for
+  // that branching behavior) — it is mocked at the module boundary here, so this test only
+  // pins that the PAGE hands it the whole blocked object rather than calling `giveUpSharedView`
+  // itself, which would silently reintroduce the bug of every call site needing its own check.
   h.getProject.mockResolvedValue(makeProject())
   h.launchSharedPreview
     .mockRejectedValueOnce(
@@ -170,15 +174,22 @@ it('gives up the shared view (never handOverWorkspace) when the dialog resolves 
       ready: true,
       snapshotTakenAt: null,
     })
-  h.giveUpSharedView.mockResolvedValue(true)
+  h.handOverWorkspace.mockResolvedValue(undefined)
 
   renderAt()
   await screen.findByRole('dialog')
   // `dirty: false` renders the clean-stop copy, which offers ONLY the discard button.
   fireEvent.click(screen.getByRole('button', { name: /Stop/i }))
 
-  await waitFor(() => expect(h.giveUpSharedView).toHaveBeenCalledTimes(1))
-  expect(h.handOverWorkspace).not.toHaveBeenCalled()
+  await waitFor(() =>
+    expect(h.handOverWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'owner-project-id', isSharedView: true }),
+      false,
+      expect.anything(),
+      expect.anything(),
+    ),
+  )
+  expect(h.giveUpSharedView).not.toHaveBeenCalled()
   await waitFor(() => expect(h.launchSharedPreview).toHaveBeenCalledTimes(2)) // retried
   expect(await screen.findByTitle('Visitor Log')).toBeTruthy() // the iframe, on retry
 })
@@ -210,7 +221,7 @@ it('hands over the recipients own build (never giveUpSharedView) when the occupa
 
   await waitFor(() =>
     expect(h.handOverWorkspace).toHaveBeenCalledWith(
-      'recipients-own-project-id',
+      expect.objectContaining({ projectId: 'recipients-own-project-id', isSharedView: false }),
       false,
       expect.anything(),
       expect.anything(),

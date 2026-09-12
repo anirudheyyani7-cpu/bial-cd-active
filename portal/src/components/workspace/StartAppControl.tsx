@@ -485,7 +485,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     let reached: HandoverStep = 'stopping'
     try {
       try {
-        await handOverWorkspace(holder.projectId, save, {}, (next) => {
+        await handOverWorkspace(holder, save, {}, (next) => {
           reached = next
           ifStillOurs(projectId, () => setStep(next))
         })

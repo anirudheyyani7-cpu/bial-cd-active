@@ -67,7 +67,7 @@ async def test_both_foreign_keys_cascade_on_delete(db_session) -> None:
         await db_session.execute(sa.text(_FK_SQL), {"table": _TABLE, "column": "project_id"})
     ).one()
     assert project_fk.references_table == "projects"
-    assert project_fk.confdeltype == "c"  # 'c' = CASCADE
+    assert project_fk.confdeltype == b"c"  # 'c' = CASCADE; asyncpg reads pg "char" as bytes
 
     recipient_fk = (
         await db_session.execute(
@@ -75,7 +75,7 @@ async def test_both_foreign_keys_cascade_on_delete(db_session) -> None:
         )
     ).one()
     assert recipient_fk.references_table == "users"
-    assert recipient_fk.confdeltype == "c"
+    assert recipient_fk.confdeltype == b"c"
 
 
 async def test_project_id_and_recipient_are_each_individually_indexed(db_session) -> None:

@@ -2610,7 +2610,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // Stop, then WAIT FOR THE STOP TO GENUINELY FINISH, then save, then release — the ordering
     // invariant lives in `handOverWorkspace`, and so does the refusal to proceed on a stop that
     // only timed out. The narration is the dialog's; this is what feeds it.
-    await handOverWorkspace(blocked.projectId, save, {}, setHandoverStep)
+    await handOverWorkspace(blocked, save, {}, setHandoverStep)
     setHandoverStep('starting')
     // The retry is awaited BEFORE the dialog is dismissed. Clearing
     // first unmounts the only surface that can say "that didn't work", so a retry that failed

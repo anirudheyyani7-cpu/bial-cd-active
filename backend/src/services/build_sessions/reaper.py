@@ -880,15 +880,17 @@ async def _renew_shared_view_from_traffic(
         last_seen_raw = reg.get(REGISTRY_FIELD_SHARED_SERVED_COUNT)
         last_seen = int(last_seen_raw) if last_seen_raw else 0
         # `truncated` IS ITS OWN EVIDENCE OF ONGOING TRAFFIC (`ServedCount`'s own docstring) —
-        # checked BEFORE the `<=` comparison, not folded into it. The supervisor's count is a
-        # bounded TAIL, not a cumulative total, so once real traffic pushes the log past that
-        # window `served.count` plateaus or drops: comparing it against `last_seen` as if it
-        # were monotonic made `count <= last_seen` come back True forever, the moment the
-        # window filled, for a session someone was actively using. A `truncated` reading means
+        # checked BEFORE the equality comparison, not folded into it. The supervisor's count is
+        # a bounded TAIL, not a cumulative total, so once real traffic pushes the log past that
+        # window `served.count` plateaus OR DROPS (a log roll starts a fresh, smaller window at
+        # `truncated=False`). Comparing with `<=` treated that drop as "no new traffic" and
+        # reaped a session mid-use the moment it rolled, even though the count changing at all —
+        # in either direction — while untruncated is itself proof something new happened; only
+        # an EXACT match means nothing changed since the last pass. A `truncated` reading means
         # the log has substantial recent activity in it BY DEFINITION — enough to have filled
         # the window — so it renews unconditionally rather than trusting a number that can no
         # longer answer "did anything NEW happen".
-        if not served.truncated and served.count <= last_seen:
+        if not served.truncated and served.count == last_seen:
             # No NEW traffic since the last pass — a steady background poll from an idle tab
             # must not read as fresh evidence every five minutes forever, or the ceiling above
             # is the only thing that would ever end a session nobody is actually reading.

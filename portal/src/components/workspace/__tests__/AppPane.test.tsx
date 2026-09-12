@@ -953,7 +953,14 @@ describe('★ taking the workspace back', () => {
 
       fireEvent.click(screen.getByRole('button', { name: button }))
 
-      await waitFor(() => expect(api.handOverWorkspace).toHaveBeenCalledWith('pA', save, {}, expect.any(Function)))
+      await waitFor(() =>
+        expect(api.handOverWorkspace).toHaveBeenCalledWith(
+          expect.objectContaining({ projectId: 'pA' }),
+          save,
+          {},
+          expect.any(Function),
+        ),
+      )
       // The relaunch that closes the sequence, and the URL the pane frames.
       await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
       expect(report.onStarted).toHaveBeenCalledWith('https://app/')

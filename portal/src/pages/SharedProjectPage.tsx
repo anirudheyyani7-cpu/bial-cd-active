@@ -25,7 +25,6 @@ import { getProject } from '../utils/projectApi'
 import type { Project } from '../utils/projectApi'
 import {
   asReclaimBlocked,
-  giveUpSharedView,
   handOverWorkspace,
   launchSharedPreview,
   refreshSharedPreview,
@@ -48,6 +47,14 @@ export default function SharedProjectPage(): React.JSX.Element {
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // FORCES THE IFRAME TO ACTUALLY RELOAD. `preview.previewUrl` is a hash of (app, recipient)
+  // — `shr_name_for` — so it is byte-identical across a teardown-and-restore: a successful
+  // Refresh writes the SAME `src` to the SAME node, React sees no prop change, and the
+  // browser never reloads. The recipient keeps looking at a document whose container
+  // underneath it has already been destroyed and rebuilt. Bumped on every successful
+  // launch/refresh and folded into the iframe's `key`, which — unlike `src` — React always
+  // treats a change to as "this is a new element", forcing a real remount.
+  const [frameNonce, setFrameNonce] = useState(0)
 
   // THE HAND-OVER PROMPT (requirement 24, its frontend half). `launchSharedPreview`/
   // `refreshSharedPreview` DO take the caller's own one-per-user slot — see their own
@@ -106,7 +113,10 @@ export default function SharedProjectPage(): React.JSX.Element {
     setLaunching(true)
     setLaunchError(null)
     launchSharedPreview(projectId)
-      .then((res) => setPreview(res))
+      .then((res) => {
+        setPreview(res)
+        setFrameNonce((n) => n + 1)
+      })
       .catch((err: unknown) => {
         // THE HAND-OVER PROMPT, NOT A GENERIC FAILURE (requirement 24). This 409 means the
         // caller's own slot is not free — either their own build, or another shared view they
@@ -140,7 +150,10 @@ export default function SharedProjectPage(): React.JSX.Element {
     setRefreshing(true)
     setLaunchError(null)
     refreshSharedPreview(projectId)
-      .then((res) => setPreview(res))
+      .then((res) => {
+        setPreview(res)
+        setFrameNonce((n) => n + 1)
+      })
       .catch((err: unknown) => {
         const reclaim = asReclaimBlocked(err)
         if (reclaim) {
@@ -166,22 +179,19 @@ export default function SharedProjectPage(): React.JSX.Element {
     else launch()
   }, [pendingAction, onRefresh, launch])
 
-  // WHAT "GIVE UP THE INCUMBENT" ACTUALLY DOES — branches once, here, on the ONE fact that
-  // decides which remedy can even be reached (see `ReclaimBlocked.isSharedView`'s own
-  // docstring). A shared occupant's `dirty` is always `false`, so `ReclaimWorkspaceDialog`'s
-  // own `copyFor` never renders a Save button for it — `save` is accepted for symmetry with
-  // the dialog's two-button contract, and is unreachable on that arm.
+  // `handOverWorkspace` branches on `blocked.isSharedView` ITSELF now (taking the whole
+  // `ReclaimBlocked` rather than a bare project id) — the ONE place that decision is made,
+  // so no call site can call `stopActiveBuild`/`release` against a shared occupant's OWNER
+  // id again by forgetting to check the flag. A shared occupant's `dirty` is always `false`,
+  // so `ReclaimWorkspaceDialog`'s own `copyFor` never renders a Save button for it — `save`
+  // is accepted for symmetry with the dialog's two-button contract and is unreachable there.
   const resolveBlocked = useCallback(
     async (save: boolean): Promise<void> => {
       if (blocked === null) return
       setResolving(true)
       setStep('stopping')
       try {
-        if (blocked.isSharedView) {
-          await giveUpSharedView()
-        } else {
-          await handOverWorkspace(blocked.projectId, save, {}, (next) => setStep(next))
-        }
+        await handOverWorkspace(blocked, save, {}, (next) => setStep(next))
         cancelBlocked()
         retryPendingAction()
       } catch (err) {
@@ -274,6 +284,7 @@ export default function SharedProjectPage(): React.JSX.Element {
           </div>
         ) : preview !== null && preview.ready ? (
           <iframe
+            key={`${preview.previewUrl}#${frameNonce}`}
             title={project?.name || 'Shared project'}
             src={preview.previewUrl}
             className="flex-1 w-full border-0"

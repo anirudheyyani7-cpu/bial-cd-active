@@ -756,18 +756,28 @@ async def test_the_sweep_does_not_renew_on_an_unchanged_served_count(
     assert name in client.torn_down
 
 
-async def test_the_sweep_never_reads_served_count_as_a_regression(
+async def test_a_dropped_count_after_a_log_roll_still_renews(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """A count that somehow reads LOWER than last seen (a restarted supervisor, a corrupted
-    field) must never renew — `<=`, not `!=`, is the comparison this pins."""
+    """Caddy's own rolling (`roll_size 1MiB roll_keep 1`) starts a fresh, smaller access log the
+    moment it rotates: `served` resets low and `truncated` flips back to `False` immediately,
+    even for a session that has been busy the whole time. This used to be indistinguishable from
+    a genuine regression (a restarted supervisor, a corrupted field) under `count <= last_seen`,
+    which read the drop as "no new traffic" and reaped an actively-used session right at the roll
+    boundary. Comparing with `==` instead treats ANY change — up or down — as evidence something
+    happened, since only an EXACT match means nothing new occurred since the last pass; see
+    `test_the_sweep_does_not_renew_on_an_unchanged_served_count` for that unchanged case."""
     name = a_shared_sandbox_name("colleague")
-    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))
-    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_SHARED_SERVED_COUNT, "9")
-    client = _reachable_shared_view_client(name, served=2)
+    await _seed_shared_view(fake_redis, USER, app_name=name, stay=_in(-1))  # already lapsed
+    await fake_redis.hset(registry_key(USER), REGISTRY_FIELD_SHARED_SERVED_COUNT, "500")
+    client = _reachable_shared_view_client(name, served=20, truncated=False)  # just rolled
 
-    assert (await reaper.sweep_all(fake_redis, client)).reaped == 1
-    assert name in client.torn_down
+    assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
+    assert client.torn_down == []
+    reg = await locks.read_registry(fake_redis, USER)
+    assert reg is not None
+    assert reg[REGISTRY_FIELD_SHARED_SERVED_COUNT] == "20"
+    assert await locks.stay_of_execution_is_current(fake_redis, USER) is True
 
 
 async def test_a_truncated_reading_renews_even_with_a_saturated_count(

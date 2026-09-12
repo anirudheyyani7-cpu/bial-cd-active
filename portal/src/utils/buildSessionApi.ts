@@ -597,9 +597,23 @@ export async function awaitStopSettled(
 /** Hand the workspace over: STOP, then optionally SAVE, then RELEASE — what the refusal
  *  dialog's buttons do to the server, in the one order that works.
  *
- *  THE ORDER IS THE DESIGN: save and release BOTH refuse while an agent is writing, so
- *  saving first would simply fail (or, past that guard, bundle a tree caught mid-edit) —
- *  stopping settles the turn first, and only then is there a coherent tree to save.
+ *  TAKES THE WHOLE `ReclaimBlocked`, NOT A BARE PROJECT ID (#198) — the one thing that makes
+ *  the branch below impossible to drop at a call site again. Four surfaces (`StartAppControl`,
+ *  `ProjectWorkspace`, `ConversationSurface`, and this page itself) each used to call this with
+ *  `blocked.projectId` alone, and none of them learned that a shared occupant's `projectId`
+ *  names its OWNER, never the caller — so `stopActiveBuild`'s `owned_project_or_404` 404'd
+ *  every one of them. Passing the whole object means the discriminant travels with the id it
+ *  qualifies, in one place, rather than needing to be re-remembered at every call site.
+ *
+ *  A SHARED OCCUPANT NEVER REACHES `stopActiveBuild`/`saveProject`/`releaseProject` AT ALL —
+ *  none of the three would even resolve the right project for it. `giveUpSharedView` is the
+ *  entire remedy: no id, no ownership check, reaping under the caller's own registry key.
+ *  `save` is accepted but ignored on this arm — a shared view's `dirty` is always `false`, so
+ *  `ReclaimWorkspaceDialog`'s own `copyFor` never even renders a Save button for it.
+ *
+ *  THE ORDER ON THE ORDINARY ARM IS THE DESIGN: save and release BOTH refuse while an agent is
+ *  writing, so saving first would simply fail (or, past that guard, bundle a tree caught
+ *  mid-edit) — stopping settles the turn first, and only then is there a coherent tree to save.
  *
  *  THE STOP IS UNCONDITIONAL, not gated on `ReclaimBlocked.building` (true only for a Write
  *  turn). Every mode pins the container and `release` refuses for all of them, so gating the
@@ -613,12 +627,18 @@ export async function awaitStopSettled(
  *  REJECTS RATHER THAN SWALLOWS: a failed save must not be followed by a release, so the
  *  rejection travels back to the only thing still mounted that can report it. */
 export async function handOverWorkspace(
-  projectId: string,
+  blocked: ReclaimBlocked,
   save: boolean,
   deps: AuthFetchDeps = {},
   narrate: (step: HandoverStep) => void = () => {},
   clock: StopWaitClock = REAL_CLOCK,
 ): Promise<void> {
+  if (blocked.isSharedView) {
+    narrate('releasing')
+    await giveUpSharedView(deps)
+    return
+  }
+  const projectId = blocked.projectId
   narrate('stopping')
   const asked = await stopActiveBuild(projectId, deps)
   const settled = stopSettled(asked) ? asked : await awaitStopSettled(projectId, deps, clock)

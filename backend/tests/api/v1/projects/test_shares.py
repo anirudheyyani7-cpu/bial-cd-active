@@ -14,22 +14,49 @@ import contextlib
 import uuid
 
 import pytest
+from pydantic import SecretStr
 
 from src.api.v1.build_sessions.deps import (
     sandbox_dependency,
     sandbox_or_none_dependency,
     session_manager_dependency,
 )
+from src.config import settings
 from src.db.models.project import Project
 from src.services.build_sessions import SessionManager
 from src.services.build_sessions.appdata import resolve_app_for_project
 from src.services.build_sessions.manager import shr_name_for
+from src.services.sandbox.config import SandboxConfig
 from src.services.storage import accessor as storage_accessor
 from src.services.storage import snapshot_key
 from tests.api.v1.projects.conftest import _VALID_DESCRIPTION, DELETE_BODY
 from tests.api.v1.projects.test_projects_crud import _auth
 from tests.factories import UserFactory
 from tests.fakes import FakeSandboxClient, FakeStorage
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`launch_shared_preview` (used by `test_unshare_tears_down_the_colleagues_live_container`)
+    provisions through the real `SessionManager`, which reads `settings.sandbox` to build the
+    container spec — unset in the test environment. Mirrors `test_manager.py`'s own fixture of
+    the same name; the earlier `fake_redis` fixture added here for the same test was the wrong
+    diagnosis (this file's manager never touches Redis directly — `wired_sandbox`'s manager and
+    `FakeSandboxClient` are the whole seam)."""
+    monkeypatch.setattr(
+        settings,
+        "sandbox",
+        SandboxConfig(
+            subscription_id="s",
+            resource_group="r",
+            region="westeurope",
+            managed_environment_name="aca-env",
+            acr_server="acr.azurecr.io",
+            acr_username="acr-user",
+            acr_password=SecretStr("acr-pass"),
+            image_ref="acr/img:latest",
+        ),
+    )
 
 
 @pytest.fixture
@@ -258,7 +285,7 @@ def wired_sandbox(app, db_session):
 
 
 async def test_unshare_tears_down_the_colleagues_live_container(
-    client, db_session, bind_store, wired_sandbox, fake_redis
+    client, db_session, bind_store, wired_sandbox
 ) -> None:
     """#198 R25 — Slice 1's teardown seam, filled in: revoking access tears down the
     recipient's live view of the project, not merely the membership row."""

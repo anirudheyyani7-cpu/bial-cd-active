@@ -206,7 +206,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
           // Stop, then WAIT FOR THE STOP TO GENUINELY FINISH, then save, then release — the
           // ordering invariant lives in `handOverWorkspace`, and so does the refusal to proceed
           // on a stop that only timed out.
-          await handOverWorkspace(reclaim.blocked.projectId, save, {}, setStep)
+          await handOverWorkspace(reclaim.blocked, save, {}, setStep)
           // The retry is AWAITED BEFORE the dialog is dismissed, so a switch that fails can still
           // be reported instead of vanishing with the dialog. It is the whole of what was refused:
           // starting this project's app, and — from the rail — opening the chat with the message

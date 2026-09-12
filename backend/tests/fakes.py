@@ -46,6 +46,8 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_SERVING_SINCE,
+    REGISTRY_FIELD_SHARED_OWNER_ID,
+    REGISTRY_FIELD_SHARED_PROJECT_ID,
     REGISTRY_FIELD_STATE,
     REGISTRY_FIELD_TOKEN_REF,
 )
@@ -210,7 +212,13 @@ def _fake_handle(app_name: str) -> SandboxHandle:
     )
 
 
-async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
+async def _hydrate_registry(
+    user_id: str,
+    handle: SandboxHandle,
+    *,
+    shared_project_id: uuid.UUID | None = None,
+    shared_owner_id: uuid.UUID | None = None,
+) -> None:
     """The one real-client side effect a canned fake must not omit: `_provision_container`
     writes the registry hash at container-create, for BOTH `provision_new` and
     `restore_from_snapshot` (`services/sandbox/client.py`). Load-bearing: `grant_stay_of_execution`
@@ -222,9 +230,13 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
     the rollout grandfathers as PROVEN — so a fake that skipped it would hand every test in this
     suite a brand-new container the platform reports as ALREADY RUNNING, and the "created but
     never served" arm would be unreachable from any test that provisions through this double.
-    Green, and blind to the whole change."""
+    Green, and blind to the whole change.
+
+    `shared_project_id`/`shared_owner_id` (#198) mirror the real client's `_write_registry`:
+    stamped only when given, `None` on the ordinary `provision_new` arm."""
+    key = registry_key(uuid.UUID(user_id))
     await get_redis().hset(
-        registry_key(uuid.UUID(user_id)),
+        key,
         mapping={
             REGISTRY_FIELD_APP_NAME: handle.app_name,
             REGISTRY_FIELD_FQDN: handle.fqdn,
@@ -237,6 +249,18 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
             REGISTRY_FIELD_SERVING_SINCE: "",
         },
     )
+    if shared_project_id is not None:
+        await get_redis().hset(
+            key,
+            mapping={
+                REGISTRY_FIELD_SHARED_PROJECT_ID: str(shared_project_id),
+                REGISTRY_FIELD_SHARED_OWNER_ID: str(shared_owner_id),
+            },
+        )
+    else:
+        await get_redis().hdel(
+            key, REGISTRY_FIELD_SHARED_PROJECT_ID, REGISTRY_FIELD_SHARED_OWNER_ID
+        )
 
 
 class FakeSandboxClient(SandboxClient):
@@ -251,6 +275,9 @@ class FakeSandboxClient(SandboxClient):
         self.restored_from: list[str | None] = []
         # #198 — the `kind` each restore was called with, parallel to `restored`.
         self.restored_as_kind: list[Literal["build_sandbox", "shared_sandbox"]] = []
+        # #198 — the `(shared_project_id, shared_owner_id)` each restore was called with,
+        # parallel to `restored_as_kind`.
+        self.restored_shared_identity: list[tuple[uuid.UUID | None, uuid.UUID | None]] = []
         self.torn_down: list[str] = []
         # The env dict each BIRTH arm actually handed the container, recorded separately from the
         # names so "was the SAS / the per-project DSN injected on THIS arm" stays answerable. The
@@ -337,6 +364,8 @@ class FakeSandboxClient(SandboxClient):
         app_env: dict[str, str],
         source_key: str | None = None,
         kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
+        shared_project_id: uuid.UUID | None = None,
+        shared_owner_id: uuid.UUID | None = None,
     ) -> SandboxHandle:
         self.restored.append(app_name)
         # Which bundle a restore PULLED is the whole question for the recovery flow, so record
@@ -346,9 +375,13 @@ class FakeSandboxClient(SandboxClient):
         # tags at all (see `test_aca.py` for the real client's own tag-stamping coverage), so
         # this is the one place a manager-level test can assert it asked for the right kind.
         self.restored_as_kind.append(kind)
+        # #198 — the registry-hash half of that same identity, parallel to `restored_as_kind`.
+        self.restored_shared_identity.append((shared_project_id, shared_owner_id))
         self.restore_env = dict(app_env)
         handle = _fake_handle(app_name)
-        await _hydrate_registry(user_id, handle)
+        await _hydrate_registry(
+            user_id, handle, shared_project_id=shared_project_id, shared_owner_id=shared_owner_id
+        )
         return handle
 
     async def exec(

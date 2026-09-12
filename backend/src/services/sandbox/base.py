@@ -676,6 +676,8 @@ class SandboxClient(abc.ABC):
         app_env: dict[str, str],
         source_key: str | None = None,
         kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
+        shared_project_id: uuid.UUID | None = None,
+        shared_owner_id: uuid.UUID | None = None,
     ) -> SandboxHandle:
         """Provision a FRESH container and restore a git-bundle onto its local disk (git ops
         over `/_sup/exec`), then RE-INJECT the app-data credential from `app_env`. Returns a
@@ -691,7 +693,15 @@ class SandboxClient(abc.ABC):
         RECIPIENT). ADDED, not widened from a callback: every existing caller means the default
         and this keeps meaning it without touching a single call site. `is_a_shared_sandbox_name`
         already matched this shape before any caller could produce it — a widening kept in step
-        with the guard it feeds, never announced ahead of one."""
+        with the guard it feeds, never announced ahead of one.
+
+        `shared_project_id`/`shared_owner_id` (#198) are the registry-hash counterpart of
+        `kind="shared_sandbox"`: written to `REGISTRY_FIELD_SHARED_PROJECT_ID`/
+        `REGISTRY_FIELD_SHARED_OWNER_ID` so a LATER occupancy check (`_occupying_project`'s
+        sibling in `manager.py`) can recognize "this slot holds a colleague's shared view"
+        without reverse-parsing `shr_name_for`'s hash — which, like every other name this
+        platform derives, is forward-match-only. `None` on the `build_sandbox` arm, always;
+        supplying one without the other is a caller error, never a partial stamp."""
         ...
 
     @abc.abstractmethod

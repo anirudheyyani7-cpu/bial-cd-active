@@ -127,6 +127,8 @@ from src.services.redis.keys import (
     REGISTRY_FIELD_CREATED_AT,
     REGISTRY_FIELD_FQDN,
     REGISTRY_FIELD_SERVING_SINCE,
+    REGISTRY_FIELD_SHARED_OWNER_ID,
+    REGISTRY_FIELD_SHARED_PROJECT_ID,
     REGISTRY_FIELD_STATE,
     REGISTRY_STATE_READY,
 )
@@ -783,6 +785,41 @@ async def _occupying_project(
                 app_id=app_id, project_id=project_id, project_name=project_name
             )
     return None
+
+
+async def _occupying_shared_project(
+    db: AsyncSession, reg: dict[str, str]
+) -> _OccupyingProject | None:
+    """The `shr-` counterpart of `_occupying_project` above — and the reason it can be a
+    plain lookup rather than another forward-match loop (#198, requirement 24).
+
+    `_occupying_project` exists ONLY because `app_name_for` cannot be reverse-parsed, so a
+    caller's own app rows must be re-derived and matched forward one at a time. `shr_name_for`
+    is exactly as lossy, but a `shr-` occupant's slot is stamped with
+    `REGISTRY_FIELD_SHARED_PROJECT_ID`/`REGISTRY_FIELD_SHARED_OWNER_ID` at Launch
+    (`launch_shared_preview`) precisely so this never needs to guess: the identity is read
+    straight off the hash, not re-derived from a name.
+
+    Called BEFORE `_occupying_project`, not after — a `shr-` occupant belongs to the
+    PROJECT'S OWNER, who is almost never the caller (`user_id` in `_occupying_project`'s own
+    query), so the forward-match loop there would search the wrong person's app rows and
+    always miss. Absent fields (an ordinary build sandbox) or a project since deleted both
+    return `None` — the second is the identical 'ghost' reading `_occupying_project` gives a
+    dangling registry entry: nothing left to warn about, so the caller falls through and
+    reclaims silently."""
+    project_id_raw = reg.get(REGISTRY_FIELD_SHARED_PROJECT_ID)
+    owner_id_raw = reg.get(REGISTRY_FIELD_SHARED_OWNER_ID)
+    if not project_id_raw or not owner_id_raw:
+        return None
+    project_id = uuid.UUID(project_id_raw)
+    owner_id = uuid.UUID(owner_id_raw)
+    project_name = await db.scalar(sa.select(Project.name).where(Project.id == project_id))
+    if project_name is None:
+        return None
+    app_id = await _existing_app_id(db, owner_id, project_id)
+    if app_id is None:
+        return None
+    return _OccupyingProject(app_id=app_id, project_id=project_id, project_name=project_name)
 
 
 async def _project_name_owned_by(
@@ -1949,9 +1986,15 @@ class SessionManager:
         redis = get_redis()
         # Four ways this returns silently — "nothing is being taken", not "another project
         # holds it": (1) the live container is already the one we want, (2) no registry entry
-        # or it is not READY, (3) the occupying name matches no app this user owns (a ghost;
-        # the reconcile clears it), (4) the container is CONFIRMED gone (`NoLiveSandboxError`).
-        # Widening any of these into a raise would put up a dialog about nothing.
+        # or it is not READY, (3) the occupying name matches no app this user owns AND carries
+        # no shared-view stamp either (a genuine ghost; the reconcile clears it), (4) the
+        # container is CONFIRMED gone (`NoLiveSandboxError`). Widening any of these into a raise
+        # would put up a dialog about nothing.
+        #
+        # A `shr-` OCCUPANT IS A FIFTH CASE, and it does NOT fall into (3): it always carries a
+        # name that matches no app the caller owns (the project is somebody else's), which is
+        # exactly why it is checked separately, BEFORE the ghost exit, by reading its stamped
+        # identity straight off the registry hash rather than trying to forward-match it.
         #
         # The clean-incumbent exits below DO raise rather than fall through, deliberately: a
         # silently reclaimed clean incumbent is true about the work but wrong about the
@@ -1980,6 +2023,31 @@ class SessionManager:
         occupied_by = reg.get(REGISTRY_FIELD_APP_NAME)
         if occupied_by is None or occupied_by == spare_app:
             return
+        # A COLLEAGUE'S SHARED VIEW, CHECKED FIRST (#198, requirement 24). `shr_name_for`
+        # hashes the (app, recipient) pair the identical forward-match-only way `app_name_for`
+        # does, so `_occupying_project` below — which searches the CALLER's own app rows — can
+        # never resolve one: the project belongs to somebody else. Before this stamp existed at
+        # Launch, that lookup came back `None` and fell through the ghost exit two lines below,
+        # silently reclaiming a colleague's still-open project with no dialog at all.
+        #
+        # NEITHER `building` NOR `agent_working` APPLIES: `launch_shared_preview` mints no
+        # `BuildSession` and no chat turn ever writes into this container, so there is no
+        # session for `_writing_session_holds`/`_live_session_holds` to find regardless of
+        # which app_id is asked — reported here as a plain constant, not probed, because
+        # probing something that can never be true is a wasted round trip with an already-known
+        # answer. `dirty=False` for the identical reason: nothing here is the recipient's own
+        # unsaved work to lose, so the CLEAN-STOP dialog is the true one — "still open" and
+        # "starting it again later brings it back", both facts that hold for a shared view.
+        shared_occupying = await _occupying_shared_project(db, reg)
+        if shared_occupying is not None:
+            raise SandboxReclaimBlockedError(
+                project_id=shared_occupying.project_id,
+                project_name=shared_occupying.project_name,
+                app_id=shared_occupying.app_id,
+                dirty=False,
+                building=False,
+                agent_working=False,
+            )
         occupying = await _occupying_project(db, user.id, occupied_by)
         if occupying is None:
             return
@@ -3526,6 +3594,8 @@ class SessionManager:
                             env,
                             source_key=snapshot_key(owner_app_id),
                             kind="shared_sandbox",
+                            shared_project_id=project.id,
+                            shared_owner_id=project.user_id,
                         )
                     except StorageNotFoundError as exc:
                         # The bundle vanished between the head-check above and the pull — the
@@ -4011,6 +4081,8 @@ class SessionManager:
         *,
         source_key: str | None = None,
         kind: Literal["build_sandbox", "shared_sandbox"] = "build_sandbox",
+        shared_project_id: uuid.UUID | None = None,
+        shared_owner_id: uuid.UUID | None = None,
     ) -> SandboxHandle:
         """Pull the known-present snapshot into a fresh container, with bounded retry.
         `source_key` selects WHICH bundle (default the saved snapshot; relaunch passes the
@@ -4023,13 +4095,21 @@ class SessionManager:
 
         `kind` (#198) forwards to `SandboxClient.restore_from_snapshot` unchanged — every
         existing caller means the default (a build sandbox); `launch_shared_preview` is the
-        one caller that passes `shared_sandbox`."""
+        one caller that passes `shared_sandbox`, and it is also the one caller that ever
+        passes `shared_project_id`/`shared_owner_id` — see that method's own docstring for
+        why the occupancy check needs them stamped."""
         attempt = 0
         while True:
             attempt += 1
             try:
                 return await sandbox_client.restore_from_snapshot(
-                    str(user_id), app_name, app_env=env, source_key=source_key, kind=kind
+                    str(user_id),
+                    app_name,
+                    app_env=env,
+                    source_key=source_key,
+                    kind=kind,
+                    shared_project_id=shared_project_id,
+                    shared_owner_id=shared_owner_id,
                 )
             except StorageNotFoundError:
                 # Discriminated by TYPE, and this clause MUST stay first: `StorageNotFoundError`

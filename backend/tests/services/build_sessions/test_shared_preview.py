@@ -20,12 +20,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.models.project import Project
 from src.db.models.user import User
 from src.services.build_sessions.appdata import resolve_app_for_project
-from src.services.build_sessions.locks import lock_is_held
+from src.services.build_sessions.locks import lock_is_held, read_registry
 from src.services.build_sessions.manager import (
     BuildSessionConflictError,
     NoSnapshotToRelaunchError,
+    SandboxReclaimBlockedError,
     SessionManager,
     shr_name_for,
+)
+from src.services.redis.keys import (
+    REGISTRY_FIELD_SHARED_OWNER_ID,
+    REGISTRY_FIELD_SHARED_PROJECT_ID,
 )
 from src.services.sandbox import SandboxHandle
 from src.services.storage import recovery_key, snapshot_key
@@ -96,6 +101,29 @@ async def test_the_restored_container_is_tagged_as_a_shared_sandbox(
     await manager.launch_shared_preview(db_session, recipient, project, client)
 
     assert client.restored_as_kind == ["shared_sandbox"]
+
+
+async def test_launch_stamps_the_registry_with_the_shared_projects_identity(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """The registry-hash half of requirement 24 (#198 slice 5): Launch must stamp WHICH
+    project this slot is a shared view of, and WHOSE, so a later occupancy check can
+    recognize it without reverse-parsing `shr_name_for`'s hash. See
+    `test_a_live_shared_view_earns_the_hand_over_dialog_instead_of_silent_reclaim` for the
+    behavior this stamp exists to enable."""
+    owner, project, app_id = await _owner_with_saved_app(
+        db_session, fake_storage, email="owner3b@example.com"
+    )
+    recipient = await UserFactory.create(db_session, email="recipient3b@example.com")
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    await manager.launch_shared_preview(db_session, recipient, project, client)
+
+    reg = await read_registry(fake_redis, recipient.id)
+    assert reg is not None
+    assert reg[REGISTRY_FIELD_SHARED_PROJECT_ID] == str(project.id)
+    assert reg[REGISTRY_FIELD_SHARED_OWNER_ID] == str(owner.id)
 
 
 async def test_launch_attaches_to_an_already_live_shared_view(
@@ -216,6 +244,83 @@ async def test_revoke_is_a_noop_when_nothing_is_there(
 
     assert revoked is False
     assert client.torn_down == []
+
+
+async def test_a_live_shared_view_earns_the_hand_over_dialog_instead_of_silent_reclaim(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """Requirement 24 / #161's own mechanism, extended to a `shr-` occupant.
+
+    Before the two registry fields this slice adds (`REGISTRY_FIELD_SHARED_PROJECT_ID`/
+    `REGISTRY_FIELD_SHARED_OWNER_ID`, stamped at Launch), a `shr-` name matched no app the
+    recipient owns, so `_occupying_project` returned `None` and `_refuse_if_reclaim_would_
+    destroy_work` fell through its ghost exit — the recipient's still-open shared view was
+    torn down with no dialog at all. This pins the fix: starting a build in a DIFFERENT
+    project of the recipient's own must raise `SandboxReclaimBlockedError` naming the SHARED
+    project, not silently reclaim the slot."""
+    owner, project, app_id = await _owner_with_saved_app(
+        db_session, fake_storage, email="owner11@example.com"
+    )
+    recipient = await UserFactory.create(db_session, email="recipient11@example.com")
+    recipient_project = await ProjectFactory.create(
+        db_session, recipient.id, description="Recipient's own, different project"
+    )
+    manager = SessionManager()
+    shared_client = FakeSandboxClient()
+    await manager.launch_shared_preview(db_session, recipient, project, shared_client)
+
+    build_client = FakeSandboxClient()
+    with pytest.raises(SandboxReclaimBlockedError) as caught:
+        await manager.ensure_sandbox(
+            db_session,
+            recipient,
+            recipient_project.id,
+            sandbox_client=build_client,
+            may_write=True,
+        )
+
+    assert caught.value.project_id == project.id  # the SHARED project, not the recipient's own
+    assert caught.value.project_name == project.name
+    assert caught.value.dirty is False  # a clean stop — nothing of the recipient's own to lose
+    assert caught.value.building is False
+    assert caught.value.agent_working is False
+    assert build_client.provisioned == []  # refused before anything was destroyed
+    # The teardown that WOULD have run is `build_client`'s (whatever client `ensure_sandbox`
+    # was passed reaps the incumbent on the way in) — `shared_client` never sees a teardown
+    # call either way, so it is `build_client.torn_down` that actually pins the fix.
+    shared_name = shr_name_for(app_id, recipient.id)
+    assert shared_name not in build_client.torn_down
+
+
+async def test_an_ordinary_build_disowns_a_prior_occupants_shared_stamp(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """The MERGE half of the same fix: `hset(mapping=...)` only ADDS fields, so once a shared
+    view is revoked and the recipient's OWN build takes the freed slot, the new registry
+    record must not still carry the PRIOR occupant's `shared_project_id`/`shared_owner_id` —
+    a leftover stamp would make `_occupying_shared_project` misidentify an ordinary build
+    sandbox as somebody else's shared view."""
+    owner, project, app_id = await _owner_with_saved_app(
+        db_session, fake_storage, email="owner3c@example.com"
+    )
+    recipient = await UserFactory.create(db_session, email="recipient3c@example.com")
+    recipient_project = await ProjectFactory.create(
+        db_session, recipient.id, description="Recipient's own project"
+    )
+    manager = SessionManager()
+    shared_client = FakeSandboxClient()
+    await manager.launch_shared_preview(db_session, recipient, project, shared_client)
+    await manager.revoke_shared_preview(recipient.id, app_id, sandbox_client=shared_client)
+
+    build_client = FakeSandboxClient()
+    await manager.ensure_sandbox(
+        db_session, recipient, recipient_project.id, sandbox_client=build_client, may_write=True
+    )
+
+    reg = await read_registry(fake_redis, recipient.id)
+    assert reg is not None
+    assert REGISTRY_FIELD_SHARED_PROJECT_ID not in reg
+    assert REGISTRY_FIELD_SHARED_OWNER_ID not in reg
 
 
 async def test_revoke_never_touches_the_recipients_own_build(

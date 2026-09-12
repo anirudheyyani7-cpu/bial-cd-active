@@ -2864,11 +2864,15 @@ class SessionManager:
         immediately regardless of the lease — that build needs the one-per-user slot, and
         sparing the preview there would orphan its container under the new registry entry.
 
-        Diverged from the deleted `_start_locked` in two deliberate ways, and both still hold
-        against `_claim_the_one_build_slot`, which is where that logic lives:
-        - No finalize-grace wait on a terminal-committed session: the snapshot relaunch would
-          restore is written only by that session's finalize, so 409ing until it settles is
-          correct — never unify this with the `_FINALIZE_GRACE_SECONDS` arm.
+        The slot answer is `_claim_the_one_build_slot`'s, not a copy of it. That call is a
+        pre-check: it raises on a genuinely live session and otherwise returns having claimed
+        nothing, so relaunch still occupies no slot. It also means relaunch waits out a session
+        that has ended and is only letting go, which is the right answer here for the same
+        reason it is right for a message — the snapshot relaunch restores is the one that
+        session's finalize is writing, so waiting hands back the FRESH tree where refusing sent
+        the citizen away to press again.
+
+        One divergence from the deleted `_start_locked` still holds:
         - It must NOT reuse `_restore_or_provision`, whose confirmed-absent arm provisions a
           BLANK template — the wrong answer for relaunch, where an empty app is not a preview
           of the user's work. Instead it checks the snapshot itself and restores directly:

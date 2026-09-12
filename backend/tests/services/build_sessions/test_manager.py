@@ -1221,7 +1221,7 @@ async def test_a_message_sent_while_a_turn_is_still_letting_go_waits_instead_of_
     — so an escape asking for either answers "still building" on every finished turn and refuses
     the citizen's next message for as long as the recovery copy takes to write.
 
-    Mutation check: drop the `turn_finish` arm of `_letting_go_of_the_slot` and this goes red."""
+    Mutation check: drop `_what_will_release_the_slot`'s `turn_finish` arm and this goes red."""
     user, project_id = await _mk(db_session, "m19b@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()

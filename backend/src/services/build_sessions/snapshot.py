@@ -249,7 +249,11 @@ async def write_snapshot(
             await _timed_store(store, key, tree, timings)
             return tree.head_sha
     finally:
-        _log.info(SNAPSHOT_STEP_TIMINGS_EVENT, app_id=str(app_id), **asdict(timings))
+        # SUPPRESSED, because this runs in a `finally` on the save path: a save that failed is
+        # propagating an exception through here, and an instrument that raised would replace the
+        # citizen's real failure with its own. A measurement is never worth a diagnosis.
+        with suppress(Exception):
+            _log.info(SNAPSHOT_STEP_TIMINGS_EVENT, app_id=str(app_id), **asdict(timings))
 
 
 # HOW MANY TIMES IN A ROW THIS APP'S RECOVERY WRITE HAS BEEN REFUSED. Process-local like the
@@ -382,7 +386,11 @@ async def write_recovery_copy(
                 diverted_to=where,
             )
     finally:
-        _log.info(SNAPSHOT_STEP_TIMINGS_EVENT, app_id=str(app_id), **asdict(timings))
+        # SUPPRESSED, because this runs in a `finally` on the save path: a save that failed is
+        # propagating an exception through here, and an instrument that raised would replace the
+        # citizen's real failure with its own. A measurement is never worth a diagnosis.
+        with suppress(Exception):
+            _log.info(SNAPSHOT_STEP_TIMINGS_EVENT, app_id=str(app_id), **asdict(timings))
 
 
 async def _where_head_sits_relative_to(

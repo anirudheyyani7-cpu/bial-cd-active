@@ -258,6 +258,36 @@ async def test_a_failed_snapshot_leaves_no_bundle_for_the_next_one_to_commit(
 # --- per-step timing -------------------------------------------------------------------
 
 
+async def test_a_save_that_dies_midway_still_reports_the_steps_that_ran(
+    fake_storage: FakeStorage,
+) -> None:
+    """The whole reason the accumulator is passed IN and mutated rather than returned: once an
+    exception has unwound past `_bundle_the_tree`, a return value is gone, and the steps that
+    did run are exactly what says WHERE the save died. A slow save that then fails is the case
+    this instrument exists for, so it cannot be the case it goes blind on."""
+    client = FakeSandboxClient()
+
+    def dies_at_the_bundle(cmd: list[str]) -> ExecResult:
+        if cmd[:2] == ["git", "bundle"]:
+            return ExecResult(stdout="", stderr="no space left on device", exit=1)
+        return ExecResult(stdout="", stderr="", exit=0)
+
+    client.exec_handler = dies_at_the_bundle
+    with capture_logs() as logs:
+        with pytest.raises(SandboxError):
+            await write_snapshot(client, _handle(), APP_ID)
+
+    timings = [log for log in logs if log["event"] == SNAPSHOT_STEP_TIMINGS_EVENT]
+    assert len(timings) == 1, "a failed save reported no timings at all"
+    timing = timings[0]
+    # The steps that RAN carry a number — the lock was waited for and the commit did happen.
+    assert isinstance(timing["lock_wait_ms"], int)
+    assert isinstance(timing["commit_ms"], int)
+    # The steps that never ran are absent rather than zero: a zero would read as instantaneous.
+    assert timing["base64_ms"] is None
+    assert timing["store_ms"] is None
+
+
 async def test_write_snapshot_times_every_step_of_a_save(fake_storage: FakeStorage) -> None:
     """Save is synchronous in-request with no client-side timeout, so this event is the only
     record of which of ASM39's three named suspects — the four execs, the per-app lock queue, or

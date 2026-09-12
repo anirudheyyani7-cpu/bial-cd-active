@@ -255,6 +255,42 @@ async def test_a_file_that_cannot_be_placed_raises_rather_than_carrying_on() -> 
     assert "Please try again" in str(caught.value)
 
 
+async def test_the_operator_half_names_the_image_a_400_really_points_at() -> None:
+    """★ TWO HALVES, TWO AUDIENCES, ONE RAISE. The citizen's sentence is unchanged above; this is
+    the other half of the same error, and it exists because the likeliest cause of a failed
+    placement reads as something else entirely.
+
+    A container running an image that predates #214 has no `/workspace/attachments` and no
+    `create_bytes` action — but the supervisor runs `_resolve` BEFORE it dispatches on the action,
+    so it never gets as far as "unknown files action". It answers `400 … path escapes workspace`,
+    and an operator reading that alone goes looking for a control-plane path bug that is not there.
+
+    Mutation check: drop the clause from the wrapped detail and only the second assertion goes red.
+    """
+    sandbox = FakeSandbox()
+    sandbox.files_error = SandboxError(
+        "files op failed with status 400: "
+        '{"detail":"path escapes workspace: /workspace/attachments/roster.xlsx"}'
+    )
+    storage = FakeStorage()
+    file = _file(name="roster.xlsx", size=6)
+    storage.objects[file.storage_key] = b"PK\x03\x04\r\n"
+
+    with pytest.raises(AttachmentPlacementError) as caught:
+        await AttachmentDelivery(files=(file,), storage=storage).place(_session(sandbox))
+
+    # Citizen half: unchanged, and asserted here so the operator clause cannot be added to it.
+    assert "roster.xlsx" in str(caught.value)
+    assert "Please try again" in str(caught.value)
+    assert "image" not in str(caught.value)
+    # Operator half: the supervisor's own words, plus the reading they need.
+    cause = str(caught.value.__cause__)
+    assert "path escapes workspace" in cause
+    assert "predating #214" in cause
+    # The original error is not discarded by raising from the annotated copy.
+    assert isinstance(caught.value.__context__, SandboxError)
+
+
 async def test_a_blob_that_has_gone_missing_raises_too() -> None:
     """Same rule, other side of the transfer: a row whose object is gone is not a file the turn
     can quietly proceed without."""

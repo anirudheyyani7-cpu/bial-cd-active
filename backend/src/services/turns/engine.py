@@ -1965,6 +1965,13 @@ class TurnEngine:
                     conversation_id=str(state.conversation_id),
                     turn_id=str(state.turn_id),
                     app_id=str(session.app_id),
+                    # THE CAUSE, NOT JUST THE FACT. `AttachmentPlacementError`'s own message is
+                    # written for the citizen and says only that the file could not be placed;
+                    # the storage or supervisor error underneath it is the half an operator
+                    # needs. Bound as a field rather than through `exc_info=True`: this
+                    # process's processor chain renders neither a traceback nor frame locals,
+                    # and the frame it would try to render holds the supervisor bearer.
+                    reason=str(exc.__cause__ or exc),
                 )
                 # The sentence is already citizen-facing — `place` words its own refusals for
                 # the person who attached the file, naming it.

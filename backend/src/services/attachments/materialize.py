@@ -269,10 +269,26 @@ class AttachmentDelivery:
                     ),
                 )
             except SandboxError as exc:
+                # THE CITIZEN'S SENTENCE IS UNCHANGED; the operator's half is the `__cause__`.
+                #
+                # ★ ONE SIGNATURE IS WORTH NAMING, because it is the one an operator would
+                # otherwise chase in the wrong place. The supervisor runs `_resolve` BEFORE it
+                # dispatches on the action, so a container whose image predates the
+                # `create_bytes` action does not answer "unknown files action" — it answers
+                # `400 … path escapes workspace`, because `/workspace/attachments` does not
+                # exist in that image either. Read straight, that sends someone hunting a
+                # control-plane path bug that is not there.
+                # `exc` itself is not discarded by raising from the annotated copy: it stays the
+                # implicit `__context__` of the error below, traceback intact.
+                detail = SandboxError(
+                    f"{exc} — a 400 on a /workspace/attachments write is the signature of a "
+                    "sandbox image predating #214 (no attachments root, no create_bytes); "
+                    "check the container's image before looking for a path bug."
+                )
                 raise AttachmentPlacementError(
                     f'"{file.display_name}" could not be placed in your workspace. '
                     "Please try again."
-                ) from exc
+                ) from detail
 
     async def _already_there(self, session: SandboxSession) -> dict[str, int]:
         """`{file name: byte size}` for what the attachments root already holds.

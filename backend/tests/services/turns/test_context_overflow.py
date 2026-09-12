@@ -473,7 +473,7 @@ async def test_a_pdf_refused_on_page_count_names_the_document_not_the_chat(
 
     The provider refuses any PDF over 600 pages outright. Measured against the live deployment:
     a 0.84 MB PDF of 601 text pages is refused while a 10 MB scan of forty is not — so this is
-    not a size refusal and no byte cap at the upload door can see it coming. #214's D3/D7
+    not a size refusal and no byte cap at the upload door can see it coming. The door
     retired the page cap that could, deliberately, which is what leaves this arm as the only
     place the citizen can be told what happened.
 

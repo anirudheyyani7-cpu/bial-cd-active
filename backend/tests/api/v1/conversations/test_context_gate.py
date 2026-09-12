@@ -571,7 +571,7 @@ async def _send_with(client, user, conversation_id: uuid.UUID, ids: list[str], t
 async def test_five_files_of_any_mix_send_and_the_sixth_is_refused(
     client, db_session, shared_storage, _fresh_engine
 ) -> None:
-    """★ ONE NUMBER GOVERNS EVERY ATTACHMENT (#214 R7b/R7c).
+    """★ ONE NUMBER GOVERNS EVERY ATTACHMENT.
 
     This replaces three tests built on the per-DOCUMENT cap of two, which is removed: a citizen
     attaching five files should not have to know which of them the platform files as expensive.

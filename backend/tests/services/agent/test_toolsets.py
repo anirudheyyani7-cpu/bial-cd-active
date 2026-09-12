@@ -410,7 +410,7 @@ def test_no_second_copy_of_the_chat_kind_wording_lives_under_backend_src() -> No
     assert offenders == []
 
 
-# --- the attachment capability (#214 R14) ------------------------------------
+# --- the attachment capability ------------------------------------
 
 
 def _reader_from_read_deps(ctx: RunContext[ReadDeps]) -> AttachmentReader:

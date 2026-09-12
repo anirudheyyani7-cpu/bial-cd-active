@@ -102,7 +102,7 @@ vi.mock('../../../utils/attachmentInput', async (importOriginal) => ({
   fileToBase64: reads.fileToBase64,
 }))
 
-describe('★ the rail holds Send while a file is still being read (#214, agc129 B3)', () => {
+describe('★ the rail holds Send while a file is still being read', () => {
   it('does not start a chat mid-read, and says a file is arriving', async () => {
     // The rail binds the same adapter as the chat composer, stages the same files and renders the
     // same box — but it never mounted the pending-read provider, so the count it read was the

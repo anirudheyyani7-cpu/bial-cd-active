@@ -1,4 +1,4 @@
-"""Putting an attached file where code can read it, and telling the agent it is there (#214).
+"""Putting an attached file where code can read it, and telling the agent it is there.
 
 R20/R20a AND R11a ARE ONE THING, WHICH IS WHY THEY ARE ONE MODULE. The platform places the file
 in the container and, in the same breath, names it to the agent. Either half alone is worse than
@@ -284,7 +284,8 @@ class AttachmentDelivery:
                 # implicit `__context__` of the error below, traceback intact.
                 detail = SandboxError(
                     f"{exc} — a 400 on a /workspace/attachments write is the signature of a "
-                    "sandbox image predating #214 (no attachments root, no create_bytes); "
+                    "sandbox image older than the two-lane attachments (no attachments root, "
+                    "no create_bytes action); "
                     "check the container's image before looking for a path bug."
                 )
                 raise AttachmentPlacementError(
@@ -331,7 +332,7 @@ class AttachmentDelivery:
         return sizes
 
     def note(self) -> str:
-        """The one thing an agent must be told, in the words it has to act on (R11a).
+        """The one thing an agent must be told, in the words it has to act on.
 
         NAMES THE FILE, THE PATH AND THE READER — all three, because the failure is what happens
         when any one is missing. Without the path the agent looks in the app tree and concludes the
@@ -356,13 +357,13 @@ class AttachmentDelivery:
           being rebuilt. Said plainly, because an agent that "fixed" the reader last turn and
           finds its change gone is one that starts writing its own again.
 
-        ★ EVERY FILE IS GIVEN TWO ADDRESSES, AND THE RUN LINE USES THE ON-DISK ONE (#214,
-        agc129's B2). The note used to offer only `.attachments/<name>`, which only a TOOL can
-        resolve — the read tools and `read_attachment` translate it. Build has no
-        `read_attachment` (R15: it runs, and may edit, the reader through `run_command`), and a
+        ★ EVERY FILE IS GIVEN TWO ADDRESSES, AND THE RUN LINE USES THE ON-DISK ONE. The note
+        used to offer only `.attachments/<name>`, which only a TOOL can resolve — the read
+        tools and `read_attachment` translate it. Build has no `read_attachment`: it runs,
+        and may edit, the reader through `run_command` instead. And a
         command executes inside the app folder, where `.attachments/` does not exist: Build ran
         the reader on the path it was given and got `missing` for a file that was there. This
-        module may not branch on the chat's kind (R71), so rather than one address per kind it
+        module may not branch on the chat's kind, so rather than one address per kind it
         gives both and says which is for what — correct on every arm, with nothing to keep in
         step.
         """

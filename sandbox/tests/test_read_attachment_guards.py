@@ -1,4 +1,4 @@
-"""An already-named reader failure keeps its own name (#214 R12a).
+"""An already-named reader failure keeps its own name.
 
 WHY THIS IS A SEPARATE MODULE FROM `test_read_attachment.py`. That one `importorskip`s all four
 reader libraries at module scope, so on any machine missing one of them it reports "13 skipped" —
@@ -136,7 +136,7 @@ def test_the_guards_parse_under_the_version_the_image_actually_ships() -> None:
     assert "except ReadFailure, MemoryError:" not in source
 
 
-# --- the reader streams, and that is load-bearing (#214 U13) ------------------------------------
+# --- the reader streams, and that is load-bearing ------------------------------------
 
 
 def test_the_workbook_is_streamed_never_materialised() -> None:

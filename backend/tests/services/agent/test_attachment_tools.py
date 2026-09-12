@@ -1,4 +1,4 @@
-"""The Plan chat's attachment capability (#214 R14) — what it allows, and what it refuses.
+"""The Plan chat's attachment capability — what it allows, and what it refuses.
 
 `test_toolsets.py` asserts WHO is offered this tool. This file asserts what the tool does with what
 it is given: the scope of the command it builds, and the three ways it can fail.
@@ -87,16 +87,16 @@ async def test_it_refuses_a_path_that_is_not_an_attachment() -> None:
     ],
 )
 async def test_a_traversal_out_of_the_attachments_root_is_refused(escape: str) -> None:
-    """★ THE PREFIX IS NOT CONTAINMENT (#214 R19).
+    """★ THE PREFIX IS NOT CONTAINMENT.
 
-    `is_an_attachment_path` answers one question — does this name the reserved prefix — and every
-    string below answers it yes. This tool then builds an argv and hands it to `exec`, which does
-    NOT pass through the supervisor's `_resolve`, so an unvetted `..` reached the reader and it
-    would open any `.csv`/`.xlsx`/`.docx`/`.pptx`/`.tsv` in the container.
+    `is_an_attachment_path` answers one question — does this name the reserved prefix — and
+    every string below answers it yes. This tool then builds an argv and hands it to `exec`,
+    which does NOT pass through the supervisor's `_resolve`, so an unvetted `..` reached the
+    reader and it would open any `.csv`/`.xlsx`/`.docx`/`.pptx`/`.tsv` in the container.
 
-    It is reachable rather than theoretical: the path is model-chosen, and this feature's own rule
-    (R18) holds that attachment content is untrusted — a spreadsheet cell that talks an agent into
-    a traversal is exactly what that rule anticipates.
+    It is reachable rather than theoretical: the path is model-chosen, and this feature's own
+    rule holds that attachment content is untrusted — a spreadsheet cell that talks an agent
+    into a traversal is exactly what that rule anticipates.
 
     Mutation receipt: drop the `refuse_unsafe_path` call and each of these reaches `exec`.
     """

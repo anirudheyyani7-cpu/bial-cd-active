@@ -43,7 +43,7 @@ from pydantic import BaseModel
 # --- config (fail-fast: required settings have no defaults) --------------------------------
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace/app"))
-# WHERE ATTACHMENTS LIVE, AND WHY IT IS NOT UNDER `WORKSPACE` (#214 R19). `WORKSPACE` is the tree
+# WHERE ATTACHMENTS LIVE, AND WHY IT IS NOT UNDER `WORKSPACE`. `WORKSPACE` is the tree
 # that BECOMES the citizen's app: it is snapshotted, restored, saved and deployed. A file someone
 # attached to a chat must not travel with any of that as a side effect of having been attached, and
 # excluding it from each of those paths in turn means getting every exclusion right forever.
@@ -1173,7 +1173,7 @@ class ExecBody(BaseModel):
     timeout: int = 900
 
 
-# A SECOND SIZE CEILING LIVED HERE AND IS GONE (D8). It restated the control plane's per-file
+# A SECOND SIZE CEILING LIVED HERE AND IS GONE. It restated the control plane's per-file
 # attachment cap, and two numbers for one rule is the only thing it reliably produced — they were
 # one release apart from disagreeing, at which point a file the door accepted would have died
 # here with a message no citizen could be shown.

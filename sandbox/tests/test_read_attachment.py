@@ -1,4 +1,4 @@
-"""The shipped attachment reader (#214) — the three measured defects, and the one return shape.
+"""The shipped attachment reader — the three measured defects, and the one return shape.
 
 Runs in the sandbox image, where the four reader libraries live. These are not smoke tests: each
 case below is one of the ways the REPLACED extractor was wrong, asserted so the replacement cannot
@@ -49,7 +49,7 @@ def run(path: Path) -> dict:
     return json.loads(proc.stdout)
 
 
-# --- the three measured defects (R24) ---------------------------------------------------------
+# --- the three measured defects ---------------------------------------------------------
 
 
 def test_a_formula_column_with_no_stored_result_says_so(tmp_path: Path) -> None:
@@ -121,7 +121,7 @@ def test_a_table_header_survives_as_a_header(tmp_path: Path) -> None:
     assert ["T1", "42"] in first["sampleRows"]
 
 
-# --- the whole is always stated (R17) ---------------------------------------------------------
+# --- the whole is always stated ---------------------------------------------------------
 
 
 def test_a_large_csv_reports_its_true_row_count_not_the_sample(tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ def test_a_tsv_is_read_on_tabs_not_commas(tmp_path: Path) -> None:
     assert out["rows"] == 1
 
 
-# --- one return shape, including failure (R12a) ------------------------------------------------
+# --- one return shape, including failure ------------------------------------------------
 
 
 def test_a_corrupt_file_is_a_named_failure_not_a_crash(tmp_path: Path) -> None:
@@ -229,7 +229,7 @@ def test_no_arguments_is_answered_rather_than_traced() -> None:
     assert json.loads(proc.stdout)["error"]["code"] == "usage"
 
 
-# --- the rest of the manifest (R12) ------------------------------------------------------------
+# --- the rest of the manifest ------------------------------------------------------------
 
 
 def test_a_workbook_reports_sheets_dimensions_and_merges(tmp_path: Path) -> None:

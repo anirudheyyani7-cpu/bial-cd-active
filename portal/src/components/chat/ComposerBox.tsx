@@ -116,7 +116,7 @@ export default function ComposerBox({
   const stagedCount = useAuiState((s) => s.composer.attachments.length)
   const hasContent = useAuiState((s) => s.composer.text.trim().length > 0) || stagedCount > 0
   /**
-   * FILES TAKEN BUT NOT YET STAGED (#214 R21a).
+   * FILES TAKEN BUT NOT YET STAGED.
    *
    * `add` reads the file to base64 before the runtime appends anything, so between the drop and
    * the chip there is a window in which the composer's own view is "no attachments" — and on a
@@ -145,7 +145,7 @@ export default function ComposerBox({
    * greying it for an empty box would also fail contrast (white on `#D6DDE4` ~1.4:1).
    * `sendUnavailable` still governs `aria-disabled` and the refusal in `doSend` untouched.
    *
-   * ARRIVING FILES DO NOT LOCK THE BOX EITHER (#214 R21a). The lock is the treatment for a
+   * ARRIVING FILES DO NOT LOCK THE BOX EITHER. The lock is the treatment for a
    * pending QUESTION, and a file a few hundred milliseconds from being staged is not one. It
    * greys the send circle through `sendUnavailable` and says why in the accessible name; the
    * box stays white.
@@ -156,7 +156,7 @@ export default function ComposerBox({
     // THE ENFORCEMENT, and the whole of it. `aria-disabled` says so; it does not do so. Pressing
     // Enter, clicking a dimmed Send and calling this directly all land here.
     if (unavailableReason !== null || !conversationId || sending) return
-    // THE FILES ARE NOT ALL IN YET (#214 R21a). Enforced here as well as drawn, for the same
+    // THE FILES ARE NOT ALL IN YET. Enforced here as well as drawn, for the same
     // reason every other refusal is: `aria-disabled` says so, it does not do so, and pressing
     // Enter lands here. Sending now would send the question without the file.
     if (attachmentsArriving) return
@@ -335,7 +335,7 @@ export default function ComposerBox({
             </div>
           )}
 
-          {/* THE FILE THAT IS COMING BUT IS NOT A CHIP YET (#214 R21a).
+          {/* THE FILE THAT IS COMING BUT IS NOT A CHIP YET.
               The library's chip list can only draw what the runtime holds, and the runtime holds
               nothing until the read finishes — so a large workbook spends its whole read with no
               mark on the screen at all. Without this the box is indistinguishable from one where

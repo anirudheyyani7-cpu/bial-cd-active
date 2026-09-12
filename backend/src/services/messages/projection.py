@@ -162,7 +162,7 @@ _FILE_MUTATORS: Final = frozenset({"write_file", "edit_file", "insert_lines"})
 class AttachmentRefItem(CamelModel):
     """One attachment on a citizen's turn, as the transcript needs to draw it.
 
-    IDENTITY WAS NOT ENOUGH, which is what #214 R23a is about. This carried only the id, and a
+    IDENTITY WAS NOT ENOUGH. This carried only the id, and a
     chip cannot be drawn from an id: the browser needs the filename to label it, the media type
     to decide whether pressing it previews or downloads, and the kind to pick the shape. So a
     reopened conversation showed no chips at all for any format, and the citizen could not see
@@ -431,7 +431,7 @@ def _file_step_label(tool_name: str, path: str | None) -> tuple[str, bool]:
 def _attachment_step_label(file: str | None) -> tuple[str, bool]:
     """(label, hidden) for a read of an attached file — and here the NAME is the friendly thing.
 
-    ★ THE ONE PLACE THIS MODULE SHOWS A FILE NAME ON PURPOSE (#214 R23). `_friendly_area` exists
+    ★ THE ONE PLACE THIS MODULE SHOWS A FILE NAME ON PURPOSE. `_friendly_area` exists
     because a citizen has no idea what `components/GateTable.tsx` is: that is the platform's own
     machinery, named by the agent. An attachment is the opposite in every respect — the citizen
     chose the file, named it, and is looking at a chip carrying that name a few inches up the
@@ -586,7 +586,7 @@ def _user_text_and_refs(content: Any) -> tuple[str, list[str]]:
                 ATTACHMENT_REF_KIND,
                 ATTACHMENT_FILE_REF_KIND,
             ):
-                # BOTH KINDS (#214). A code-lane file leaves the second marker because its bytes
+                # BOTH KINDS. A code-lane file leaves the second marker because its bytes
                 # never became a `BinaryContent` — and reading only the first is what made a
                 # spreadsheet's chip vanish on reload while an image's survived, which is the R23a
                 # regression this work exists to close, inverted for the new formats.
@@ -1254,7 +1254,7 @@ async def project_conversation(
 
     ONE QUERY FOR THE WHOLE TRANSCRIPT. The ids are collected across every item first, so a
     conversation with forty attachments costs one read rather than forty — the N+1 this
-    codebase treats as a defect rather than a style note (R9).
+    codebase treats as a defect rather than a style note.
 
     An id with no row is left with empty name and media type on purpose: the row is gone
     (reclaimed with its conversation) but the reference survives in the payload forever, and

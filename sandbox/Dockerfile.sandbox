@@ -75,7 +75,7 @@ RUN curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/c
 RUN pip3 install --no-cache-dir --break-system-packages \
         "fastapi==0.141.1" "uvicorn[standard]==0.52.2" "websockets==17.0.1"
 
-# The attachment reader's libraries (#214). Pinned like their neighbours above, and captured from
+# The attachment reader's libraries. Pinned like their neighbours above, and captured from
 # what this base actually resolved to rather than picked from a changelog.
 #
 # CHOSEN FOR FAMILIARITY, NOT CAPABILITY, which is the requirement's own rule: the agent may edit
@@ -123,7 +123,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 # over the frozen /exec (`/usr/local/bin/{snapshot,restore}.sh <workspace> [b64]`).
 COPY scripts/snapshot.sh scripts/restore.sh /usr/local/bin/
 
-# THE CANONICAL ATTACHMENT READER (#214). Baked at a fixed path OUTSIDE the editable tree, so a
+# THE CANONICAL ATTACHMENT READER. Baked at a fixed path OUTSIDE the editable tree, so a
 # Build agent that edits its working copy into a state that no longer works has somewhere
 # known-good to come back from.
 COPY scripts/read_attachment.py /usr/local/lib/bial/read_attachment.py
@@ -154,7 +154,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /etc/caddy/Caddyfile \
 # The runtime npm cache is created here too: a deterministic, appuser-owned path so an on-demand
 # `npm install` at runtime (run as appuser via /exec) — and the restore reconcile install — never
 # falls back to a root-owned one. It stays EMPTY in the image; the build below uses its own.
-# `/workspace/attachments` is a SIBLING of the app tree, not a child (#214 R19): it shares the
+# `/workspace/attachments` is a SIBLING of the app tree, not a child: it shares the
 # volume, because the sandbox is already there and can already run code, but no snapshot, restore
 # or deploy walks it — so nothing a citizen attaches can reach a saved version or a published app
 # as a side effect of having been attached.

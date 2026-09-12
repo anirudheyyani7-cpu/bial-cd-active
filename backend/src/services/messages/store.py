@@ -74,7 +74,7 @@ SCHEMA_VERSION: Final = 2
 ATTACHMENT_REF_KIND: Final = "bial-attachment-ref"
 
 ATTACHMENT_FILE_REF_KIND: Final = "bial-attachment-file-ref"
-"""A code-lane attachment's durable reference — the file CODE reads, not the model (#214).
+"""A code-lane attachment's durable reference — the file CODE reads, not the model.
 
 WHY A SECOND KIND EXISTS AT ALL. `ATTACHMENT_REF_KIND` is written by `_externalize_binaries`,
 which fires on a serialized `BinaryContent` — and a code-lane file deliberately never becomes one.

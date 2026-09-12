@@ -162,7 +162,7 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
 
     attachment_id = "att_gate_floorplan_1"
 
-    # ★ THE CHAT FIRST, THEN ITS FILE, THEN THE MESSAGE — the journey IS the ordering (D1).
+    # ★ THE CHAT FIRST, THEN ITS FILE, THEN THE MESSAGE — the journey IS the ordering.
     #
     # This test used to create the conversation between the upload and the send, which was the
     # ordering the product had: the composer minted an id in the browser, uploaded against

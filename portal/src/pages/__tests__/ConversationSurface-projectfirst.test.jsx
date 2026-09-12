@@ -106,7 +106,7 @@ afterEach(() => cleanup())
 describe('BuilderPage — the seed turn is filed under a project', () => {
   it('creates the chat row FIRST — before the upload and the turn — then the confirmed brief starts the build', async () => {
     // The row is no longer a `create` block riding the turn: an upload has to name a conversation
-    // the server has already written, so creation is its own call and it comes first (#214 D1).
+    // the server has already written, so creation is its own call and it comes first.
     // No title rides it — the heading is derived from the draft, which is not known a round trip
     // earlier; the turn that follows is what names the row.
     renderHandoff()

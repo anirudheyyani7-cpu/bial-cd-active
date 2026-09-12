@@ -152,7 +152,7 @@ async def test_many_owned_attachments_yield_zero_eligible(client, app, db_sessio
     assert body["attachments"]["deleted"] == 0
 
 
-# THE DECK-SIBLING TEST IS GONE (#214). A .pptx was rendered to PDF by a converter and the
+# THE DECK-SIBLING TEST IS GONE. A .pptx was rendered to PDF by a converter and the
 # derived `{key}.pdf` stored beside the original, so a sweep had to know not to reclaim it as
 # an orphan. Nothing derives anything from an attachment now - a deck is stored as itself and
 # read in the sandbox - so there is no sibling to survive, and `_blob_keys_for` returns one key

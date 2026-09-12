@@ -85,7 +85,7 @@ interface ProjectedAttachment {
 }
 
 /**
- * The `file` parts for a projected user turn, rebuilt from what the server sent (#214 R23a).
+ * The `file` parts for a projected user turn, rebuilt from what the server sent.
  *
  * VALIDATED RATHER THAN CAST. A projection item is `Record<string, unknown>`, so this is the
  * boundary where the shape stops being a promise: an entry with no id draws nothing, and a
@@ -225,7 +225,7 @@ export function messagesFromProjection(
         role: 'user',
         // FILES FIRST, THEN THE PROSE — the same order `buildUserParts` writes when the message
         // is first composed, so a reloaded turn renders identically to the one the citizen
-        // watched send. Rebuilding these is the second half of #214 R23a: the server has always
+        // watched send. Rebuilding these is the second half of the reload path: the server has always
         // sent the attachment identities and this path threw them away, so every chip vanished
         // on refresh for every format, and with it the citizen's only sight of the files still
         // riding on every turn.

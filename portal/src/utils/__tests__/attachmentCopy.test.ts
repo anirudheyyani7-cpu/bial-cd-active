@@ -35,7 +35,7 @@ const unsupported = () => new File(['x'], 'terminal-3.zip', { type: 'application
 
 describe('the composer refusal sentence agrees with the real allowlist', () => {
   it('describes a LANE for every format the picker accepts', () => {
-    // ★ THE RECONCILIATION SURVIVES, IN THE ONLY SHAPE THAT STILL MAKES SENSE (#214 R21).
+    // ★ THE RECONCILIATION SURVIVES, IN THE ONLY SHAPE THAT STILL MAKES SENSE.
     //
     // This used to check the sentence named each accepted format and no refused one. The
     // sentence is no longer an inventory: R21 requires one sentence describing what HAPPENS to a

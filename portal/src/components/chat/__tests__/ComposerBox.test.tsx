@@ -467,7 +467,7 @@ describe('★ the attachment pipeline stays ours', () => {
     draw({ onUrgent })
     // A `.ppt`, not a `.pptx`: the modern deck is accepted now — code reads it in the sandbox —
     // while the pre-2007 binary format stays refused, because opening one would mean hosting a
-    // converter, which is a standing scope boundary (#214).
+    // converter, which is a standing scope boundary.
     drop(new File(['x'], 'slides.ppt', { type: 'application/vnd.ms-powerpoint' }))
     await waitFor(() => expect(onUrgent).toHaveBeenCalledTimes(1))
     expect(onUrgent.mock.calls[0]?.[0]).toMatch(/isn't supported|is not supported/i)
@@ -493,7 +493,7 @@ describe('★ the attachment pipeline stays ours', () => {
   })
 
   it('a large spreadsheet is no longer refused by a text budget that no longer exists', async () => {
-    // ★ THE BUDGET WENT WITH ITS LANE (#214). Inline text rode in EVERY turn of the
+    // ★ THE BUDGET WENT WITH ITS LANE. Inline text rode in EVERY turn of the
     // conversation, so it carried a cumulative 512 KB ceiling: three 250 KB spreadsheets were
     // 750 KB, two fit and the third was refused.
     //

@@ -1356,7 +1356,7 @@ async def _post_first_message(
     """A chat's FIRST message, in the order the composer now sends it: create the row, then post
     the turn against it.
 
-    ★ THE `create` BLOCK IS GONE (D1), and this helper is what that cost. It used to carry the
+    ★ THE `create` BLOCK IS GONE, and this helper is what that cost. It used to carry the
     chat's parentage on the turn itself, so the server could check the workspace and write the row
     in ONE transaction — every refusal above the creation left nothing behind, and the project's
     chat list was afterwards exactly as long as it was before (R-18).
@@ -1460,7 +1460,8 @@ async def test_the_first_message_of_a_new_chat_can_carry_a_spreadsheet(
 async def test_a_first_message_refused_by_the_workspace_leaves_an_empty_chat_and_no_turn(
     client, db_session, set_chat_model, fake_redis, fake_storage, app
 ) -> None:
-    """★ THE TRADE D1 MAKES, ASSERTED RATHER THAN ASSUMED — this test used to say the opposite.
+    """★ THE TRADE THE NEW ORDERING MAKES, ASSERTED RATHER THAN ASSUMED — this test used to
+    say the opposite.
 
     It used to pin R-18: a first message refused by the workspace left NOTHING, because the row
     was staged inside the turn's transaction and rolled back with it. The row is created a round
@@ -1655,7 +1656,8 @@ async def test_a_second_message_in_an_existing_conversation_is_unchanged(
 async def test_creating_a_chat_that_already_exists_is_idempotent_not_a_conflict(
     client, db_session, set_chat_model, fake_redis, fake_storage, _fresh_engine
 ) -> None:
-    """★ THE RETRY AFTER A REFUSED FIRST SEND, which D1 makes an ordinary case rather than a rare
+    """★ THE RETRY AFTER A REFUSED FIRST SEND, which the new ordering makes an ordinary case
+    rather than a rare
     one: the refusal leaves a real, empty chat, and the citizen's second attempt calls create
     again on the same id. If that answered 409 the leftover row would refuse its own retry, and
     the citizen would be stuck in a chat they cannot use and cannot delete.
@@ -1688,7 +1690,7 @@ async def test_creating_a_chat_that_already_exists_is_idempotent_not_a_conflict(
 # and they pinned the loser joining the winner's chat, taking the winner's PROJECT, and keeping
 # its own message. That branch existed because this route created conversations.
 #
-# It does not any more (D1), so the race moved with the creation to `POST /v1/conversations`,
+# It does not any more, so the race moved with the creation to `POST /v1/conversations`,
 # which has had the identical arm all along and is covered by `test_create.py`'s idempotency and
 # conflict cases. Deleting the tests here rather than re-pointing them is deliberate: re-pointed,
 # they would assert `test_create.py`'s behaviour under this file's name and through a route that

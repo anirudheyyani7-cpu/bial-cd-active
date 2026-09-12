@@ -203,7 +203,7 @@ async def test_a_document_occupies_nothing_until_the_provider_has_counted_it(db_
     assert exc.occupied == 153_342
 
 
-# R9a — THE ATTACHMENT READER'S OUTPUT, AND WHY THERE IS NO TEST FOR IT HERE (#214).
+# R9a — THE ATTACHMENT READER'S OUTPUT, AND WHY THERE IS NO TEST FOR IT HERE.
 #
 # A test lived here that proved the reader's manifest was charged to the conversation: the file's
 # BYTES never enter the window, which is the whole point of the code lane, but the manifest does,

@@ -1,4 +1,4 @@
-"""Which of the two lanes a media type belongs to, and the admission checks for the second (#214).
+"""Which of the two lanes a media type belongs to, and the admission checks for the second.
 
 THE ONE RULE THE WHOLE FEATURE RESTS ON. An attachment is routed by what can be DONE with it, not
 by a list of extensions:
@@ -23,7 +23,7 @@ So the second lane is its own set, admitted only where an attachment is STORED. 
 model-facing consumers keep the narrow gate they already had, and they refuse the code lane without
 a single line changing in any of them. The separation is structural rather than remembered.
 
-PASSWORD PROTECTION IS DETECTED AT THE DOOR, for every format that can carry it (R6). An encrypted
+PASSWORD PROTECTION IS DETECTED AT THE DOOR, for every format that can carry it. An encrypted
 Office file is not a damaged ZIP — it is an OLE2 compound document wrapping the encrypted package,
 and it announces itself in its first eight bytes. So a locked workbook is refused with the same
 sentence a locked PDF gets, rather than being accepted, stored, charged, and failing inside the
@@ -63,7 +63,7 @@ _DELIMITED: Final[dict[str, tuple[str, ...]]] = {
 
 CODE_LANE_MEDIA: Final[frozenset[str]] = frozenset(_OPC_PART) | frozenset(_DELIMITED)
 
-# THE SUFFIX THE READER DISPATCHES ON — not a display detail (#214 R20a).
+# THE SUFFIX THE READER DISPATCHES ON — not a display detail.
 #
 # `read_attachment.py` picks its reader from `path.suffix.lower()` and from nothing else, so the
 # name a file is written under inside the container decides whether it can be read at all. Two
@@ -123,7 +123,7 @@ def looks_password_protected(data: bytes) -> bool:
 PASSWORD_PROTECTED_TEXT: Final = (
     "That file is password-protected. Remove the password and attach it again."
 )
-"""ONE SENTENCE FOR EVERY LOCKED FILE, whatever its format (#214 R21/AE8c).
+"""ONE SENTENCE FOR EVERY LOCKED FILE, whatever its format.
 
 There were two, and they differed in both nouns: a locked PDF was told to "remove the password and
 UPLOAD it again" about "that DOCUMENT", a locked workbook to "attach it again" about "that FILE".
@@ -136,7 +136,7 @@ moves."""
 
 # ── WHAT A PDF IS ASKED AT THE DOOR ────────────────────────────────────────────────────────────
 #
-# TWO QUESTIONS, AND NEITHER OF THEM IS "HOW LONG IS IT". The page cap is gone (D3): a document's
+# TWO QUESTIONS, AND NEITHER OF THEM IS "HOW LONG IS IT". The page cap is gone: a document's
 # length is the client's token cost to bear, and the cap it was paired with — a flat per-document
 # charge sized to it — was already deleted. What is left is the pair of facts that make a file
 # unusable no matter its length: it is locked, or it is not all there.
@@ -151,7 +151,7 @@ moves."""
 # NEITHER READS TEXT, and nothing here may grow into something that does. PDFs are model-lane —
 # `CODE_LANE_MEDIA` is Office plus CSV/TSV — and are handed to the model as vision. A scanned,
 # non-searchable PDF has a header, an EOF marker and a page tree like any other, and is a
-# first-class supported case (R3). A text probe would refuse it.
+# first-class supported case. A text probe would refuse it.
 
 _PDF_TAIL_BYTES: Final = 64 * 1024
 """How much of the end of a PDF the two scans look at.

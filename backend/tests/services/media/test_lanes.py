@@ -1,4 +1,4 @@
-"""The two lanes (#214 R2/R6/R6a) — and the widening that must not reach the model.
+"""The two lanes — and the widening that must not reach the model.
 
 An attachment is routed by what can be DONE with it: the model reads images and PDFs itself, and
 code in the workspace reads everything else. These tests pin the boundary in both directions,

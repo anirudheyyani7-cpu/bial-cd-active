@@ -81,7 +81,7 @@ export const FAQS = [
   },
   {
     q: 'What files can I attach in chat?',
-    // COMPOSED FROM THE COMPOSER'S OWN CONSTANTS, never restated (R21). Both halves of this
+    // COMPOSED FROM THE COMPOSER'S OWN CONSTANTS, never restated. Both halves of this
     // answer used to be spelled out by hand — the lanes sentence and the megabyte figure — and
     // the figure was still "4 MB" long enough that a citizen reading it here and being refused
     // there would have been told two different rules by the same platform.

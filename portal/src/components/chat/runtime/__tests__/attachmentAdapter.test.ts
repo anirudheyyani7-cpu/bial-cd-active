@@ -69,7 +69,7 @@ describe('★ a claim is given back when the citizen takes the chip back', () =>
     // THE OTHER HALF, and the reason the release above is not simply 'count less'. Nothing is
     // removed here, so every file is real and the last one is over a cap that still exists.
     //
-    // The cap CHANGED with #214: the 512 KB cumulative text budget went with the inline lane -
+    // The cap CHANGED: the 512 KB cumulative text budget went with the inline lane -
     // a spreadsheet is an uploaded file now and never enters the prompt - so what bounds a
     // gesture is the per-message FILE COUNT. The release must not have turned that into a
     // suggestion either, which is the invariant this test has always been about.

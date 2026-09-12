@@ -68,7 +68,7 @@ def pdf_with_pages(pages: int) -> bytes:
 def scanned_pdf(pages: int = 2) -> bytes:
     """A page-image PDF: every page is one embedded image XObject and there is NO text at all.
 
-    ★ A FIRST-CLASS SUPPORTED CASE (R3), and the fixture that keeps the door's checks structural.
+    ★ A FIRST-CLASS SUPPORTED CASE, and the fixture that keeps the door's checks structural.
     A scanned invoice has a header, an EOF marker and a page tree like any other document, and the
     model reads it as vision. Anything at this door that reached for the file's TEXT would refuse
     it — so this is the file that would go red if either scan were ever "improved" into a text

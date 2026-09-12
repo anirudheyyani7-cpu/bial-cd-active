@@ -82,7 +82,7 @@ def _cookie(jwt: str) -> dict[str, str]:
 async def _auth(db_session):
     """A signed-in user, and A CONVERSATION TO UPLOAD AGAINST.
 
-    ★ THE SECOND HALF IS NOT CONVENIENCE (D1). `conversationId` is required at the door now — an
+    ★ THE SECOND HALF IS NOT CONVENIENCE. `conversationId` is required at the door now — an
     upload names the chat it belongs to, because that is what makes the per-conversation count
     answerable at the door and leaves no file without an owner. Every test that uploads therefore
     needs a real, owned, already-written conversation, so this returns one rather than letting
@@ -205,7 +205,7 @@ async def test_text_type_rejected(client, db_session) -> None:
 
 
 async def test_a_csv_is_no_longer_refused_as_inline_text(client, db_session, fake_storage) -> None:
-    """★ THE `text/*` REFUSAL INVERTS FOR THE DELIMITED FORMATS (#214).
+    """★ THE `text/*` REFUSAL INVERTS FOR THE DELIMITED FORMATS.
 
     It used to refuse every text type because text rode inside the prompt rather than being
     uploaded. That lane is gone: every attachment is an uploaded file with a stored identity,
@@ -410,7 +410,7 @@ async def test_the_wire_ceiling_clears_a_legal_file_encoded(
 
 
 async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake_storage) -> None:
-    """★ THE BOUND IS WIRED, NOT MERELY PRESENT (#214 R18b, ordering hazard 3).
+    """★ THE BOUND IS WIRED, NOT MERELY PRESENT.
 
     `assert_zip_not_bomb` had three callers, all server-side extraction arms this work deletes,
     and its own suite calls the function DIRECTLY — so that suite proves the algorithm and would
@@ -448,7 +448,7 @@ async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake
 async def test_the_conversation_count_cap_holds_for_a_chat_not_written_yet(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE CAP WAS BYPASSABLE ON THE ORDINARY PATH (#214 R7b).
+    """★ THE CAP WAS BYPASSABLE ON THE ORDINARY PATH.
 
     It was gated on `conversation_id is not None`, and an upload whose chat has no row yet stores
     NULL — which, since the first message of every new chat does exactly that, is the common case
@@ -552,7 +552,7 @@ async def test_a_csv_is_not_run_through_the_archive_bound(
     assert fake_storage.objects  # stored, not refused
 
 
-# --- the conversation-scoped budgets (#214 R7a/R7b) ---------------------------
+# --- the conversation-scoped budgets ---------------------------
 
 
 async def _a_conversation(db_session, user):
@@ -594,7 +594,7 @@ async def _fill_conversation(db_session, user, conversation_id, *, held: int) ->
 async def test_a_full_conversation_does_not_exhaust_the_account(
     client, db_session, fake_storage
 ) -> None:
-    """AE20 — the whole point of scoping the budget to the conversation (#214 R7a).
+    """The whole point of scoping the budget to the conversation.
 
     It used to count every attachment a citizen had ever uploaded, across every conversation, so
     two or three working sessions exhausted a lifetime allowance and the only way to reclaim any
@@ -646,7 +646,7 @@ async def test_a_full_conversation_says_so_and_names_a_way_out(
 async def test_bytes_far_over_the_deleted_budget_are_accepted_while_the_count_is_under(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE BYTE BUDGET IS REALLY GONE (D5), and this is the only test that can say so.
+    """★ THE BYTE BUDGET IS REALLY GONE, and this is the only test that can say so.
 
     Fifty megabytes used to be the per-conversation ceiling, and every other test here would stay
     green with it restored — they all sit well under it. This one seeds a conversation holding far
@@ -704,7 +704,7 @@ async def test_re_uploading_a_known_id_into_a_full_conversation_is_refused(
 async def test_the_conversation_attachment_count_is_enforced_on_the_server(
     client, db_session, fake_storage
 ) -> None:
-    """AE18 — a cap a reload cannot clear (#214 R7b).
+    """AE18 — a cap a reload cannot clear.
 
     The browser has had this number since the beginning and it was never enforced here: the
     portal tallies attachments by walking the messages it has loaded, so the count reset to zero
@@ -945,7 +945,7 @@ def test_attachments_openapi_documents_codes() -> None:
     # status the route raises without declaring passes unnoticed — which is exactly what the
     # locked-PDF 415 did until a review caught it. Anything raised gets named here.
     #
-    # "501" IS GONE (#214). It was the deck converter's "PowerPoint attachments aren't enabled",
+    # "501" IS GONE. It was the deck converter's "PowerPoint attachments aren't enabled",
     # and the converter is deleted — a .pptx is stored as itself and read in the sandbox now.
     #
     # AND THIS LINE HAD TO CHANGE, which the retirement inventory predicted it would not: it read
@@ -989,7 +989,7 @@ async def test_upload_links_owned_conversation(client, db_session, fake_storage)
 async def test_an_upload_with_no_conversation_id_is_refused_with_a_sentence(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE BREAKING CHANGE, AND ITS WORDS (D1). This test asserted the opposite: an upload with
+    """★ THE BREAKING CHANGE, AND ITS WORDS. This test asserted the opposite: an upload with
     no `conversationId` stored a NULL link and kept working, because the composer uploaded before
     the chat existed. The order is inverted now — the chat is created, then its files go up
     against it — so the absence is a client that has not been updated.
@@ -1112,7 +1112,7 @@ async def test_upload_malformed_conversation_id_400(client, db_session, fake_sto
 async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
     client, db_session, fake_storage
 ) -> None:
-    """★ RE-POINTED, NOT DELETED (#214, ordering hazard 4).
+    """★ RE-POINTED, NOT DELETED.
 
     The invariant here is about CONVERSATION LINKING, not about Office: a refused upload must
     leave no orphaned object even when the body carries a valid conversationId. It happened to
@@ -1149,7 +1149,8 @@ async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_
     than calling it directly. It used to fill the deleted byte budget with one huge row; it fills
     the file count with twenty old ones now.
 
-    ★ AND THE ORPHANS ARE LINKED, which is the shape D1 actually produces. An upload names its
+    ★ AND THE ORPHANS ARE LINKED, which is the shape an upload that names its conversation
+    actually produces. An upload names its
     conversation at the door, so a first send refused four times leaves twenty files linked to a
     chat and carried by no message. The reclaimer never read the link — it asks whether any SENT
     message references the row, and age — so it frees exactly these.
@@ -1355,7 +1356,7 @@ async def _upload_pdf(client, headers, conv, attachment_id: str, data: bytes, na
 async def test_a_long_pdf_is_accepted_now_that_nothing_counts_its_pages(
     client, db_session, fake_storage
 ) -> None:
-    """★ THE DIRECTIVE, AS ONE ASSERTION (D3/D7). Forty pages was over the old cap and is an
+    """★ THE DOOR IMPOSES NO PAGE CAP, AS ONE ASSERTION. Forty pages was over the old cap and is an
     ordinary business document; it uploads.
 
     THE POSITIVE CASE COMES FIRST because every other test in this section asserts a refusal, and
@@ -1373,7 +1374,7 @@ async def test_a_scanned_image_only_pdf_is_accepted(client, db_session, fake_sto
     """★ THE CHECK IS STRUCTURAL, NOT TEXTUAL, and this is the file that proves it.
 
     A scanned invoice carries no text at all — every page is one image — and it is a first-class
-    supported case (R3): the model reads a PDF as vision. Anything at this door that reached for
+    supported case: the model reads a PDF as vision. Anything at this door that reached for
     the file's text would refuse the very documents citizens photograph and upload most.
 
     Mutation check: add any text probe to the PDF arm and this goes red.
@@ -1544,7 +1545,7 @@ async def test_a_cross_reference_bomb_costs_the_door_nothing(
 async def test_a_locked_pdf_and_a_locked_workbook_say_the_identical_sentence(
     client, db_session, fake_storage
 ) -> None:
-    """★ AE8c / R21 — ONE SENTENCE FOR ONE SITUATION, asserted as byte equality.
+    """★ ONE SENTENCE FOR ONE SITUATION, asserted as byte equality.
 
     The two used to differ in both nouns: a locked PDF was told to "remove the password and UPLOAD
     it again" about "that DOCUMENT", a locked workbook to "attach it again" about "that FILE".

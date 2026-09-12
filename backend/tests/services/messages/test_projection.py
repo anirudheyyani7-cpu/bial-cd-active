@@ -900,7 +900,7 @@ def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
 
 
 def test_a_code_lane_attachment_still_has_a_chip_after_reload() -> None:
-    """★ R23a, INVERTED FOR THE NEW FORMATS (#214).
+    """★ R23a, INVERTED FOR THE NEW FORMATS.
 
     A chip is rebuilt from a reference marker in the stored payload. A model-lane file leaves one
     because `_externalize_binaries` fires on its `BinaryContent`; a code-lane file never becomes
@@ -945,7 +945,7 @@ def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_ent
 
 
 def test_reading_an_attachment_names_the_citizens_own_file() -> None:
-    """★ #214 R23, AND THE ONE DELIBERATE EXCEPTION TO `_friendly_area`.
+    """★ THE ONE DELIBERATE EXCEPTION TO `_friendly_area`.
 
     Every other file label in this module hides the path on purpose: `components/GateTable.tsx`
     is the platform's own machinery and means nothing to the person reading. An attachment is the
@@ -2012,7 +2012,7 @@ async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) 
     assert proposal.text.endswith("Shall I start there?")
 
 
-# --- #214: the attachment fence never reaches the bubble ------------------------------------
+# --- the attachment fence never reaches the bubble ------------------------------------
 
 
 async def _user_turn(db_session, user, conversation, content) -> None:
@@ -2036,11 +2036,11 @@ async def _user_items(db_session, user, conversation) -> list[UserTextItem]:
 
 
 async def test_an_inlined_file_body_is_kept_out_of_the_user_bubble(db_session) -> None:
-    """★ THE GUARD THIS FILE EXISTS TO PIN (#214, ordering hazard 1).
+    """★ THE GUARD THIS FILE EXISTS TO PIN.
 
     `_is_attachment_fence` is the ONLY thing standing between a persisted file body and the
     citizen's own message bubble, and until now nothing tested it — a grep for `fence` across
-    `backend/tests/` returned only build-prompt fixtures. #214 deletes the inline-text lane
+    `backend/tests/` returned only build-prompt fixtures. This work deletes the inline-text lane
     that produces these blocks, and the fence check looks like part of that lane; it is not.
     Every conversation already on disk that carried a CSV or a spreadsheet has that content
     stored as a bare string inside a `user-prompt` content list, so deleting the check makes
@@ -2095,7 +2095,7 @@ async def test_a_plain_message_is_not_mistaken_for_a_fence(db_session) -> None:
 
 async def test_the_bare_string_shape_still_reaches_the_bubble(db_session) -> None:
     """A text-only turn is persisted as a bare string, not a list (`prompt_content`'s fast
-    path). The filter must not touch that branch — pinned because #214 rewrites the producer
+    path). The filter must not touch that branch — pinned because this work rewrites the producer
     and the two shapes are easy to collapse into one."""
     user, _, conversation = await _thread(db_session)
     await _user_turn(db_session, user, conversation, "just a question, no files")
@@ -2107,7 +2107,7 @@ async def test_the_bare_string_shape_still_reaches_the_bubble(db_session) -> Non
 
 async def test_an_attachment_reference_becomes_a_chip_id_not_prose(db_session) -> None:
     """The other half of `_user_text_and_refs`: a `bial-attachment-ref` marker leaves the prose
-    and arrives as an id the UI draws a chip from. #214 R23a builds on this — the projection
+    and arrives as an id the UI draws a chip from. The reload path builds on this — the projection
     already ships the ids and the reload path throws them away — so the producing side is
     pinned here before that work moves it."""
     user, _, conversation = await _thread(db_session)

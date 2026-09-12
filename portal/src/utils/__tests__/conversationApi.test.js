@@ -686,7 +686,7 @@ describe('messagesFromProjection — a stopped turn still looks stopped after a 
 })
 
 
-describe('attachment chips survive a reload (#214 R23a)', () => {
+describe('attachment chips survive a reload', () => {
   const withAttachments = (attachments) =>
     messagesFromProjection([{ type: 'user_text', seq: 1, text: 'what is in this?', attachments }])
 

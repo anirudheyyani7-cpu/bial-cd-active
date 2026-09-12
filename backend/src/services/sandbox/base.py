@@ -577,7 +577,7 @@ class FileInsert(_FileOpBase):
 
 
 class FileCreateBytes(_FileOpBase):
-    """Place a REAL FILE in the workspace — the only op here that is not text (#214).
+    """Place a REAL FILE in the workspace — the only op here that is not text.
 
     Its sibling `FileCreate` writes through `write_text` and rewrites every CRLF to LF, which is
     right for source and silently corrupts a binary: an Office file is a ZIP archive and carries

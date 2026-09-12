@@ -69,7 +69,7 @@ describe('wireMessageFromParts — the stateless wire message', () => {
   })
 
   it('a stored fence part is FILTERED, not sent, now that nothing mints one', () => {
-    // THE PRODUCER WENT, THE FILTER STAYED, and they are not the same thing (#214). A CSV used
+    // THE PRODUCER WENT, THE FILTER STAYED, and they are not the same thing. A CSV used
     // to be read in the browser and pushed into the prompt as a fence block; every attachment
     // is an uploaded file now, so nothing produces one of these parts. But conversations
     // already on disk carry them, and this filter is what keeps a stored CSV body off the wire
@@ -97,7 +97,7 @@ describe('decodeBase64Text', () => {
 
 describe('buildUserParts', () => {
   it('uploads EVERY attachment, prose text last', async () => {
-    // ONE MECHANISM (#214). A CSV was read in the browser and inlined; a PNG was uploaded. Both
+    // ONE MECHANISM. A CSV was read in the browser and inlined; a PNG was uploaded. Both
     // are uploads now - which is what lets a chip be rebuilt on reload for every format by one
     // fix, because the inline lane could never produce an identity to rebuild from.
     const upload = vi.fn(async (a) => ({ attachmentId: a.attachmentId, key: `att/u/${a.attachmentId}`, kind: 'image', name: a.name, mediaType: a.mediaType, size: a.size }))
@@ -194,7 +194,7 @@ describe('no conversion-dependent part can be produced', () => {
   })
 })
 
-describe('the conversation link rides with an upload (#214 R7a/R7b)', () => {
+describe('the conversation link rides with an upload', () => {
   it('sends the thread id, so the row can be counted per conversation', async () => {
     // THE GAP THIS CLOSES. The server has always accepted `conversationId`, resolved it
     // owner-scoped and stamped it on the row — and no client ever sent one, so every stored

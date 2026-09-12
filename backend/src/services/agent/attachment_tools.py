@@ -1,4 +1,4 @@
-"""The Plan chat's one way to read an attached file (#214 R14).
+"""The Plan chat's one way to read an attached file.
 
 WHY THIS IS ITS OWN TOOLSET RATHER THAN A WIDER `run_command`. Plan already executes inside the
 container, but only through `check_the_guest_list`: eight read-only binaries, exec-style argv, no
@@ -176,7 +176,7 @@ def attachment_toolset[DepsT](
         # would open any `.csv`/`.xlsx`/`.docx`/`.pptx`/`.tsv` in the container.
         #
         # It matters because the path can be MODEL-CHOSEN and attachment content is untrusted by
-        # this feature's own rule (R18) — a spreadsheet cell that talks an agent into a traversal
+        # this feature's own rule — a spreadsheet cell that talks an agent into a traversal
         # is exactly the shape that rule anticipates. `_vet_path_token` is the same lexical guard
         # `read_file` and `search_files` apply, and it is applied here for the same reason and
         # BEFORE the translation, exactly as `to_container_path` documents.

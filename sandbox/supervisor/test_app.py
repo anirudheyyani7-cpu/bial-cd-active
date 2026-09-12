@@ -281,7 +281,7 @@ def test_files_create_missing_file_text_is_400() -> None:
     assert r.status_code == 400
 
 
-# --- the attachments root (#214 R19) ----------------------------------------------------------
+# --- the attachments root ----------------------------------------------------------
 def test_a_file_can_be_written_outside_the_app_tree() -> None:
     """★ WHY THERE ARE TWO ROOTS. `WORKSPACE` is the tree that BECOMES the citizen's app — it is
     snapshotted, restored, saved and deployed. A file someone attached to a chat must not travel
@@ -340,7 +340,7 @@ def test_neither_root_is_a_doorway_to_the_other_or_to_anywhere_else() -> None:
         assert r.status_code == 400, f"{path} was not refused"
 
 
-# --- /files: create_bytes (#214 — the binary lane) --------------------------------------------
+# --- /files: create_bytes --------------------------------------------
 def test_files_create_bytes_writes_the_real_bytes_unchanged() -> None:
     """A REAL FILE, NOT TEXT. Every other write action here decodes UTF-8 and rewrites CRLF to
     LF; a spreadsheet is a ZIP archive and carries 0x0D 0x0A constantly, so `create` would
@@ -395,7 +395,7 @@ def test_files_create_bytes_rejects_payload_that_is_not_base64() -> None:
 
 
 def test_files_create_bytes_writes_a_file_larger_than_the_deleted_ceiling() -> None:
-    """★ THE SIZE QUESTION IS THE DOOR'S, AND ONLY THE DOOR'S (D8). A second ceiling here used to
+    """★ THE SIZE QUESTION IS THE DOOR'S, AND ONLY THE DOOR'S. A second ceiling here used to
     restate the control plane's per-file cap, and the two would eventually disagree — at which
     point a file the door had already accepted, stored and charged for would die inside the
     container with a message no citizen could be shown.

@@ -45,7 +45,7 @@ describe('validateAttachmentFiles', () => {
   })
 
   it('accepts the code-lane formats as ordinary uploads', () => {
-    // THE INLINE-TEXT CAPS ARE GONE WITH THEIR LANE (#214). A CSV used to be read in the browser
+    // THE INLINE-TEXT CAPS ARE GONE WITH THEIR LANE. A CSV used to be read in the browser
     // and inlined into the prompt, so it carried its own 256 KB per-file and 512 KB
     // per-conversation budgets. Every attachment is an uploaded file now, governed by the one
     // per-file cap — which is also what lets a chip be rebuilt on reload for every format.
@@ -79,7 +79,7 @@ describe('validateAttachmentFiles', () => {
   })
 
   it('gives every format the SAME cap — a CSV, an image and a PDF are one rule', () => {
-    // RE-POINTED TWICE (#214, then D2). It first asserted a 256 KB cap on inlined text, which
+    // RE-POINTED TWICE. It first asserted a 256 KB cap on inlined text, which
     // existed because a CSV's BYTES rode in the prompt on every turn. Nothing is inlined now, so
     // it became "a CSV gets the ordinary file cap" — and the ordinary cap has since become one
     // number for all ten formats, so what is worth asserting is that no format has its own.

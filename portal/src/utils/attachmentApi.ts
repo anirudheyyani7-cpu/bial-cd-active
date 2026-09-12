@@ -36,7 +36,7 @@ interface UploadAttachmentArgs {
   size: number
   base64: string
   /** The thread this file belongs to. Sent so the row carries its conversation link, which the
-   *  server's per-conversation limits count over (#214 R7a/R7b). The server has always accepted
+   *  server's per-conversation limits count over. The server has always accepted
    *  and owner-validated this field; no client ever sent it, so every stored row was NULL and a
    *  conversation-scoped count would have counted nothing. */
   conversationId?: string

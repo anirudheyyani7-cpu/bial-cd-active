@@ -281,7 +281,7 @@ async def test_search_returns_no_hits_from_inside_a_lockfile(
 
 
 def test_a_search_hit_comes_back_in_the_vocabulary_the_model_was_given() -> None:
-    """★ A RESULT THE MODEL CANNOT FEED BACK IS A DEAD END (#214 R19).
+    """★ A RESULT THE MODEL CANNOT FEED BACK IS A DEAD END.
 
     `search_files` translates `subdir` on the way IN, so grep runs against
     `/workspace/attachments/…` and every hit it prints carries that container-absolute prefix.
@@ -481,7 +481,7 @@ def test_empty_argv_is_bounced() -> None:
     assert check_the_guest_list([]) is not None
 
 
-# --- a command naming an attached file is taught, not failed (#214 R14) ------
+# --- a command naming an attached file is taught, not failed ------
 
 
 @pytest.mark.parametrize(

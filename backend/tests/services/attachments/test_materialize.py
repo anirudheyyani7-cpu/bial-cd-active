@@ -1,4 +1,4 @@
-"""Placing an attached file, and telling the agent it is there (#214 R20/R20a/R11a).
+"""Placing an attached file, and telling the agent it is there.
 
 THE TWO HALVES FAIL DIFFERENTLY, WHICH IS WHY BOTH ARE PINNED HERE. A file that is never placed
 produces a `missing` from the reader — visible, recoverable. A file that is placed and never
@@ -73,7 +73,7 @@ def _session(sandbox: FakeSandbox) -> SandboxSession:
     )
 
 
-# --- the name on disk (R20a) --------------------------------------------------------------
+# --- the name on disk --------------------------------------------------------------
 
 
 def test_the_extension_comes_from_the_verified_type_not_from_the_name() -> None:
@@ -169,7 +169,7 @@ def test_the_two_paths_are_the_same_file_addressed_two_ways() -> None:
     assert file.model_path == ".attachments/rota.xlsx"
 
 
-# --- the placement (R20) ------------------------------------------------------------------
+# --- the placement ------------------------------------------------------------------
 
 
 async def test_the_bytes_land_in_the_container_unmodified() -> None:
@@ -264,7 +264,8 @@ async def test_the_operator_half_names_the_image_a_400_really_points_at() -> Non
     the other half of the same error, and it exists because the likeliest cause of a failed
     placement reads as something else entirely.
 
-    A container running an image that predates #214 has no `/workspace/attachments` and no
+    A container running an image older than the two-lane attachments has no
+    `/workspace/attachments` and no
     `create_bytes` action — but the supervisor runs `_resolve` BEFORE it dispatches on the action,
     so it never gets as far as "unknown files action". It answers `400 … path escapes workspace`,
     and an operator reading that alone goes looking for a control-plane path bug that is not there.
@@ -290,7 +291,7 @@ async def test_the_operator_half_names_the_image_a_400_really_points_at() -> Non
     # Operator half: the supervisor's own words, plus the reading they need.
     cause = str(caught.value.__cause__)
     assert "path escapes workspace" in cause
-    assert "predating #214" in cause
+    assert "older than the two-lane attachments" in cause
     # The original error is not discarded by raising from the annotated copy.
     assert isinstance(caught.value.__context__, SandboxError)
 
@@ -347,7 +348,7 @@ async def test_a_transient_storage_failure_still_says_try_again() -> None:
     assert isinstance(caught.value.__cause__, StorageAuthError)
 
 
-# --- the note (R11a) ------------------------------------------------------------------------
+# --- the note ------------------------------------------------------------------------
 
 
 def test_the_note_names_the_file_the_path_and_the_reader() -> None:
@@ -379,7 +380,7 @@ def test_the_note_gives_commands_a_path_they_can_open() -> None:
     `.attachments/<name>` and a Run line taking `<path>`, so Build ran the reader on a path
     relative to the app folder and got `missing` for a file that was there.
 
-    The note is kind-blind by design — this module may not branch on `ChatKind` (R71) — so it
+    The note is kind-blind by design — this module may not branch on `ChatKind` — so it
     gives both addresses and says which is for what, and that is correct on Plan and Build alike.
 
     Mutation receipt: put `<path>` back on the Run line and the second assertion goes red.
@@ -406,7 +407,7 @@ def test_the_note_says_a_failure_is_an_answer() -> None:
 
 
 def test_the_note_says_file_content_is_data_and_never_an_instruction() -> None:
-    """★ #214 R18. A cell, a paragraph or a speaker note can say "ignore your previous
+    """★ A cell, a paragraph or a speaker note can say "ignore your previous
     instructions", and the reader will faithfully report it — that is the reader working, not the
     reader failing. The boundary has to be stated somewhere, and the note is the only place the
     agent is told about attachments at all.
@@ -421,7 +422,7 @@ def test_the_note_says_file_content_is_data_and_never_an_instruction() -> None:
 
 
 def test_the_note_forbids_seeding_the_apps_database_from_an_attachment() -> None:
-    """★ #214 R18a. A roster is what the app is built FOR, not what it is built FROM. An agent
+    """★ A roster is what the app is built FOR, not what it is built FROM. An agent
     that quietly inserts a thousand rows has made a decision about someone's data that nobody
     asked for and that nothing on screen records."""
     note = AttachmentDelivery(files=(_file(),), storage=FakeStorage()).note()
@@ -431,7 +432,7 @@ def test_the_note_forbids_seeding_the_apps_database_from_an_attachment() -> None
 
 
 def test_the_note_says_the_reader_is_the_shipped_copy() -> None:
-    """★ #214 R16. Build can edit the reader — it holds an unrestricted `run_command` — but the
+    """★ Build can edit the reader — it holds an unrestricted `run_command` — but the
     reader lives in the workspace IMAGE, not in the app tree, so the edit dies with the container.
     An agent that fixed it last turn and finds its change gone is one that starts writing its own
     parser again, which is the outcome the whole design removes."""
@@ -462,7 +463,7 @@ def test_the_note_lists_every_file_the_conversation_holds() -> None:
     assert "/workspace/attachments/b.docx" in note
 
 
-# --- what the turn can see (R20a) -----------------------------------------------------------
+# --- what the turn can see -----------------------------------------------------------
 
 
 async def _stored(
@@ -494,7 +495,7 @@ async def _stored(
 async def _sent(db_session, *, user_id: uuid.UUID, conversation_id: uuid.UUID, ids: list[str]):
     """A committed user message that CARRIED these attachments.
 
-    ★ A STORED ROW IS NOT A SENT FILE (D1), which is what this helper exists to say. An upload
+    ★ A STORED ROW IS NOT A SENT FILE, which is what this helper exists to say. An upload
     names its conversation at the door now, so a row is linked from the instant it is stored —
     including one whose message was refused and never sent. `code_lane_attachments` therefore
     reads the SENT set out of the message payloads, and a test that wants a file delivered has to
@@ -636,7 +637,7 @@ async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
 
 
 async def test_a_sent_file_is_still_found_on_the_second_turn(db_session) -> None:
-    """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO (#214 R7a).
+    """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO.
 
     Turn two carries no attachment ids at all, so what makes "the file you attached three turns
     ago" still answerable is the conversation link — a container recycled between turns comes back
@@ -674,7 +675,7 @@ async def test_a_sent_file_is_still_found_on_the_second_turn(db_session) -> None
 
 
 async def test_a_file_uploaded_but_never_sent_is_neither_placed_nor_announced(db_session) -> None:
-    """★ THE REVIEW'S SHARPEST FINDING, AND THE ONE THE NEW ORDERING CREATED (D1).
+    """★ THE ONE THE NEW ORDERING CREATED.
 
     Linking at insert means a row belongs to the conversation from the instant it is stored —
     before any message carries it, and whether or not one ever does. So a citizen whose first send
@@ -683,7 +684,8 @@ async def test_a_file_uploaded_but_never_sent_is_neither_placed_nor_announced(db
     are talking to attached these files to this conversation". The agent would then reason from
     files the citizen had taken back.
 
-    Before D1 those rows were NULL-linked and invisible to the delivery, so the new ordering
+    Under the old ordering those rows were NULL-linked and invisible to the delivery, so the
+    new ordering
     converts an invisible orphan into a live, announced, re-placed file. The guard is what keeps
     the delivery scoped to what was actually sent.
 

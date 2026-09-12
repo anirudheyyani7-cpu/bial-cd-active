@@ -334,7 +334,7 @@ def test_a_plan_chat_stays_lean() -> None:
 
 
 def test_the_plan_segment_points_at_the_reader_rather_than_at_extraction() -> None:
-    """★ #214 R27. This paragraph used to describe a mechanism that no longer exists: an
+    """★ This paragraph used to describe a mechanism that no longer exists: an
     attachment's text was extracted on the SERVER and inlined into the prompt, so the segment only
     had to say "put what it means into the plan". Nothing extracts anything now — the file sits in
     the workspace and code opens it — and a prompt still written against the old mechanism would

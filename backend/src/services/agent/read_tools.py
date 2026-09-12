@@ -96,7 +96,7 @@ success is not summarised on a surface that has no slice handle."""
 # under the exact exclusions the model reads under.
 IGNORED_DIRS = frozenset({".git", "node_modules", ".next", "dist", ".turbo"})
 
-# THE ONE PATH OUTSIDE THE APP ROOT THAT MAY BE NAMED (#214 R19). Attachments live in a sibling
+# THE ONE PATH OUTSIDE THE APP ROOT THAT MAY BE NAMED. Attachments live in a sibling
 # of the app tree so nothing a citizen attaches can reach a saved version or a deployed app as a
 # side effect of being attached — which means an agent has to be able to SAY where they are.
 #
@@ -713,7 +713,7 @@ def _vet_path_token(token: str) -> str | None:
 def _refuse_an_attachment_operand(token: str) -> str | None:
     """Why a command may not name an attached file, or None when the token is not one.
 
-    ★ TEACHING, NOT FAILING (R14). A command runs inside the app's folder; attachments live in a
+    ★ TEACHING, NOT FAILING. A command runs inside the app's folder; attachments live in a
     sibling of it. So an operand naming one either resolves to nothing (`.attachments/roster.csv`,
     relative, admitted, then missing) or is refused for its leading slash
     (`/workspace/attachments/roster.csv`) — and both answers send the agent back to describing the

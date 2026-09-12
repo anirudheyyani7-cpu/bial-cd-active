@@ -909,7 +909,7 @@ describe('a refused send leaves the citizen holding their message', () => {
  * answer different questions (per message vs cumulative) and a test that accepted either would go
  * green on the wrong one.
  */
-// THE PER-MESSAGE DOCUMENT CAP IS GONE (#214 R7c), and its tests with it. It was two, and it
+// THE PER-MESSAGE DOCUMENT CAP IS GONE, and its tests with it. It was two, and it
 // shipped as the stopgap that stopped a 61-page PDF blowing the context budget. The count was
 // the belt beside the page cap's braces — and the page cap has since gone the same way, once
 // the flat per-document charge it was sized against stopped existing. One rule governs a message

@@ -36,7 +36,7 @@ def _collect_ref_ids(node: Any, ids: set[str]) -> None:
         for item in node:
             _collect_ref_ids(item, ids)
     elif isinstance(node, dict):
-        # BOTH KINDS, and the second one is why this comment exists (#214). A model-lane file is
+        # BOTH KINDS, and the second one is why this comment exists. A model-lane file is
         # externalized from its `BinaryContent` and leaves `ATTACHMENT_REF_KIND`; a code-lane file
         # never becomes one, so it leaves `ATTACHMENT_FILE_REF_KIND` instead. Scanning only the
         # first made every spreadsheet, document and deck invisible to the two callers that decide
@@ -64,7 +64,7 @@ def _referenced_attachment_ids(payloads: Iterable[list[Any] | None]) -> set[str]
 def _blob_keys_for(attachments: Iterable[Attachment]) -> list[str]:
     """The object-store keys to sweep for these attachment rows: one key each.
 
-    THE DECK SIBLING IS GONE (#214). A `.pptx` used to be rendered to PDF by a converter and the
+    THE DECK SIBLING IS GONE. A `.pptx` used to be rendered to PDF by a converter and the
     derived `{key}.pdf` stored beside the original, so a sweep had to know to remove both. Nothing
     derives anything from an attachment now — a deck is stored as itself and read in the sandbox —
     so there is one key per row again.

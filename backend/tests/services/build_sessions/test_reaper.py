@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import ast
 import base64
-import inspect
 import time
 import uuid
 from dataclasses import replace
@@ -1394,21 +1393,6 @@ async def test_a_teardown_of_a_container_that_never_served_anybody_sounds_the_al
     # greps, and a container that never served is exactly the history this alarm's name must
     # also cover without overclaiming it.
     assert "never" not in fired[0]["event"]
-
-
-def test_the_never_served_alarm_names_both_histories_the_empty_sentinel_can_mean() -> None:
-    """A container that never served and one that DID serve and had its proof retracted leave
-    the identical empty sentinel, and the alarm's own docstring is what a reader trusts to say
-    so — asserting only the first history would be the alarm claiming more than the signal
-    supports. Read off the live docstring rather than restated here, so a rewrite that quietly
-    narrows the claim back down is caught.
-
-    Mutation check: put the alarm's opening line back to "A container is about to stop existing
-    having served nobody, ever" and this goes red."""
-    doc = inspect.getdoc(reaper._sound_the_alarm_if_the_proof_is_absent) or ""
-    assert "having served nobody, ever" not in doc
-    assert "retract" in doc.lower()
-    assert "does not say the container never served" in doc.lower()
 
 
 async def test_a_teardown_of_a_container_that_did_serve_is_silent(

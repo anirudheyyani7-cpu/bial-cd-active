@@ -63,6 +63,19 @@ it belongs to, and what the model does with it.
   turn with "the assistant hit a problem", which named nothing and invited sending it again. The
   refusal now names the document and offers the two things that work — attach a shorter one, or
   split it.
+- **A spreadsheet is measured rather than taken at its word.** A workbook carries a record of its
+  own extent, and some tools write one that is wrong. The reader believed it, so a sheet of fifty
+  rows that declared itself one cell was summarised as one cell — no error, nothing to suggest
+  anything had been missed, and an answer built from a file the assistant had barely read.
+- **Switching chats while a file is uploading no longer disables Send everywhere.** The composer is
+  shared across conversations, and an upload abandoned by navigating away left it waiting on a
+  message that would never be sent, in every chat, until the page was reloaded. Those abandoned
+  uploads also kept counting against the old chat's twenty-file limit, so it could refuse the next
+  file while showing none.
+- **Two files with the same name can no longer overwrite each other in the workspace.** The escape
+  for a repeated filename was a name a third file could itself have.
+- **A malformed PDF cannot break the password check.** A crafted file could make the check that
+  looks for a password fail outright rather than answer yes or no.
 
 ### Known limitations
 

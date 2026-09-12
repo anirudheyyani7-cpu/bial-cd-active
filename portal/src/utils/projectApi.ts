@@ -45,6 +45,15 @@ export interface Project {
    */
   hasRelaunchableSnapshot: boolean | null
   /**
+   * Whether the OWNER has ever saved a version — narrower than `hasRelaunchableSnapshot`,
+   * which also counts an autosave/recovery copy (#198). The restricted shared workspace
+   * restores ONLY from the saved bundle, never a recovery copy, so this is the one field it
+   * can trust to decide whether Launch would actually work. `null` for an owner's own view
+   * (irrelevant there) and for a shared view with no app at all; `false` means Launch should
+   * be shown disabled, with the reason, rather than attempted into a known failure.
+   */
+  hasSavedSnapshot: boolean | null
+  /**
    * Is the app SERVING right now? Not derivable from `appStatus`: APPROVED means an
    * administrator said yes, but one-click deploy never writes `status`, so a live app can
    * stay `draft`. Server-computed from deployment history; `false` for no app.
@@ -173,6 +182,7 @@ function toProject(value: unknown): Project {
     // Anything that is not a literal boolean — absent, null, or a shape we do not recognize —
     // is the "cannot say" answer. That is the fail-safe direction: it withholds the claim.
     hasRelaunchableSnapshot: typeof value.hasRelaunchableSnapshot === 'boolean' ? value.hasRelaunchableSnapshot : null,
+    hasSavedSnapshot: typeof value.hasSavedSnapshot === 'boolean' ? value.hasSavedSnapshot : null,
     // Absent or non-boolean means NOT live: the badge claims something, so an unknown
     // must never render as a claim.
     isServing: value.isServing === true,

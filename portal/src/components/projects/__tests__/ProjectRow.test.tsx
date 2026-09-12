@@ -28,6 +28,7 @@ const project = (over: Partial<Project> = {}): Project => ({
   appId: null,
   appStatus: null,
   hasRelaunchableSnapshot: null,
+  hasSavedSnapshot: null,
   isServing: false,
   createdAt: '2026-07-10T00:00:00Z',
   updatedAt: '2026-07-10T00:00:00Z',

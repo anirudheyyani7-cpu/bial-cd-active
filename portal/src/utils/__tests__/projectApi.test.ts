@@ -32,11 +32,19 @@ describe('listProjects', () => {
     const fetchImpl = fetchReturning(200, { items: [sampleProject], page: 1, pageSize: 25, total: 1, totalPages: 1 })
     const page = await listProjects({}, deps(fetchImpl))
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/projects')
-    // The wire sample carries no `hasRelaunchableSnapshot` — the list never computes one —
-    // and the narrower defaults it to `null`, the "cannot say" answer that withholds the claim.
-    // It carries no `access` either, and `asAccess` fails safe to `'owner'` for exactly that case.
+    // The wire sample carries no `hasRelaunchableSnapshot` (the list never computes one),
+    // `hasSavedSnapshot` (owner-view/list-scoped, #198), or `access` — each narrower defaults
+    // to its own "cannot say"/fail-safe answer (`null`, `null`, `'owner'` respectively).
     expect(page).toEqual({
-      items: [{ ...sampleProject, hasRelaunchableSnapshot: null, isServing: false, access: 'owner' }],
+      items: [
+        {
+          ...sampleProject,
+          hasRelaunchableSnapshot: null,
+          hasSavedSnapshot: null,
+          isServing: false,
+          access: 'owner',
+        },
+      ],
       page: 1,
       pageSize: 25,
       total: 1,

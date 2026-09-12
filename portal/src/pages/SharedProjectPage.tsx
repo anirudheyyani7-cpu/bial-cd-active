@@ -92,10 +92,14 @@ export default function SharedProjectPage(): React.JSX.Element {
       .finally(() => setLaunching(false))
   }, [projectId])
 
-  // Fires once the project resolves. `launch` closes over `projectId` alone and is stable
-  // across everything else this effect would otherwise list.
+  // Fires once the project resolves — UNLESS the owner has confirmed nothing saved
+  // (`hasSavedSnapshot === false`, requirement 10's second sentence). Launching into that is a
+  // guaranteed, already-known failure; the render below shows the explanation directly instead
+  // of spending a round trip to learn what `getProject` already said. `null` (unknown) still
+  // launches — that reading means "cannot say", not "confirmed missing", and the reactive
+  // failure state below is exactly what covers a wrong guess in that direction.
   useEffect(() => {
-    if (project !== null) launch()
+    if (project !== null && project.hasSavedSnapshot !== false) launch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
 
@@ -143,7 +147,7 @@ export default function SharedProjectPage(): React.JSX.Element {
           <button
             type="button"
             onClick={onRefresh}
-            aria-disabled={busy || project === null}
+            aria-disabled={busy || project === null || project.hasSavedSnapshot === false}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
           >
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : undefined} /> Refresh
@@ -157,6 +161,18 @@ export default function SharedProjectPage(): React.JSX.Element {
             <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center max-w-md">
               <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
               <p className="text-xs text-neutral mt-1">{projectError}</p>
+            </div>
+          </div>
+        ) : project !== null && project.hasSavedSnapshot === false ? (
+          // LAUNCH DISABLED, WITH THE SAME EXPLANATION the share panel and a launch attempt
+          // would each give (requirement 10's second sentence) — shown up front, never
+          // attempted into a failure the project's own GET already knew about.
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="bg-white border border-bial-border rounded-2xl py-16 px-6 text-center max-w-md">
+              <p className="text-sm font-semibold text-tertiary">Nothing to launch yet</p>
+              <p className="text-xs text-neutral mt-1">
+                The owner hasn’t saved a version of this app yet.
+              </p>
             </div>
           </div>
         ) : launchError !== null ? (

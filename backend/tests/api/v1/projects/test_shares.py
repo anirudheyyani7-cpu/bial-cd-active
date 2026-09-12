@@ -348,7 +348,57 @@ async def test_get_project_reports_shared_access_for_a_recipient(
 
     resp = await client.get(f"/v1/projects/{project_id}", headers=recipient_headers)
     assert resp.status_code == 200
-    assert resp.json()["access"] == "shared"
+    body = resp.json()
+    assert body["access"] == "shared"
+    assert body["hasSavedSnapshot"] is True  # R10's second sentence: Launch is not disabled
+
+
+async def test_get_project_reports_no_saved_snapshot_for_a_recipient_when_it_vanishes(
+    client, db_session, bind_store
+) -> None:
+    """R10's second sentence, the disable side: an existing share whose bundle is gone reports
+    `hasSavedSnapshot: false` so the restricted workspace can disable Launch and explain why,
+    rather than letting a recipient press it into a failure the API already knows about."""
+    owner_headers, owner = await _auth(db_session)
+    store = bind_store(FakeStorage())
+    created = (
+        await client.post(
+            "/v1/projects",
+            headers=owner_headers,
+            json={"name": "App", "description": _VALID_DESCRIPTION},
+        )
+    ).json()
+    project_id = created["id"]
+    app_id = await resolve_app_for_project(db_session, owner.id, uuid.UUID(project_id))
+    await db_session.commit()
+    await store.put(snapshot_key(app_id), b"BUNDLE")
+    recipient_headers, recipient = await _auth(db_session)
+    await client.post(
+        f"/v1/projects/{project_id}:share",
+        headers=owner_headers,
+        json={"sharedWithUserId": str(recipient.id)},
+    )
+    await store.delete(snapshot_key(app_id))  # the owner's bundle is gone AFTER the share
+
+    resp = await client.get(f"/v1/projects/{project_id}", headers=recipient_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["access"] == "shared"
+    assert body["hasSavedSnapshot"] is False
+
+
+async def test_get_project_reports_no_saved_snapshot_field_for_an_owner(
+    client, db_session, bind_store
+) -> None:
+    """The field is scoped to a SHARED viewer — an owner reads `hasRelaunchableSnapshot`
+    instead, and paying for a second object-store HEAD on the far more common owner page load,
+    for a field nothing on that path consults, would be pure cost."""
+    headers, owner = await _auth(db_session)
+    project_id = await _mint_project_with_snapshot(client, headers, owner, db_session, bind_store)
+
+    resp = await client.get(f"/v1/projects/{project_id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["hasSavedSnapshot"] is None
 
 
 async def test_get_project_404s_for_a_stranger_not_shared_with(

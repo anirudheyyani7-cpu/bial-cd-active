@@ -76,13 +76,14 @@ from src.services.build_sessions import (
     reap_user,
     shr_name_for,
 )
-from src.services.build_sessions.manager import restorable_presence
+from src.services.build_sessions.manager import restorable_presence, snapshot_presence
 from src.services.deploy.liveness import live_app_ids
 from src.services.deploy.registry_delete import sweep_app_repositories
 from src.services.deploy.teardown import sweep_published_apps
 from src.services.embeddings import EmbedderDep, write_description_embedding
 from src.services.projects import (
     MIN_COLLEAGUE_QUERY_CHARS,
+    ProjectAccess,
     create_share,
     delete_project_cascade,
     find_possible_duplicates,
@@ -135,6 +136,7 @@ def _to_response(
     *,
     is_serving: bool,
     access: Literal["owner", "shared"] = "owner",
+    has_saved_snapshot: bool | None = None,
 ) -> ProjectResponse:
     """Project a row onto the wire shape.
 
@@ -160,6 +162,7 @@ def _to_response(
         created_at=project.created_at,
         updated_at=project.updated_at,
         access=access,
+        has_saved_snapshot=has_saved_snapshot,
     )
 
 
@@ -613,6 +616,13 @@ async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -
     # exact predicate `preview-state` answers with, so a cold page load and the 45-second poll
     # can never disagree about whether a restore is on offer.
     relaunchable = False if app_id is None else await restorable_presence(app_id)
+    # R10's SECOND SENTENCE, computed ONLY for a shared viewer: an owner never reads this
+    # field (they have `has_relaunchable_snapshot` for their own Relaunch), and paying for a
+    # second object-store HEAD on every owner page load — the far more common reader of this
+    # route — would be a real cost for a field nothing on that path consults.
+    has_saved_snapshot = None
+    if resolved.access is ProjectAccess.SHARED:
+        has_saved_snapshot = None if app_id is None else await snapshot_presence(app_id)
     return _to_response(
         project,
         app_id,
@@ -620,6 +630,7 @@ async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -
         relaunchable,
         is_serving=await _serving_now(db, app_id),
         access=resolved.access.value,
+        has_saved_snapshot=has_saved_snapshot,
     )
 
 

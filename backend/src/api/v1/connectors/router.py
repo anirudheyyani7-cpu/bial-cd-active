@@ -32,6 +32,7 @@ import uuid
 from datetime import date
 from typing import Final
 
+import redis.asyncio as aioredis
 import sqlalchemy as sa
 from fastapi import APIRouter, status
 from redis.exceptions import RedisError
@@ -54,8 +55,10 @@ from src.api.v1.connectors.schemas import (
     RelativeWindowChoice,
     StoredWindow,
 )
+from src.api.v1.live_build import _the_live_session_is_this_app
 from src.core.connectors import CONNECTORS, Connector, resolve_window
 from src.core.errors import AppApiError
+from src.db.models.app_registry import AppRegistry
 from src.db.models.connector_access import ConnectorAccessRequest, ConnectorRequestStatus
 from src.db.models.project import Project
 from src.db.models.project_connector import ConnectorWindowKind, ProjectConnector
@@ -63,11 +66,13 @@ from src.schemas import AUTH_401, ErrorEnvelope, error_responses
 from src.services.build_sessions.locks import (
     liveness_lease_is_held,
     lock_is_held,
+    read_registry,
     read_starting_marker,
 )
 from src.services.connectors import ConnectorPersonState, PersonAccess, current_access
 from src.services.redis import get_redis
 from src.services.redis.client import RedisNotConfiguredError
+from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -414,8 +419,44 @@ def _unsupported_window_message(connector: Connector) -> str:
     return f"Pick one of the ranges {connector.display_name} offers: {listed} days."
 
 
-async def _refuse_while_a_session_is_live(user_id: uuid.UUID, connector: Connector) -> None:
-    """R11a: refuse a settings change while this citizen has a turn in flight.
+async def _the_live_session_is_this_project(
+    db: DbSession,
+    redis: aioredis.Redis,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    starting_project_id: uuid.UUID | None,
+) -> bool:
+    """Is the session the signals above report the one running inside THIS project?
+
+    THE THREE SIGNALS CARRY TWO KINDS OF IDENTITY. The starting marker holds a PROJECT id
+    outright and is written under the lock, so while one stands it IS the live session's
+    identity — and it is the only one that can answer during a cold start, before a registry
+    entry exists. The lock and the lease carry none: theirs comes from the registry hash's app
+    name, which `_the_live_session_is_this_app` compares and fails closed on.
+
+    A PROJECT NOTHING WAS EVER BUILT IN HAS NO APP ROW, and so no container of its own — a
+    registry naming an app is naming somebody else's work. A registry naming NOTHING is
+    ambiguity rather than innocence, and refuses here for the reason it refuses there."""
+    if starting_project_id is not None:
+        return starting_project_id == project_id
+    # Read, never mint: `resolve_app_for_project` upserts, and a settings write that minted a
+    # draft app would leave one behind for a project nobody has ever built in. The `user_id`
+    # predicate is the isolation boundary — dropping it is a cross-user leak.
+    app_id: uuid.UUID | None = await db.scalar(
+        sa.select(AppRegistry.id).where(
+            AppRegistry.project_id == project_id, AppRegistry.user_id == user_id
+        )
+    )
+    if app_id is None:
+        registry = await read_registry(redis, user_id)
+        return not (registry or {}).get(REGISTRY_FIELD_APP_NAME, "")
+    return await _the_live_session_is_this_app(redis, user_id, app_id)
+
+
+async def _refuse_while_a_session_is_live(
+    db: DbSession, user_id: uuid.UUID, project_id: uuid.UUID, connector: Connector
+) -> None:
+    """R11a: refuse a settings change while this project has a turn in flight.
 
     THREE SIGNALS, ANY OF WHICH MEANS LIVE, because they cover the whole of a session's shape:
     the one-per-user LOCK is held for the duration of a turn; the liveness LEASE is the one signal
@@ -423,6 +464,11 @@ async def _refuse_while_a_session_is_live(user_id: uuid.UUID, connector: Connect
     STARTING marker covers the window between "a start was asked for" and "the lock was taken".
     Reading only the lock would let a change land during a cold start, which is precisely the
     window in which the container's environment is being assembled.
+
+    ALL THREE ARE KEYED ON THE PERSON, because a citizen gets one workspace — so a build anywhere
+    lights all three. Only the project that session is running in has an environment a change
+    could contradict, so the refusal is narrowed to it and the citizen's other projects stay
+    settable while it runs.
 
     FAILS CLOSED. A Redis error refuses the change rather than allowing it — the same posture
     `acquire_lock` takes, and the consistent one: if the platform cannot tell whether a session is
@@ -435,10 +481,13 @@ async def _refuse_while_a_session_is_live(user_id: uuid.UUID, connector: Connect
     except RedisNotConfiguredError:
         return
     try:
-        live = (
+        starting_project_id = await read_starting_marker(redis, user_id)
+        live_here = (
             await lock_is_held(redis, user_id)
             or await liveness_lease_is_held(redis, user_id)
-            or await read_starting_marker(redis, user_id) is not None
+            or starting_project_id is not None
+        ) and await _the_live_session_is_this_project(
+            db, redis, user_id, project_id, starting_project_id
         )
     except RedisError as exc:
         raise AppApiError(
@@ -446,7 +495,7 @@ async def _refuse_while_a_session_is_live(user_id: uuid.UUID, connector: Connect
             _SESSION_IS_LIVE.format(name=connector.display_name),
             code="session_is_live",
         ) from exc
-    if live:
+    if live_here:
         raise AppApiError(
             status.HTTP_409_CONFLICT,
             _SESSION_IS_LIVE.format(name=connector.display_name),
@@ -696,7 +745,7 @@ async def set_project_connector(
     # R11a — AFTER the approval check and BEFORE anything is written. Ordered that way on
     # purpose: an unapproved citizen gets the 403 they would always have got, rather than a
     # confusing "stop your build" for a setting they were never allowed to change.
-    await _refuse_while_a_session_is_live(user.id, connector)
+    await _refuse_while_a_session_is_live(db, user.id, project_id, connector)
 
     window = body.window
     if isinstance(window, RelativeWindowChoice) and window.days not in _offered_days(connector):

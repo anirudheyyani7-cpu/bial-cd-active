@@ -502,6 +502,40 @@ def test_a_lockfile_that_drifted_is_titled_on_the_package_that_drifted() -> None
     assert "desktop-linux" not in err.title
 
 
+def test_a_recovered_drift_does_not_outrank_the_failure_that_stopped_the_build() -> None:
+    """The interaction between the tolerated drift and the classifier, which is the whole reason
+    the dependency markers rank last.
+
+    The deps stage RECOVERS from a drifted lockfile: `npm ci` refuses, prints its block, and the
+    fallback install succeeds. So that block is in the log of every drifted app's build — and a
+    drifted app is the ordinary case, not an exotic one. When such a build then fails to compile,
+    the compile diagnostic is the failure; the npm block is residue from a step that worked."""
+    log = _DEPENDENCY_DRIFT_LOG + (
+        "\n#12 8.402 added 129 packages in 20s"
+        "\n#20 31.55 Error: useSearchParams() should be wrapped in a suspense boundary"
+    )
+
+    err = errors.from_next_build(log)
+
+    assert "useSearchParams" in err.title, (
+        "the compile failure is what stopped this build; got: " + err.title
+    )
+    assert "does not satisfy" not in err.title
+    assert not errors.is_dependency_failure(err), (
+        "a citizen sent to fix a manifest that already installed cleanly is the defect"
+    )
+
+
+def test_a_dependency_failure_with_no_compile_diagnostic_still_wins_the_title() -> None:
+    """The other direction, and the reason ranking them last is safe: a build that genuinely
+    died installing never reaches the compiler, so it carries no compile marker for the
+    dependency markers to lose to."""
+    err = errors.from_next_build(_DEPENDENCY_DRIFT_LOG)
+
+    assert "does not satisfy" in err.title, err.title
+    assert errors.is_dependency_failure(err)
+
+
 def test_the_sentence_a_citizen_reads_about_a_drifted_lockfile_names_nothing_technical() -> None:
     """The other half of the same classification, and it must not be the same string.
 

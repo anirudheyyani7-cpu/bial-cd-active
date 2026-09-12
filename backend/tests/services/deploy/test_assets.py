@@ -113,12 +113,39 @@ def test_the_fallback_says_so_in_the_build_log_before_it_runs() -> None:
     """Both arms end in a successful install, from different versions, so the transcript is
     otherwise identical. Reading the log is the whole diagnosis for a dependency problem, so
     the log has to name the arm that ran."""
-    announcement, separator, command = _dependency_install().partition("||")[2].partition("&&")
+    fallback = _dependency_install().partition("||")[2]
+    announcement, separator, command = fallback.partition("&& npm install")
 
     assert "echo " in announcement
     assert "npm install" in announcement, "the logged line does not name the arm it takes"
-    assert separator == "&&"
-    assert command.strip().startswith("npm install")
+    assert separator == "&& npm install", "the announcement must precede the install"
+    assert command.strip().startswith("--ignore-scripts")
+
+
+def test_only_a_drifted_lockfile_takes_the_fallback() -> None:
+    """`npm ci` also refuses when a tarball does not match the hash the lock vetted. Falling
+    back there would answer a supply-chain signal by fetching the package again — the one check
+    that would catch a swapped tarball, downgraded to a suggestion.
+
+    So the fallback is gated on npm's drift codes, and the guard must run BEFORE the install."""
+    fallback = _dependency_install().partition("||")[2]
+    guard = fallback.partition("&& npm install")[0]
+
+    assert "grep" in guard, f"the fallback is ungated: {fallback}"
+    for drift_only in ("EUSAGE", "Invalid:"):
+        assert drift_only in guard, f"the gate does not name {drift_only}: {guard}"
+
+
+def test_a_failure_that_is_not_drift_keeps_npms_own_diagnosis() -> None:
+    """The first arm's output is held back so a RECOVERED drift does not litter the log of a
+    build that later fails for an unrelated reason. Held back is not discarded: a build that is
+    going to fail has to carry the reason it failed."""
+    line = _dependency_install()
+
+    assert "2>/tmp/npm-ci.err" in line, "the first arm's diagnosis is streamed, not captured"
+    last_arm = line.rpartition("||")[2]
+    assert "cat /tmp/npm-ci.err" in last_arm, f"the captured diagnosis is never replayed: {line}"
+    assert "exit 1" in last_arm, "a build with no usable dependencies must still fail"
 
 
 def test_the_build_does_not_go_through_an_agent_editable_script() -> None:

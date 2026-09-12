@@ -65,17 +65,23 @@ _NEXT_BUILD_MARKERS = (
     # The build ran out of memory rather than finding a fault in the code. Surfacing it as
     # the TITLE matters: told "your code has an error", a citizen edits code that is fine.
     "JavaScript heap out of memory",
-    # Below the heap marker for the reason the heap marker exists: an install that ran out of
-    # memory is a resource failure, and telling a citizen their dependencies are wrong would
-    # send them editing a manifest that is fine.
-    *_DEPENDENCY_MARKERS,
     "ReferenceError:",
     "TypeError:",
     "SyntaxError:",
-    # Last and broadest: catches the shapes with no dedicated marker, notably
+    # Broad: catches the shapes with no dedicated marker, notably
     # "Error: useSearchParams() should be wrapped in a suspense boundary" — a headline
     # member of the class `tsc --noEmit` is blind to.
     "Error:",
+    # LAST, BELOW EVERY COMPILE MARKER, and that position is the load-bearing part. The deps
+    # stage tolerates a lockfile that has drifted from `package.json`: `npm ci` refuses, prints
+    # its `Invalid: … does not satisfy …` block, and the fallback install succeeds. So that
+    # block is in the log of every drifted app's build — including the ones that go on to fail
+    # for a reason that has nothing to do with dependencies. Ranked any higher, it would outrank
+    # the real diagnostic and tell a citizen to fix a manifest that is already working.
+    #
+    # A build that genuinely died installing carries no compile marker at all, so these still
+    # win the only case they are meant to win.
+    *_DEPENDENCY_MARKERS,
 )
 # A header, not a diagnostic — the useful line is the one after it.
 _FAILED_TO_COMPILE = "Failed to compile"

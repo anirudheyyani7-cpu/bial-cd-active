@@ -181,6 +181,18 @@ def read_delimited(path: Path, separator: str) -> dict[str, Any]:
     try:
         lazy = pl.scan_csv(path, separator=separator, infer_schema_length=10_000)
         frame = lazy.collect()
+    # ★ A FAILURE THAT ALREADY HAS A NAME KEEPS IT, and this clause must stay ABOVE the broad one
+    # — placed below it the guard is valid, dead and silent, and nothing in the selected ruff set
+    # would say so. The parentheses are load-bearing too: the image ships Python 3.13, where a
+    # bindingless `except A, B:` is a hard SyntaxError (the backend is 3.14, where it is legal).
+    #
+    # `MemoryError` is the reader's own ceiling firing and `ReadFailure` is its deadline; neither
+    # is a fact about the FILE. Swallowed by the arm below, both were reported as "could not be
+    # read — re-save it in its own application", which is advice a citizen can follow all
+    # afternoon without getting anywhere. Re-raised, `describe` gives each its own name and its
+    # own next step (`too_large` → attach a smaller file; `timeout` → fewer sheets or rows).
+    except (ReadFailure, MemoryError):
+        raise
     except Exception as exc:  # polars raises a family of parse errors; all mean the same thing here
         raise ReadFailure(
             "unreadable",
@@ -220,6 +232,8 @@ def read_docx(path: Path) -> dict[str, Any]:
 
     try:
         document = docx.Document(str(path))
+    except (ReadFailure, MemoryError):
+        raise  # a ceiling or a deadline, not a damaged file — see `read_delimited`
     except Exception as exc:
         raise ReadFailure(
             "unreadable",
@@ -270,6 +284,8 @@ def read_pptx(path: Path) -> dict[str, Any]:
 
     try:
         deck = pptx.Presentation(str(path))
+    except (ReadFailure, MemoryError):
+        raise  # a ceiling or a deadline, not a damaged file — see `read_delimited`
     except Exception as exc:
         raise ReadFailure(
             "unreadable",

@@ -64,10 +64,11 @@ it belongs to, and what the model does with it.
   refusal now names the document, says that the chat it landed in will keep hitting the same limit,
   and offers the two things that work from there — start a new chat with a shorter document, or
   split this one and attach the part you need.
-- **A spreadsheet is measured rather than taken at its word.** A workbook carries a record of its
-  own extent, and some tools write one that is wrong. The reader believed it, so a sheet of fifty
-  rows that declared itself one cell was summarised as one cell — no error, nothing to suggest
-  anything had been missed, and an answer built from a file the assistant had barely read.
+- **A spreadsheet that misdescribes its own size no longer hides its own data.** A workbook carries
+  a record of how far its sheets extend, and some tools write one that is too small. The reader
+  believed it, so a sheet of fifty rows and three columns declaring itself a single cell was
+  summarised as a single cell — with the other columns missing from everything the assistant saw,
+  no error, and nothing to suggest anything had been missed.
 - **Switching chats while a file is uploading no longer disables Send everywhere.** The composer is
   shared across conversations, and an upload abandoned by navigating away left it waiting on a
   message that would never be sent, in every chat, until the page was reloaded. Those abandoned

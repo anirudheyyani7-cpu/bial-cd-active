@@ -1,16 +1,17 @@
 /**
- * Parts-model transform helpers (bytes live server-side via attachmentApi.js). Maps `parts[]` onto
- * the Anthropic request shape and onto display. A part is prose; text carrying an INLINE csv/txt
- * attachment (re-inlined every turn); or a `file` whose bytes sit in the object store —
- * `image`/`document` bytes reach the model as-is, `office` (.docx/.xlsx) bytes NEVER do (the
- * server-extracted Markdown goes instead, as a sticky text block), and neither do `deck` (.pptx)
- * bytes: the model sees an INTERNAL converted PDF by `pdfFileId`, and the user only the .pptx.
+ * Parts-model transform helpers (bytes live server-side via attachmentApi.ts). Maps `parts[]` onto
+ * the Anthropic request shape and onto display. A part this composer MINTS is prose, or a `file`
+ * whose bytes sit in the object store — there is one producer now, and it is the uploaded one.
  *
- * The send path is byte-free: the browser sends only the new message — prose, fenced attachment
- * text, and OWNED refs for stored binaries (`wireMessageFromParts`); the server rehydrates bytes
- * and replays history from its own store.
+ * OLDER PART SHAPES STILL ARRIVE FROM HISTORY and are still rendered: an inline text attachment,
+ * an `office` part carrying server-extracted Markdown, a `deck` part naming a converted PDF by
+ * `pdfFileId`. Nothing produces them any more, and the readers stay because a transcript written
+ * before this change is still a transcript someone opens.
+ *
+ * The send path is byte-free: the browser sends only the new message — prose and OWNED refs for
+ * stored binaries (`wireMessageFromParts`); the server rehydrates bytes and replays history from
+ * its own store.
  */
-import { TEXT_MEDIA_TYPES } from './attachmentInput'
 import type { PendingAttachment } from './attachmentInput'
 import { uploadAttachment as defaultUpload, deleteAttachment as defaultDelete } from './attachmentApi'
 import type { MessagePart, TextPart } from './messageTypes'
@@ -151,38 +152,29 @@ export async function buildUserParts(
   conversationId?: string,
 ): Promise<MessagePart[]> {
   const parts: MessagePart[] = []
+  // ONE PATH, FOR EVERY FORMAT. Three producers used to branch here — an inline text part, an
+  // office part and a deck part — and all three are gone with the media-type sets that fed them.
+  // The last to go was the inline arm, whose set had been emptied so its readers could migrate
+  // one at a time; a branch whose condition is permanently false is a claim that some file still
+  // travels inside the prompt, and none does.
+  //
+  // TWO THINGS FALL OUT, and both are gains rather than side effects: the office branch used to
+  // run BEFORE the magic-byte check, so that check is now the sole gate for every uploaded file;
+  // and extraction ran before storage, so a rejected file never orphaned a blob — an ordering
+  // that survives because there is no extraction left to order.
   for (const a of pendingAttachments) {
-    if (TEXT_MEDIA_TYPES.has(a.mediaType)) {
-      parts.push({
-        type: 'text',
-        text: decodeBase64Text(a.base64),
-        attachment: { attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size },
-      })
-    // THE PRODUCERS ARE GONE, not merely the filter. `attachmentStore` went on MINTING deck
-    // parts under a stale comment claiming the server converted them, while the wire builder
-    // dropped them again a hundred lines away — a producer minting parts nothing consumes, which
-    // is exactly the residual a removal is supposed to close. Both it and the office producer go
-    // with the media types that fed them.
-    //
-    // TWO THINGS FALL OUT, and both are gains rather than side effects: the office branch used to
-    // run BEFORE the magic-byte check, so that check is now the sole gate for every uploaded file;
-    // and extraction ran before storage, so a rejected file never orphaned a blob — an ordering
-    // that survives because there is no extraction left to order.
-    } else {
-      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64, conversationId })
-      // UNCHECKED, matching pre-migration behaviour: `AttachmentRef`'s fields are what the server
-      // actually guarantees for an upload — trusted here, not re-validated. (This note used to
-      // say "see the office branch above"; there is no office branch any more.)
-      parts.push({
-        type: 'file',
-        attachmentId: ref.attachmentId,
-        key: ref.key,
-        kind: ref.kind as 'image' | 'document',
-        name: ref.name,
-        mediaType: ref.mediaType,
-        size: ref.size,
-      })
-    }
+    const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64, conversationId })
+    // UNCHECKED, matching pre-migration behaviour: `AttachmentRef`'s fields are what the server
+    // actually guarantees for an upload — trusted here, not re-validated.
+    parts.push({
+      type: 'file',
+      attachmentId: ref.attachmentId,
+      key: ref.key,
+      kind: ref.kind as 'image' | 'document',
+      name: ref.name,
+      mediaType: ref.mediaType,
+      size: ref.size,
+    })
   }
   parts.push({ type: 'text', text })
   return parts

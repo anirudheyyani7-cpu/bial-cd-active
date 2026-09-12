@@ -32,6 +32,7 @@ sandbox several turns later where nothing can explain it.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 WORD_MEDIA_TYPE: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -119,6 +120,103 @@ def looks_password_protected(data: bytes) -> bool:
     return data[:8] == _OLE2_SIGNATURE
 
 
+PASSWORD_PROTECTED_TEXT: Final = (
+    "That file is password-protected. Remove the password and attach it again."
+)
+"""ONE SENTENCE FOR EVERY LOCKED FILE, whatever its format (#214 R21/AE8c).
+
+There were two, and they differed in both nouns: a locked PDF was told to "remove the password and
+UPLOAD it again" about "that DOCUMENT", a locked workbook to "attach it again" about "that FILE".
+Same situation, same remedy, two voices — which is the drift R21 exists to prevent, and it is worse
+here than most because the citizen is being told the identical thing twice in different words.
+
+It names no format, no encryption scheme and no library, so it stays true as the set of formats
+moves."""
+
+
+# ── WHAT A PDF IS ASKED AT THE DOOR ────────────────────────────────────────────────────────────
+#
+# TWO QUESTIONS, AND NEITHER OF THEM IS "HOW LONG IS IT". The page cap is gone (D3): a document's
+# length is the client's token cost to bear, and the cap it was paired with — a flat per-document
+# charge sized to it — was already deleted. What is left is the pair of facts that make a file
+# unusable no matter its length: it is locked, or it is not all there.
+#
+# BOTH ARE TAIL SCANS WITH NO DEPENDENCY, which is what let `pypdf` go. A PDF's trailer dictionary
+# — the classic `trailer << … >>` form AND the PDF 1.5+ cross-reference STREAM dictionary that
+# replaced it — is emitted in PLAINTEXT immediately before `startxref`, while content streams are
+# Flate-compressed and live earlier. A scan keyed on the `trailer` keyword would miss every modern
+# producer: Word and Acrobat emit xref streams and write no `trailer` at all, which is exactly the
+# shape a citizen's password-protected file has.
+#
+# NEITHER READS TEXT, and nothing here may grow into something that does. PDFs are model-lane —
+# `CODE_LANE_MEDIA` is Office plus CSV/TSV — and are handed to the model as vision. A scanned,
+# non-searchable PDF has a header, an EOF marker and a page tree like any other, and is a
+# first-class supported case (R3). A text probe would refuse it.
+
+_PDF_TAIL_BYTES: Final = 64 * 1024
+"""How much of the end of a PDF the two scans look at.
+
+SIXTY-FOUR KILOBYTES, NOT FOUR, and the difference decides whether the lock check works on real
+files at all. In the classic form the trailer is the last few hundred bytes and four would do. In
+the PDF 1.5+ form the dictionary that carries `/Encrypt` is the header of a cross-reference STREAM,
+and its compressed payload sits between that dictionary and the end of the file — for a
+thousand-page document that payload is kilobytes, so a four-kilobyte window would fall short of
+the dictionary and report every large encrypted document as unlocked. Sixty-four kilobytes is
+0.6% of the size cap and a few microseconds to scan."""
+
+# `/Encrypt` is a trailer KEY, and the spec requires its value to be an indirect reference — so it
+# is always `/Encrypt <num> <gen> R`. Matching the reference rather than the bare word is what
+# keeps the literal characters "/Encrypt" inside a content stream from reading as a locked file.
+_PDF_ENCRYPT_ENTRY: Final = re.compile(rb"/Encrypt\s+\d+\s+\d+\s+R")
+_STARTXREF_OFFSET: Final = re.compile(rb"startxref\s+(\d+)")
+
+
+def pdf_looks_password_protected(data: bytes) -> bool:
+    """Does this PDF declare encryption in its trailer?
+
+    FAILS TOWARD *NOT* LOCKED, deliberately: a file wrongly called locked is refused at the door
+    with advice its owner cannot act on, while one wrongly let through fails later with a sentence
+    the reader can still word honestly.
+    """
+    return _PDF_ENCRYPT_ENTRY.search(data[-_PDF_TAIL_BYTES:]) is not None
+
+
+def pdf_looks_truncated(data: bytes) -> bool:
+    """Is there positive evidence this PDF was cut short?
+
+    ★ FAILS OPEN, AND THAT IS THE WHOLE DESIGN. It refuses only on evidence, never on the absence
+    of it. A long chain of incremental updates — what signing and annotating produce — can push
+    the structure further from the end than a tail scan expects, and refusing a valid file at the
+    door is worse than letting a broken one fail later, which is today's behaviour anyway.
+
+    Two pieces of evidence, both cheap: the `%%EOF` terminator is missing from the tail, or
+    `startxref` names an offset past the end of the file — which is what a transfer cut in the
+    middle produces, and what nothing else does.
+    """
+    tail = data[-_PDF_TAIL_BYTES:]
+    if b"%%EOF" not in tail:
+        return True
+    match = _STARTXREF_OFFSET.search(tail)
+    if match is None:
+        return False
+    return int(match.group(1)) >= len(data)
+
+
+def pdf_refusal(name: str, data: bytes) -> str | None:
+    """Why this PDF is refused at the door, or None if it may be stored.
+
+    ORDERED THE SAME WAY `code_lane_refusal` IS, and for the same reason: an encrypted file is
+    also a file whose structure a reader cannot follow, and "remove the password" is something a
+    person can do while "this file is damaged" about a file they know is fine reads as the
+    platform being broken.
+    """
+    if pdf_looks_password_protected(data):
+        return PASSWORD_PROTECTED_TEXT
+    if pdf_looks_truncated(data):
+        return f'"{name}" could not be read as a PDF. Re-save it and attach it again.'
+    return None
+
+
 def code_lane_refusal(media_type: str, name: str, data: bytes) -> str | None:
     """Why this code-lane upload is refused, or None if it may be stored.
 
@@ -140,7 +238,7 @@ def code_lane_refusal(media_type: str, name: str, data: bytes) -> str | None:
     if part is None:
         return f"Unsupported attachment type: {media_type}."
     if looks_password_protected(data):
-        return "That file is password-protected. Remove the password and attach it again."
+        return PASSWORD_PROTECTED_TEXT
     if data[:4] != _ZIP_SIGNATURE:
         return f'"{name}" could not be read as an Office file. Re-save it and attach it again.'
     if part not in data:

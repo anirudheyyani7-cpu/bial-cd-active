@@ -908,10 +908,11 @@ describe('a refused send leaves the citizen holding their message', () => {
  * green on the wrong one.
  */
 // THE PER-MESSAGE DOCUMENT CAP IS GONE (#214 R7c), and its tests with it. It was two, and it
-// shipped as the stopgap that stopped a 61-page PDF blowing the context budget. The 30-page
-// cap and the flat charge sized to it are the real protections and both stay; the count was
-// the belt beside those braces. One rule governs a message now - five files, any mix - so a
-// citizen never has to know which of their files the platform considers expensive.
+// shipped as the stopgap that stopped a 61-page PDF blowing the context budget. The count was
+// the belt beside the page cap's braces — and the page cap has since gone the same way, once
+// the flat per-document charge it was sized against stopped existing. One rule governs a message
+// now - five files, any mix - so a citizen never has to know which of their files the platform
+// considers expensive.
 
 describe('an upload the server refuses says WHY, not "try again"', () => {
   /* TWO EMITTERS, ONE BANNER, AND THE ONE THAT KNEW NOTHING WENT LAST.
@@ -920,13 +921,17 @@ describe('an upload the server refuses says WHY, not "try again"', () => {
      non-`SendRefusal` is not silence to `ComposerBox` — it is the GENERIC line. So the specific
      sentence was written and immediately overwritten.
 
-     Found in a browser, not here: a real 40-page PDF, `413 POST /api/attachments` in the network
-     log carrying "That document is too long to work with. Try one under 30 pages.", and "That
-     message did not send … try again." on screen. Retrying re-sends the same 40 pages to the same
-     cap, so the advice the citizen was actually given could never work — the failure
-     `attachmentInput.ts` names as advice that leads nowhere. */
+     Found in a browser, not here: a real refused PDF, `413 POST /api/attachments` carrying the
+     server's own sentence in the network log, and "That message did not send … try again." on
+     screen. Retrying re-sends the identical file into the identical refusal, so the advice the
+     citizen was actually given could never work — the failure `attachmentInput.ts` names as
+     advice that leads nowhere.
 
-  const REFUSAL = 'That document is too long to work with. Try one under 30 pages.'
+     THE FIXTURE MOVED WITH THE CAP. It used to be the page-cap sentence, which no longer exists;
+     what this test is really about is that ANY server sentence survives to the banner, so it now
+     carries a refusal the door still emits. */
+
+  const REFUSAL = 'That file is password-protected. Remove the password and attach it again.'
 
   it('shows the server’s sentence and keeps the message in the box', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })

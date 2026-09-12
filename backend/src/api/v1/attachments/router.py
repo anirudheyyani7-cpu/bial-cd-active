@@ -1,14 +1,25 @@
-"""Attachment HTTP endpoints — image/PDF upload / download / delete.
+"""Attachment HTTP endpoints — upload / download / delete, for all ten formats.
 
-Byte-matches the Express `/api/attachments` contract (`server/attachments.js`): one base64
-file per request, server-side allowlist + magic-byte validation, a 4 MB per-file cap, a 50 MB
-per-user byte quota, object keys scoped by `user_id` and re-guarded with `assert_owned`, and
-the `{error:{message}}` / `{ok:true}` envelopes. Text is never uploaded (it travels inline);
-office and deck uploads take their own branches, rendered to a form the model can read before
-anything is stored.
+THE DOOR ASKS THREE QUESTIONS AND NOTHING DOWNSTREAM ASKS ANY OF THEM AGAIN. Is this file one of
+the ten? Is it under `ATTACHMENT_MAX_BYTES`? Is it whole and unlocked? A file that passes is
+stored as itself, owner-scoped, and read where it can actually be read.
 
-A PDF is additionally admitted by PAGE COUNT (`MAX_PDF_PAGES`) — bytes cannot stand in for
-pages, and the window charge a document carries is sized to the cap rather than to its size.
+ONE SIZE FOR EVERY FORMAT, AND ONE PLACE THAT ASKS. There used to be four independently-declared
+per-file byte numbers — this route's, a duplicate inside a decoder that had no callers, the
+browser's, and the supervisor's write ceiling. Four numbers for one rule is a rule that will
+disagree with itself, and it was one release away from doing so. The others are gone; the browser
+keeps a copy because a citizen should learn a file is too large before uploading it, and a test
+holds the two equal.
+
+WHAT IS NOT ASKED, DELIBERATELY. Length. A PDF's page count used to be measured in a killable
+subprocess and capped, because a document was charged a flat figure sized to that cap. Nothing
+prices a document up front any more — the window check reads what the provider reports for a
+completed turn — so the cap was bounding a cost that no longer exists, at the price of a
+dependency, a process governor and a refusal a citizen could not act on. The token cost of a long
+document is the client's to bear (D7).
+
+Object keys are scoped by `user_id` and re-guarded with `assert_owned`; the envelopes are the
+ported `{error:{message,code?}}` / `{ok:true}`.
 """
 
 from __future__ import annotations
@@ -36,9 +47,14 @@ from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
 from src.schemas import AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
-from src.services.media.lanes import code_lane_refusal, is_code_lane, is_opc_archive
+from src.services.media.lanes import (
+    PASSWORD_PROTECTED_TEXT,
+    code_lane_refusal,
+    is_code_lane,
+    is_opc_archive,
+    pdf_refusal,
+)
 from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
-from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
 from src.services.storage import (
     ObjectStorage,
@@ -55,31 +71,45 @@ router = APIRouter(prefix="/attachments", tags=["attachments"])
 # Client-minted attachment id shape (Express `ID_RE`) — a safe object-key token.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
-# Per-file decoded cap (Express `ATTACHMENT_MAX_BYTES`) and per-user total (Express
-# `ATTACHMENT_TOTAL_CAP`), plus the request-body ceiling (Express mount `limit:'6mb'`).
-ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024
-_BODY_LIMIT_BYTES = 6 * 1024 * 1024
+ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+"""The per-file decoded cap, and THE ONLY PLACE THE SIZE QUESTION IS ASKED (D2/D8).
 
-# THE STORAGE BUDGET IS PER CONVERSATION, NOT PER CITIZEN (#214 R7a). It used to sum every
-# attachment a person had ever uploaded, across every conversation, with no conversation filter
-# — a lifetime account budget of roughly a dozen full-size files. Two or three working sessions
-# exhausted it, and the only way to reclaim any was to delete whole conversations, because
-# nothing lets a citizen remove a single attachment from an old one. The message was "Attachment
-# storage is full" with no action behind it.
-#
-# Scoped to the conversation it becomes something a citizen can act on: this chat is full, a new
-# one has room, and starting one is a real remedy rather than advice that changes nothing.
-#
-# THE TRADE, STATED: this removes the only ceiling on a citizen's TOTAL stored bytes, because
-# many conversations now means many budgets. Taken deliberately — a lifetime cap that cannot be
-# reclaimed is the worse failure — and worth watching rather than pre-solving.
-ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
+TEN MEGABYTES FOR EVERY FORMAT. It was four, and a second, far lower number applied to the two
+delimited formats on the browser side alone — so a citizen with a 300 KB CSV export was refused
+by a rule the server did not have and could not have explained. One number covers a photograph, a
+scanned invoice, a workbook and a deck, and a citizen never has to know which of their files the
+platform considers expensive.
 
-# How many attachments one conversation may hold, counted SERVER-SIDE (#214 R7b). The browser
-# has had this number since the beginning and it was never enforced here — the portal's
-# `validateConversationAttachmentCap` tallies attachments by walking the messages the browser has
-# loaded, so it reset to zero on every page reload. A cap a refresh clears is not a cap.
+EVERY REFUSAL THAT NAMES A SIZE INTERPOLATES THIS CONSTANT rather than spelling a number, so the
+figure a citizen is told and the figure enforced cannot drift."""
+
+ATTACHMENT_MAX_MB = ATTACHMENT_MAX_BYTES // (1024 * 1024)
+"""The cap as a whole number of megabytes, for the sentences that have to say it out loud."""
+
+_BODY_LIMIT_BYTES = 15 * 1024 * 1024
+"""The request-body ceiling, and NOT a second opinion on the cap above.
+
+It fires on RAW WIRE BYTES before the body is decoded, which is a different question: no client
+can route around the framework's own buffering, so this is what stops a hostile body being read
+into memory at all. It must therefore clear base64 of a legal file — 10 MiB encodes to 13,981,016
+bytes — with room for the JSON around it. Set below that and the door would refuse a file it
+means to accept, with a sentence about the request rather than the file."""
+
 MAX_ATTACHMENTS_PER_CONVERSATION = 20
+"""How many attachments one conversation may hold, counted SERVER-SIDE (#214 R7b).
+
+★ IT IS NOW THE WHOLE OF THE PER-CONVERSATION LIMIT. A byte budget used to sit beside it — 50 MB
+per conversation — and the two were a single rule wearing two numbers: whichever bound bit first
+decided, and a citizen could not tell which they had hit or predict either. A count is the one a
+person can hold in their head, and it is the one the composer already showed them.
+
+The browser has had this number since the beginning and it was never enforced here: the portal's
+`validateConversationAttachmentCap` tallies attachments by walking the messages the browser has
+loaded, so it reset to zero on every page reload. A cap a refresh clears is not a cap.
+
+THE TRADE, STATED: nothing now bounds a citizen's TOTAL stored bytes, because many conversations
+means many budgets. Taken deliberately — the byte budget it replaces was itself scoped to the
+conversation, so that ceiling was already gone — and worth watching rather than pre-solving."""
 
 
 ATTACHMENT_LANES_SENTENCE: Final = (
@@ -96,56 +126,14 @@ goes stale the moment the allowlist moves, and tells a citizen nothing about why
 behaves differently from a photograph."""
 
 
-MAX_PDF_PAGES: Final = 30
-"""How long a document may be, in pages, and the byte cap above cannot express it.
-
-A text PDF runs about 1.3 KB a page and a scanned one about 300 KB, so the same 4 MB spans
-roughly 13 pages to 3,200. The document that pushed a conversation to 77% of its hard context
-limit was 79 KB — comfortably inside every size bound the platform had.
-
-THE NUMBER IS SET FROM WHAT A PAGE COSTS, ~2,500 tokens measured, against the per-conversation
-ceiling. Thirty pages is ~75,000 tokens — the large majority of business documents, and still
-room for a document plus a real build conversation inside the 500,000 per-conversation ceiling
-— with a good deal to spare, now that ceiling is the corrected one. Nothing charges an
-admitted document a nominal any more; the window check reads the count the provider returns for
-a completed turn, so THIS cap is the only bound that acts before the provider has seen the file.
-Raise it and a single upload can fill a conversation on its own, with the refusal arriving one
-turn later than the citizen would have wanted it."""
-
-PDF_TOO_LONG_TEXT: Final = (
-    f"That document is too long to work with. Try one under {MAX_PDF_PAGES} pages."
-)
-"""The ONE sentence every failure of the page check gives the citizen.
-
-IT IS ONE SENTENCE FOR THREE OUTCOMES — over the cap, unreadable, and too slow to read — and
-that is a decision, not an oversight. There is nothing true and useful the platform can tell
-someone about a PDF it could not read, and any second sentence would have to reach for the
-vocabulary this one exists to keep out: page objects, parsers, cross-reference tables, bytes.
-The real cause is logged server-side, which is where an operator can act on it: the citizen
-gets the sentence and no internals, the log gets the detail.
-
-It is built from `MAX_PDF_PAGES` so the number a citizen is told and the number enforced cannot
-drift apart."""
-
-PDF_TOO_LONG_CODE: Final = "PDF_TOO_LONG"
-"""The machine-readable code beside `PDF_TOO_LONG_TEXT`, so a client can branch on the page
-cap without string-matching prose."""
-
-PDF_LOCKED_TEXT: Final = (
-    "That document is password-protected. Remove the password and upload it again."
-)
-"""THE ONE PDF FAILURE THE CITIZEN CAN ACT ON, so it is the one that does not get the sentence
-above. A locked document is a fact about THEIR file, not about the platform — and telling
-someone holding a three-page locked invoice that it is "too long to work with, try one under 30
-pages" is advice that cannot be followed. They would shorten the document and be refused again,
-learning nothing. `attachmentInput.ts` already records this rule for the format refusals:
-advice is only honest while it leads somewhere.
-
-It names no parser, no encryption scheme and no internal state, so it keeps the property the
-collapsed sentence exists for."""
-
 PDF_LOCKED_CODE: Final = "PDF_ENCRYPTED"
-"""Mirrors `parse/parsers.py::PDF_ENCRYPTED_CODE` — the child raises it, this route maps it."""
+"""The machine-readable code beside the shared locked-file sentence, so a client can branch on
+password protection without string-matching prose.
+
+THE SENTENCE ITSELF IS `media.PASSWORD_PROTECTED_TEXT`, shared byte-for-byte with the locked
+Office refusal. This route used to word its own — "that DOCUMENT is password-protected, remove
+the password and UPLOAD it again" against the lane's "that FILE … ATTACH it again" — the same
+situation told twice in different words, which is the drift R21 exists to prevent."""
 
 # The allowlist + magic-byte prefixes live in `src.services.media.magic` — the SINGLE source of
 # truth shared with every other path that can put bytes in front of the model, so a block the
@@ -286,16 +274,16 @@ async def _store_attachment_bytes(
     conversation_id: uuid.UUID | None,
     data: bytes,
 ) -> dict[str, Any]:
-    """Enforce the per-user quota and store the bytes owner-scoped; return the Express file-part
-    ref. Idempotent on a repeated id (reuses the row + key). Raises `AppApiError(413)` on an
-    over-quota write. NOTE: the quota check-then-store has a concurrent-overspend window (as in
-    the daily gate) — hardening deferred.
+    """Enforce the per-conversation COUNT and store the bytes owner-scoped; return the file-part
+    ref. Idempotent on a repeated id (reuses the row + key). Raises `AppApiError(413)` when the
+    conversation is full. NOTE: the check-then-store has a concurrent-overspend window (as in the
+    daily gate) — hardening deferred.
 
     `conversation_id` is stamped on the CREATE branch. On an idempotent re-upload it re-links
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
     existing link to NULL (the link is set-once-then-refreshable, never silently dropped)."""
     size = len(data)
-    # BOTH BUDGETS ARE SCOPED TO THE CONVERSATION when there is one, and to the UNLINKED POOL when
+    # THE BUDGET IS SCOPED TO THE CONVERSATION when there is one, and to the UNLINKED POOL when
     # there is not (#214, agc129's B4).
     #
     # ★ THE FALLBACK USED TO BE THE WHOLE ACCOUNT, and that refused a new chat's first file for
@@ -306,46 +294,33 @@ async def _store_attachment_bytes(
     # move that could not help.
     #
     # Scoped to `conversation_id IS NULL`, an unlinked upload competes only with files that are
-    # ALSO still unsent. The pool stays bounded — nothing uploaded without a chat is ever free —
-    # and every file leaves it the moment the message carrying it is sent
-    # (`materialize.adopt_unlinked_attachments`).
+    # ALSO still unsent. The pool stays bounded — nothing uploaded without a chat is ever free.
     link = (
         Attachment.conversation_id == conversation_id
         if conversation_id is not None
         else Attachment.conversation_id.is_(None)
     )
     scope = [Attachment.user_id == user_id, link]
-    used_raw = await db.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(*scope)
-    )
-    used = int(used_raw or 0)
     existing = await db.scalar(
         sa.select(Attachment).where(
             Attachment.user_id == user_id, Attachment.attachment_id == attachment_id
         )
     )
-    # ONLY A ROW IN THE SAME SCOPE OFFSETS THE SUM. `existing` is looked up by (owner, id) alone,
-    # so a row from a DIFFERENT scope was never in `used` — subtracting its size drove the total
-    # negative and handed the citizen free headroom. Both scopes reduce to one comparison: the row
-    # counts iff its link equals the one being checked, and `None == None` is the unlinked pool.
-    # (The previous `conversation_id is None or …` form subtracted a LINKED row's size from the
-    # unlinked sum, which would have reopened exactly that hole under the scope above.)
-    counts_toward_used = existing is not None and existing.conversation_id == conversation_id
-    old_size = existing.size if (existing is not None and counts_toward_used) else 0
-    if used - old_size + size > ATTACHMENT_TOTAL_CAP:
-        raise AppApiError(
-            413,
-            "This conversation has no room for more attachments. Start a new chat to add more.",
-            code="ATTACHMENT_STORE_FULL",
-        )
     # THE COUNT, and only for a file this conversation does not already hold — a re-upload of the
     # same id replaces a row rather than adding one, so counting it would refuse an idempotent
     # retry at the boundary.
     #
+    # ★ `existing is None` ALONE IS NOT THAT QUESTION, and the difference is a live bypass. A row
+    # is looked up by (owner, id) with no conversation filter, so a known id re-uploaded against a
+    # DIFFERENT conversation finds `existing` and skips the count — moving the row into a chat
+    # that already holds twenty. The predicate has to be "is this conversation gaining a file",
+    # which is the same comparison the deleted byte budget made for the same reason, and
+    # `None == None` is the unlinked pool on both sides.
+    #
     # IT DOES NOT SKIP AN UNLINKED UPLOAD: gated on `conversation_id is not None` the cap was
     # bypassable on the ordinary path, since every new chat's first file is unlinked. It counts the
-    # unlinked pool instead — the same population the byte budget above uses for that case.
-    if existing is None:
+    # unlinked pool instead.
+    if existing is None or existing.conversation_id != conversation_id:
         held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
         # `scope` is the conversation when there is one and the unlinked pool when there is not.
         if int(held or 0) + 1 > MAX_ATTACHMENTS_PER_CONVERSATION:
@@ -388,59 +363,32 @@ async def _store_attachment_bytes(
     }
 
 
-def _decode_bounded(b64: Any) -> bytes:
-    """Decode a base64 body and enforce the 4 MB decoded cap (shared by office/deck).
-    Raises `AppApiError`."""
-    if not isinstance(b64, str) or not b64:
-        raise AppApiError(400, "Invalid attachment: missing bytes.")
-    try:
-        data = base64.b64decode(b64, validate=False)
-    except (binascii.Error, ValueError):  # fmt: skip  # ruff py314 strips parens
-        raise AppApiError(400, "Invalid attachment: missing bytes.") from None
-    if len(data) > ATTACHMENT_MAX_BYTES:
-        raise AppApiError(413, "Attachment is too large (max 4 MB).")
-    return data
+def _assert_pdf_is_whole_and_unlocked(data: bytes, name: str) -> None:
+    """Refuse a locked or truncated PDF, BEFORE anything is stored.
 
+    ★ IT ASKS NOTHING ABOUT LENGTH, and it costs no subprocess. What stood here counted pages in
+    a killable, memory-capped child, because a PDF is the worst-behaved thing this route accepts
+    and a cross-reference stream declaring millions of entries costs eight kilobytes and tens of
+    seconds to walk. That machinery — a process governor, a spawned child, an rlimit and a PDF
+    library — existed to serve a cap on LENGTH, and the charge that cap was sized against is
+    gone. Both checks below are byte scans over the last four kilobytes: no parse, no child, no
+    dependency, and nothing for a hostile file to be hostile at.
 
-async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
-    """Refuse a PDF longer than `MAX_PDF_PAGES`, BEFORE anything is stored.
+    THE PAGE CHECK WAS ALSO THE ONLY READABILITY CHECK A PDF GOT, which is why removing it alone
+    would have been a loss. `pdf_refusal` keeps that half — a file cut short in transfer is
+    refused here rather than accepted, stored, and failing in front of the model — and keeps it
+    FAILING OPEN, refusing only on positive evidence. See `media/lanes.py` for both scans.
 
-    ★ THE COUNT RUNS IN THE KILLABLE GOVERNOR, NEVER IN THIS HANDLER, and that is the load-
-    bearing half of this function. The standing rule for uploads is explicit — treat them as
-    untrusted, validate at the boundary, SANDBOX PARSING — and a PDF is the worst-behaved
-    thing this route accepts: a Flate bomb, a circular object graph, a
-    cross-reference stream declaring millions of entries are all reachable inside 4 MB, and the
-    last of those costs eight kilobytes and tens of seconds. Read on the event loop, one upload
-    stalls the worker serving every other citizen's request. Read through `run_parse`, it is a
-    fresh spawned child with a wall-clock deadline and an address-space rlimit, terminated when
-    it overruns. `_handle_office_upload` next door takes the same route for the same reason.
-
-    EVERY FAILURE WEARS ONE ANSWER. Over the cap, unreadable, killed at the deadline, contained
-    OOM — all four are `PDF_TOO_LONG_TEXT` and a 413. The alternative is telling a citizen
-    which of the platform's internal failure modes their file hit, which is both useless to
-    them and the internals leak that same rule forbids; the distinguishing detail goes to
-    the log instead — `pdf_page_check_failed` (the parser's `code`/`status`) or
-    `pdf_over_page_cap` (`pages`/`cap`).
-
-    THOSE TWO EVENTS ARE THE COMPENSATING CONTROL the collapse was traded for, so they are
-    pinned by a test rather than left to good intentions. They go through STRUCTLOG, like every
-    other module here: nothing in this process configures stdlib `logging` (`main.py` wires
-    structlog to a `PrintLogger`, and uvicorn's config names only the `uvicorn*` loggers), so a
-    `logging.getLogger(__name__)` line would be dropped at the root or reach `lastResort`, whose
-    bare `%(message)s` strips exactly the fields an operator came for."""
-    try:
-        counted = await run_parse(data, "count_pdf_pages", name, None)
-        pages = counted["pageCount"]
-    except FileParseError as exc:
-        logger.warning("pdf_page_check_failed", code=exc.code, status=exc.status)
-        # The locked arm is the one exception to the collapse above, and only this one: it is a
-        # 415 rather than a 413 because nothing about the file's SIZE was the problem.
-        if exc.code == PDF_LOCKED_CODE:
-            raise AppApiError(415, PDF_LOCKED_TEXT, code=PDF_LOCKED_CODE) from exc
-        raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE) from exc
-    if not isinstance(pages, int) or pages > MAX_PDF_PAGES:
-        logger.info("pdf_over_page_cap", pages=pages, cap=MAX_PDF_PAGES)
-        raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE)
+    A locked file answers 415 rather than 413: nothing about its SIZE was the problem, and the
+    citizen has something to do about it.
+    """
+    refusal = pdf_refusal(name, data)
+    if refusal is None:
+        return
+    if refusal == PASSWORD_PROTECTED_TEXT:
+        raise AppApiError(415, refusal, code=PDF_LOCKED_CODE)
+    logger.info("pdf_refused_as_incomplete", size=len(data))
+    raise AppApiError(415, refusal)
 
 
 @router.post(
@@ -451,12 +399,16 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
     responses=error_responses(
         (400, ErrorEnvelope, "Invalid attachment id, conversation id, name, type, or bytes"),
         (404, ErrorEnvelope, "conversationId not found (or not owned by the caller)"),
-        (413, ErrorEnvelope, "Attachment too large, over the PDF page cap, or storage full"),
-        # DECLARED BECAUSE IT IS RAISED — the locked-PDF arm above answers 415, and a status the
-        # route really sends but the schema never mentions is the generated client's problem
+        (413, ErrorEnvelope, "Attachment too large, or the conversation already holds 20 files"),
+        # DECLARED BECAUSE IT IS RAISED — the locked and incomplete arms answer 415, and a status
+        # the route really sends but the schema never mentions is the generated client's problem
         # later. It is 415 and not 413 for the reason given there: nothing about the SIZE was
         # wrong. (This route's own contract test asserts a SUBSET, so it did not catch the gap.)
-        (415, ErrorEnvelope, "The PDF is password-protected and cannot be read"),
+        (
+            415,
+            ErrorEnvelope,
+            "The file is password-protected, incomplete, or not a supported kind",
+        ),
         (429, ErrorEnvelope, "Too many attachment requests"),
         AUTH_401,
     ),
@@ -464,7 +416,8 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
 async def upload_attachment(
     request: Request, user: CurrentUser, db: DbSession, storage: Storage
 ) -> JSONResponse:
-    # Body-size ceiling (Express mount `limit:'6mb'`) — refuse a huge body before buffering it.
+    # The wire ceiling — refuse a huge body before buffering it. Not the size cap; see the
+    # constant for why the two are different questions.
     content_length = request.headers.get("content-length")
     if (
         content_length is not None
@@ -528,16 +481,14 @@ async def upload_attachment(
             400, f"Attachment bytes do not match the declared type {media_type}."
         ) from None
     if len(data) > ATTACHMENT_MAX_BYTES:
-        raise AppApiError(413, "Attachment is too large (max 4 MB).")
+        raise AppApiError(413, f"Attachment is too large (max {ATTACHMENT_MAX_MB} MB).")
     # AFTER the magic-byte and size checks and BEFORE the store, so a refused document leaves
-    # no object and no row — the ordering `_handle_office_upload` already keeps. The arm is
-    # split on media type rather than run for everything: an image's cost does not scale with
-    # its page count (it has none), and charging every screenshot a subprocess spawn would be
-    # a real regression in the common path.
+    # no object and no row. Split on media type rather than run for everything because the two
+    # scans read PDF syntax; an image has no trailer to look in.
     if media_type == PDF_MEDIA_TYPE:
-        await _assert_pdf_within_page_cap(data, name)
+        _assert_pdf_is_whole_and_unlocked(data, name)
     if is_code_lane(media_type):
-        # AFTER the size check and BEFORE the store, like the page cap above: a refused file
+        # AFTER the size check and BEFORE the store, like the PDF arm above: a refused file
         # leaves no object and no row. Password protection is checked in here too, for every
         # format that can carry it — a locked workbook gets the same sentence a locked PDF does,
         # rather than being stored, charged, and failing inside the sandbox several turns later.
@@ -545,7 +496,7 @@ async def upload_attachment(
         if refusal is not None:
             raise AppApiError(415, refusal)
         # THE ARCHIVE BOUND, ON THE HALF OF THE LANE THAT ACTUALLY CARRIES ARCHIVES (R18b).
-        # Office files are ZIPs, and a 4 MB one can declare 300 MB uncompressed.
+        # Office files are ZIPs, and one inside the size cap can declare gigabytes uncompressed.
         #
         # `is_opc_archive`, NOT `is_code_lane`, and the difference was a live defect: gated on the
         # whole lane this refused every CSV and TSV with "Malformed archive (no ZIP

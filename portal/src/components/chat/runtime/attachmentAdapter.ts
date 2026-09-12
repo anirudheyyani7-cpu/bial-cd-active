@@ -27,7 +27,6 @@ import {
   fileToBase64,
   newAttachmentId,
   resolveMediaType,
-  textAttachmentBytes,
   validateAttachmentFiles,
 } from '../../../utils/attachmentInput'
 import type { PendingAttachment as OurAttachment } from '../../../utils/attachmentInput'
@@ -138,11 +137,11 @@ export function createAttachmentAdapter({ accept, staged, onRefused, onReadingCh
 
     async add({ file }): Promise<PendingAttachment> {
       // OUR VALIDATION, AGAINST WHAT IS ALREADY STAGED AND WHAT THIS GESTURE HAS ALREADY TAKEN.
-      // The per-message file cap and the per-conversation text-byte budget are both cumulative, so
-      // the check has to see both lists rather than only the arriving file.
+      // The per-message file cap is cumulative, so the check has to see both lists rather than
+      // only the arriving file.
       const mediaType = resolveMediaType(file)
       const current = countable()
-      const verdict = validateAttachmentFiles([file], current.length, textAttachmentBytes(current))
+      const verdict = validateAttachmentFiles([file], current.length)
       if ('error' in verdict && verdict.error) {
         onRefused(verdict.error)
         throw new AttachmentRefusal(verdict.error)

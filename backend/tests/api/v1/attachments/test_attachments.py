@@ -7,7 +7,6 @@ from __future__ import annotations
 import base64
 import datetime
 import io
-import re
 import struct
 import time
 import uuid
@@ -19,24 +18,35 @@ from structlog.testing import capture_logs
 
 from src.api.v1.attachments.router import (
     ATTACHMENT_LANES_SENTENCE,
-    ATTACHMENT_TOTAL_CAP,
+    ATTACHMENT_MAX_BYTES,
+    ATTACHMENT_MAX_MB,
     MAX_ATTACHMENTS_PER_CONVERSATION,
-    MAX_PDF_PAGES,
 )
 from src.config import settings
 from src.db.models.attachment import Attachment
 from src.services.attachments import reclaim_orphaned_attachments
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.media.lanes import EXCEL_MEDIA_TYPE
+from src.services.media.lanes import EXCEL_MEDIA_TYPE, PASSWORD_PROTECTED_TEXT
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
-from tests.pdfs import locked_pdf, pdf_with_pages, restricted_pdf, unreadable_pdf, xref_bomb_pdf
+from tests.pdfs import (
+    encrypted_pdf,
+    encrypted_xref_stream_pdf,
+    incrementally_updated_pdf,
+    pdf_mentioning_encrypt_in_its_content,
+    pdf_pointing_past_its_own_end,
+    pdf_with_pages,
+    scanned_pdf,
+    truncated_pdf,
+    unreadable_pdf,
+    xref_bomb_pdf,
+)
 
 _TTL = settings.auth.access_ttl_seconds
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-# A REAL one-page PDF, not just the magic prefix: a PDF upload is parsed for its page
-# count, so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case,
-# tested by name below.
+# A REAL one-page PDF, not just the magic prefix: the door checks a PDF for structural wholeness,
+# so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case, tested by
+# name below.
 _PDF = pdf_with_pages(1)
 
 
@@ -265,40 +275,83 @@ async def test_missing_media_type_rejected(client, db_session) -> None:
     assert resp.json() == {"error": {"message": "mediaType is required."}}
 
 
-async def test_over_size_cap_rejected(client, db_session) -> None:
+async def test_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_not(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE BOUNDARY, ON BOTH SIDES, AND THE NUMBER READ FROM THE CONSTANT.
+
+    This test used to spell "4 MB" into its own assertion, so the day the cap moved it went red
+    for the right reason with completely the wrong message — and it is not findable by grepping
+    for the symbol, which is how a hardcoded figure survives a rename. Sized and asserted from
+    `ATTACHMENT_MAX_BYTES` now, so the boundary follows the cap wherever it goes.
+
+    The accepted side matters as much as the refused one: an off-by-one that refuses a file
+    exactly at the cap is the same defect wearing the other sign.
+    """
     headers, _ = await _auth(db_session)
-    oversized = b"\x89PNG\r\n\x1a\n" + b"\x00" * (4 * 1024 * 1024)  # just over 4 MB decoded
+    at_cap = b"\x89PNG\r\n\x1a\n" + b"\x00" * (ATTACHMENT_MAX_BYTES - 8)
+    ok = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={"attachmentId": "att_at_cap", "mediaType": "image/png", "base64": _b64(at_cap)},
+    )
+    assert ok.status_code == 201
+
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_big", "mediaType": "image/png", "base64": _b64(oversized)},
+        json={
+            "attachmentId": "att_big",
+            "mediaType": "image/png",
+            "base64": _b64(at_cap + b"\x00"),
+        },
     )
     assert resp.status_code == 413
-    assert resp.json() == {"error": {"message": "Attachment is too large (max 4 MB)."}}
+    assert resp.json() == {
+        "error": {"message": f"Attachment is too large (max {ATTACHMENT_MAX_MB} MB)."}
+    }
 
 
-async def test_over_quota_rejected(client, db_session) -> None:
-    headers, user = await _auth(db_session)
-    near_cap = 50 * 1024 * 1024 - 4
-    db_session.add(
-        Attachment(
-            user_id=user.id,
-            attachment_id="att_existing",
-            media_type="image/png",
-            name="",
-            size=near_cap,
-            storage_key=f"att/{user.id}/existing",
-        )
+async def test_a_request_body_over_the_wire_ceiling_is_refused_before_it_is_buffered(
+    client, db_session
+) -> None:
+    """★ A BRANCH NOTHING COVERED, on a constant this work moved.
+
+    The wire ceiling is a different question from the size cap: it fires on the declared
+    Content-Length before the body is read at all, so it is what stops a hostile request being
+    buffered into memory. It therefore has to clear base64 of a legal file — 10 MiB encodes to
+    13,981,016 bytes — and a ceiling set too low would refuse files the door means to accept,
+    with a sentence about the REQUEST rather than about the file, and no test to say so.
+
+    Sent with a Content-Length header and a tiny body: the branch reads the header, so the test
+    does not have to move fifteen megabytes to reach it.
+    """
+    headers, _ = await _auth(db_session)
+    resp = await client.post(
+        "/v1/attachments",
+        headers={**headers, "content-length": str(64 * 1024 * 1024)},
+        content=b"{}",
     )
-    await db_session.flush()
+    assert resp.status_code == 413
+    assert resp.json() == {"error": {"message": "Attachment request is too large."}}
+
+
+async def test_the_wire_ceiling_clears_a_legal_file_encoded(
+    client, db_session, fake_storage
+) -> None:
+    """The other side of the same constant, and the one that would fail silently: a cap-sized file
+    base64-encodes to about 13.3 MB on the wire, so a ceiling below that refuses every maximum
+    upload before it is even decoded."""
+    headers, _ = await _auth(db_session)
+    at_cap = b"\x89PNG\r\n\x1a\n" + b"\x00" * (ATTACHMENT_MAX_BYTES - 8)
+    body = _b64(at_cap)
+    assert len(body) > ATTACHMENT_MAX_BYTES  # base64 really is bigger than the file
     resp = await client.post(
         "/v1/attachments",
         headers=headers,
-        json={"attachmentId": "att_new", "mediaType": "image/png", "base64": _b64(_PNG)},
+        json={"attachmentId": "att_wire", "mediaType": "image/png", "base64": body},
     )
-    assert resp.status_code == 413
-    body = resp.json()
-    assert body["error"]["code"] == "ATTACHMENT_STORE_FULL"
+    assert resp.status_code == 201
 
 
 async def test_a_zip_bomb_is_refused_on_the_upload_lane(client, db_session, fake_storage) -> None:
@@ -481,38 +534,48 @@ async def _upload_into(client, headers, conversation_id, attachment_id, *, size=
     )
 
 
+async def _fill_conversation(db_session, user, conversation_id, *, held: int) -> None:
+    """Put `held` attachments in a conversation, without going through the door."""
+    for index in range(held):
+        db_session.add(
+            Attachment(
+                user_id=user.id,
+                attachment_id=f"att_seed_{conversation_id.hex[:6]}_{index}",
+                media_type="image/png",
+                name="",
+                size=len(_PNG),
+                storage_key=f"att/{user.id}/seed-{conversation_id.hex[:6]}-{index}",
+                conversation_id=conversation_id,
+            )
+        )
+    await db_session.flush()
+
+
 async def test_a_full_conversation_does_not_exhaust_the_account(
     client, db_session, fake_storage
 ) -> None:
-    """AE20 — the whole point of moving the budget (#214 R7a).
+    """AE20 — the whole point of scoping the budget to the conversation (#214 R7a).
 
-    It used to sum every attachment a citizen had ever uploaded, across every conversation, so
+    It used to count every attachment a citizen had ever uploaded, across every conversation, so
     two or three working sessions exhausted a lifetime allowance and the only way to reclaim any
     was to delete whole conversations. Now a full chat is a full chat: the next one has room, and
     "start a new chat" is advice that actually works.
 
-    Mutation receipt: drop the conversation predicate from the budget query and the second
-    upload 413s on bytes the other conversation spent.
+    RE-POINTED FROM BYTES TO A COUNT, not deleted. The per-conversation BYTE budget is gone and a
+    flat file count replaced it, but what this test is about — that fullness is a fact about one
+    chat and not about the account — is the same claim either way.
+
+    Mutation receipt: drop the conversation predicate from the count query and the second upload
+    413s on files the other conversation is holding.
     """
     headers, user = await _auth(db_session)
     first = await _a_conversation(db_session, user)
-    db_session.add(
-        Attachment(
-            user_id=user.id,
-            attachment_id="att_full",
-            media_type="image/png",
-            name="",
-            size=ATTACHMENT_TOTAL_CAP - 8,
-            storage_key=f"att/{user.id}/full",
-            conversation_id=first.id,
-        )
-    )
-    await db_session.flush()
+    await _fill_conversation(db_session, user, first.id, held=MAX_ATTACHMENTS_PER_CONVERSATION)
 
-    # The conversation holding it is full...
+    # The conversation holding them is full...
     refused = await _upload_into(client, headers, first.id, "att_more")
     assert refused.status_code == 413, refused.text
-    assert refused.json()["error"]["code"] == "ATTACHMENT_STORE_FULL"
+    assert refused.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
 
     # ...and a new one has room. This is the assertion the old per-citizen budget could not pass.
     second = await _a_conversation(db_session, user)
@@ -525,28 +588,77 @@ async def test_a_full_conversation_says_so_and_names_a_way_out(
 ) -> None:
     """AE21. The old copy was "Attachment storage is full. Remove some attachments and try
     again." — advice a citizen cannot follow, because nothing lets them remove one attachment
-    from an old conversation. The refusal now names the thing that is full and the thing that
+    from an old conversation. The refusal names the thing that is full and the thing that
     works."""
     headers, user = await _auth(db_session)
     conversation = await _a_conversation(db_session, user)
-    db_session.add(
-        Attachment(
-            user_id=user.id,
-            attachment_id="att_full",
-            media_type="image/png",
-            name="",
-            size=ATTACHMENT_TOTAL_CAP - 8,
-            storage_key=f"att/{user.id}/full",
-            conversation_id=conversation.id,
-        )
+    await _fill_conversation(
+        db_session, user, conversation.id, held=MAX_ATTACHMENTS_PER_CONVERSATION
     )
-    await db_session.flush()
 
     resp = await _upload_into(client, headers, conversation.id, "att_more")
 
     message = resp.json()["error"]["message"]
     assert "new chat" in message.lower()
     assert "remove some attachments" not in message.lower()
+
+
+async def test_bytes_far_over_the_deleted_budget_are_accepted_while_the_count_is_under(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE BYTE BUDGET IS REALLY GONE (D5), and this is the only test that can say so.
+
+    Fifty megabytes used to be the per-conversation ceiling, and every other test here would stay
+    green with it restored — they all sit well under it. This one seeds a conversation holding far
+    more than that and uploads into it successfully, so the deleted rule cannot return unnoticed.
+
+    Mutation check: restore the `sum(Attachment.size)` budget and its refusal, and this goes red.
+    """
+    headers, user = await _auth(db_session)
+    conversation = await _a_conversation(db_session, user)
+    db_session.add(
+        Attachment(
+            user_id=user.id,
+            attachment_id="att_enormous",
+            media_type="image/png",
+            name="",
+            size=400 * 1024 * 1024,
+            storage_key=f"att/{user.id}/enormous",
+            conversation_id=conversation.id,
+        )
+    )
+    await db_session.flush()
+
+    accepted = await _upload_into(client, headers, conversation.id, "att_next")
+
+    assert accepted.status_code == 201, accepted.text
+
+
+async def test_re_uploading_a_known_id_into_a_full_conversation_is_refused(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE GUARD THAT KEEPS THE COUNT REAL, and the bypass it closes is one line wide.
+
+    A row is looked up by (owner, attachment id) with NO conversation filter, so a known id
+    re-uploaded against a DIFFERENT conversation used to find `existing`, skip the count entirely
+    and move the row into a chat already holding twenty. The count cap says twenty; that path made
+    it twenty-one, twenty-two, and so on, with no refusal at any point.
+
+    Mutation check: narrow the predicate back to `if existing is None:` and this goes red.
+    """
+    headers, user = await _auth(db_session)
+    roomy = await _a_conversation(db_session, user)
+    full = await _a_conversation(db_session, user)
+    await _fill_conversation(db_session, user, full.id, held=MAX_ATTACHMENTS_PER_CONVERSATION)
+
+    # A real upload into a chat with room — this is the row the re-upload will try to move.
+    first = await _upload_into(client, headers, roomy.id, "att_x")
+    assert first.status_code == 201, first.text
+
+    moved = await _upload_into(client, headers, full.id, "att_x")
+
+    assert moved.status_code == 413, moved.text
+    assert moved.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
 
 
 async def test_the_conversation_attachment_count_is_enforced_on_the_server(
@@ -888,39 +1000,49 @@ async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
     assert fake_storage.objects == {}
 
 
-async def test_reclaim_frees_quota_then_upload_succeeds(client, db_session, fake_storage) -> None:
-    # A user at the 413 cap whose quota is all never-sent orphans can upload again after a sweep.
-    from src.api.v1.attachments.router import ATTACHMENT_TOTAL_CAP
+async def test_reclaim_frees_room_then_upload_succeeds(client, db_session, fake_storage) -> None:
+    """THE RECLAIMER'S ONLY END-TO-END WIRING TEST, re-pointed from bytes to the count.
 
+    A citizen whose conversation is full of never-sent orphans can upload again after a sweep —
+    which is the whole reason the reclaimer exists, and the only test that drives it through the
+    door rather than calling it directly. It used to fill the deleted byte budget with one huge
+    row; it fills the file count with twenty old ones now. Same claim, live rule.
+    """
     headers, user = await _auth(db_session)
-    near_cap = ATTACHMENT_TOTAL_CAP - 4
     old = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=30)
-    key = f"att/{user.id}/old"
-    db_session.add(
-        Attachment(
-            user_id=user.id,
-            attachment_id="att_old",
-            media_type="image/png",
-            name="",
-            size=near_cap,
-            storage_key=key,
-            created_at=old,
+    keys = []
+    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
+        key = f"att/{user.id}/old-{index}"
+        keys.append(key)
+        db_session.add(
+            Attachment(
+                user_id=user.id,
+                attachment_id=f"att_old_{index}",
+                media_type="image/png",
+                name="",
+                size=len(_PNG),
+                storage_key=key,
+                created_at=old,
+            )
         )
-    )
     await db_session.flush()
-    fake_storage.objects[key] = b"x"
+    for key in keys:
+        fake_storage.objects[key] = b"x"
 
+    # The unlinked pool is the scope an upload with no conversation is counted against.
     over = await client.post(
         "/v1/attachments",
         headers=headers,
         json={"attachmentId": "att_new", "mediaType": "image/png", "base64": _b64(_PNG)},
     )
     assert over.status_code == 413
+    assert over.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
 
     result = await reclaim_orphaned_attachments(db_session, fake_storage, user_id=user.id)
-    assert result.reclaimed == 1
-    assert result.freed_bytes == near_cap
-    assert key not in fake_storage.objects
+    assert result.reclaimed == MAX_ATTACHMENTS_PER_CONVERSATION
+    assert result.freed_bytes == len(_PNG) * MAX_ATTACHMENTS_PER_CONVERSATION
+    for key in keys:
+        assert key not in fake_storage.objects
 
     ok = await client.post(
         "/v1/attachments",
@@ -1031,18 +1153,20 @@ async def test_requires_auth(client) -> None:
     assert (await client.post("/v1/attachments", json={})).status_code == 401
 
 
-# --- the PDF page cap ---------------------------------------------------------
+# --- what the door asks a PDF ------------------------------------------------
 #
-# ★ WHAT THIS SECTION IS FOR. A 61-page document measured 153,342 tokens — 77% of the hard
-# context limit — while the guardrail recorded it as 1,600, or 0.8%. The guardrail no longer
-# guesses at all: it reads what the provider reported for a turn it served
-# (`test_context_window.py`). That leaves THIS cap as the only bound acting before the provider
-# has seen the file, which is why the page count is checked at admission.
+# ★ TWO QUESTIONS, AND NEITHER IS "HOW LONG IS IT". A page cap used to live here, because a
+# document was charged a flat figure sized to it — a 61-page file measured 153,342 tokens, 77% of
+# the hard context limit, while the guardrail recorded 1,600. The guardrail stopped guessing
+# (`test_context_window.py`: it reads what the provider reported for a turn it served), and the
+# flat charge went with it, which left a cap bounding a cost that no longer existed. It is gone,
+# and its parser, its process governor and its dependency with it. A long document's token cost is
+# the client's to bear.
 #
-# The cap is a PAGE count, not a byte count, and that is the whole reason a parser is involved:
-# a text PDF runs ~1.3 KB a page and a scanned one ~300 KB, so the same 4 MB is anywhere from
-# 13 to 3,200 pages. The existing 4 MB size cap cannot see the difference; the document that
-# blew the limit was 79 KB.
+# WHAT REPLACED IT IS NOT NOTHING. The page count was also the only READABILITY check any PDF got,
+# so a file that could not be opened at all was refused as a side effect of being counted. Two
+# byte scans over the file's tail keep that half: is it locked, and is it all there. Both are
+# dependency-free, neither reads text, and the structural one refuses only on positive evidence.
 
 
 async def _upload_pdf(client, headers, attachment_id: str, data: bytes, name: str = "doc.pdf"):
@@ -1058,303 +1182,289 @@ async def _upload_pdf(client, headers, attachment_id: str, data: bytes, name: st
     )
 
 
-async def test_a_pdf_at_the_page_cap_is_accepted(client, db_session, fake_storage) -> None:
-    """★ THE POSITIVE CASE, FIRST. Every other test in this section asserts a refusal, and a
-    cap that refused every PDF would satisfy all of them. Exactly at the cap is admitted —
-    "under 30 pages" in the refusal means the 30-page document goes through."""
+async def test_a_long_pdf_is_accepted_now_that_nothing_counts_its_pages(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE DIRECTIVE, AS ONE ASSERTION (D3/D7). Forty pages was over the old cap and is an
+    ordinary business document; it uploads.
+
+    THE POSITIVE CASE COMES FIRST because every other test in this section asserts a refusal, and
+    a door that refused every PDF would satisfy all of them.
+    """
     headers, _ = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_cap", pdf_with_pages(MAX_PDF_PAGES))
+    resp = await _upload_pdf(client, headers, "att_long", pdf_with_pages(40))
 
     assert resp.status_code == 201, resp.text
-    assert resp.json()["attachment"]["kind"] == "document"
     assert len(fake_storage.objects) == 1
 
 
-async def test_a_pdf_one_page_over_the_cap_is_refused_in_plain_words(
+async def test_a_scanned_image_only_pdf_is_accepted(client, db_session, fake_storage) -> None:
+    """★ THE CHECK IS STRUCTURAL, NOT TEXTUAL, and this is the file that proves it.
+
+    A scanned invoice carries no text at all — every page is one image — and it is a first-class
+    supported case (R3): the model reads a PDF as vision. Anything at this door that reached for
+    the file's text would refuse the very documents citizens photograph and upload most.
+
+    Mutation check: add any text probe to the PDF arm and this goes red.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_scan", scanned_pdf())
+
+    assert resp.status_code == 201, resp.text
+
+
+async def test_a_password_protected_pdf_is_refused_at_the_door(
     client, db_session, fake_storage
 ) -> None:
-    """One page over, and the sentence a citizen reads.
+    """★ AE8c — a locked document is the one PDF failure a citizen can act on, so it keeps its own
+    refusal rather than being stored, counted, and failing in front of the model.
 
-    THE COPY IS THE ASSERTION, not decoration. The refusal has to name a limit the person can
-    act on ("under 30 pages") and must not hand them the platform's vocabulary — no page
-    objects, no parser, no bytes, no library name, no traceback. A body that leaks any of those
-    is the failure this pins, and it is a security property as much as a copy one —
-    internal errors must never be exposed to the frontend."""
+    Rebuilt without the library that used to detect it: the door reads the trailer's `/Encrypt`
+    entry, which is syntax.
+    """
     headers, _ = await _auth(db_session)
 
-    resp = await _upload_pdf(client, headers, "att_over", pdf_with_pages(MAX_PDF_PAGES + 1))
+    resp = await _upload_pdf(client, headers, "att_locked", encrypted_pdf(pages=3))
 
-    assert resp.status_code == 413, resp.text
-    message = resp.json()["error"]["message"]
-    assert message == "That document is too long to work with. Try one under 30 pages."
-    body = resp.text.lower()
-    for leak in ("pypdf", "traceback", "page object", "/type /page", "parse", "byte", "xref"):
-        assert leak not in body, leak
-    # And nothing was stored: a refused upload leaves no object and no row to reclaim later.
+    assert resp.status_code == 415, resp.text
+    body = resp.json()
+    assert body["error"]["code"] == "PDF_ENCRYPTED"
+    assert body["error"]["message"] == PASSWORD_PROTECTED_TEXT
     assert fake_storage.objects == {}
-    assert (
-        await db_session.scalar(select(Attachment).where(Attachment.attachment_id == "att_over"))
-    ) is None
 
 
-async def test_an_image_never_reaches_the_page_counter(client, db_session, monkeypatch) -> None:
-    """A PNG skips the check entirely — the parser is not called at all.
+async def test_an_xref_stream_encrypted_pdf_is_refused_too(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE FALSE-NEGATIVE DIRECTION, and the one a naive check misses entirely.
 
-    Not merely "an image still uploads": that would pass with the counter running on every
-    upload and quietly answering 1. Every image upload paying a subprocess spawn is a real
-    regression in the common path, so the assertion is on the CALL, not on the outcome."""
+    Word and Acrobat emit PDF 1.5+ cross-reference STREAMS and write no `trailer` keyword at all,
+    so a scan keyed on that word finds nothing in the encrypted document a citizen is most likely
+    to actually have — while correctly refusing a hand-made classic one. The two fixtures must
+    both be refused or the check is theatre.
+
+    Mutation check: key the lock scan on the `trailer` keyword and only this test goes red.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_locked_xref", encrypted_xref_stream_pdf())
+
+    assert resp.status_code == 415, resp.text
+    assert resp.json()["error"]["code"] == "PDF_ENCRYPTED"
+    assert fake_storage.objects == {}
+
+
+async def test_a_document_that_merely_mentions_encryption_is_not_called_locked(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE FALSE-POSITIVE DIRECTION. A perfectly ordinary document whose page text is prose
+    about encryption carries the literal bytes `/Encrypt` near the end of the file. Called locked,
+    its owner is told to remove a password that does not exist — advice that leads nowhere, about
+    a file that is fine.
+
+    The scan matches the trailer's `/Encrypt <num> <gen> R` indirect reference, which the spec
+    requires and running prose does not take.
+
+    Mutation check: match the bare word and this goes red.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_prose", pdf_mentioning_encrypt_in_its_content())
+
+    assert resp.status_code == 201, resp.text
+
+
+async def test_a_truncated_pdf_is_refused_and_not_stored(client, db_session, fake_storage) -> None:
+    """★ THE READABILITY HALF THE PAGE CAP USED TO PROVIDE. A dropped upload is a real document
+    whose last quarter never arrived — no cross-reference table, no terminator. Admitted, it is
+    stored, counted against the conversation and fails in front of the model turns later, where
+    nothing can explain it.
+
+    Mutation check: delete the structural scan and this is stored with a 201.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_cut", truncated_pdf())
+
+    assert resp.status_code == 415, resp.text
+    assert fake_storage.objects == {}
+
+
+async def test_a_pdf_naming_an_offset_past_its_own_end_is_refused(
+    client, db_session, fake_storage
+) -> None:
+    """The subtler shape of the same failure: terminator present, `startxref` pointing into bytes
+    that are not there. Positive evidence, which is the only kind the scan acts on."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_past_end", pdf_pointing_past_its_own_end())
+
+    assert resp.status_code == 415, resp.text
+    assert fake_storage.objects == {}
+
+
+async def test_magic_valid_rubbish_is_still_refused(client, db_session, fake_storage) -> None:
+    """A file that passes the 18-byte prefix check and is plainly not a document. It used to be
+    refused as "too long to work with", which was never true of it; the sentence it gets now says
+    the readable thing instead."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_rubbish", unreadable_pdf())
+
+    assert resp.status_code == 415, resp.text
+    assert "could not be read as a PDF" in resp.json()["error"]["message"]
+    assert fake_storage.objects == {}
+
+
+async def test_a_signed_pdf_with_incremental_updates_is_accepted(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE FAIL-OPEN DIRECTION, and the reason the structural scan refuses only on evidence.
+
+    Signing and annotating append incremental sections, each with its own xref table and trailer,
+    which pushes the ORIGINAL structure far from the end of the file. A scan that demanded to
+    recognise the whole document would refuse exactly the files an approvals process produces —
+    and refusing a valid file at the door is worse than letting a broken one fail later, which is
+    what happened before this check existed anyway.
+
+    Mutation check: make the scan require the FIRST trailer to be findable and this goes red.
+    """
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_signed", incrementally_updated_pdf())
+
+    assert resp.status_code == 201, resp.text
+
+
+async def test_a_cross_reference_bomb_costs_the_door_nothing(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE RECEIPT THAT REMOVING THE GOVERNOR DID NOT REOPEN WHAT IT WAS FOR.
+
+    This 32 KB file declares eight million cross-reference entries. A reader must walk every one
+    before it can resolve the catalog — six to twelve seconds, inside every size cap, unbounded in
+    the only axis they watch — and that is precisely why each PDF used to be handed to a killable,
+    memory-capped subprocess.
+
+    Nothing opens a PDF here any more. The door scans the last 64 KB for two byte patterns, so the
+    bomb is neither expensive nor interesting: it is a well-formed, unencrypted document and it is
+    accepted, in microseconds.
+
+    The wall clock is asserted deliberately loosely. It is not a benchmark — it is the difference
+    between "scanned some bytes" and "walked eight million entries", which is three orders of
+    magnitude, so a generous bound still fails loudly if a parse ever comes back.
+    """
+    headers, _ = await _auth(db_session)
+    bomb = xref_bomb_pdf()
+
+    started = time.monotonic()
+    resp = await _upload_pdf(client, headers, "att_bomb", bomb)
+    elapsed = time.monotonic() - started
+
+    assert resp.status_code == 201, resp.text
+    assert elapsed < 2.0, f"the door spent {elapsed:.1f}s on a file nothing should parse"
+
+
+async def test_a_locked_pdf_and_a_locked_workbook_say_the_identical_sentence(
+    client, db_session, fake_storage
+) -> None:
+    """★ AE8c / R21 — ONE SENTENCE FOR ONE SITUATION, asserted as byte equality.
+
+    The two used to differ in both nouns: a locked PDF was told to "remove the password and UPLOAD
+    it again" about "that DOCUMENT", a locked workbook to "attach it again" about "that FILE".
+    Same predicament, same remedy, two voices — and a citizen who hits both learns that the
+    platform does not know it is saying the same thing twice.
+
+    Mutation check: fork either sentence and this goes red on the equality, not on a substring.
+    """
+    headers, _ = await _auth(db_session)
+    ole2 = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + b"\x00" * 64
+
+    pdf = await _upload_pdf(client, headers, "att_lp", encrypted_pdf())
+    workbook = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": "att_lx",
+            "name": "book.xlsx",
+            "mediaType": EXCEL_MEDIA_TYPE,
+            "base64": _b64(ole2),
+        },
+    )
+
+    assert pdf.status_code == 415 and workbook.status_code == 415
+    assert pdf.json()["error"]["message"] == workbook.json()["error"]["message"]
+    assert pdf.json()["error"]["message"] == PASSWORD_PROTECTED_TEXT
+
+
+async def test_a_refused_pdf_leaks_no_internals_to_the_citizen(
+    client, db_session, fake_storage
+) -> None:
+    """The standing rule for every refusal here: name the file's problem, never the platform's
+    machinery. A citizen holding a damaged scan should not meet the words trailer, xref or
+    startxref."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_leak", truncated_pdf())
+
+    message = resp.json()["error"]["message"]
+    for leak in ("trailer", "startxref", "xref", "byte", "parse", "encrypt", "/Encrypt"):
+        assert leak not in message.lower(), f"{leak!r} leaked into {message!r}"
+
+
+async def test_an_image_is_not_put_through_the_pdf_scans(
+    client, db_session, fake_storage, monkeypatch
+) -> None:
+    """The arm is split on media type, and this is the receipt. A PNG has no trailer to look in,
+    and a scan that ran over one would be asking a question with no meaning — the same reasoning
+    that kept images out of the page counter before it."""
     import src.api.v1.attachments.router as att_router
-    from src.services.parse.governor import run_parse as real_run_parse
 
+    # The real one is taken from the module that DEFINES it, not from the router that imported
+    # it: the router re-binds the name, and reading it back through there is an implicit re-export
+    # the strict gate refuses. The patch still targets the router's own binding, which is what the
+    # route body reads.
+    from src.services.media.lanes import pdf_refusal as real_pdf_refusal
+
+    headers, _ = await _auth(db_session)
     calls: list[str] = []
 
-    async def _spy(buffer, kind, filename, sheet, **kwargs):
-        calls.append(kind)
-        return await real_run_parse(buffer, kind, filename, sheet, **kwargs)
+    def _spy(name: str, data: bytes) -> str | None:
+        calls.append(name)
+        return real_pdf_refusal(name, data)
 
-    monkeypatch.setattr(att_router, "run_parse", _spy)
-    headers, _ = await _auth(db_session)
+    monkeypatch.setattr(att_router, "pdf_refusal", _spy)
 
-    resp = await client.post(
+    image = await client.post(
         "/v1/attachments",
         headers=headers,
         json={"attachmentId": "att_png", "mediaType": "image/png", "base64": _b64(_PNG)},
     )
+    document = await _upload_pdf(client, headers, "att_pdf", pdf_with_pages(2))
 
-    assert resp.status_code == 201
-    assert calls == []
+    assert image.status_code == 201 and document.status_code == 201
+    assert calls == ["doc.pdf"], "only the PDF should reach the PDF scans"
 
 
-async def test_a_corrupt_pdf_is_refused_with_the_same_sentence_not_a_500(
+async def test_the_pdf_refusals_leave_a_trace_an_operator_can_act_on(
     client, db_session, fake_storage
 ) -> None:
-    """Magic-valid bytes that will not parse.
+    """The compensating control for a citizen-facing sentence that says nothing about the cause.
 
-    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before the page cap
-    existed this was STORED and sent to the model as a document. It must now be refused, and
-    refused as a client error rather than as a server one: a 500 here would be the platform
-    reporting its own failure for the citizen's malformed file, and would put a stack trace one
-    config flag away from the browser.
-
-    It wears the SAME sentence as the over-cap refusal on purpose. There is nothing true and
-    useful the platform can tell someone about a PDF it could not read, and a second sentence
-    would have to reach for parser vocabulary to say anything at all. The real cause is logged
-    server-side, where an operator can act on it."""
-    headers, _ = await _auth(db_session)
-
-    resp = await _upload_pdf(client, headers, "att_corrupt", unreadable_pdf())
-
-    assert resp.status_code == 413, resp.text
-    assert (
-        resp.json()["error"]["message"]
-        == "That document is too long to work with. Try one under 30 pages."
-    )
-    assert fake_storage.objects == {}
-
-
-async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
-    client, db_session, fake_storage
-) -> None:
-    """★ THE ONE PDF REFUSAL THE CITIZEN CAN ACT ON, so it is the one that does not get the
-    collapsed sentence.
-
-    A password-protected PDF parses far enough to say it is locked and no further, so it lands
-    in the same `FileParseError` arm as a corrupt file. Under the collapse that made it "too
-    long to work with — try one under 30 pages", which is advice that cannot be followed: this
-    fixture is THREE pages. A citizen holding a locked invoice would shorten it, be refused
-    again, and learn nothing. That is the shape `attachmentInput.ts` records as advice only
-    being honest while it leads somewhere.
-
-    A 415 rather than a 413, because nothing about the file's size was the problem. The
-    sentence still names no parser, no encryption scheme and no internal state, so it keeps the
-    property the collapsed sentence exists for."""
-    headers, _ = await _auth(db_session)
-
-    resp = await _upload_pdf(client, headers, "att_locked", locked_pdf(pages=3))
-
-    assert resp.status_code == 415, resp.text
-    body = resp.json()["error"]
-    assert body["message"] == (
-        "That document is password-protected. Remove the password and upload it again."
-    )
-    assert body["code"] == "PDF_ENCRYPTED"
-    # It must not be told the length is the problem — the document is well under the cap.
-    assert "too long" not in body["message"]
-    assert "30 pages" not in body["message"]
-    # And it leaks nothing about how we found out.
-    assert not re.search(r"pypdf|decrypt|encrypt|cipher|/Encrypt|parser", body["message"], re.I)
-    # Refused before the store, like every other arm.
-    assert fake_storage.objects == {}
-
-
-async def test_an_encrypted_pdf_cannot_lie_its_way_past_the_page_cap(
-    client, db_session, fake_storage
-) -> None:
-    """★ THE BYPASS THAT DEFEATS THE PAGE CAP, AT THE ROUTE THAT HAS TO CLOSE IT.
-
-    A permission-restricted PDF — empty user password, so every reader including ours opens it
-    unasked — whose catalog DECLARES one page and whose page tree carries twenty thousand. It
-    costs 120 KB, well inside the 4 MB size cap, and before this check it was admitted: pypdf
-    returns the declared `/Count` unwalked for any encrypted file, so the count the cap compared
-    against was the uploader's own number.
-
-    Two assertions, and they pull in opposite directions on purpose. It must NOT be refused for
-    encryption — the file is perfectly readable and the 415 would be a lie the citizen cannot
-    act on — and it MUST be refused for length, which is the true fact about it."""
-    headers, _ = await _auth(db_session)
-
-    resp = await _upload_pdf(
-        client, headers, "att_encrypted_liar", restricted_pdf(pages=20_000, declares=1)
-    )
-
-    assert resp.status_code == 413, resp.text
-    body = resp.json()["error"]
-    assert body["message"] == "That document is too long to work with. Try one under 30 pages."
-    assert "password" not in body["message"].lower()
-    # Refused before the store, like every other arm: no object, no row to reclaim later.
-    assert fake_storage.objects == {}
-    assert (
-        await db_session.scalar(
-            select(Attachment).where(Attachment.attachment_id == "att_encrypted_liar")
-        )
-    ) is None
-
-
-async def test_a_permission_restricted_pdf_is_uploaded_like_any_other_document(
-    client, db_session, fake_storage
-) -> None:
-    """★ THE POSITIVE CASE FOR THE ENCRYPTED PATH, and the one a careless fix breaks.
-
-    "Refuse encrypted PDFs" closes the bypass above and every other test in this file still
-    passes — while refusing the ordinary encrypted document an office produces, where
-    permissions are set and the user password is left empty. That file opens without a
-    password, so there is nothing the citizen could be told to do about it.
-
-    Three pages, honestly declared, and it is stored: encryption is not the question the cap
-    asks. Only a file an empty password will not open is refused, and that is `locked_pdf`
-    above wearing its own 415."""
-    headers, _ = await _auth(db_session)
-
-    resp = await _upload_pdf(client, headers, "att_restricted", restricted_pdf(pages=3))
-
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["attachment"]["kind"] == "document"
-    assert len(fake_storage.objects) == 1
-
-
-# THE DECK-CAP TEST WENT WITH THE DECK PATH (#214 R27). It proved that a 60-page deck cleared
-# the pptx branch's own 100-page limit while the 30-page upload cap applied to PDFs — two caps
-# that disagreed on purpose, because a deck was rendered to PDF by a converter that was never
-# deployed. There is no pptx branch and no converter now: a deck is stored as itself and read in
-# the sandbox, so it is governed by the size cap like every other code-lane file, and there is no
-# second page count for the two to disagree about.
-
-
-async def test_a_pdf_that_hangs_the_parser_is_killed_and_the_worker_keeps_serving(
-    client, db_session, monkeypatch, fake_storage
-) -> None:
-    """★ THE INVARIANT THAT MAKES THE PAGE COUNT SAFE TO TAKE AT ALL.
-
-    `xref_bomb_pdf()` is 8 KB and takes a reader seven to twelve seconds — inside the 4 MB size
-    cap, inside the memory ceiling, unbounded in the only axis neither of them watches. Read on
-    the event loop it stalls the worker serving every other citizen's request; read in the
-    governor's subprocess it is terminated at the deadline and the request answers.
-
-    The governor is the REAL one — same spawned child, same pypdf, same hostile bytes, really
-    killed. Only the deadline is shortened, so the test costs a second instead of ten.
-
-    MUTATION: replace the `run_parse` call in the router with a direct in-process `pypdf` read.
-    The patched deadline is then never consulted, the handler blocks for the full parse, and
-    this goes red twice over — on the status (the bomb resolves to one page, so it would be
-    STORED) and on the elapsed time."""
-    import src.api.v1.attachments.router as att_router
-    from src.services.parse.governor import run_parse as real_run_parse
-
-    async def _short_deadline(buffer, kind, filename, sheet, **kwargs):
-        return await real_run_parse(buffer, kind, filename, sheet, timeout=1.0)
-
-    monkeypatch.setattr(att_router, "run_parse", _short_deadline)
-    headers, _ = await _auth(db_session)
-
-    started = time.monotonic()
-    resp = await _upload_pdf(client, headers, "att_bomb", xref_bomb_pdf())
-    elapsed = time.monotonic() - started
-
-    assert resp.status_code == 413, resp.text
-    assert (
-        resp.json()["error"]["message"]
-        == "That document is too long to work with. Try one under 30 pages."
-    )
-    assert elapsed < 5.0, f"the request should return at the deadline, took {elapsed:.1f}s"
-    assert fake_storage.objects == {}
-    # And the worker is still serving: with the real deadline back, the very next upload
-    # succeeds. (The shortened one is under the cost of spawning the child at all, so it would
-    # refuse an honest document too — which is the reason the product's deadline is 10 s.)
-    monkeypatch.undo()
-    ok = await _upload_pdf(client, headers, "att_after", pdf_with_pages(1))
-    assert ok.status_code == 201, ok.text
-
-
-# --- the log that pays for the collapsed sentence ------------------------------
-#
-# ★ WHY THESE TWO TESTS EXIST. `_assert_pdf_within_page_cap` deliberately answers four distinct
-# refusals — over the cap, unreadable, killed at the deadline, contained OOM — with ONE citizen-
-# facing sentence, and both its docstring and `PDF_TOO_LONG_TEXT`'s justify that collapse by
-# promising the real cause reaches the server-side log where an operator can act on it. That
-# promise IS the compensating control the collapse was traded for, so it is asserted rather than
-# assumed. It was not free: the module logged through stdlib `logging`, which nothing in this
-# process configures — the over-cap line vanished at the root and the failure line reached
-# `lastResort`, whose bare `%(message)s` dropped `code` and `status` on the floor.
-#
-# Both assert the FIELDS, not just the event name. An event name alone tells an operator a PDF
-# was refused, which they already knew from the 413; the fields are the entire distinguishing
-# detail the citizen was not given.
-
-
-async def test_the_over_cap_refusal_logs_the_pages_and_the_cap(client, db_session) -> None:
-    """The over-cap arm names both numbers, so an operator can see a 31-page document met a
-    30-page cap without re-deriving either from the refused upload."""
+    A locked file needs no log — its refusal already names the cause, and the citizen can act on
+    it. An INCOMPLETE one does: "could not be read as a PDF" is all the citizen is told, so the
+    operator half has to exist somewhere, and it is one event carrying the size and nothing that
+    could identify the file.
+    """
     headers, _ = await _auth(db_session)
 
     with capture_logs() as logs:
-        resp = await _upload_pdf(
-            client, headers, "att_log_over", pdf_with_pages(MAX_PDF_PAGES + 1)
-        )
+        resp = await _upload_pdf(client, headers, "att_logged", truncated_pdf())
 
-    assert resp.status_code == 413, resp.text
-    over = [entry for entry in logs if entry["event"] == "pdf_over_page_cap"]
-    assert over, f"no pdf_over_page_cap event in {[e['event'] for e in logs]}"
-    assert over[0]["pages"] == MAX_PDF_PAGES + 1
-    assert over[0]["cap"] == MAX_PDF_PAGES
-
-
-async def test_the_unreadable_and_locked_refusals_log_the_cause_that_tells_them_apart(
-    client, db_session
-) -> None:
-    """★ THE DISCRIMINATION, not merely the presence of a line.
-
-    A corrupt PDF and a locked one are the same 413/415 shrug to the citizen by design, so the
-    log is the ONLY place the two are distinguishable. Two uploads, two different `code`s, and a
-    `status` that is the PARSER's (400 — the caller's file, not the platform failing), not the
-    413 the citizen was shown. A log line that hardcoded either field, or that carried the event
-    name alone, would leave an operator exactly as informed as the refused citizen."""
-    headers, _ = await _auth(db_session)
-
-    with capture_logs() as corrupt_logs:
-        corrupt = await _upload_pdf(client, headers, "att_log_corrupt", unreadable_pdf())
-    with capture_logs() as locked_logs:
-        locked = await _upload_pdf(client, headers, "att_log_locked", locked_pdf(pages=3))
-
-    assert corrupt.status_code == 413, corrupt.text
-    assert locked.status_code == 415, locked.text
-
-    failures = [
-        entry
-        for entries in (corrupt_logs, locked_logs)
-        for entry in entries
-        if entry["event"] == "pdf_page_check_failed"
-    ]
-    assert len(failures) == 2, f"expected both refusals logged, got {failures}"
-    assert [entry["code"] for entry in failures] == ["INVALID_PDF", "PDF_ENCRYPTED"]
-    assert [entry["status"] for entry in failures] == [400, 400]
+    assert resp.status_code == 415, resp.text
+    events = [entry for entry in logs if entry["event"] == "pdf_refused_as_incomplete"]
+    assert len(events) == 1, f"expected exactly one trace, got {events}"
+    assert events[0]["size"] > 0
+    assert "doc.pdf" not in repr(events[0])

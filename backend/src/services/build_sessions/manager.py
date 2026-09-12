@@ -283,10 +283,10 @@ def _terminal_status(reason: str) -> Literal[BuildSessionStatus.ENDED, BuildSess
 # the repo does have other scheduled work elsewhere.
 _ENDED_RETENTION_SECONDS: float = 300.0
 
-# How long a start will wait for an ended-but-still-finalizing session's shielded end
-# sequence before keeping the 409 — a refine sent right after natural completion must not
-# bounce off its own finished build (the finalize is usually sub-second; the bound only
-# guards a wedged teardown).
+# How long a start will wait for an ended-but-still-finalizing session to let go of the slot
+# before keeping the 409 — a message sent right after natural completion must not bounce off
+# its own finished turn (letting go is usually sub-second; the bound only guards a wedged
+# teardown).
 _FINALIZE_GRACE_SECONDS: float = 30.0
 
 # How long the end sequence will wait for the outcome record before giving up and emitting the
@@ -1167,9 +1167,35 @@ class BuildSession:
     # The single shielded end-sequence task (created by the first _finalize caller); every
     # caller awaits it, so a caller's own cancellation can't tear the sequence in half.
     finalize_task: asyncio.Task[None] | None = None
+    # The TURN path's counterpart to `finalize_task`, and the reason it needs one: a turn's end
+    # runs `finish_turn_sandbox` inline in the turn that is unwinding, so there is no task for
+    # anyone else to await. Bound the moment that sequence starts and SET the moment it lets go
+    # of the one-per-user slot — which is what lets a message sent the instant a turn ends wait
+    # for the release instead of bouncing off the sender's own finished turn.
+    turn_finish: asyncio.Event | None = None
     # Stamped when the end sequence completes — starts the retention window after which the
     # session (and its envelope buffer) is evicted from the manager.
     ended_at: datetime | None = None
+
+
+def _what_will_release_the_slot(
+    session: BuildSession | None,
+) -> asyncio.Task[None] | asyncio.Event | None:
+    """Whatever has to finish before this session lets go of the one-per-user slot — or None when
+    the session is genuinely still working and a claimant must be refused. THE ONE DECISION
+    behind both the turn gate's refusal and the slot claim's bounded wait.
+
+    TWO SHAPES, because the two end paths are built differently: a stop or a force-end runs the
+    end sequence in `finalize_task`, which anyone can await, and a turn's end runs
+    `finish_turn_sandbox` inline in the unwinding turn, which leaves only the event it sets.
+    Reading `terminal_committed` instead would answer False on every ordinary turn end — only
+    `_finalize` ever sets it — and a citizen's next message would be refused for as long as the
+    turn's recovery copy took to write."""
+    if session is None:
+        return None
+    if session.finalize_task is not None:
+        return session.finalize_task
+    return session.turn_finish
 
 
 class SessionManager:
@@ -1249,6 +1275,17 @@ class SessionManager:
     def active_session_for(self, user_id: uuid.UUID) -> BuildSession | None:
         session_id = self._active_by_user.get(user_id)
         return self._sessions.get(session_id) if session_id is not None else None
+
+    def is_letting_go_of_the_workspace(self, session: BuildSession) -> bool:
+        """Is this session OVER — terminal committed, nothing left but the release of the
+        one-per-user slot?
+
+        The question `api/v1/conversations/turns.py` asks before it refuses a second message.
+        A session in this state must not earn a refusal there: the slot claim inside the turn
+        waits (bounded) for the release and then admits the message, or keeps the 409 on its own
+        terms. A session that is genuinely working answers False and is refused at once — two
+        turns at once for one person is what the single slot exists to prevent."""
+        return _what_will_release_the_slot(session) is not None
 
     def live_user_ids(self) -> set[uuid.UUID]:
         """Users with a live in-proc session — never reaped by a sweep."""
@@ -1561,24 +1598,19 @@ class SessionManager:
             return
         blocking_id = self._active_by_user.get(user_id)
         blocking = self._sessions.get(blocking_id) if blocking_id is not None else None
-        finalize = blocking.finalize_task if blocking is not None else None
-        if blocking is None or not blocking.terminal_committed or finalize is None:
+        releasing = _what_will_release_the_slot(blocking)
+        if releasing is None:
             raise await self._slot_conflict_for(
                 user_id, blocking, blocking_id, db, requested_project_id
             )
-        # The blocking session has already COMMITTED its terminal — it is ended but still
-        # finalizing. Wait (bounded) for the shielded end sequence instead of 409ing the user's
-        # own finished build, then fall through to a fresh allocation; on a timeout or a finalize
-        # error, keep the 409.
-        #
-        # ONLY A STOP CAN PUT US HERE NOW. `finalize_task` is assigned in exactly one place,
-        # `_finalize`, and with `_run_and_finalize` deleted the only caller left is `_end` — i.e.
-        # `stop` / `force_end`. The case this was written for ("a refine sent right on the heels
-        # of natural completion") needed a build that finalized itself on completion, which no
-        # longer exists. The guard stays because it still reads correctly and fails closed: on a
-        # session that never finalizes, `finalize` is None and the 409 above is taken.
+        # The blocking session has already COMMITTED its terminal — it is ended and only letting
+        # go. Wait (bounded) for that instead of 409ing the user's own finished work, then fall
+        # through to a fresh allocation; on a timeout or an error in there, keep the 409.
+        letting_go: Awaitable[object] = (
+            asyncio.shield(releasing) if isinstance(releasing, asyncio.Task) else releasing.wait()
+        )
         try:
-            await asyncio.wait_for(asyncio.shield(finalize), timeout=_FINALIZE_GRACE_SECONDS)
+            await asyncio.wait_for(letting_go, timeout=_FINALIZE_GRACE_SECONDS)
         except Exception:
             raise await self._slot_conflict_for(
                 user_id, blocking, blocking_id, db, requested_project_id
@@ -2916,20 +2948,12 @@ class SessionManager:
         async with self._start_lock_for(user.id):
             redis = get_redis()
             user_id = user.id
-            if user_id in self._active_by_user:
-                # The SAME choice `_claim_the_one_build_slot` makes, and relaunch is the
-                # door the citizen actually walks through: the rail composer preflights this
-                # route before it opens a chat, so this is the refusal that reaches the screen
-                # first. A different project holding the slot earns the hand-over dialog, not
-                # "try again" advice that cannot come true while that build runs.
-                blocking_id = self._active_by_user.get(user_id)
-                raise await self._slot_conflict_for(
-                    user_id,
-                    self._sessions.get(blocking_id) if blocking_id is not None else None,
-                    blocking_id,
-                    db,
-                    project_id,
-                )
+            # THE SAME CLAIM, not a copy of it: relaunch is the door the citizen actually walks
+            # through — the rail composer preflights this route before it opens a chat — so the
+            # refusal that reaches the screen first has to be the one the turn would have given,
+            # a hand-over dialog for a different project's hold and a bounded wait for a turn
+            # that has already ended. Held under the same per-user start lock the claim expects.
+            await self._claim_the_one_build_slot(user_id, db=db, requested_project_id=project_id)
             # WHICH container would satisfy this relaunch? Read-only on purpose, and computed
             # out here because it has to be: `app_id` is not bound until inside the lock, and
             # `resolve_app_for_project` is an UPSERT that mints a DRAFT row — so it can never
@@ -4236,6 +4260,13 @@ class SessionManager:
         # is no longer a dead end the thread has to be rescued from), and the snapshot itself.
         redis = get_redis()
 
+        # Bound HERE, before the first await: from this line the turn's terminal is already
+        # written and the slot is still held, so a message sent the instant the turn ends lands
+        # inside this window. `_claim_the_one_build_slot` waits on this event rather than
+        # refusing; a window that opened even one await later would have a hole at its start.
+        finishing = asyncio.Event()
+        session.turn_finish = finishing
+
         # STILL NO SAVE HERE.
         #
         # 1b. The generation-time overpromise detector, while the container is still up. A
@@ -4316,6 +4347,8 @@ class SessionManager:
             # pardon raised, or this user can never send another Write message.
             self._active_by_user.pop(session.user_id, None)
             self._maybe_prune_start_lock(session.user_id)
+            # AFTER the pop, so whoever this wakes finds the slot already free.
+            finishing.set()
 
         session.status = BuildSessionStatus.ENDED
         session.ended_at = datetime.now(UTC)

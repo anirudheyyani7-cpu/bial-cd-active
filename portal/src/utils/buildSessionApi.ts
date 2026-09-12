@@ -634,8 +634,13 @@ export async function handOverWorkspace(
   clock: StopWaitClock = REAL_CLOCK,
 ): Promise<void> {
   if (blocked.isSharedView) {
-    narrate('releasing')
+    // NARRATE AFTER, NOT BEFORE. A caller that reads its OWN narration callback as a record of
+    // how far the hand-over got (`StartAppControl.tsx`'s `useTakeBack`, which infers "was
+    // anything stopped?" from the last step it observed) must see NO step at all when this
+    // throws — nothing here ever stops anything, on either outcome, so a step recorded before
+    // the call would make a rejection look exactly like a successful stop of the OWNER's app.
     await giveUpSharedView(deps)
+    narrate('releasing')
     return
   }
   const projectId = blocked.projectId

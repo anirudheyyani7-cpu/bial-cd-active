@@ -35,14 +35,21 @@ from tests.factories import UserFactory
 from tests.fakes import FakeSandboxClient, FakeStorage
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     """`launch_shared_preview` (used by `test_unshare_tears_down_the_colleagues_live_container`)
     provisions through the real `SessionManager`, which reads `settings.sandbox` to build the
     container spec — unset in the test environment. Mirrors `test_manager.py`'s own fixture of
-    the same name; the earlier `fake_redis` fixture added here for the same test was the wrong
-    diagnosis (this file's manager never touches Redis directly — `wired_sandbox`'s manager and
-    `FakeSandboxClient` are the whole seam)."""
+    the same name. NOT autouse: `sandbox_or_none_dependency` returning a real client (rather than
+    `None`) changes `:unshare`'s own branching for every OTHER test in this file, routing it into
+    `revoke_shared_preview`'s Redis-backed teardown instead of the no-op arm most of them exercise
+    — so only the one test that actually launches a shared container should request this.
+
+    This file's manager DOES touch Redis directly — `_launch_shared_preview_under_one_build_id`
+    (`manager.py:3585`) and `revoke_shared_preview` (`manager.py:2635`) both call `get_redis()` —
+    so the one test that requests this fixture also needs `fake_redis` alongside it; sandbox
+    config alone gets it past `SandboxNotConfiguredError` only to fail at `RedisNotConfiguredError`
+    one call later."""
     monkeypatch.setattr(
         settings,
         "sandbox",
@@ -285,7 +292,7 @@ def wired_sandbox(app, db_session):
 
 
 async def test_unshare_tears_down_the_colleagues_live_container(
-    client, db_session, bind_store, wired_sandbox
+    client, db_session, bind_store, wired_sandbox, _sandbox_configured, fake_redis
 ) -> None:
     """#198 R25 — Slice 1's teardown seam, filled in: revoking access tears down the
     recipient's live view of the project, not merely the membership row."""

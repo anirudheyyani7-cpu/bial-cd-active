@@ -14,7 +14,7 @@
 export const ALLOWED_MEDIA_TYPES = [
   // The MODEL lane — it reads these bytes itself.
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
-  // The CODE lane — a reader in the workspace opens these and reports what it found (#214).
+  // The CODE lane — a reader in the workspace opens these and reports what it found.
   // `text/plain` is deliberately NOT here: it works today and stops, because no client
   // requirement names it and every format costs a reader arm, refusal copy, a test and a line
   // in the help page. Scope Boundaries records it as a withdrawal rather than a format never
@@ -24,7 +24,7 @@ export const ALLOWED_MEDIA_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]
-// THE INLINE TEXT LANE IS GONE, AND SO IS ITS LAST TRACE (#214). A CSV used to be read in the
+// THE INLINE TEXT LANE IS GONE, AND SO IS ITS LAST TRACE. A CSV used to be read in the
 // browser and pushed into the prompt as a fenced text block; every attachment is now an uploaded
 // file with a stored identity, which is what lets a chip be rebuilt on reload for EVERY format by
 // one fix — the inline lane could never have produced an identity to rebuild from.
@@ -35,14 +35,14 @@ export const ALLOWED_MEDIA_TYPES = [
 // could reach, and a `textAttachmentBytes` helper that could only ever return 0 — dead code with
 // a live test asserting the zero, which is the residue this pass exists to remove.
 
-// WHAT CAN BE SHOWN AS TEXT, which is a different question from how a file travels (#214), and
+// WHAT CAN BE SHOWN AS TEXT, which is a different question from how a file travels, and
 // the reason the set above could not simply be reused for it: `AttachmentPreview` asks whether
 // pressing a chip can render the file in place. A CSV is still perfectly readable in a browser,
 // and losing that preview would be a real regression smuggled in by a transport change.
 //
 // Office formats are absent on purpose: a spreadsheet, document or deck cannot be rendered in a
 // browser without a converter this platform does not host, so their chips return the file
-// instead (R23b).
+// instead.
 export const TEXT_PREVIEW_MEDIA_TYPES = new Set(['text/csv', 'text/tab-separated-values'])
 // Extension tokens let the OS picker show these even when it reports an inconsistent or empty
 // MIME — which it does constantly for Office and delimited files (see `resolveMediaType`).
@@ -55,7 +55,7 @@ export const ACCEPT_ATTR = [
   ...ALLOWED_MEDIA_TYPES, '.csv', '.tsv', '.tab', '.xlsx', '.docx', '.pptx',
 ].join(',')
 
-// ONE SIZE FOR EVERY FORMAT, matching the server's `ATTACHMENT_MAX_BYTES` exactly (D2); a test
+// ONE SIZE FOR EVERY FORMAT, matching the server's `ATTACHMENT_MAX_BYTES` exactly; a test
 // holds the two equal. Measured on the original `File.size`, so a citizen learns a file is too
 // large before it is read, encoded and sent.
 export const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -89,7 +89,7 @@ export const ATTACHMENT_LANES_SENTENCE =
   "and I'll open it with code."
 
 /**
- * ONE SENTENCE, EVERYWHERE (#214 R21). The composer, the help page and every unsupported-format
+ * ONE SENTENCE, EVERYWHERE. The composer, the help page and every unsupported-format
  * refusal say this and nothing else — three sentences that drift is how the removed rule failed.
  *
  * IT DESCRIBES WHAT HAPPENS, NOT WHICH EXTENSIONS ARE ON A LIST. A list of ten formats is the
@@ -111,7 +111,7 @@ export function unsupportedFormatMessage(): string {
 export function resolveMediaType(file: File): string {
   const name = file.name || ''
   if (/\.csv$/i.test(name)) return 'text/csv'
-  if (/\.tsv$/i.test(name) || /\.tab$/i.test(name)) return 'text/tab-separated-values'
+  if (/\.(tsv|tab)$/i.test(name)) return 'text/tab-separated-values'
   if (/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   if (/\.docx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   if (/\.pptx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -180,7 +180,7 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
 }
 
 /**
- * THE PER-DOCUMENT LIMIT IS GONE (#214 R7c), and its server twin with it.
+ * THE PER-DOCUMENT LIMIT IS GONE, and its server twin with it.
  *
  * It was two, and it existed because a document was charged a flat figure sized to a page cap,
  * so three could not fit one message. The limit bought the citizen a sentence naming it instead

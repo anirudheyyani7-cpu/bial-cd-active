@@ -114,7 +114,7 @@ KEEPALIVE_SECONDS = 15.0
 class StartTurnBody(CamelModel):
     """`POST /conversations/{id}/turns` — the new message; the conversation id rides the path.
 
-    ★ A `create` BLOCK USED TO RIDE HERE AND IS GONE (D1). It carried a not-yet-written chat's
+    ★ NO `create` BLOCK RIDES THIS CALL. One used to, carrying a not-yet-written chat's
     parentage so the row could be created inside this request, after every side-effect-free
     refusal — which kept a refused first message from leaving an orphaned, titled, empty chat
     behind. That guarantee is deliberately traded away: attachments are uploaded AGAINST a
@@ -214,11 +214,11 @@ async def start_conversation_turn(
     skips it). `expects_mutation` travels to the engine: no file change makes a Build-it turn a
     FAILED build but a Write turn just an answered question — only the caller knows which.
 
-    `attachments` is the conversation's code-lane files (#214 R20). Only `POST /turns` passes
+    `attachments` is the conversation's code-lane files. Only `POST /turns` passes
     one; Build-it's `None` is a fact rather than a gap, because that route CREATES the Build
     chat it starts — there is no conversation yet for a file to have been attached to."""
 
-    # THE STORED ROW RECORDS THE CODE LANE; THE PROMPT DOES NOT (#214). A code-lane file's bytes
+    # THE STORED ROW RECORDS THE CODE LANE; THE PROMPT DOES NOT. A code-lane file's bytes
     # must never enter the prompt — that is the whole lane — but the message still has to RECORD
     # that the file was sent, because three separate things decide what is still referenced by
     # scanning stored payloads: the never-sent reclaimer, the conversation cascade, and the
@@ -321,7 +321,7 @@ async def start_turn(
     manager: SessionManagerDep,
     sandbox: OptionalSandbox,
 ) -> TurnStartResponse | JSONResponse:
-    # ★ THIS ROUTE NO LONGER CREATES A CONVERSATION, and that is the reordering D1 asked for.
+    # ★ THIS ROUTE CREATES NO CONVERSATION: the row exists a round trip before this call.
     #
     # It used to. A `create` block rode the first message so the row could be staged here and
     # flushed below, after every side-effect-free refusal — which meant a refused first message
@@ -468,7 +468,7 @@ async def start_turn(
             raise AppApiError(400, str(exc)) from None
 
     history = await _history()
-    # THE TWO LANES SPLIT HERE, AND THIS IS THE ONLY PLACE THAT KNOWS BOTH (#214 R20/R11a).
+    # THE TWO LANES SPLIT HERE, AND THIS IS THE ONLY PLACE THAT KNOWS BOTH.
     #
     # One query answers both halves. The files it returns are the ones the platform must write
     # into the container and name to the agent; their ids are exactly the ids that must NOT reach
@@ -567,6 +567,7 @@ async def start_turn(
         project_description=project.description or None,
     )
     app_id = await _app_id_for_project(db, user.id, project_id)
+    sent_ids = set(body.message.attachment_ids)
 
     turn_id = await start_conversation_turn(
         db=db,
@@ -591,7 +592,7 @@ async def start_turn(
         file_attachment_ids=[
             file.attachment_id
             for file in (delivery.files if delivery is not None else ())
-            if file.attachment_id in set(body.message.attachment_ids)
+            if file.attachment_id in sent_ids
         ],
     )
     # `None` rather than `0` for a conversation nobody has measured — see the field's own note.

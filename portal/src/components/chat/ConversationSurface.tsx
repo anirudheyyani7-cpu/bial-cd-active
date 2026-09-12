@@ -1421,11 +1421,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     const stillHere = () => isAlive() && buildIdRef.current === activeId
     // READ BEFORE THE AWAITS BELOW, not after: `seqRef` is what tells a first message from a
     // continuation, and the create call has to be decided before the upload it precedes.
-    const isFirstMessage = seqRef.current === 0 && Boolean(projectId)
+    const isFirstMessage = seqRef.current === 0
 
     let parts
     try {
-      // ★ THE CHAT EXISTS BEFORE ITS FILES DO, and the order is the point (#214 D1).
+      // ★ THE CHAT EXISTS BEFORE ITS FILES DO, and the order is the point.
       //
       // The server requires an upload to name the conversation it belongs to, and it must be a
       // conversation that is already written — which is what makes the per-conversation count
@@ -1440,7 +1440,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // does: the banner names the server's own sentence, nothing is uploaded, the composer keeps
       // its text and every staged chip, and Send comes back. The round trip sits inside the same
       // pending window that already keeps Send unavailable, so nothing leaves the composer
-      // silently (R21a).
+      // silently.
       if (isFirstMessage && projectId) {
         await createConversation({ id: activeId, projectId, kind })
       }

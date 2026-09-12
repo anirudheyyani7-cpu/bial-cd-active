@@ -282,7 +282,7 @@ _CONTEXT_OVERFLOW_MARKERS: Final = ("prompt is too long", "exceed context limit"
 # base64.data: A maximum of 600 PDF pages may be provided.` — measured through this exact stack
 # against the deployment in use. It is not a size refusal: a 0.84 MB PDF of 601 text pages is
 # refused while a 10 MB scan of forty is not, so no byte cap at the upload door can see it
-# coming, and #214's D3/D7 retired the page cap that could.
+# coming, and the door deliberately imposes no page cap.
 #
 # WHY IT IS NAMED RATHER THAN LEFT GENERIC. This is a permanent property of the file the citizen
 # just attached, and "the assistant hit a problem and this turn was stopped" invites the one
@@ -326,9 +326,9 @@ def _provider_refusal_message(exc: ModelHTTPError) -> str:
         error: object = body.get("error")
         if isinstance(error, Mapping):
             candidate: object = error.get("message")
-            return candidate.lower() if isinstance(candidate, str) else ""
-        return ""
-    if isinstance(body, str):
+            if isinstance(candidate, str):
+                return candidate.lower()
+    elif isinstance(body, str):
         return body.lower()
     return ""
 
@@ -843,7 +843,7 @@ class _TurnState:
     # terminal frame, or a late preview frame lands after `[DONE]`. All three are None only on a
     # turn whose attach never completed.
     sandbox: SandboxSession | None = None
-    # The conversation's code-lane attachments and the store they live in (#214 R20/R11a), or
+    # The conversation's code-lane attachments and the store they live in, or
     # None when it holds none. Set by the send route, which is the only layer holding both the
     # database session and the object store; used twice — once inside the attach, to put the
     # files in the container before the agent's first read, and once at the top of the run, to
@@ -1009,7 +1009,7 @@ def _sandbox_of(ctx: RunContext[ChatDeps]) -> SandboxSession:
 
 
 def _reader_of(ctx: RunContext[ChatDeps]) -> AttachmentReader:
-    """The ChatDeps accessor Plan's attachment reader resolves through (#214 R14).
+    """The ChatDeps accessor Plan's attachment reader resolves through.
 
     It reads the same field `_sandbox_of` does, and that is the point rather than a duplication:
     the reader runs `python3` inside the container, which is a capability no read-only workspace
@@ -1087,7 +1087,7 @@ class TurnEngine:
         `expects_mutation` is the Build-it caller's declaration that this turn OWES a file
         change; only the plan-card path opts in (see the mutation guard in `_run_write`).
 
-        `attachments` is the conversation's code-lane files (#214). The ROUTE resolves them
+        `attachments` is the conversation's code-lane files. The ROUTE resolves them
         because only the route holds the database session and the object store together; the
         engine holds the container and the model's context, which is where both halves of the
         delivery happen. None until someone attaches a spreadsheet."""
@@ -1362,7 +1362,7 @@ class TurnEngine:
             if workspace is not None:
                 note = await self._workspace_note(state)
                 history = [*history, ModelRequest(parts=[UserPromptPart(content=note)])]
-            # AND THE ATTACHED FILES, ON THE SAME CARRIER AND FOR THE SAME REASON (#214 R11a).
+            # AND THE ATTACHED FILES, ON THE SAME CARRIER AND FOR THE SAME REASON.
             #
             # An ephemeral tail rather than part of the citizen's own message: the paths are a
             # fact about THIS container, and a container is not what a conversation is stored
@@ -1432,7 +1432,7 @@ class TurnEngine:
                         kind=state.kind,
                         prompt_context=prompt_context,
                         workspace=workspace,
-                        # SET ON THIS ARM TOO NOW (#214 R14). It used to be Build-only, and the
+                        # SET ON THIS ARM TOO NOW. It used to be Build-only, and the
                         # comment on the field said so — but the Plan arm's attachment reader
                         # runs `python3` in the same container, which is a capability no
                         # read-only workspace can express: `LiveSandboxWorkspace` routes through
@@ -2011,7 +2011,7 @@ class TurnEngine:
             # and a second feed would draw every step twice.
             emitter=None,
         )
-        # THE ATTACHED FILES GO IN NOW — BEFORE THE AGENT'S FIRST READ (#214 R20/R20a).
+        # THE ATTACHED FILES GO IN NOW — BEFORE THE AGENT'S FIRST READ.
         #
         # HERE, RATHER THAN ANYWHERE ELSE, because this is the one place a turn of either kind
         # first holds a live container, and because the container it holds may be a NEW one. The

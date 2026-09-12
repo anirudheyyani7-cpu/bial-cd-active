@@ -99,19 +99,20 @@ export function countAttachments(messages: unknown): number {
  * attachmentIds }`. The full-transcript Anthropic assembly is gone — the server loads
  * history itself, so the browser sends only the NEW message:
  *  - typed prose → `text`.
- *  - inline text attachments + office extractions → `<attachment>` fences in
- *    `attachmentTexts` (server treats them as opaque data).
- *  - image/PDF file parts → `attachmentIds` (owned refs; SERVER rehydrates bytes).
- *  - deck parts → dropped (disabled server-side; no stateless equivalent).
+ *  - file parts → `attachmentIds` (owned refs; the SERVER rehydrates bytes for the model lane
+ *    and writes code-lane files into the workspace).
+ *
+ * Nothing is written into `attachmentTexts`. The field stays on the wire type because readers
+ * still accept it, but every attachment is an uploaded file now — see the two branches below
+ * for why their filters outlive the producers that fed them.
  */
 export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
-  const attachmentTexts: string[] = []
   const attachmentIds: string[] = []
   const prose: string[] = []
   if (Array.isArray(parts)) {
     for (const p of parts) {
       if (p?.type === 'text') {
-        // NO FENCE BRANCH ANY MORE (#214). A text attachment used to be read in the browser and
+        // NO FENCE BRANCH ANY MORE. A text attachment used to be read in the browser and
         // pushed into the prompt as an `<attachment ...>` block; every attachment is an uploaded
         // file now, so nothing mints a text part carrying `.attachment`.
         //
@@ -131,19 +132,17 @@ export function wireMessageFromParts(parts: MessagePart[]): WireMessage {
     }
   }
   const message: WireMessage = { text: prose.join('\n') }
-  if (attachmentTexts.length > 0) message.attachmentTexts = attachmentTexts
   if (attachmentIds.length > 0) message.attachmentIds = attachmentIds
   return message
 }
 
 /**
- * Build a user turn's `parts[]` from the composer: uploads each image/PDF (via `upload`,
- * returning a file ref) and inlines each csv/txt as a text-attachment part; typed prose
- * becomes the final text part. Attachment parts come first (chips above text, and
- * Anthropic file-before-text ordering). An upload failure propagates so the caller can
- * abort the send. `conversationId` stamps each upload with the thread it belongs to, which
- * is what scopes the per-conversation budget and what the reader is later pointed at
- * (#214 R7a/R7b).
+ * Build a user turn's `parts[]` from the composer: uploads every attachment via `upload`,
+ * returning a file ref for each; typed prose becomes the final text part. Attachment parts
+ * come first (chips above text, and Anthropic file-before-text ordering). An upload failure
+ * propagates so the caller can abort the send. `conversationId` stamps each upload with the
+ * thread it belongs to, which is what scopes the per-conversation count and what the reader
+ * is later pointed at.
  */
 export async function buildUserParts(
   text: string,

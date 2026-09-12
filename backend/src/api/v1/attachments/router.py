@@ -16,7 +16,7 @@ subprocess and capped, because a document was charged a flat figure sized to tha
 prices a document up front any more — the window check reads what the provider reports for a
 completed turn — so the cap was bounding a cost that no longer exists, at the price of a
 dependency, a process governor and a refusal a citizen could not act on. The token cost of a long
-document is the client's to bear (D7).
+document is the client's to bear.
 
 Object keys are scoped by `user_id` and re-guarded with `assert_owned`; the envelopes are the
 ported `{error:{message,code?}}` / `{ok:true}`.
@@ -73,7 +73,7 @@ router = APIRouter(prefix="/attachments", tags=["attachments"])
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
-"""The per-file decoded cap, and THE ONLY PLACE THE SIZE QUESTION IS ASKED (D2/D8).
+"""The per-file decoded cap, and THE ONLY PLACE THE SIZE QUESTION IS ASKED.
 
 TEN MEGABYTES FOR EVERY FORMAT. It was four, and a second, far lower number applied to the two
 delimited formats on the browser side alone — so a citizen with a 300 KB CSV export was refused
@@ -97,7 +97,7 @@ bytes — with room for the JSON around it. Set below that and the door would re
 means to accept, with a sentence about the request rather than the file."""
 
 MAX_ATTACHMENTS_PER_CONVERSATION = 20
-"""How many attachments one conversation may hold, counted SERVER-SIDE (#214 R7b).
+"""How many attachments one conversation may hold, counted SERVER-SIDE.
 
 ★ IT IS NOW THE WHOLE OF THE PER-CONVERSATION LIMIT. A byte budget used to sit beside it — 50 MB
 per conversation — and the two were a single rule wearing two numbers: whichever bound bit first
@@ -117,7 +117,7 @@ ATTACHMENT_LANES_SENTENCE: Final = (
     "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide "
     "deck and I'll open it with code."
 )
-"""ONE SENTENCE, EVERYWHERE (#214 R21). The composer, the help page and every unsupported-format
+"""ONE SENTENCE, EVERYWHERE. The composer, the help page and every unsupported-format
 refusal carry these exact words — three sentences that drift is how the removed rule failed. Its
 portal twin is `ATTACHMENT_LANES_SENTENCE` in `portal/src/utils/attachmentInput.ts`, and a test
 holds the two byte-identical.
@@ -134,7 +134,7 @@ password protection without string-matching prose.
 THE SENTENCE ITSELF IS `media.PASSWORD_PROTECTED_TEXT`, shared byte-for-byte with the locked
 Office refusal. This route used to word its own — "that DOCUMENT is password-protected, remove
 the password and UPLOAD it again" against the lane's "that FILE … ATTACH it again" — the same
-situation told twice in different words, which is the drift R21 exists to prevent."""
+situation told twice in different words."""
 
 # The allowlist + magic-byte prefixes live in `src.services.media.magic` — the SINGLE source of
 # truth shared with every other path that can put bytes in front of the model, so a block the
@@ -226,7 +226,7 @@ CONVERSATION_ID_REQUIRED_CODE: Final = "CONVERSATION_ID_REQUIRED"
 CONVERSATION_ID_REQUIRED_TEXT: Final = (
     "conversationId is required — create the conversation first, then upload its files against it."
 )
-"""★ A BREAKING CHANGE, TAKEN ON PURPOSE (D1). The field was optional and no shipped client sent
+"""★ A BREAKING CHANGE, TAKEN ON PURPOSE. The field was optional and no shipped client sent
 it, so every stored row was NULL-linked and adopted afterwards by the send route.
 
 The order is inverted now: the chat exists, then its files are uploaded against it, then the
@@ -242,12 +242,10 @@ FastAPI 422 would render a different shape and the browser would show its fallba
 async def _resolve_conversation_link(db: DbSession, user_id: uuid.UUID, raw: Any) -> uuid.UUID:
     """Resolve the client-supplied `conversationId` to an OWNED, EXISTING conversation's id.
 
-    ★ REQUIRED, AND THE ROW MUST ALREADY BE THERE (D1). This used to admit two absences: no field
-    at all, and a well-formed id whose row had not been written yet — both stored `NULL`, because
-    the composer uploaded before the first send and the conversation was created by that send.
-    Neither is admitted now, and the reason is what linking at insert buys: the count cap can be
-    asked at the door, no adoption pass has to run afterwards, and a refused first message leaves
-    no unowned file behind.
+    ★ REQUIRED, AND THE ROW MUST ALREADY BE THERE. Neither an absent field nor a well-formed id
+    whose row is unwritten is admitted, and linking at insert is what that buys: the count cap
+    can be asked at the door, no adoption pass has to run afterwards, and a refused first
+    message leaves no unowned file behind.
 
     Resolving it is referential integrity, NOT the tenancy boundary — the row is written and read
     under the caller's own `user_id` either way; what it buys is that an upload cannot be hung off
@@ -290,7 +288,7 @@ async def _store_attachment_bytes(
     `conversation_id` is stamped on the CREATE branch and refreshed on a re-upload — it is
     required now, so there is no absence for either branch to preserve."""
     size = len(data)
-    # THE BUDGET IS THE CONVERSATION, and there is no second scope any more (D1).
+    # THE BUDGET IS THE CONVERSATION, and there is no second scope.
     #
     # An unlinked pool used to sit beside it: every new chat's first file was uploaded before the
     # conversation row existed, so it stored NULL and was counted against `conversation_id IS
@@ -437,7 +435,7 @@ async def upload_attachment(
     media_type = body.get("mediaType")
     if not isinstance(media_type, str):
         raise AppApiError(400, "mediaType is required.")
-    # THE `text/*` REFUSAL INVERTS FOR THE TWO DELIMITED FORMATS (#214). It used to refuse every
+    # THE `text/*` REFUSAL INVERTS FOR THE TWO DELIMITED FORMATS. It used to refuse every
     # text type, because text rode inside the prompt rather than being uploaded. That lane is
     # gone: every attachment is now an uploaded file with a stored identity, which is what lets a
     # chip be rebuilt on reload for every format by one fix. CSV and TSV are ordinary uploads.
@@ -453,25 +451,24 @@ async def upload_attachment(
     # before any bytes are parsed or stored — no orphaned object on the reject path).
     name = _attachment_name(body.get("name"))
     conversation_id = await _resolve_conversation_link(db, user.id, body.get("conversationId"))
-    # THE THREE ADMISSION ARMS COLLAPSE INTO TWO (#214). Office and deck each had their own,
+    # THE THREE ADMISSION ARMS COLLAPSE INTO TWO. Office and deck each had their own,
     # because each ran a different server-side conversion before storing: docx/xlsx were extracted
     # to Markdown, and a deck was rendered to PDF by a converter that was never deployed. Both are
     # gone. A file is now stored as itself and read where it can actually be read, so what is left
     # is the routing rule and nothing else — the model reads these bytes, or code does.
     b64 = body.get("base64")
+    # ASKED ONCE, FOR BOTH LANES, and it is the same refusal `_validate_attachment_bytes` returns
+    # for an absent field — so the model lane's wording is unchanged by being asked here. It is
+    # also the narrow everything below relies on, which is why it is a guard rather than a branch.
+    if not isinstance(b64, str) or not b64:
+        raise AppApiError(400, "Invalid attachment: missing bytes.")
     # WHICH LANE, decided once. The model reads images and PDFs itself; code in the workspace
     # reads everything else. Neither branch is a list of extensions the other has to stay in step
     # with — `is_code_lane` is the single answer both use.
-    if is_code_lane(media_type):
-        if not isinstance(b64, str) or not b64:
-            raise AppApiError(400, "Invalid attachment: missing bytes.")
-    else:
+    if not is_code_lane(media_type):
         err = _validate_attachment_bytes(media_type, b64)
         if err is not None:
             raise AppApiError(400, err)
-    # Validation guarantees a non-empty str; this redundant narrow satisfies the type checker.
-    if not isinstance(b64, str):
-        raise AppApiError(400, "Invalid attachment: missing bytes.")
     try:
         data = base64.b64decode(b64, validate=False)
     except (binascii.Error, ValueError):  # fmt: skip  # ruff py314 strips parens
@@ -493,7 +490,7 @@ async def upload_attachment(
         refusal = code_lane_refusal(media_type, name, data)
         if refusal is not None:
             raise AppApiError(415, refusal)
-        # THE ARCHIVE BOUND, ON THE HALF OF THE LANE THAT ACTUALLY CARRIES ARCHIVES (R18b).
+        # THE ARCHIVE BOUND, ON THE HALF OF THE LANE THAT ACTUALLY CARRIES ARCHIVES.
         # Office files are ZIPs, and one inside the size cap can declare gigabytes uncompressed.
         #
         # `is_opc_archive`, NOT `is_code_lane`, and the difference was a live defect: gated on the
@@ -592,7 +589,7 @@ async def delete_attachment(
         # good. `sweep_blobs` never raises and returns what survived, so the leak is at least
         # written down with the id it belonged to, which is the most a post-commit sweep can owe.
         #
-        # NO DERIVED SIBLING TO SWEEP ANY MORE (#214). A deck used to be rendered to PDF and the
+        # NO DERIVED SIBLING TO SWEEP ANY MORE. A deck used to be rendered to PDF and the
         # `{key}.pdf` stored beside the original, so a delete had to remove both or leak one.
         # Nothing derives anything from an attachment now.
         await db.delete(att)

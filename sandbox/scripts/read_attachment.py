@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report what an attached file CONTAINS, without sending the file to the model (#214).
+"""Report what an attached file CONTAINS, without sending the file to the model.
 
 WHY THIS SHIPS INSTEAD OF BEING WRITTEN EACH TURN. The platform used to flatten a workbook to
 Markdown on the server, keep the first thousand rows, and say nothing about the rest — so a
@@ -8,12 +8,12 @@ an agent write a parser per turn reproduces that: our own from-scratch reader wa
 first run, and five parsers given one crafted file disagreed on its row count by five orders of
 magnitude. This is known-correct code the agent starts FROM.
 
-ONE RETURN SHAPE, ALWAYS (R12a). Every run prints a single JSON object and exits 0 — a manifest
+ONE RETURN SHAPE, ALWAYS. Every run prints a single JSON object and exits 0 — a manifest
 on success, a named failure on any other outcome. Never a stack trace, never a bare exception,
 and never an empty manifest, because an empty manifest reads exactly like an empty file and that
 is the class of wrong answer this whole design exists to remove.
 
-IT STATES THE WHOLE WHENEVER IT SHOWS A PART (R17). Every truncated list carries the true count
+IT STATES THE WHOLE WHENEVER IT SHOWS A PART. Every truncated list carries the true count
 beside it. Silence about what was omitted is the specific failure being replaced.
 
 NO NETWORK. It opens one path on local disk and nothing else. The platform puts the file there
@@ -76,7 +76,7 @@ TIME_LIMIT_SECONDS = 30
 # `MemoryError` — verified both ways rather than assumed.
 MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
 
-# How much of any unbounded list is shown. The true total always rides beside it (R17).
+# How much of any unbounded list is shown. The true total always rides beside it.
 MAX_ITEMS = 50
 MAX_SAMPLE_ROWS = 5
 # Cell text is summarised, never dumped: this reports the SHAPE of a file so an app can be built
@@ -99,7 +99,7 @@ class ReadFailure(Exception):  # noqa: N818
 
 
 def _clip(text: Any, limit: int = MAX_TEXT_CHARS) -> str:
-    """One cell or paragraph, bounded, with the true length stated when it is cut (R17)."""
+    """One cell or paragraph, bounded, with the true length stated when it is cut."""
     s = "" if text is None else str(text)
     if len(s) <= limit:
         return s
@@ -196,7 +196,7 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     opened by Excel, so its formula cells have no cached value at all: with only the value load
     those columns come back blank, and the citizen is shown an empty column for data that is
     simply uncalculated. Reading both is how the manifest can say "this column is a formula and
-    carries no stored result" instead (R24). Two streamed passes are cheap; two materialised ones
+    carries no stored result" instead. Two streamed passes are cheap; two materialised ones
     were the 829 MB.
 
     THE TWO THINGS `read_only` TAKES AWAY, and how each is given back:
@@ -261,7 +261,7 @@ def read_xlsx(path: Path) -> dict[str, Any]:
             )
             is_formula = isinstance(probe, str) and probe.startswith("=")
             column: dict[str, Any] = {
-                "name": header[index - 1] if index - 1 < len(header) else None,
+                "name": header[index - 1],
                 "isFormula": is_formula,
             }
             if is_formula:
@@ -347,7 +347,7 @@ def read_delimited(path: Path, separator: str) -> dict[str, Any]:
 def read_docx(path: Path) -> dict[str, Any]:
     """Paragraphs, headings, tables with their headers intact, and media NAMED not inlined.
 
-    TWO OF THE THREE MEASURED DEFECTS LIVE HERE (R24). The replaced extractor inlined an embedded
+    TWO OF THE THREE MEASURED DEFECTS LIVE HERE. The replaced extractor inlined an embedded
     photo as text — 98.8% of one 66 KB report's 18,586 tokens were a picture the model could not
     see, and the 891 characters of actual prose were truncated to make room for it. And it
     flattened tables, losing the header row that says what the columns mean. So media is an
@@ -382,7 +382,7 @@ def read_docx(path: Path) -> dict[str, Any]:
         body = [[_clip(c.text.strip()) for c in r.cells] for r in rows[1:]]
         tables.append(
             {
-                "header": header,  # kept as a HEADER, not folded into the body (R24)
+                "header": header,  # kept as a HEADER, not folded into the body
                 "rows": len(body),
                 "columns": len(header),
                 "sampleRows": body[:MAX_SAMPLE_ROWS],
@@ -437,7 +437,7 @@ def read_pptx(path: Path) -> dict[str, Any]:
                         "categories": _listing([_clip(c) for c in categories]),
                         "series": _listing(
                             [
-                                {"name": s.name, "values": _listing([v for v in s.values])}
+                                {"name": s.name, "values": _listing(list(s.values))}
                                 for s in shape.chart.series
                             ]
                         ),

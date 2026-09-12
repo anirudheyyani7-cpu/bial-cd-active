@@ -83,7 +83,7 @@ export interface AttachmentAdapterOptions {
    */
   onRefused: (message: string) => void
   /**
-   * HOW MANY FILES ARE BEING READ RIGHT NOW, published on every change (#214 R21a).
+   * HOW MANY FILES ARE BEING READ RIGHT NOW, published on every change.
    *
    * A file is not staged until `fileToBase64` has finished with it, and on a large workbook over
    * a slow disk that is a real window with nothing on screen in it. Send is pressable throughout
@@ -115,21 +115,21 @@ export function createAttachmentAdapter({ accept, staged, onRefused, onReadingCh
    * has settled with nothing left unpublished (a cancelled `clearAttachments()`). A failed
    * read releases its claim immediately.
    */
-  const claimed = new Map<string, { mediaType: string; size: number }>()
+  const claimed = new Set<string>()
   let reading = 0
 
-  /** Move the in-flight count and tell whoever is drawing the composer (R21a). */
+  /** Move the in-flight count and tell whoever is drawing the composer. */
   function readingBy(delta: number): void {
     reading += delta
     onReadingChanged?.(reading)
   }
 
   /** What the caps must count right now: what the composer holds, plus what is still being read. */
-  function countable(): { mediaType: string; size: number }[] {
+  function countable(): number {
     const stagedNow = payloadsOf(staged())
     if (reading === 0) claimed.clear()
     else for (const p of stagedNow) claimed.delete(p.id)
-    return [...stagedNow, ...claimed.values()]
+    return stagedNow.length + claimed.size
   }
 
   return {
@@ -140,8 +140,7 @@ export function createAttachmentAdapter({ accept, staged, onRefused, onReadingCh
       // The per-message file cap is cumulative, so the check has to see both lists rather than
       // only the arriving file.
       const mediaType = resolveMediaType(file)
-      const current = countable()
-      const verdict = validateAttachmentFiles([file], current.length)
+      const verdict = validateAttachmentFiles([file], countable())
       if ('error' in verdict && verdict.error) {
         onRefused(verdict.error)
         throw new AttachmentRefusal(verdict.error)
@@ -153,7 +152,7 @@ export function createAttachmentAdapter({ accept, staged, onRefused, onReadingCh
       // recognised in the staged list once the composer is holding the file — the claim and the
       // attachment have to be the same thing under the same name, or they are counted twice.
       const id = newAttachmentId()
-      claimed.set(id, { mediaType, size: file.size })
+      claimed.add(id)
       readingBy(1)
 
       try {

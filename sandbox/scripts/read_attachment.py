@@ -111,6 +111,23 @@ def _listing(items: list[Any], limit: int = MAX_ITEMS) -> dict[str, Any]:
     return {"total": len(items), "shown": items[:limit]}
 
 
+def _sample(rows: list[Any]) -> list[Any]:
+    """A few rows of a table, bounded in BOTH directions.
+
+    A row count alone is half a bound: a table five rows deep and sixteen thousand columns wide
+    still puts eighty thousand cells into a manifest that is returned to the model verbatim. The
+    true width is stated beside every sample — `columns` for a delimited file, the table's own
+    `columns` for a document — so cutting the row here loses nothing a reader cannot see.
+
+    A row is a list of cells or a mapping of column name to cell; both shapes are cut the same
+    way and keep the shape they arrived in.
+    """
+    return [
+        row[:MAX_ITEMS] if isinstance(row, list) else dict(list(row.items())[:MAX_ITEMS])
+        for row in rows[:MAX_SAMPLE_ROWS]
+    ]
+
+
 # --- spreadsheets -----------------------------------------------------------------------------
 
 
@@ -134,6 +151,11 @@ _MERGE_SCAN_OVERLAP = 256
 # A sheet with more merges than this is not going to be summarised usefully anyway, and the cap
 # keeps a hostile file from turning a bounded scan into an unbounded list.
 _MERGE_SCAN_LIMIT = 10_000
+# AND A SECOND CAP, ON MATCHES RATHER THAN RANGES, because the first one stopped bounding the READ
+# the moment the results became a set. One `<mergeCell>` element repeated deflates to almost
+# nothing: 0.67 MB on disk inflates to 274 MB of identical tags, which grow the distinct count not
+# at all and so never reach the cap above. This one is what still ends the walk.
+_MERGE_SCAN_MATCHES = 100_000
 
 
 def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
@@ -160,10 +182,12 @@ def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
     entry = sheet_path.lstrip("/")
     if not entry:
         return []
-    # A DICT, SO THE CAP COUNTS DISTINCT RANGES AND BOTH EXITS DE-DUPLICATE. The overlap can
-    # re-match a tag that straddled a chunk boundary, so a list would let duplicates consume the
-    # budget and would return them raw on the capped path.
+    # A DICT, SO THE REPORTED CAP COUNTS DISTINCT RANGES AND BOTH EXITS DE-DUPLICATE. The overlap
+    # can re-match a tag that straddled a chunk boundary, so a list would let duplicates consume
+    # the budget and would return them raw on the capped path. `seen` is the second cap, and it
+    # counts raw matches: it is what still ends the walk when nothing new is being found.
     ranges: dict[str, None] = {}
+    seen = 0
     try:
         with zipfile.ZipFile(path) as bundle, bundle.open(entry) as part:
             tail = b""
@@ -174,7 +198,8 @@ def _merged_ranges(path: Path, sheet_path: str) -> list[str]:
                 window = tail + chunk
                 for match in _MERGE_CELL_REF.finditer(window):
                     ranges[match.group(1).decode("ascii", "replace")] = None
-                    if len(ranges) >= _MERGE_SCAN_LIMIT:
+                    seen += 1
+                    if len(ranges) >= _MERGE_SCAN_LIMIT or seen >= _MERGE_SCAN_MATCHES:
                         return list(ranges)
                 tail = window[-_MERGE_SCAN_OVERLAP:]
     except (KeyError, OSError, zipfile.BadZipFile):
@@ -187,10 +212,11 @@ def read_xlsx(path: Path) -> dict[str, Any]:
 
     STREAMED, NOT MATERIALISED, and the difference is the whole reason a 10 MB workbook is
     readable at all. `read_only=True` walks the sheet XML a row at a time instead of building a
-    cell object per cell: measured on a dense 9.99 MB workbook (23,000 x 40 = 920,000 cells) in
-    the shipped image at 1 vCPU / 2 GiB, the full-model load peaked at 829 MB and took 9.4s, and
-    this one peaks at 46 MB and takes 5.8s for byte-identical output. The old shape did not merely
-    cost more — it exceeded `MEMORY_LIMIT_BYTES` and the citizen was told to attach a smaller file.
+    cell object per cell: measured in the image at 1 vCPU / 2 GiB on a dense 9.95 MB workbook
+    (17,200 x 40 = 688,000 cells of high-entropy text, no dimension record, so every pass walks
+    the sheet), the full-model load peaked at 621 MB and took 8.9s, and this one peaks at 44 MB
+    and takes 5.2s. The old shape did not merely cost more — it exceeded `MEMORY_LIMIT_BYTES` and
+    the citizen was told to attach a smaller file.
 
     LOADED TWICE ON PURPOSE, and this is the requirement that costs the second pass. openpyxl
     reads either the FORMULAS (`data_only=False`) or the values Excel last CACHED for them
@@ -202,8 +228,9 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     were the 829 MB.
 
     THE TWO THINGS `read_only` TAKES AWAY, and how each is given back:
-      * `max_row`/`max_column` are unset until asked for — `calculate_dimension(force=True)`
-        computes them from the sheet's own dimension record, scanning if it has to.
+      * `max_row`/`max_column` come from the sheet's own `<dimension>` record, which a writer can
+        get wrong; the record is read, then discarded so it cannot truncate the rows, and the
+        sheet is walked only when it is missing or the rows prove it too narrow.
       * `merged_cells` is never populated — `_merged_ranges` reads them from the sheet part.
     """
     import openpyxl
@@ -222,26 +249,15 @@ def read_xlsx(path: Path) -> dict[str, Any]:
     sheets = []
     for name in formulas.sheetnames:
         fsheet, vsheet = formulas[name], values[name]
-        try:
-            # MEASURE THE SHEET, DO NOT BELIEVE IT. `calculate_dimension(force=True)` computes only
-            # when the dimension is UNSET, so a workbook that DECLARES a wrong `<dimension>` wins:
-            # a 50-row, 3-column sheet claiming `A1:A1` is summarised as one row and one column,
-            # with `ok: true` and no sign anything was missed. Discarding the declared record first
-            # is what makes the scan actually happen. A file with no dimension record at all was
-            # always fine — only a lying one bites, which is why a differential harness built from
-            # openpyxl-written fixtures cannot produce the case.
-            #
-            # Read-only rows are truncated to `max_column`, so believing a short dimension also
-            # silently drops columns from every row — the padding below cannot recover them.
-            fsheet.reset_dimensions()
-            fsheet.calculate_dimension(force=True)
-        except (ValueError, TypeError):
-            # A sheet whose stored dimension record is absent or malformed leaves the row and
-            # column counts at zero rather than failing the read: the header, the type probe and
-            # the merged ranges below do not depend on them, and reporting a shape of 0 x 0 beside
-            # a real header is a smaller lie than refusing a file that opens perfectly well.
-            pass
-        rows, cols = fsheet.max_row or 0, fsheet.max_column or 0
+        # THE DECLARED `<dimension>` IS READ BEFORE IT IS DISCARDED, and discarding it is what
+        # stops the damage. A read-only row is truncated to `max_column`, so a 50-row, 3-column
+        # sheet declaring `A1:A1` did not merely report one row and one column — its other columns
+        # were ABSENT from every row the reader saw, with `ok: true` and nothing to say so.
+        # `reset_dimensions()` costs nothing and both passes take it, so the header, the type probe
+        # and the cached values below all arrive at their real width whatever the sheet claims.
+        declared_rows, declared_cols = fsheet.max_row or 0, fsheet.max_column or 0
+        vsheet.reset_dimensions()
+        fsheet.reset_dimensions()
 
         # ONE PASS FOR BOTH ROWS. A read-only sheet has no random `cell(row=, column=)` access —
         # that is the API's way of saying it never holds the grid — so the header and the probe
@@ -252,30 +268,56 @@ def read_xlsx(path: Path) -> dict[str, Any]:
         vrows = vsheet.iter_rows(min_row=1, max_row=2, values_only=True)
         next(vrows, ())
         cached_values = list(next(vrows, ()) or ())
+        width = max(len(header_values), len(probe_values))
 
-        # `max_column` can under-report against a ragged first row; trust whichever is wider so a
-        # column present in the file is never dropped from the manifest.
-        cols = max(cols, len(header_values), len(probe_values))
-        # ONE HEADER ENTRY PER COLUMN, and both halves of that matter.
+        rows, cols = declared_rows, max(declared_cols, width)
+        if not declared_rows or declared_cols < width:
+            # WALKED ONLY WHEN THE RECORD IS ABSENT OR CAUGHT OUT. openpyxl's `write_only` writer
+            # emits no dimension at all, and a record narrower than the row underneath it has
+            # already been proved wrong — in both cases a walk is the only way to the real shape.
+            #
+            # NOT ON EVERY WORKBOOK, which is what forcing the walk unconditionally amounted to.
+            # Measured in the image at 1 vCPU / 2 GiB: four sheets of 46,000 rows, 9.55 MB and well
+            # inside the upload cap, went from 0.28s to 7.47s, and the same shape a little larger
+            # spends the whole 30-second deadline and comes back telling the citizen to attach a
+            # smaller file. Excel and openpyxl both always write a truthful record, so that is the
+            # common case paying for the rare one.
+            try:
+                fsheet.calculate_dimension(force=True)
+            except (ValueError, TypeError, UnboundLocalError):
+                # A SHEET WITH NO NON-EMPTY ROW LEAVES THE WALK WITH AN UNBOUND LOCAL, and an
+                # unused second tab is ordinary in a real workbook — refusing the whole file over
+                # one would cost the citizen every other sheet in it. There is nothing to measure
+                # and the 0 x 0 below is the truth. The same fallback covers a malformed record.
+                pass
+            rows, cols = fsheet.max_row or 0, max(fsheet.max_column or 0, width)
+
+        # ONE HEADER ENTRY PER COLUMN THE FIRST ROWS ACTUALLY CARRY, and each half of that matters.
         #
         # A blank cell keeps its slot rather than being filtered out: a merge blanks every cell
         # but the first (`A1:B1` leaves B1 empty), and dropping those shifts every later column's
         # name one place left — a header that reads plausibly and is wrong, which is worse than a
         # gap. `_clip(None)` is "", the placeholder the materialising reader produced.
         #
-        # And a short row is padded out to `cols`. A materialised grid handed back one cell per
-        # column whether or not the row carried them; a streamed row stops at its last cell, so
-        # without this a sheet whose header row is shorter than the sheet is wide loses entries.
-        header = [_clip(v) for v in header_values] + [""] * max(cols - len(header_values), 0)
+        # And a short row is padded out to the wider of the two. A materialised grid handed back
+        # one cell per column whether or not the row carried them; a streamed row stops at its
+        # last cell, so without this a header row shorter than the row below it loses entries.
+        #
+        # `width`, NOT `cols`. Some writers declare the whole grid — `A1:XFD1048576` — for a sheet
+        # holding six cells, and describing a column per declared column would put 16,384 empty
+        # entries into a manifest that goes to the model. `columns` still reports what the sheet
+        # claims; this list describes what is there to describe.
+        header = [_clip(v) for v in header_values] + [""] * max(width - len(header_values), 0)
 
         columns = []
-        for index in range(1, cols + 1):
+        for index in range(1, width + 1):
             # The first data row is what the column's type is judged from — the header row is
             # text in almost every real file and would make every column look like a string.
-            probe = probe_values[index - 1] if rows >= 2 and index <= len(probe_values) else None
-            cached = (
-                cached_values[index - 1] if rows >= 2 and index <= len(cached_values) else None
-            )
+            #
+            # Judged on the row that was READ, not on the count. A sheet declaring one row while
+            # holding fifty would otherwise report every column's type as null.
+            probe = probe_values[index - 1] if index <= len(probe_values) else None
+            cached = cached_values[index - 1] if index <= len(cached_values) else None
             is_formula = isinstance(probe, str) and probe.startswith("=")
             column: dict[str, Any] = {
                 "name": header[index - 1],
@@ -357,7 +399,8 @@ def read_delimited(path: Path, separator: str) -> dict[str, Any]:
         for name in frame.columns
     ]
     sample = [
-        {k: _clip(v) for k, v in row.items()} for row in frame.head(MAX_SAMPLE_ROWS).to_dicts()
+        {k: _clip(v) for k, v in row.items()}
+        for row in _sample(frame.head(MAX_SAMPLE_ROWS).to_dicts())
     ]
     # `rows` is the TRUE height, not the sample's length — the number the old extractor never said.
     return {"rows": frame.height, "columns": _listing(columns), "sampleRows": sample}
@@ -409,7 +452,7 @@ def read_docx(path: Path) -> dict[str, Any]:
                 "header": _listing(header),
                 "rows": len(body),
                 "columns": len(header),
-                "sampleRows": body[:MAX_SAMPLE_ROWS],
+                "sampleRows": _sample(body),
             }
         )
 

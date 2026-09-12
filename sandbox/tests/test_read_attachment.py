@@ -116,7 +116,7 @@ def test_a_table_header_survives_as_a_header(tmp_path: Path) -> None:
     out = run(path)
 
     first = out["tables"]["shown"][0]
-    assert first["header"] == ["terminal", "movements"]
+    assert first["header"] == {"total": 2, "shown": ["terminal", "movements"]}
     assert first["rows"] == 2  # the header is NOT counted as a body row
     assert ["T1", "42"] in first["sampleRows"]
 

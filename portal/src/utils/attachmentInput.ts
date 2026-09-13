@@ -185,9 +185,9 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
  * It was two, and it existed because a document was charged a flat figure sized to a page cap,
  * so three could not fit one message. The limit bought the citizen a sentence naming it instead
  * of a context refusal telling them to start a new chat, which then refuses the identical
- * message (#194). Nothing prices a document up front any more on either side, and the page cap
- * itself has since gone the same way: the window is measured from what the provider reports for
- * a completed turn.
+ * message. Nothing prices a document up front any more on either side, and the page cap itself
+ * has since gone the same way: the window is measured from what the provider reports for a
+ * completed turn.
  *
  * It goes because a citizen attaching five files should not have to know which of them the
  * platform considers expensive. `MAX_FILES_PER_MESSAGE` is now the only per-message count, and

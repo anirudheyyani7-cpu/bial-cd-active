@@ -429,7 +429,6 @@ async def test_delete_cascades_children_and_sweeps_blobs(client, db_session, fak
     ) is None
     assert snapshot_key(app.id) not in fake_storage.objects
     assert "att/deck" not in fake_storage.objects
-    # Audit written.
     audit = await db_session.scalar(
         select(AuditLog).where(
             AuditLog.action == "project:delete", AuditLog.resource_id == str(project.id)
@@ -594,9 +593,7 @@ async def test_cascade_batches_many_conversations_and_dedups_shared_attachment(d
         assert await db_session.get(Conversation, conv.id) is None
     assert await db_session.get(Project, project.id) is None
     assert await db_session.scalar(select(Attachment).where(Attachment.user_id == user.id)) is None
-    # Shared key returned exactly once; the deck contributes its blob + derived `.pdf`.
-    # ONE KEY PER ROW. A .pptx used to carry a derived `{key}.pdf` from the converter,
-    # so a cascade had to sweep both. Nothing derives anything from an attachment now.
+    # ONE KEY PER ROW, and the shared attachment appears once across both conversations.
     assert sorted(cleanup.blob_keys) == ["att/deck", "att/shared"]
     assert cleanup.app_container_ids == []  # this project has no app → no container to sweep
 

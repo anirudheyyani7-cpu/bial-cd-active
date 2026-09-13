@@ -506,7 +506,15 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         return
       }
       ifStillOurs(projectId, () => setStep('starting'))
-      const ended = await askForTheWorkspace(rep, projectId, holder.projectName)
+      // NO HOLDER TO REPORT AS STOPPED ON THE SHARED ARM, which is what `null` means here: the
+      // relaunch below can still fail after the give-up succeeded, and `take-back-failed` carries
+      // whatever is passed straight into the pane's "X was stopped" sentence. Nothing of the
+      // colleague's was ever running under this citizen's account to stop.
+      const ended = await askForTheWorkspace(
+        rep,
+        projectId,
+        holder.isSharedView ? null : holder.projectName,
+      )
       // THE ENDING THAT WORKED, SAID OUT LOUD.
       //
       // The other four endings are already sentences on the pane, written by the map from

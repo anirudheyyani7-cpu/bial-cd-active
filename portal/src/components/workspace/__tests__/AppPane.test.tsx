@@ -1008,6 +1008,25 @@ describe('★ taking the workspace back', () => {
     )
   })
 
+  it('★ a give-up that WORKED, then a relaunch that failed, still claims nothing was stopped', async () => {
+    // The third arm, and the one the other two miss: the shared view really was given up, so the
+    // narration reached `releasing`, and only the citizen's OWN relaunch then failed. `reached`
+    // is no longer `stopping`, so anything passed as the holder here would be published as
+    // “Car pool” was stopped — a colleague's app, which nothing ever stopped.
+    const reason = 'Sandbox unavailable.'
+    api.handOverWorkspace.mockResolvedValue(undefined)
+    const { report } = await askTheQuestion({ isSharedView: true, dirty: false })
+    api.relaunchPreview.mockRejectedValueOnce(new ApiError(reason, 503, 'sandbox_unavailable'))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool”$/ }))
+
+    await waitFor(() =>
+      expect(report.onStartOutcome).toHaveBeenCalledWith({
+        kind: 'take-back-failed', reason, stoppedHolder: null,
+      }),
+    )
+  })
+
   it('★ ENDING 1 — a stop that failed dismisses the dialog and hands the pane the server`s sentence', async () => {
     // `buildSessionApi.ts` authors the two-minute ceiling sentence. It arrives here verbatim, and
     // `stoppedHolder` is null because nothing was stopped.

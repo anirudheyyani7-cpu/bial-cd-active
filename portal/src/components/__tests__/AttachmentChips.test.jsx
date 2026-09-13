@@ -72,7 +72,7 @@ describe('AttachmentChips — deck (.pptx) chip', () => {
   })
 })
 
-// --- #214 R23b/R23c: pressing a chip does something, and says what -------------------------
+// --- pressing a chip does something, and says what -------------------------
 
 describe('every chip is a control that says which file and what it does', () => {
   const chip = (over) => ({

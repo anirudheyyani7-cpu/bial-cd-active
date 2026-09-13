@@ -70,7 +70,7 @@ const AttachmentPreview: FC<AttachmentPreviewProps> = ({ target, onClose }) => {
   const src = target.dataUrl ?? null
   const isImage = target.mediaType.startsWith('image/')
   // The DISPLAY set, not the transport one: whether this can be rendered in place is a
-  // different question from whether it was inlined into the prompt (#214).
+  // different question from whether it was inlined into the prompt.
   const isText = TEXT_PREVIEW_MEDIA_TYPES.has(target.mediaType)
   const text = isText ? decodedText(target) : null
 

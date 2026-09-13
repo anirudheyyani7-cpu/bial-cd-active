@@ -1,5 +1,5 @@
 /**
- * A FILE THAT HAS BEEN TAKEN BUT IS NOT STAGED YET (#214 R21a).
+ * A FILE THAT HAS BEEN TAKEN BUT IS NOT STAGED YET.
  *
  * `add` reads the file to base64 before the runtime appends anything, so between the drop and the
  * chip there is a window in which the composer's own view of itself is "no attachments". On a

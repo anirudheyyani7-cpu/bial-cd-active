@@ -538,11 +538,19 @@ def shared_storage(fake_storage, monkeypatch):
     return fake_storage
 
 
-async def _upload(client, user, attachment_id: str, media_type: str, data: bytes) -> None:
+async def _upload(
+    client, user, conversation_id: uuid.UUID, attachment_id: str, media_type: str, data: bytes
+) -> None:
+    """Upload one file AGAINST a conversation, which the door now requires.
+
+    The id was always available at this call site; what changed is that the server wants it, so a
+    file's owner is knowable at the door rather than stamped on afterwards by the send route.
+    """
     resp = await client.post(
         "/v1/attachments",
         headers=_headers(user),
         json={
+            "conversationId": str(conversation_id),
             "attachmentId": attachment_id,
             "mediaType": media_type,
             "base64": base64.b64encode(data).decode(),
@@ -563,7 +571,7 @@ async def _send_with(client, user, conversation_id: uuid.UUID, ids: list[str], t
 async def test_five_files_of_any_mix_send_and_the_sixth_is_refused(
     client, db_session, shared_storage, _fresh_engine
 ) -> None:
-    """★ ONE NUMBER GOVERNS EVERY ATTACHMENT (#214 R7b/R7c).
+    """★ ONE NUMBER GOVERNS EVERY ATTACHMENT.
 
     This replaces three tests built on the per-DOCUMENT cap of two, which is removed: a citizen
     attaching five files should not have to know which of them the platform files as expensive.
@@ -580,7 +588,7 @@ async def test_five_files_of_any_mix_send_and_the_sixth_is_refused(
     user, _project, conversation = await _a_conversation(db_session)
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     for index in range(4):
-        await _upload(client, user, f"mix_{index}", "image/png", png)
+        await _upload(client, user, conversation.id, f"mix_{index}", "image/png", png)
 
     at_the_cap = await client.post(
         f"/v1/conversations/{conversation.id}/turns",
@@ -596,7 +604,7 @@ async def test_five_files_of_any_mix_send_and_the_sixth_is_refused(
     assert at_the_cap.status_code == 202, at_the_cap.text
     await _settle(_fresh_engine, conversation.id)
 
-    await _upload(client, user, "mix_4", "image/png", png)
+    await _upload(client, user, conversation.id, "mix_4", "image/png", png)
     over = await client.post(
         f"/v1/conversations/{conversation.id}/turns",
         headers=_headers(user),
@@ -641,7 +649,7 @@ async def test_uploading_a_document_computes_and_stores_no_token_figure(
     anything at all."""
     user, _project, conversation = await _a_conversation(db_session)
     await _stuff_the_conversation(db_session, user, conversation, tokens=60_000)
-    await _upload(client, user, "spec", "application/pdf", pdf_with_pages(30))
+    await _upload(client, user, conversation.id, "spec", "application/pdf", pdf_with_pages(30))
 
     # Nothing about an upload writes usage — no charge is computed at admission any more.
     assert (

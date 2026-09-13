@@ -1,4 +1,4 @@
-"""Placing an attached file, and telling the agent it is there (#214 R20/R20a/R11a).
+"""Placing an attached file, and telling the agent it is there.
 
 THE TWO HALVES FAIL DIFFERENTLY, WHICH IS WHY BOTH ARE PINNED HERE. A file that is never placed
 produces a `missing` from the reader — visible, recoverable. A file that is placed and never
@@ -17,6 +17,8 @@ import uuid
 
 import pytest
 
+from src.db.models.conversation import ChatKind
+from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.services.attachments.materialize import (
     CONTAINER_ATTACHMENTS_ROOT,
     AttachmentDelivery,
@@ -32,9 +34,11 @@ from src.services.media.lanes import (
     TSV_MEDIA_TYPE,
     WORD_MEDIA_TYPE,
 )
+from src.services.messages.store import ATTACHMENT_FILE_REF_KIND
 from src.services.orchestrator.deps import SandboxSession
 from src.services.sandbox import SandboxError
 from src.services.sandbox.base import ExecResult
+from src.services.storage.errors import StorageAuthError, StorageNotFoundError
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.fakes import FakeStorage
 from tests.services.orchestrator.fake_sandbox import FakeSandbox
@@ -69,7 +73,7 @@ def _session(sandbox: FakeSandbox) -> SandboxSession:
     )
 
 
-# --- the name on disk (R20a) --------------------------------------------------------------
+# --- the name on disk --------------------------------------------------------------
 
 
 def test_the_extension_comes_from_the_verified_type_not_from_the_name() -> None:
@@ -155,6 +159,40 @@ def test_two_files_that_land_on_the_same_name_stay_distinct(names: list[str]) ->
     assert first.container_path != second.container_path
 
 
+def test_the_escape_from_a_collision_cannot_itself_collide() -> None:
+    """★ THE DISAMBIGUATOR IS A NAME A FILE CAN HAVE.
+
+    Prefixing the position once is not enough. Attach `3-report.csv` and two files called
+    `report.csv`: the third takes the position prefix and lands on `3-report.csv`, which the first
+    already holds. Two attachments on one container path is the overwrite this function exists to
+    prevent, reached through the mechanism meant to prevent it.
+
+    Asserted on the SIZE of the set rather than on the names, so a different bumping scheme stays
+    green and only an actual overwrite goes red.
+
+    Mutation receipt: replace the re-check loop with a single `f"{index}-{file_name}"` and the
+    distinct count drops to two.
+    """
+    from src.services.attachments.materialize import _named_without_collisions
+
+    rows = [
+        Attachment(
+            user_id=uuid.uuid4(),
+            attachment_id=f"att_{i}",
+            media_type=CSV_MEDIA_TYPE,
+            name=name,
+            size=1,
+            storage_key=f"att/x/{i}",
+        )
+        for i, name in enumerate(["3-report.csv", "report.csv", "report.csv"], start=1)
+    ]
+
+    placed = _named_without_collisions(rows)
+
+    assert len({item.file_name for item in placed}) == 3
+    assert len({item.container_path for item in placed}) == 3
+
+
 def test_the_two_paths_are_the_same_file_addressed_two_ways() -> None:
     """The container writes an absolute path (the supervisor's second root is reachable only by
     naming it absolutely); the agent is given the `.attachments/` prefix its read surface vets and
@@ -165,7 +203,7 @@ def test_the_two_paths_are_the_same_file_addressed_two_ways() -> None:
     assert file.model_path == ".attachments/rota.xlsx"
 
 
-# --- the placement (R20) ------------------------------------------------------------------
+# --- the placement ------------------------------------------------------------------
 
 
 async def test_the_bytes_land_in_the_container_unmodified() -> None:
@@ -255,9 +293,53 @@ async def test_a_file_that_cannot_be_placed_raises_rather_than_carrying_on() -> 
     assert "Please try again" in str(caught.value)
 
 
+async def test_the_operator_half_names_the_image_a_400_really_points_at() -> None:
+    """★ TWO HALVES, TWO AUDIENCES, ONE RAISE. The citizen's sentence is unchanged above; this is
+    the other half of the same error, and it exists because the likeliest cause of a failed
+    placement reads as something else entirely.
+
+    A container running an image older than the two-lane attachments has no
+    `/workspace/attachments` and no
+    `create_bytes` action — but the supervisor runs `_resolve` BEFORE it dispatches on the action,
+    so it never gets as far as "unknown files action". It answers `400 … path escapes workspace`,
+    and an operator reading that alone goes looking for a control-plane path bug that is not there.
+
+    Mutation check: drop the clause from the wrapped detail and only the second assertion goes red.
+    """
+    sandbox = FakeSandbox()
+    sandbox.files_error = SandboxError(
+        "files op failed with status 400: "
+        '{"detail":"path escapes workspace: /workspace/attachments/roster.xlsx"}'
+    )
+    storage = FakeStorage()
+    file = _file(name="roster.xlsx", size=6)
+    storage.objects[file.storage_key] = b"PK\x03\x04\r\n"
+
+    with pytest.raises(AttachmentPlacementError) as caught:
+        await AttachmentDelivery(files=(file,), storage=storage).place(_session(sandbox))
+
+    # Citizen half: unchanged, and asserted here so the operator clause cannot be added to it.
+    assert "roster.xlsx" in str(caught.value)
+    assert "Please try again" in str(caught.value)
+    assert "image" not in str(caught.value)
+    # Operator half: the supervisor's own words, plus the reading they need.
+    cause = str(caught.value.__cause__)
+    assert "path escapes workspace" in cause
+    assert "older than the two-lane attachments" in cause
+    # The original error is not discarded by raising from the annotated copy.
+    assert isinstance(caught.value.__context__, SandboxError)
+
+
 async def test_a_blob_that_has_gone_missing_raises_too() -> None:
     """Same rule, other side of the transfer: a row whose object is gone is not a file the turn
-    can quietly proceed without."""
+    can quietly proceed without — and the sentence must not promise that retrying will help.
+
+    A missing object is permanent: nothing puts it back. "Please try again" would cost the
+    citizen the turn a second time before they learn the only thing that works is re-attaching.
+
+    Mutation receipt: delete the `except StorageNotFoundError` arm so the broad `StorageError`
+    one catches the absence, and the retry sentence comes back.
+    """
     sandbox = FakeSandbox()
     storage = FakeStorage()  # the object is deliberately never seeded
     file = _file(name="gates.csv", media_type=CSV_MEDIA_TYPE)
@@ -266,9 +348,41 @@ async def test_a_blob_that_has_gone_missing_raises_too() -> None:
         await AttachmentDelivery(files=(file,), storage=storage).place(_session(sandbox))
 
     assert "gates.csv" in str(caught.value)
+    assert "attach it again" in str(caught.value)
+    assert "try again" not in str(caught.value).lower()
+    assert isinstance(caught.value.__cause__, StorageNotFoundError)
 
 
-# --- the note (R11a) ------------------------------------------------------------------------
+async def test_a_transient_storage_failure_still_says_try_again() -> None:
+    """★ THE RECEIPT THAT ONLY THE ABSENCE CASE WAS NARROWED.
+
+    `StorageNotFoundError` is one of five `StorageError` subclasses, and the other four —
+    auth, signing, upload, unconfigured — are the ordinary transient shapes. A thirty-second
+    Azure credential blip reported as "attach it again" is the same untrue-sentence defect
+    read from the other end: the file is fine, and the citizen is told to redo work.
+
+    Mutation receipt: collapse the two arms back into one and this goes red whichever sentence
+    survives — the narrow arm loses the retry copy, the broad arm loses the absence copy.
+    """
+
+    class _AuthFailingStorage(FakeStorage):
+        async def get(self, key: str) -> bytes:
+            raise StorageAuthError("the credential was rejected")
+
+    sandbox = FakeSandbox()
+    file = _file(name="gates.csv", media_type=CSV_MEDIA_TYPE)
+
+    with pytest.raises(AttachmentPlacementError) as caught:
+        await AttachmentDelivery(files=(file,), storage=_AuthFailingStorage()).place(
+            _session(sandbox)
+        )
+
+    assert "Please try again" in str(caught.value)
+    assert "attach it again" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, StorageAuthError)
+
+
+# --- the note ------------------------------------------------------------------------
 
 
 def test_the_note_names_the_file_the_path_and_the_reader() -> None:
@@ -293,14 +407,14 @@ def test_the_note_names_the_file_the_path_and_the_reader() -> None:
 
 
 def test_the_note_gives_commands_a_path_they_can_open() -> None:
-    """★ AGC129'S B2 — Build was told a path nothing on its arm could resolve.
+    """★ BUILD WAS TOLD A PATH NOTHING ON ITS ARM COULD RESOLVE.
 
     Build has no `read_attachment` tool (R15: it runs, and may edit, the reader through
     `run_command`), and `run_command` executes inside the app folder. The note offered only
     `.attachments/<name>` and a Run line taking `<path>`, so Build ran the reader on a path
     relative to the app folder and got `missing` for a file that was there.
 
-    The note is kind-blind by design — this module may not branch on `ChatKind` (R71) — so it
+    The note is kind-blind by design — this module may not branch on `ChatKind` — so it
     gives both addresses and says which is for what, and that is correct on Plan and Build alike.
 
     Mutation receipt: put `<path>` back on the Run line and the second assertion goes red.
@@ -327,7 +441,7 @@ def test_the_note_says_a_failure_is_an_answer() -> None:
 
 
 def test_the_note_says_file_content_is_data_and_never_an_instruction() -> None:
-    """★ #214 R18. A cell, a paragraph or a speaker note can say "ignore your previous
+    """★ A cell, a paragraph or a speaker note can say "ignore your previous
     instructions", and the reader will faithfully report it — that is the reader working, not the
     reader failing. The boundary has to be stated somewhere, and the note is the only place the
     agent is told about attachments at all.
@@ -342,7 +456,7 @@ def test_the_note_says_file_content_is_data_and_never_an_instruction() -> None:
 
 
 def test_the_note_forbids_seeding_the_apps_database_from_an_attachment() -> None:
-    """★ #214 R18a. A roster is what the app is built FOR, not what it is built FROM. An agent
+    """★ A roster is what the app is built FOR, not what it is built FROM. An agent
     that quietly inserts a thousand rows has made a decision about someone's data that nobody
     asked for and that nothing on screen records."""
     note = AttachmentDelivery(files=(_file(),), storage=FakeStorage()).note()
@@ -352,7 +466,7 @@ def test_the_note_forbids_seeding_the_apps_database_from_an_attachment() -> None
 
 
 def test_the_note_says_the_reader_is_the_shipped_copy() -> None:
-    """★ #214 R16. Build can edit the reader — it holds an unrestricted `run_command` — but the
+    """★ Build can edit the reader — it holds an unrestricted `run_command` — but the
     reader lives in the workspace IMAGE, not in the app tree, so the edit dies with the container.
     An agent that fixed it last turn and finds its change gone is one that starts writing its own
     parser again, which is the outcome the whole design removes."""
@@ -383,7 +497,7 @@ def test_the_note_lists_every_file_the_conversation_holds() -> None:
     assert "/workspace/attachments/b.docx" in note
 
 
-# --- what the turn can see (R20a) -----------------------------------------------------------
+# --- what the turn can see -----------------------------------------------------------
 
 
 async def _stored(
@@ -412,6 +526,52 @@ async def _stored(
     storage.objects[key] = b"PK\x03\x04"
 
 
+async def _sent(
+    db_session,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    ids: list[str],
+    seq: int = 0,
+):
+    """A committed user message that CARRIED these attachments.
+
+    ★ A STORED ROW IS NOT A SENT FILE, which is what this helper exists to say. An upload
+    names its conversation at the door now, so a row is linked from the instant it is stored —
+    including one whose message was refused and never sent. `code_lane_attachments` therefore
+    reads the SENT set out of the message payloads, and a test that wants a file delivered has to
+    say a message carried it rather than only that the row exists.
+
+    The payload shape is the one `append_batch` writes: a user-prompt part whose content list ends
+    with one `ATTACHMENT_FILE_REF_KIND` marker per file.
+    """
+    db_session.add(
+        Message(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            seq=seq,
+            entry_kind=MessageEntryKind.TURN,
+            kind=ChatKind.BUILD,
+            visibility=MessageVisibility.VISIBLE,
+            payload=[
+                {
+                    "kind": "request",
+                    "parts": [
+                        {
+                            "part_kind": "user-prompt",
+                            "content": [
+                                {"kind": ATTACHMENT_FILE_REF_KIND, "attachment_id": ref}
+                                for ref in ids
+                            ],
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    await db_session.flush()
+
+
 async def test_the_query_takes_the_code_lane_and_leaves_the_model_lane(db_session) -> None:
     """★ THE LANE BOUNDARY, ON THE PATH THAT PLACES FILES. An image belongs to the model and its
     bytes ride in the prompt; only a code-lane file is written into the container. A widened query
@@ -438,6 +598,7 @@ async def test_the_query_takes_the_code_lane_and_leaves_the_model_lane(db_sessio
         name="shot.png",
         conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["a", "b"])
 
     found = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
 
@@ -474,7 +635,7 @@ async def test_a_row_with_no_conversation_link_is_still_found_by_its_id(db_sessi
 
 
 async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
-    """★ AGC129'S B1 — reading must never write, because the chat does not exist yet.
+    """★ READING MUST NEVER WRITE, because the chat does not exist yet.
 
     `code_lane_attachments` runs in the send route BEFORE the conversation row is written. It used
     to adopt NULL-linked rows into that not-yet-written conversation, and the route's next query
@@ -516,18 +677,18 @@ async def test_reading_a_new_chats_files_writes_nothing(db_session) -> None:
     assert link is None
 
 
-async def test_adoption_keeps_the_file_findable_on_the_second_turn(db_session) -> None:
-    """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO (#214 R7a).
+async def test_a_sent_file_is_still_found_on_the_second_turn(db_session) -> None:
+    """★ THE FILE THAT WORKED ON TURN ONE AND VANISHED ON TURN TWO.
 
-    Turn one finds an unlinked file by the message's own ids. Turn two carries none, so a row whose
-    link is still NULL is not found at all — not placed, not named to the agent, `read_attachment`
-    not even registered. Adoption is now a separate step the send route calls once the conversation
-    demonstrably exists, which is what B1 requires.
+    Turn two carries no attachment ids at all, so what makes "the file you attached three turns
+    ago" still answerable is the conversation link — a container recycled between turns comes back
+    empty, and every turn re-places what the chat holds.
 
-    Mutation receipt: skip `adopt_unlinked_attachments` and the second read returns empty.
+    ADOPTION USED TO BE WHAT PUT THE LINK THERE, in a separate step the send route ran once the
+    conversation demonstrably existed, because the composer uploaded before the row was written.
+    An upload names its conversation at the door now, so the link is stamped at insert and there
+    is nothing left to adopt. The claim this test makes is unchanged.
     """
-    from src.services.attachments.materialize import adopt_unlinked_attachments
-
     storage = FakeStorage()
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, user.id)
@@ -536,77 +697,161 @@ async def test_adoption_keeps_the_file_findable_on_the_second_turn(db_session) -
         db_session,
         storage,
         user_id=user.id,
-        attachment_id="loose",
+        attachment_id="linked",
         media_type=EXCEL_MEDIA_TYPE,
         name="book.xlsx",
-        conversation_id=None,
+        conversation_id=conv.id,
     )
 
-    # Turn one — found by the message's own ids; the route then adopts it.
+    # Turn one — named by the message's own ids, and the message is recorded as carrying it.
     first = await code_lane_attachments(
-        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["linked"]
     )
-    assert [f.attachment_id for f in first] == ["loose"]
-    await adopt_unlinked_attachments(
-        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["loose"]
-    )
+    assert [f.attachment_id for f in first] == ["linked"]
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["linked"])
 
     # Turn two — no ids on the message at all.
     second = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
-    assert [f.attachment_id for f in second] == ["loose"], "the file vanished on the second turn"
+    assert [f.attachment_id for f in second] == ["linked"], "the file vanished on the second turn"
 
 
-async def test_adoption_moves_only_the_callers_still_unlinked_rows(db_session) -> None:
-    """Adoption is one UPDATE over client-supplied ids, so it must be narrow in both directions: it
-    never re-links a file that already belongs to a conversation, and it never touches a row
-    belonging to someone else — even when that row's id is named."""
-    from sqlalchemy import select
+async def test_a_files_path_does_not_move_when_an_earlier_file_is_sent_later(db_session) -> None:
+    """★ A PATH THAT MOVES BETWEEN TURNS IS A PATH THE CONTAINER ALREADY HOLDS UNDER THE OLD NAME.
 
-    from src.services.attachments.materialize import adopt_unlinked_attachments
+    The collision rule falls back to the row's position, and a row joins the sent set on the turn
+    its message becomes durable. Numbering the SENT-FILTERED list therefore renumbers every later
+    same-named file each time one more is sent: the third `report.xlsx` moves from `2-report.xlsx`
+    to `3-report.xlsx`, the second takes the name it vacated, and — because placement skips a file
+    already there at the right size — the container keeps the old bytes while the note tells the
+    agent they belong to the new file.
 
+    Mutation receipt: name the filtered list instead of filtering the named one and the second
+    assertion goes red.
+    """
     storage = FakeStorage()
-    me = await UserFactory.create(db_session)
-    them = await UserFactory.create(db_session)
-    project = await ProjectFactory.create(db_session, me.id)
-    this_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
-    other_chat = await ConversationFactory.create(db_session, me.id, project_id=project.id)
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    for n in (1, 2, 3):
+        await _stored(
+            db_session,
+            storage,
+            user_id=user.id,
+            attachment_id=f"att_{n}",
+            media_type=EXCEL_MEDIA_TYPE,
+            name="report.xlsx",
+            conversation_id=conv.id,
+        )
+
+    await _sent(
+        db_session, user_id=user.id, conversation_id=conv.id, ids=["att_1", "att_3"], seq=0
+    )
+    before = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+    third = next(f.file_name for f in before if f.attachment_id == "att_3")
+
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["att_2"], seq=1)
+    after = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+
+    assert len({f.file_name for f in after}) == 3, "two files on one path"
+    assert next(f.file_name for f in after if f.attachment_id == "att_3") == third
+
+
+async def test_a_conversation_with_no_code_lane_file_never_reads_its_transcript(
+    db_session, monkeypatch
+) -> None:
+    """Most conversations carry no spreadsheet at all, and every turn was reading the whole
+    transcript to filter an empty list with it.
+
+    Mutation receipt: delete the early return and this raises out of the stub.
+    """
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+
+    async def _never(*_args, **_kwargs):
+        raise AssertionError("the transcript was read for a chat holding no code-lane file")
+
+    monkeypatch.setattr("src.services.attachments.materialize._ids_already_sent", _never)
+
+    assert await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id) == []
+
+
+async def test_a_file_uploaded_but_never_sent_is_neither_placed_nor_announced(db_session) -> None:
+    """★ THE ONE THE NEW ORDERING CREATED.
+
+    Linking at insert means a row belongs to the conversation from the instant it is stored —
+    before any message carries it, and whether or not one ever does. So a citizen whose first send
+    was refused by the workspace gate, who then removes the files and types "hello", would have
+    five spreadsheets written into their container and `note()` telling the agent "the person you
+    are talking to attached these files to this conversation". The agent would then reason from
+    files the citizen had taken back.
+
+    Under the old ordering those rows were NULL-linked and invisible to the delivery, so the
+    new ordering
+    converts an invisible orphan into a live, announced, re-placed file. The guard is what keeps
+    the delivery scoped to what was actually sent.
+
+    Mutation check: drop the sent-set filter from `code_lane_attachments` and this goes red.
+    """
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
     await _stored(
         db_session,
         storage,
-        user_id=me.id,
-        attachment_id="already",
+        user_id=user.id,
+        attachment_id="sent",
         media_type=CSV_MEDIA_TYPE,
-        name="a.csv",
-        conversation_id=other_chat.id,
+        name="carried.csv",
+        conversation_id=conv.id,
     )
     await _stored(
         db_session,
         storage,
-        user_id=them.id,
-        attachment_id="theirs",
+        user_id=user.id,
+        attachment_id="abandoned",
         media_type=CSV_MEDIA_TYPE,
-        name="b.csv",
-        conversation_id=None,
+        name="refused.csv",
+        conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["sent"])
 
-    await adopt_unlinked_attachments(
+    # A later turn carrying NOTHING — the "hello" after the refusal.
+    found = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
+
+    assert [f.attachment_id for f in found] == ["sent"]
+    # And the note the agent is handed names only the file that was really attached.
+    note = AttachmentDelivery(files=tuple(found), storage=storage).note()
+    assert "carried.csv" in note
+    assert "refused.csv" not in note
+
+
+async def test_a_file_this_message_carries_is_delivered_before_any_message_records_it(
+    db_session,
+) -> None:
+    """The other half of the guard, and the half that would make it useless if it were missing:
+    on the turn that SENDS a file, no stored message references it yet — the marker is written by
+    the same commit that ends the turn. The message's own ids are what qualify it."""
+    storage = FakeStorage()
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    conv = await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    await _stored(
         db_session,
-        user_id=me.id,
-        conversation_id=this_chat.id,
-        attachment_ids=["already", "theirs"],
+        storage,
+        user_id=user.id,
+        attachment_id="fresh",
+        media_type=CSV_MEDIA_TYPE,
+        name="rows.csv",
+        conversation_id=conv.id,
     )
 
-    links = dict(
-        (
-            await db_session.execute(
-                select(Attachment.attachment_id, Attachment.conversation_id).where(
-                    Attachment.attachment_id.in_(["already", "theirs"])
-                )
-            )
-        ).all()
+    found = await code_lane_attachments(
+        db_session, user_id=user.id, conversation_id=conv.id, attachment_ids=["fresh"]
     )
-    assert links["already"] == other_chat.id  # not re-linked
-    assert links["theirs"] is None  # not someone else's to move
+
+    assert [f.attachment_id for f in found] == ["fresh"]
 
 
 async def test_another_owners_file_is_not_reachable_by_naming_its_id(db_session) -> None:
@@ -652,6 +897,7 @@ async def test_the_delivery_round_trips_a_stored_file_into_the_container(db_sess
         name="Gate roster.xlsx",
         conversation_id=conv.id,
     )
+    await _sent(db_session, user_id=user.id, conversation_id=conv.id, ids=["a"])
 
     files = await code_lane_attachments(db_session, user_id=user.id, conversation_id=conv.id)
     delivery = AttachmentDelivery(files=tuple(files), storage=storage)

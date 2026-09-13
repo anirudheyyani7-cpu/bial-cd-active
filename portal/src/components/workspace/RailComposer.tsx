@@ -73,7 +73,7 @@ export default function RailComposer({ projectId }: RailComposerProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* ★ ALL THREE ATTACHMENT PROVIDERS, NOT TWO (#214, agc129's B3). This used to mount the
+      {/* ★ ALL THREE ATTACHMENT PROVIDERS, NOT TWO. This used to mount the
           refusal sink and the staged binding by hand and miss the pending-read count, so the
           rail's Send never waited for a file still being read: a spreadsheet dropped here and sent
           mid-read landed nowhere, and the chat started from the sentence alone. */}

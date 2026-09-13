@@ -1,7 +1,7 @@
 """Projects CRUD + rollback-safe cascade delete.
 
 Covers create/list/get/patch/delete owner-scoping, KD-8/#191 description requirement +
-length cap, KD-1 keyset stability under concurrent insert (AE3), the R7 page cap, and the
+length cap, KD-1 keyset stability under concurrent insert, the R7 page cap, and the
 KD-3 cascade: children swept through the blob-aware core, blobs deleted only post-commit.
 The description's WORD bound gets its own boundary-pinning file,
 `test_project_description_words.py`, mirroring `test_project_name_words.py`.
@@ -156,7 +156,7 @@ async def test_patch_updates_name_and_description_together(client, db_session) -
 
 
 async def test_patch_description_cannot_be_cleared_400(client, db_session) -> None:
-    # #191 widened the rename path's existing "cannot be cleared" rule (R11) to cover
+    # #191 widened the rename path's existing "cannot be cleared" rule to cover
     # description too — mirrors test_patch_name_cannot_be_cleared_400 below exactly.
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id, description="original")
@@ -429,7 +429,6 @@ async def test_delete_cascades_children_and_sweeps_blobs(client, db_session, fak
     ) is None
     assert snapshot_key(app.id) not in fake_storage.objects
     assert "att/deck" not in fake_storage.objects
-    # Audit written.
     audit = await db_session.scalar(
         select(AuditLog).where(
             AuditLog.action == "project:delete", AuditLog.resource_id == str(project.id)
@@ -594,9 +593,7 @@ async def test_cascade_batches_many_conversations_and_dedups_shared_attachment(d
         assert await db_session.get(Conversation, conv.id) is None
     assert await db_session.get(Project, project.id) is None
     assert await db_session.scalar(select(Attachment).where(Attachment.user_id == user.id)) is None
-    # Shared key returned exactly once; the deck contributes its blob + derived `.pdf`.
-    # ONE KEY PER ROW (#214). A .pptx used to carry a derived `{key}.pdf` from the converter,
-    # so a cascade had to sweep both. Nothing derives anything from an attachment now.
+    # ONE KEY PER ROW, and the shared attachment appears once across both conversations.
     assert sorted(cleanup.blob_keys) == ["att/deck", "att/shared"]
     assert cleanup.app_container_ids == []  # this project has no app → no container to sweep
 

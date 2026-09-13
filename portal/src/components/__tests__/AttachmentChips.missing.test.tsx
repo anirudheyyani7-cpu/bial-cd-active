@@ -1,5 +1,5 @@
 /**
- * A CHIP WHOSE FILE HAS GONE SAYS SO — for every format, not just images (#214 R23b/R23c).
+ * A CHIP WHOSE FILE HAS GONE SAYS SO — for every format, not just images.
  *
  * The `missing` state existed and was unreachable for two of the three chip types: the file and
  * PDF branches both `return` above the `if (missing)` check, so pressing one set the state, the

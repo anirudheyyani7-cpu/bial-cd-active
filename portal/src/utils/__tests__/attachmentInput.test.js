@@ -3,10 +3,10 @@ import {
   validateAttachmentFiles,
   validateConversationAttachmentCap,
   resolveMediaType,
-  textAttachmentBytes,
   fileToBase64,
   ACCEPT_ATTR,
   MAX_FILE_SIZE,
+  MAX_FILE_SIZE_MB,
   MAX_FILES_PER_MESSAGE,
   MAX_ATTACHMENTS_PER_CONVERSATION,
 } from '../attachmentInput'
@@ -30,9 +30,13 @@ describe('validateAttachmentFiles', () => {
     expect(res.error).toMatch(/isn't supported/)
   })
 
-  it('rejects a file over the 4 MB limit', () => {
+  it('rejects a file one byte over the cap, and names the cap it enforced', () => {
+    // Asserted against the CONSTANT, never a spelled number: a refusal that says a figure the
+    // code does not enforce is the drift this interpolation exists to prevent, and a hardcoded
+    // "4 MB" here is what let the two disagree in the first place.
+    expect(validateAttachmentFiles([file('huge.png', 'image/png', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
     const res = validateAttachmentFiles([file('huge.png', 'image/png', MAX_FILE_SIZE + 1)], 0)
-    expect(res.error).toMatch(/4 MB/)
+    expect(res.error).toMatch(new RegExp(`${MAX_FILE_SIZE_MB} MB`))
   })
 
   it('rejects exceeding the per-message file cap', () => {
@@ -41,10 +45,10 @@ describe('validateAttachmentFiles', () => {
   })
 
   it('accepts the code-lane formats as ordinary uploads', () => {
-    // THE INLINE-TEXT CAPS ARE GONE WITH THEIR LANE (#214). A CSV used to be read in the browser
+    // THE INLINE-TEXT CAPS ARE GONE WITH THEIR LANE. A CSV used to be read in the browser
     // and inlined into the prompt, so it carried its own 256 KB per-file and 512 KB
     // per-conversation budgets. Every attachment is an uploaded file now, governed by the one
-    // 4 MB cap — which is also what lets a chip be rebuilt on reload for every format.
+    // per-file cap — which is also what lets a chip be rebuilt on reload for every format.
     expect(validateAttachmentFiles([file('rows.csv', 'text/csv')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('rows.tsv', 'text/tab-separated-values')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('book.xlsx', XLSX)], 0)).toEqual({ ok: true })
@@ -74,33 +78,31 @@ describe('validateAttachmentFiles', () => {
     expect(validateAttachmentFiles([file('data.csv', '')], 0)).toEqual({ ok: true })
   })
 
-  it('gives a CSV the same 4 MB file cap as every other upload, not the old inline-text one', () => {
-    // RE-POINTED, NOT DELETED (#214). This asserted the 256 KB cap on inlined text, and that cap
-    // existed because a CSV's BYTES rode in the prompt on every turn — 256 KB per file and
-    // 512 KB per conversation kept the accumulated text inside the context budget.
+  it('gives every format the SAME cap — a CSV, an image and a PDF are one rule', () => {
+    // RE-POINTED TWICE. It first asserted a 256 KB cap on inlined text, which
+    // existed because a CSV's BYTES rode in the prompt on every turn. Nothing is inlined now, so
+    // it became "a CSV gets the ordinary file cap" — and the ordinary cap has since become one
+    // number for all ten formats, so what is worth asserting is that no format has its own.
     //
-    // Nothing is inlined now: a CSV is an uploaded file that code reads in the sandbox, so it is
-    // bounded by the same 4 MB size cap as an image or a PDF. `TEXT_MEDIA_TYPES` is empty, which
-    // is what makes `MAX_TEXT_FILE_SIZE` unreachable rather than merely unused — the constant
-    // stays because `AttachmentPreview` still asks what can be RENDERED as text, which is a
-    // different question.
-    //
-    // The half worth keeping is that a per-file cap is enforced at all, so that is what this
-    // asserts, on both sides of the boundary.
-    expect(validateAttachmentFiles([file('big.csv', 'text/csv', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
-    expect(validateAttachmentFiles([file('big.csv', 'text/csv', MAX_FILE_SIZE + 1)], 0).error).toMatch(/4 MB/)
-    expect(validateAttachmentFiles([file('spec.pdf', 'application/pdf', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
+    // A citizen should never have to know which of their files the platform considers expensive,
+    // and the surest way to break that is for one format to keep a private number.
+    for (const [name, type] of [
+      ['big.csv', 'text/csv'],
+      ['big.tsv', 'text/tab-separated-values'],
+      ['photo.png', 'image/png'],
+      ['spec.pdf', 'application/pdf'],
+      ['book.xlsx', XLSX],
+      ['doc.docx', DOCX],
+      ['deck.pptx', PPTX],
+    ]) {
+      expect(validateAttachmentFiles([file(name, type, MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
+      expect(validateAttachmentFiles([file(name, type, MAX_FILE_SIZE + 1)], 0).error).toMatch(
+        new RegExp(`${MAX_FILE_SIZE_MB} MB`),
+      )
+    }
   })
 
 
-})
-
-describe('textAttachmentBytes', () => {
-
-  it('is 0 for empty / non-array inputs', () => {
-    expect(textAttachmentBytes([])).toBe(0)
-    expect(textAttachmentBytes(null)).toBe(0)
-  })
 })
 
 describe('resolveMediaType', () => {
@@ -142,6 +144,23 @@ describe('ACCEPT_ATTR', () => {
     // A withdrawal and two legacy formats: absent, so the picker never offers them.
     expect(ACCEPT_ATTR).not.toContain('.txt')
     expect(ACCEPT_ATTR).not.toContain('.doc,')
+  })
+
+  it('★ THE AGREEMENT: every extension this composer resolves, the picker also offers', () => {
+    // ASSERTS THE RELATIONSHIP, NOT THE CONSTANT. `expect(ACCEPT_ATTR).toContain('.tab')` would
+    // restate the list back to itself and catch nothing; what actually broke was the two halves
+    // DISAGREEING — `resolveMediaType` mapped `.tab` to TSV and the server's TSV door admits that
+    // suffix by name, while the picker's filter did not list it. So a citizen browsing for
+    // `movements.tab` could not select the file they had just been told was supported.
+    //
+    // IT FAILED ONLY ON THE PICKER PATH, which is why it survived: dragging the same file in
+    // never consults `ACCEPT_ATTR` and worked the whole time.
+    for (const ext of ['.csv', '.tsv', '.tab', '.xlsx', '.docx', '.pptx']) {
+      const resolved = resolveMediaType(file(`movements${ext}`, ''))
+      expect(resolved).toBeTruthy()
+      expect(validateAttachmentFiles([file(`movements${ext}`, '')], 0)).toEqual({ ok: true })
+      expect(ACCEPT_ATTR.split(',')).toContain(ext)
+    }
   })
 })
 

@@ -27,7 +27,7 @@ const CODE_LANE_TYPES = new Set([
 ])
 
 function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
-  // THREE KINDS, ONE PER THING A CHIP CAN DO (#214 R23b). The server derives these from the media
+  // THREE KINDS, ONE PER THING A CHIP CAN DO. The server derives these from the media
   // type in `chip_kind_for`, so the chip a citizen sees on reload is the same shape as the one
   // they watched appear. `document`/`image` are also matched on the media type directly, because
   // parts staged in the composer carry a locally-assigned kind.
@@ -51,7 +51,7 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
     }
   }, [att.attachmentId, isPdf, isFile])
 
-  // ★ FIRST, BEFORE EVERY FORMAT BRANCH (#214 R23b). It used to sit below them, and both
+  // ★ FIRST, BEFORE EVERY FORMAT BRANCH. It used to sit below them, and both
   // the file and PDF chips return above it — so `setMissing(true)` set state, the component
   // re-rendered, the early return fired again, and this was never reached. The press was
   // still absorbed in silence for exactly the two formats the branches handle, which is the
@@ -77,7 +77,7 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
   }
 
   if (isFile) {
-    // THE CODE LANE RETURNS THE FILE (#214 R23b). A spreadsheet, document or deck cannot be
+    // THE CODE LANE RETURNS THE FILE. A spreadsheet, document or deck cannot be
     // rendered in a browser without a converter this platform does not host, so pressing the chip
     // hands the citizen their own file back - under its own name and type, never anonymous bytes.
     //
@@ -92,7 +92,7 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
         data-testid="attachment-download-chip"
         onClick={async () => {
           const url = await fetchAttachmentObjectUrl(att.attachmentId)
-          // A FAILED FETCH SAYS SO (R23b). It used to do nothing at all, which reads as a broken
+          // A FAILED FETCH SAYS SO. It used to do nothing at all, which reads as a broken
           // button - the one thing a control must never do is absorb a press silently.
           if (url) downloadObjectUrl(url, att.name)
           else setMissing(true)
@@ -134,7 +134,7 @@ function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
 
   return (
     <>
-      {/* A BUTTON, NOT A CLICKABLE IMAGE (R23c). It opens a modal, so it has to be reachable and
+      {/* A BUTTON, NOT A CLICKABLE IMAGE. It opens a modal, so it has to be reachable and
           operable from the keyboard — an `<img onClick>` is neither, and a screen reader announced
           it as an image with no indication that pressing it did anything. */}
       <button

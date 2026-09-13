@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, CheckCircle, XCircle } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
+import { ATTACHMENT_LANES_SENTENCE, MAX_FILE_SIZE_MB } from '../utils/attachmentInput'
 
 // The one support address this page states, rather than the two hardcoded copies it
 // carried (each under its own "TODO: confirm support address"). The CONFIGURED address
@@ -80,7 +81,11 @@ export const FAQS = [
   },
   {
     q: 'What files can I attach in chat?',
-    a: "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide deck and I'll open it with code. That means images (PNG, JPEG, GIF, WebP), PDFs, Excel (.xlsx), Word (.docx), PowerPoint (.pptx), CSV and TSV — up to 4 MB each. A picture or a PDF is read directly. A spreadsheet, document or deck is opened by a reader running in your project's workspace, which reports what the whole file contains rather than a sample of it. The original is always kept and can be re-downloaded from its chip. Older formats (.doc, .xls, .ppt) are not accepted — save them in the newer format, or export to PDF.",
+    // COMPOSED FROM THE COMPOSER'S OWN CONSTANTS, never restated. Both halves of this
+    // answer used to be spelled out by hand — the lanes sentence and the megabyte figure — and
+    // the figure was still "4 MB" long enough that a citizen reading it here and being refused
+    // there would have been told two different rules by the same platform.
+    a: `${ATTACHMENT_LANES_SENTENCE} That means images (PNG, JPEG, GIF, WebP), PDFs, Excel (.xlsx), Word (.docx), PowerPoint (.pptx), CSV and TSV — up to ${MAX_FILE_SIZE_MB} MB each. A picture or a PDF is read directly. A spreadsheet, document or deck is opened by a reader running in your project's workspace, which reports what the whole file contains rather than a sample of it. The original is always kept and can be re-downloaded from its chip. Older formats (.doc, .xls, .ppt) are not accepted — save them in the newer format, or export to PDF.`,
   },
   {
     q: 'Is there a limit to how many apps I can build?',

@@ -1,5 +1,5 @@
 /**
- * NOTHING REACHABLE HERE NEEDS A CONVERTER — the inertness guard, inverted (#214).
+ * NOTHING REACHABLE HERE NEEDS A CONVERTER — the inertness guard, inverted.
  *
  * This file used to assert that presentations, spreadsheets and documents were UNREACHABLE, and
  * it was right for as long as the only way to read one was to convert it: docx and xlsx were

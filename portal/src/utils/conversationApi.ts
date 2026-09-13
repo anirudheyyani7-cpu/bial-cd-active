@@ -85,7 +85,7 @@ interface ProjectedAttachment {
 }
 
 /**
- * The `file` parts for a projected user turn, rebuilt from what the server sent (#214 R23a).
+ * The `file` parts for a projected user turn, rebuilt from what the server sent.
  *
  * VALIDATED RATHER THAN CAST. A projection item is `Record<string, unknown>`, so this is the
  * boundary where the shape stops being a promise: an entry with no id draws nothing, and a
@@ -225,7 +225,7 @@ export function messagesFromProjection(
         role: 'user',
         // FILES FIRST, THEN THE PROSE — the same order `buildUserParts` writes when the message
         // is first composed, so a reloaded turn renders identically to the one the citizen
-        // watched send. Rebuilding these is the second half of #214 R23a: the server has always
+        // watched send. Rebuilding these is the second half of the reload path: the server has always
         // sent the attachment identities and this path threw them away, so every chip vanished
         // on refresh for every format, and with it the citizen's only sight of the files still
         // riding on every turn.
@@ -514,10 +514,50 @@ export function deriveTitle(text: string): string {
 }
 
 /**
+ * Create the conversation row, BEFORE its first file is uploaded and before its first turn.
+ *
+ * ★ THIS CLIENT CAME BACK ON PURPOSE, AND IT COSTS SOMETHING. It was retired when a chat's
+ * parentage moved onto its first turn, and that move bought a real guarantee: a first message
+ * refused by the workspace gate left NOTHING behind, because the row was flushed inside the turn's
+ * own transaction and rolled back with it. An upload now names the conversation it belongs to, so
+ * the row has to exist a round trip earlier than the send — and two orderings cannot both be true.
+ * The trade is recorded rather than hidden: a refused first send leaves an empty chat.
+ *
+ * NO TITLE IS PASSED, deliberately. `deriveTitle` runs on the draft at SEND time, which is one
+ * round trip later than this call, and stamping refused text into a row nobody can delete would
+ * be worse than leaving it unnamed. The first message that actually lands titles the chat.
+ *
+ * IDEMPOTENT PER OWNER: re-posting the same id with the same parentage answers 200 with the
+ * existing header, which is what makes a retry after a refused first send work — the leftover chat
+ * must not refuse its own second attempt.
+ */
+export async function createConversation(
+  { id, projectId, kind }: { id: string; projectId: string; kind: string },
+  deps: AuthFetchDeps = {},
+): Promise<ConversationHeader | null> {
+  const res = await authFetch(
+    '/api/conversations',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, projectId, kind }),
+    },
+    deps,
+  )
+  if (!res.ok) throw await readApiError(res, 'The chat could not be started. Try again.')
+  const data = (await res.json()) as { conversation?: unknown }
+  return normalizeHeader(data.conversation)
+}
+
+/**
  * Build an async READ store for one conversation `kind` (plan | build), preserving the names
  * `builderHistory` re-exports. `newConversation` stays SYNCHRONOUS — it mints a UUID with no
- * network. There is no create member: a row's parentage rides its first turn now (see the
- * retirement note above), so there is nothing left here to create a row with.
+ * network, and minting an id is still all this store does about creation.
+ *
+ * STILL NO CREATE MEMBER, though the reason changed: `createConversation` came back above, but
+ * it belongs to the SEND path, which is the only place that knows a chat is about to receive its
+ * first file. A create member here would invite creating a row at the moment one is listed or
+ * navigated to, which is exactly the empty-chat problem the send path is careful to bound.
  */
 export interface ConversationStore {
   loadHistory: (deps?: AuthFetchDeps) => Promise<(ConversationHeader | null)[]>

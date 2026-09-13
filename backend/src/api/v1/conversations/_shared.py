@@ -55,7 +55,8 @@ from src.services.storage import ObjectStorage, StorageUnconfiguredError, get_st
 MAX_MESSAGE_TEXT_CHARS = 64_000
 MAX_ATTACHMENT_TEXT_CHARS = 600_000
 
-# THE FILE COUNT IS THE ONE EXCEPTION TO THE PARAGRAPH ABOVE, and #214 R7b is why it moved.
+# THE FILE COUNT IS THE ONE EXCEPTION TO THE PARAGRAPH ABOVE, and the per-conversation
+# count is why it moved.
 #
 # That argument is about TEXT: the server writes messages nobody typed — the plan handoff, a
 # build's first message — so its text ceiling must sit above a number chosen for a text box.
@@ -99,20 +100,23 @@ PDF_MEDIA_TYPE = "application/pdf"
 
 # --- the per-document limit, and why it is gone -------------------------------------------
 #
-# THERE IS NO DOCUMENT COUNT ANY MORE (#214 R7c). It was two, and it shipped in the batch-1
-# burndown as the stopgap that stopped a 61-page PDF blowing the context budget (#194). The real
-# fix was the 30-page cap and the flat charge sized to it; both stay. The count was the belt
-# beside those braces.
+# THERE IS NO DOCUMENT COUNT ANY MORE. It was two, a stopgap against a long PDF blowing the
+# context budget, and it sat beside a page cap and a flat per-document charge sized to that cap.
+# All three are gone: nothing prices a document before it is sent, so there is no estimate left
+# for a count to protect.
 #
 # It goes because a citizen attaching five files should not have to know which of them the
 # platform considers expensive. One rule governs every attachment on a message now —
 # `MAX_FILES_PER_MESSAGE`, any mix of formats — the same reasoning that sends a spreadsheet to
 # the code lane at every size rather than above a threshold.
 #
-# WHAT REPLACES IT IS NOT ANOTHER COUNT. A message the conversation cannot hold is refused on the
-# room it needs, before it is sent (R10). The failure this guarded against was never really "too
-# many documents": it was a citizen landing on a context-limit refusal whose only advice is to
-# start a new chat, which then refuses the identical message.
+# WHAT REPLACES IT IS NOT ANOTHER COUNT, AND IT IS NOT A PRE-SEND CHECK EITHER. The admission
+# gate reads what the provider reported for the conversation's LAST served turn, so it bounds a
+# thread that has already grown too large; it cannot size the message about to be sent, because
+# only the provider can count a prompt. A single long document therefore reaches the provider on
+# its first turn whatever its length, and the refusal comes back from there — which is why
+# `turns/engine.py` translates the provider's own two refusals into sentences of ours rather
+# than leaving them generic.
 
 
 # --- dependencies -------------------------------------------------------------------------
@@ -172,7 +176,7 @@ class TurnMessage(CamelModel):
 
     @model_validator(mode="after")
     def _bounded_and_non_empty(self) -> TurnMessage:
-        # ONE NUMBER FOR THE WHOLE MESSAGE, any mix of formats (#214 R7b). The two lists carry
+        # ONE NUMBER FOR THE WHOLE MESSAGE, any mix of formats. The two lists carry
         # the same thing from a citizen's point of view — files they attached — so counting them
         # apart let a message hold twice what the composer offered. A citizen should not have to
         # know which of their five files the platform files under which list.
@@ -239,21 +243,21 @@ async def resolve_binaries(
     anything else are a 400 (their content travels as `attachmentTexts`), and an unknown/foreign
     id fails the same typed way the rehydrator words it.
 
-    It no longer counts documents. That gate was `MAX_PDF_BLOCKS`, removed by #214 R7c — one
-    file count now governs every format, and the room a message needs is checked before it is
-    sent rather than by refusing a second PDF here.
+    It no longer counts documents. One file count governs every format at the upload door, and a
+    document too long for the provider is refused by the provider, in a sentence of ours.
 
-    `skip` NAMES THE CODE LANE, AND IT IS APPLIED BEFORE THE REHYDRATOR RATHER THAN AFTER IT
-    (#214 R20). A code-lane file is not refused and not lost — it travels by being written into
-    the workspace, where the shipped reader opens it. But it cannot pass through here on the way:
-    the rehydrator re-asserts `bytes_match_declared`, which answers False for every code-lane type
-    BECAUSE THE MODEL ALLOWLIST WAS DELIBERATELY NOT WIDENED, so a spreadsheet reaching it would
-    come back as "no longer matches its declared type" — a refusal about a file that is completely
-    fine. The caller resolves which ids those are (it has just queried the rows) and names them.
+    `skip` NAMES THE CODE LANE, AND IT IS APPLIED BEFORE THE REHYDRATOR RATHER THAN AFTER IT.
+    A code-lane file is not refused and not lost — it travels by being written into the
+    workspace, where the shipped reader opens it. But it cannot pass through here on the way:
+    the rehydrator re-asserts `bytes_match_declared`, which answers False for every code-lane
+    type BECAUSE THE MODEL ALLOWLIST WAS DELIBERATELY NOT WIDENED, so a spreadsheet reaching it
+    would come back as "no longer matches its declared type" — a refusal about a file that is
+    completely fine. The caller resolves which ids those are (it has just queried the rows) and
+    names them.
 
     The route is what knows, rather than this function: the same query answers "which files must
-    be placed in the container" and "which ids must not enter the prompt", and asking twice is how
-    the two answers drift."""
+    be placed in the container" and "which ids must not enter the prompt", and asking twice is
+    how the two answers drift."""
     if not attachment_ids:
         return []
     if storage is None:

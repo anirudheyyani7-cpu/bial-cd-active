@@ -92,7 +92,7 @@ async def _file_message(db, *, user_id: uuid.UUID, attachment_id: str) -> None:
 
 
 async def test_a_sent_code_lane_file_is_never_reclaimed_as_an_orphan(db_session) -> None:
-    """★ THE DATA-LOSS BUG THIS MARKER EXISTS TO CLOSE (#214).
+    """★ THE DATA-LOSS BUG THIS MARKER EXISTS TO CLOSE.
 
     A code-lane file never becomes `BinaryContent`, so `_externalize_binaries` never ran for it and
     the message it was sent with recorded nothing. This scan reads stored payloads to decide what
@@ -229,7 +229,7 @@ async def test_reclaim_reduces_sum_size(db_session) -> None:
     assert int(after or 0) == 0
 
 
-# THE DECK-SIBLING SWEEP IS GONE (#214). A .pptx upload used to own `{storage_key}` AND a
+# THE DECK-SIBLING SWEEP IS GONE. A .pptx upload used to own `{storage_key}` AND a
 # derived `{storage_key}.pdf` from the converter, so reclamation had to remove both or leak the
 # rendered PDF forever. Nothing derives anything from an attachment now - a deck is stored as
 # itself and read in the sandbox - so `_blob_keys_for` returns one key per row and there is no

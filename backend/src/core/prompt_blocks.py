@@ -123,7 +123,7 @@ what the platform records, and renaming a label must never migrate a record.
 synonym worth keeping alive in a comment."""
 
 ATTACHMENT_READ_TOOL = "read_attachment"
-"""The Plan arm's one way to open a file the citizen attached (#214 R14/R23).
+"""The Plan arm's one way to open a file the citizen attached.
 
 HERE RATHER THAN BESIDE THE TOOL because two modules that never import each other need the same
 spelling: `services/agent/attachment_tools.py` registers the tool, and

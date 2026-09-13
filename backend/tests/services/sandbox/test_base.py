@@ -140,7 +140,7 @@ def test_file_op_discriminates_each_action() -> None:
 
 
 def test_create_bytes_is_a_separate_op_from_create() -> None:
-    """#214 — the binary lane must not be reachable by accident.
+    """The binary lane must not be reachable by accident.
 
     `create` writes through `write_text` and rewrites every CRLF to LF, which corrupts any
     binary carrying that byte pair — an Office file is a ZIP archive and carries it constantly.

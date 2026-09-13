@@ -281,7 +281,7 @@ async def test_the_tool_layer_names_the_live_workspace_when_there_is_nothing_to_
     assert "your app's live workspace" in feed
 
 
-# --- the attachments prefix (#214 R19) ---------------------------------------
+# --- the attachments prefix ---------------------------------------
 
 
 async def test_the_attachments_prefix_reaches_the_second_root() -> None:

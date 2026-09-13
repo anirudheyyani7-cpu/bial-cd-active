@@ -155,7 +155,7 @@ def toolsets_for_kind[DepsT](
                 cast(AbstractToolset[DepsT], CONVERSATION_TOOLSET),
                 cast(AbstractToolset[DepsT], _PLAN_OPTIONS_TOOLSET),
             ]
-            # THE ATTACHMENT CAPABILITY, ON THIS ARM ALONE (#214 R14). Plan already executes in
+            # THE ATTACHMENT CAPABILITY, ON THIS ARM ALONE. Plan already executes in
             # the container, but only the eight read-only binaries on `check_the_guest_list` —
             # `python3` is deliberately absent, so it cannot invoke the shipped reader the way
             # Build does. Widening that list is not available: it is shared with the reviewer

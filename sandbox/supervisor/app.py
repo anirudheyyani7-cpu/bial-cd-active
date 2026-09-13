@@ -43,14 +43,15 @@ from pydantic import BaseModel
 # --- config (fail-fast: required settings have no defaults) --------------------------------
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace/app"))
-# WHERE ATTACHMENTS LIVE, AND WHY IT IS NOT UNDER `WORKSPACE` (#214 R19). `WORKSPACE` is the tree
+# WHERE ATTACHMENTS LIVE, AND WHY IT IS NOT UNDER `WORKSPACE`. `WORKSPACE` is the tree
 # that BECOMES the citizen's app: it is snapshotted, restored, saved and deployed. A file someone
 # attached to a chat must not travel with any of that as a side effect of having been attached, and
 # excluding it from each of those paths in turn means getting every exclusion right forever.
 # Keeping it out of the tree means there is nothing to exclude.
 #
 # A SIBLING, NOT A CHILD. `/workspace/attachments` shares the volume — the sandbox is already there
-# and can already run code, which is the whole reason attachments are here at all — but no snapshot,
+# and can already run code, which is the whole reason attachments are here at all — but no
+# snapshot,
 # restore or deploy walks it.
 ATTACHMENTS = Path(os.environ.get("ATTACHMENTS_DIR", "/workspace/attachments"))
 APP_USER = os.environ.get("APP_USER", "appuser")
@@ -1172,12 +1173,18 @@ class ExecBody(BaseModel):
     timeout: int = 900
 
 
-# The decoded ceiling for `create_bytes`. It matches the platform's per-file attachment cap,
-# because attachments are what this action exists to place: a file the control plane refused to
-# store cannot arrive here, so a larger bound would only widen what a compromised caller could
-# write. Base64 inflates by roughly 4/3 on the wire; the check is on the DECODED length, which is
-# what actually lands on disk.
-MAX_BINARY_WRITE_BYTES = 4 * 1024 * 1024
+# A SECOND SIZE CEILING LIVED HERE AND IS GONE. It restated the control plane's per-file
+# attachment cap, and two numbers for one rule is the only thing it reliably produced — they were
+# one release apart from disagreeing, at which point a file the door accepted would have died
+# here with a message no citizen could be shown.
+#
+# THE TWO ARGUMENTS FOR KEEPING IT WERE BOTH TRACED AND NEITHER HELD. It did not contain a hostile
+# caller: `create_bytes` is not a model tool and has one caller on the control plane, while
+# `run_command` is a general shell that can already write anywhere the workspace allows. And it
+# did not bound this process's own allocation: placement is a sequential loop with one container
+# and one turn slot per user, so the supervisor holds ONE file at a time — peak is the base64 body
+# plus the decoded copy of a single file, against a 2 GiB container, and the door's cap bounds
+# that transitively.
 
 
 class FilesBody(BaseModel):
@@ -1300,10 +1307,6 @@ def files(body: FilesBody) -> dict[str, Any]:
             data = base64.b64decode(body.file_b64, validate=True)
         except (binascii.Error, ValueError):
             raise HTTPException(422, "file_b64 is not valid base64") from None
-        # Bounded on the DECODED length — the encoded string is 4/3 the size and is not what
-        # lands on disk. Checked before the write, so an oversized body never creates a file.
-        if len(data) > MAX_BINARY_WRITE_BYTES:
-            raise HTTPException(413, f"file exceeds {MAX_BINARY_WRITE_BYTES} bytes")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
         # NO `_redact` HERE, and that is not an omission: redaction keeps an injected secret out

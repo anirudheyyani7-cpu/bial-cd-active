@@ -43,7 +43,7 @@ export default function ChatRuntimeProvider({
   })
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* The refusal sink, the pending-read count (#214 R21a) and the staged binding, mounted as
+      {/* The refusal sink, the pending-read count and the staged binding, mounted as
           one so no composer can take two of the three — see `AttachmentAdapterProviders`. */}
       <AttachmentAdapterProviders bound={bound}>{children}</AttachmentAdapterProviders>
     </AssistantRuntimeProvider>

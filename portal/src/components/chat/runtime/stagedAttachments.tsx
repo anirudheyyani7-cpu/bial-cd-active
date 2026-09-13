@@ -36,7 +36,7 @@ export interface BoundAdapter {
   /** Where a refused file's sentence goes. The mounted composer fills it — see `useRefusalSink`. */
   refusalRef: MutableRefObject<(message: string) => void>
   /**
-   * HOW MANY FILES ARE STILL BEING READ (#214 R21a). STATE, not a ref, and that is the whole
+   * HOW MANY FILES ARE STILL BEING READ. STATE, not a ref, and that is the whole
    * reason it is here rather than beside the two refs above: the composer has to RE-RENDER when
    * this changes — Send goes unavailable and a pending row appears — and a ref cannot ask for a
    * render. It is the one thing the adapter publishes that the screen has to react to.
@@ -73,7 +73,7 @@ export function useBoundAttachmentAdapter(): BoundAdapter {
 }
 
 /**
- * HOW MANY FILES THE COMPOSER IS STILL READING, as context (#214 R21a).
+ * HOW MANY FILES THE COMPOSER IS STILL READING, as context.
  *
  * The same shape as the refusal sink and for the same reason: the provider that owns the count is
  * mounted above the composer and does not know which of its children has the send control. `0`
@@ -136,7 +136,7 @@ export function StagedAttachmentsBinding({
 }
 
 /**
- * EVERY PROVIDER A COMPOSER'S ATTACHMENTS NEED, MOUNTED AS ONE (#214, agc129's B3).
+ * EVERY PROVIDER A COMPOSER'S ATTACHMENTS NEED, MOUNTED AS ONE.
  *
  * ★ THIS EXISTS BECAUSE THE SEND GATE WAS HALF-SHIPPED. The pending-read count reached the chat
  * composer through `PendingReadsProvider` in `ChatRuntimeProvider` — and the rail composer, which

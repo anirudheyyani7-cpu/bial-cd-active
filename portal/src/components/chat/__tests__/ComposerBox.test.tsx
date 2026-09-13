@@ -15,6 +15,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { ComposerHarness } from './_composerHarness'
 import ComposerBox from '../ComposerBox'
 import { SendRefusal } from '../sendRefusal'
+import { MAX_FILE_SIZE, MAX_FILE_SIZE_MB } from '../../../utils/attachmentInput'
 import type { ComposerSubmission } from '../ComposerBox'
 
 afterEach(cleanup)
@@ -454,9 +455,9 @@ describe('★ the attachment pipeline stays ours', () => {
     // the model can see it. Mutation receipt: drop `onRefused` from the adapter and this goes red.
     const onUrgent = vi.fn()
     draw({ onUrgent })
-    drop(new File([new Uint8Array(4 * 1024 * 1024 + 1)], 'huge.png', { type: 'image/png' }))
+    drop(new File([new Uint8Array(MAX_FILE_SIZE + 1)], 'huge.png', { type: 'image/png' }))
     await waitFor(() => expect(onUrgent).toHaveBeenCalledTimes(1))
-    expect(onUrgent.mock.calls[0]?.[0]).toMatch(/too large|4 MB|smaller/i)
+    expect(onUrgent.mock.calls[0]?.[0]).toMatch(new RegExp(`exceeds the ${MAX_FILE_SIZE_MB} MB`, 'i'))
     // …and nothing was staged.
     expect(screen.queryByTestId('composer-chips')).toBeNull()
   })
@@ -466,7 +467,7 @@ describe('★ the attachment pipeline stays ours', () => {
     draw({ onUrgent })
     // A `.ppt`, not a `.pptx`: the modern deck is accepted now — code reads it in the sandbox —
     // while the pre-2007 binary format stays refused, because opening one would mean hosting a
-    // converter, which is a standing scope boundary (#214).
+    // converter, which is a standing scope boundary.
     drop(new File(['x'], 'slides.ppt', { type: 'application/vnd.ms-powerpoint' }))
     await waitFor(() => expect(onUrgent).toHaveBeenCalledTimes(1))
     expect(onUrgent.mock.calls[0]?.[0]).toMatch(/isn't supported|is not supported/i)
@@ -492,12 +493,12 @@ describe('★ the attachment pipeline stays ours', () => {
   })
 
   it('a large spreadsheet is no longer refused by a text budget that no longer exists', async () => {
-    // ★ THE BUDGET WENT WITH ITS LANE (#214). Inline text rode in EVERY turn of the
+    // ★ THE BUDGET WENT WITH ITS LANE. Inline text rode in EVERY turn of the
     // conversation, so it carried a cumulative 512 KB ceiling: three 250 KB spreadsheets were
     // 750 KB, two fit and the third was refused.
     //
     // A spreadsheet is an uploaded file now. It never enters the prompt, so there is nothing
-    // for a text budget to bound - it is governed by the 4 MB per-file cap and the
+    // for a text budget to bound - it is governed by the one per-file cap and the
     // per-conversation limits the server enforces. All three land.
     //
     // The SHAPE this used to protect - a cap holding inside one gesture, where files fan out

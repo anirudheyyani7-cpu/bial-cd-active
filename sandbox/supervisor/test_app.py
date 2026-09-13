@@ -281,7 +281,7 @@ def test_files_create_missing_file_text_is_400() -> None:
     assert r.status_code == 400
 
 
-# --- the attachments root (#214 R19) ----------------------------------------------------------
+# --- the attachments root ----------------------------------------------------------
 def test_a_file_can_be_written_outside_the_app_tree() -> None:
     """★ WHY THERE ARE TWO ROOTS. `WORKSPACE` is the tree that BECOMES the citizen's app — it is
     snapshotted, restored, saved and deployed. A file someone attached to a chat must not travel
@@ -340,7 +340,7 @@ def test_neither_root_is_a_doorway_to_the_other_or_to_anywhere_else() -> None:
         assert r.status_code == 400, f"{path} was not refused"
 
 
-# --- /files: create_bytes (#214 — the binary lane) --------------------------------------------
+# --- /files: create_bytes --------------------------------------------
 def test_files_create_bytes_writes_the_real_bytes_unchanged() -> None:
     """A REAL FILE, NOT TEXT. Every other write action here decodes UTF-8 and rewrites CRLF to
     LF; a spreadsheet is a ZIP archive and carries 0x0D 0x0A constantly, so `create` would
@@ -394,23 +394,29 @@ def test_files_create_bytes_rejects_payload_that_is_not_base64() -> None:
     assert r.status_code == 422
 
 
-def test_files_create_bytes_refuses_an_oversized_file_before_writing_it() -> None:
-    """Bounded on the DECODED length, and checked BEFORE the write — an over-cap body must not
-    leave a partial file behind for something else to find."""
-    from app import MAX_BINARY_WRITE_BYTES
+def test_files_create_bytes_writes_a_file_larger_than_the_deleted_ceiling() -> None:
+    """★ THE SIZE QUESTION IS THE DOOR'S, AND ONLY THE DOOR'S. A second ceiling here used to
+    restate the control plane's per-file cap, and the two would eventually disagree — at which
+    point a file the door had already accepted, stored and charged for would die inside the
+    container with a message no citizen could be shown.
 
-    too_big = b"\x00" * (MAX_BINARY_WRITE_BYTES + 1)
+    Five megabytes is over the ceiling that stood here and comfortably under the door's, so this
+    write is exactly the one the disagreement would have swallowed.
+
+    Mutation check: restore any decoded-length check in `create_bytes` and this goes red.
+    """
+    payload = b"\x00" * (5 * 1024 * 1024)
     r = client.post(
         "/files",
         json={
             "action": "create_bytes",
-            "path": "huge.bin",
-            "file_b64": base64.b64encode(too_big).decode(),
+            "path": "large.bin",
+            "file_b64": base64.b64encode(payload).decode(),
         },
         headers=AUTH,
     )
-    assert r.status_code == 413
-    assert not (WORKSPACE / "huge.bin").exists()
+    assert r.status_code == 200
+    assert (WORKSPACE / "large.bin").read_bytes() == payload
 
 
 def test_files_create_bytes_cannot_escape_the_workspace() -> None:

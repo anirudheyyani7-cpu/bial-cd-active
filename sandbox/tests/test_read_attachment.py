@@ -1,4 +1,4 @@
-"""The shipped attachment reader (#214) — the three measured defects, and the one return shape.
+"""The shipped attachment reader — the three measured defects, and the one return shape.
 
 Runs in the sandbox image, where the four reader libraries live. These are not smoke tests: each
 case below is one of the ways the REPLACED extractor was wrong, asserted so the replacement cannot
@@ -6,7 +6,8 @@ be wrong the same way.
 
 The fixtures are built here rather than checked in, so what each test proves is visible in the
 test itself — a checked-in .xlsx whose formulas have no cached values looks identical to one whose
-formulas do, and the difference is the entire point of `test_a_formula_column_with_no_stored_result`.
+formulas do, and the difference is the entire point of
+`test_a_formula_column_with_no_stored_result`.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ READER = Path(__file__).resolve().parents[1] / "scripts" / "read_attachment.py"
 # The canonical 1x1 transparent PNG. Base64 here so the fixture is a real image the
 # libraries accept; the assertions below check this text never reaches the MANIFEST.
 _ONE_PIXEL_PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
+    "DUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
 openpyxl = pytest.importorskip("openpyxl", reason="reader libraries live in the sandbox image")
@@ -47,7 +49,7 @@ def run(path: Path) -> dict:
     return json.loads(proc.stdout)
 
 
-# --- the three measured defects (R24) ---------------------------------------------------------
+# --- the three measured defects ---------------------------------------------------------
 
 
 def test_a_formula_column_with_no_stored_result_says_so(tmp_path: Path) -> None:
@@ -114,12 +116,12 @@ def test_a_table_header_survives_as_a_header(tmp_path: Path) -> None:
     out = run(path)
 
     first = out["tables"]["shown"][0]
-    assert first["header"] == ["terminal", "movements"]
+    assert first["header"] == {"total": 2, "shown": ["terminal", "movements"]}
     assert first["rows"] == 2  # the header is NOT counted as a body row
     assert ["T1", "42"] in first["sampleRows"]
 
 
-# --- the whole is always stated (R17) ---------------------------------------------------------
+# --- the whole is always stated ---------------------------------------------------------
 
 
 def test_a_large_csv_reports_its_true_row_count_not_the_sample(tmp_path: Path) -> None:
@@ -162,7 +164,7 @@ def test_a_tsv_is_read_on_tabs_not_commas(tmp_path: Path) -> None:
     assert out["rows"] == 1
 
 
-# --- one return shape, including failure (R12a) ------------------------------------------------
+# --- one return shape, including failure ------------------------------------------------
 
 
 def test_a_corrupt_file_is_a_named_failure_not_a_crash(tmp_path: Path) -> None:
@@ -219,13 +221,15 @@ def test_every_outcome_exits_zero_and_prints_one_json_object(tmp_path: Path) -> 
 
 
 def test_no_arguments_is_answered_rather_than_traced() -> None:
-    proc = subprocess.run([sys.executable, str(READER)], capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [sys.executable, str(READER)], capture_output=True, text=True, timeout=120
+    )
 
     assert proc.returncode == 0
     assert json.loads(proc.stdout)["error"]["code"] == "usage"
 
 
-# --- the rest of the manifest (R12) ------------------------------------------------------------
+# --- the rest of the manifest ------------------------------------------------------------
 
 
 def test_a_workbook_reports_sheets_dimensions_and_merges(tmp_path: Path) -> None:

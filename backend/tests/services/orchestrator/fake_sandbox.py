@@ -354,7 +354,7 @@ class FakeSandbox(SandboxClient):
         # The supervisor's 400-on-escape → opaque SandboxError. BRAIN's write guard denies
         # these above the seam, but the fake still models the client-side rejection.
         #
-        # TWO ROOTS, MIRRORING THE SUPERVISOR'S `_resolve` (#214 R19). A relative path is still
+        # TWO ROOTS, MIRRORING THE SUPERVISOR'S `_resolve`. A relative path is still
         # app-relative and is still the only shape any agent tool produces; the attachments root
         # is reachable ONLY by naming it absolutely, which is the property that keeps an app
         # containing its own `attachments/` directory resolving where it always did. Without this

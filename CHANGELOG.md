@@ -82,11 +82,13 @@ it belongs to, and what the model does with it.
 ### Known limitations
 
 - **A long PDF is limited by pages, not by megabytes, and the limit is lower than the 10 MB cap
-  suggests.** A PDF page costs the assistant roughly 2,900 tokens, so a document of about 175 pages
-  fills a conversation's entire context on its own regardless of how small the file is; beyond
-  roughly 600 pages the assistant will not accept the document at all. Both refusals are now clearly
-  worded, but neither is caught at upload — the file is accepted and the refusal arrives on the
-  turn. Attaching an excerpt rather than a full report is the reliable approach for long documents.
+  suggests.** A PDF page costs the assistant roughly 2,900 tokens, so page count is what decides,
+  however small the file is. Around 175 pages a single document fills a conversation's whole
+  allowance: that message is still answered, and the chat is finished afterwards. Past roughly 350
+  the document is refused outright, and past 600 it is refused for its page count specifically.
+  Every one of those refusals is now clearly worded, but none is caught at upload — the file is
+  accepted and the refusal arrives on the turn. Attaching an excerpt rather than a full report is
+  the reliable approach for long documents.
 
 ## [1.7.0-beta.13] - 2026-09-11
 
